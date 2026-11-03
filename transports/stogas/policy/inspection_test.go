@@ -398,22 +398,42 @@ func BenchmarkInspectionOpaqueRules(b *testing.B) {
 	}
 }
 
-func TestInspectionShowsWhichPolicyOrdersRequests(t *testing.T) {
+func TestInspectionShowsWhichPolicySetsEachSortCriterion(t *testing.T) {
 	required := func(by string) string { return `{"routing":{"sort":[{"by":"` + by + `"}]}}` }
 	preferred := func(by string) string {
 		return `{"rules":{"d":{"mode":"default","routing":{"sort":[{"by":"` + by + `"}]}}}}`
 	}
-	replaced := []InspectionNote{{Kind: "order", Scope: OrganizationScope}}
+	run := func(policy map[string]any, rule string, criteria int) map[string]any {
+		value := map[string]any{"policy": policy, "criteria": criteria}
+		if rule != "" {
+			value["rule"] = rule
+		}
+		return value
+	}
+	org := run(map[string]any{"scope": OrganizationScope}, "", 1)
+	key := run(map[string]any{"scope": KeyScope, "id": "key"}, "", 1)
+	orgRule := run(map[string]any{"scope": OrganizationScope}, "d", 1)
+	keyRule := run(map[string]any{"scope": KeyScope, "id": "key"}, "d", 1)
 	for _, test := range []struct {
 		org, key string
-		from     map[string]any
-		notes    []InspectionNote
+		sorts    []string
+		from     []map[string]any
 	}{
-		{required("provider.id"), required("model.id"), map[string]any{"scope": OrganizationScope, "mode": "required"}, replaced},
-		{required("provider.id"), preferred("model.id"), map[string]any{"scope": OrganizationScope, "mode": "required"}, replaced},
-		{preferred("provider.id"), preferred("model.id"), map[string]any{"scope": KeyScope, "id": "key", "mode": "default"}, nil},
-		{preferred("provider.id"), `{}`, map[string]any{"scope": OrganizationScope, "mode": "default"}, nil},
-		{`{}`, `{"routing":{"sort":[]}}`, map[string]any{"scope": KeyScope, "id": "key", "mode": "required"}, nil},
+		// Requirements run broadest first, then defaults closest first.
+		{required("provider.id"), required("model.id"), []string{"provider.id", "model.id"}, []map[string]any{org, key}},
+		{required("provider.id"), preferred("model.id"), []string{"provider.id", "model.id"}, []map[string]any{org, keyRule}},
+		{preferred("provider.id"), preferred("model.id"), []string{"model.id", "provider.id"}, []map[string]any{keyRule, orgRule}},
+		{preferred("provider.id"), required("model.id"), []string{"model.id", "provider.id"}, []map[string]any{key, orgRule}},
+		{preferred("provider.id"), `{}`, []string{"provider.id"}, []map[string]any{orgRule}},
+		// A criterion equal to an earlier one cannot break its ties.
+		{required("provider.id"), preferred("provider.id"), []string{"provider.id"}, []map[string]any{org}},
+		// One run names the policy of consecutive criteria.
+		{
+			`{"routing":{"sort":[{"by":"provider.id"},{"by":"model.id"}]}}`, preferred("route.id"),
+			[]string{"provider.id", "model.id", "route.id"},
+			[]map[string]any{run(map[string]any{"scope": OrganizationScope}, "", 2), keyRule},
+		},
+		{`{}`, `{"routing":{"sort":[]}}`, nil, nil},
 	} {
 		inspection, err := InspectSources([]InspectionSource{
 			{Scope: OrganizationScope, Config: json.RawMessage(test.org)},
@@ -423,8 +443,14 @@ func TestInspectionShowsWhichPolicyOrdersRequests(t *testing.T) {
 			t.Fatal(err)
 		}
 		routing, _ := inspection.Effective["routing"].(map[string]any)
-		if !reflect.DeepEqual(routing["orderFrom"], test.from) || !reflect.DeepEqual(inspection.Notes, test.notes) {
-			t.Fatalf("%s + %s: from %v, notes %+v", test.org, test.key, routing["orderFrom"], inspection.Notes)
+		sorts, _ := routing["sort"].([]Sort)
+		var got []string
+		for _, criterion := range sorts {
+			got = append(got, criterion.By)
+		}
+		from, _ := routing["sortFrom"].([]map[string]any)
+		if !slices.Equal(got, test.sorts) || !reflect.DeepEqual(from, test.from) || len(inspection.Notes) > 0 {
+			t.Fatalf("%s + %s: sort %v from %v, notes %+v", test.org, test.key, got, from, inspection.Notes)
 		}
 	}
 }
@@ -479,20 +505,14 @@ func TestInspectionShowsWhichRequirementsReplaceDefaults(t *testing.T) {
 		t.Fatalf("notes: %+v", inspection.Notes)
 	}
 
-	// One ordering applies: a required one replaces every default one, and
-	// otherwise the closest default replaces the others. The order note
-	// already tells the edited policy.
+	// Every ordering applies, so no requirement replaces a default one.
 	preferred := `{"rules":{"d":{"mode":"default","routing":{"order":["openai"],"sort":[{"by":"provider.id"}]}}}}`
 	for _, test := range []struct {
 		org      string
 		replaced [2]any
 	}{
-		{`{"routing":{"sort":[{"by":"model.id"}]}}`, [2]any{nil, []map[string]any{
-			{"setting": "routing.order", "policy": organization}, {"setting": "routing.sort", "policy": organization},
-		}}},
-		{preferred, [2]any{[]map[string]any{
-			{"setting": "routing.order", "policy": own, "rule": "d"}, {"setting": "routing.sort", "policy": own, "rule": "d"},
-		}, nil}},
+		{`{"routing":{"sort":[{"by":"model.id"}]}}`, [2]any{nil, nil}},
+		{preferred, [2]any{nil, nil}},
 	} {
 		inspection, err = InspectSources([]InspectionSource{
 			{Scope: OrganizationScope, Config: json.RawMessage(test.org)},
@@ -734,7 +754,6 @@ func TestReplacedDefaultsAgreeWithActivation(t *testing.T) {
 		rules, _ := inspection.Effective["rules"].([]map[string]any)
 		for _, item := range rules {
 			reference := item["policy"].(map[string]any)
-			source := slices.Index(scopes, reference["scope"].(Scope))
 			name := item["name"].(string)
 			fields := map[string]json.RawMessage{}
 			raw, _ := json.Marshal(item["config"])
@@ -758,8 +777,11 @@ func TestReplacedDefaultsAgreeWithActivation(t *testing.T) {
 				for _, matched := range []bool{true, false} {
 					var replaced bool
 					if kind&orderingPermissions != 0 {
-						origin, ok := active[matched].OrderOrigin()
-						replaced = !ok || origin.Source != source || origin.Rule != name
+						// A default ordering is never replaced; it orders the
+						// ties that the others leave, unless an earlier equal
+						// criterion already applies.
+						query := active[matched].Routing.Query
+						replaced = query == nil || !slices.ContainsFunc(query.OrderBy, func(s Sort) bool { return s.By == "model.id" })
 					} else {
 						replaced = kind&active[matched].requiredSettings != 0
 					}
@@ -781,7 +803,7 @@ func TestReplacedDefaultsAgreeWithActivation(t *testing.T) {
 			}
 		}
 	}
-	for _, name := range []string{"kept", "always", "conditional", "ordering true", "ordering false"} {
+	for _, name := range []string{"kept", "always", "conditional", "ordering false"} {
 		if seen[name] < 20 {
 			t.Fatalf("checked %s %d times: %v", name, seen[name], seen)
 		}

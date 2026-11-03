@@ -70,7 +70,7 @@ func TestRoutingSkipsDeploymentsThatCannotReadTheAttachments(t *testing.T) {
 			}
 			config := policyConfig(1)
 			config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Deployments: order}
-			config.Routing.Order = order
+			config.Routing.Query = orderedQuery(t, "", order...)
 			if tc.extract {
 				extract := true
 				config.Plugins = &policy.Plugins{TextExtraction: &extract}

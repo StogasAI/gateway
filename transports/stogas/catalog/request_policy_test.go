@@ -16,7 +16,7 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/policy"
 )
 
-func TestCredentialEligibilityPrecedesPoliciesAndDefaultOrder(t *testing.T) {
+func TestCredentialEligibilityPrecedesPoliciesAndTheirOrder(t *testing.T) {
 	loadTestCatalog(t)
 	for _, path := range []string{"/v1/chat/completions", "/v1/responses"} {
 		for _, test := range []struct {
@@ -34,7 +34,9 @@ func TestCredentialEligibilityPrecedesPoliciesAndDefaultOrder(t *testing.T) {
 			{name: "two configured providers", model: "gpt-5.6-sol", providers: map[string][]int{"azure": {0}, "openai": {0}}, deployment: "azure-gpt-5.6-sol"},
 			{name: "cheapest region first", model: "gpt-5.6-sol", providers: map[string][]int{"azure": {0}}, filter: `deployment.id != 'azure-gpt-5.6-sol' && deployment.id != 'azure-gpt-5.6-sol-instant'`, deployment: "azure-gpt-5.6-sol-apac"},
 			{name: "provider still has regions", model: "azure/gpt-5.6-sol", providers: map[string][]int{"azure": {0}}, deployment: "azure-gpt-5.6-sol"},
-			{name: "no model and several models", providers: map[string][]int{"openai": {0}}, code: "model_ambiguous"},
+			// The newest OpenAI model leads the test default; with no fallbacks the
+			// models behind it change nothing.
+			{name: "no model and several models", providers: map[string][]int{"openai": {0}}, deployment: "openai-gpt-6.1-sol"},
 			{name: "no model and one model", providers: map[string][]int{"azure": {0}, "openai": {0}}, filter: `model.id == 'gpt-5.6-sol'`, deployment: "azure-gpt-5.6-sol"},
 			{name: "strict provider unavailable", model: "gpt-5.6-sol", providers: map[string][]int{"azure": {0}}, extra: `,"provider":"openai"`, code: "provider_not_allowed"},
 			{name: "exact selection retains policy", model: "openai-gpt-5.6-sol", providers: map[string][]int{"openai": {0}}, filter: `provider.id == 'azure'`, code: "model_unavailable"},
@@ -56,7 +58,7 @@ func TestCredentialEligibilityPrecedesPoliciesAndDefaultOrder(t *testing.T) {
 				}
 				config := policyConfig(1)
 				if test.filter != "" {
-					config.Routing.Query = mustRouting(t, test.filter, nil)
+					config.Routing.Query = mustRouting(t, test.filter, testDefaultSort())
 				}
 				checks, transforms := 0, 0
 				resolved, err := ResolveRequest(RequestInput{
@@ -359,7 +361,7 @@ func TestRequestPolicyCompilesOnceAndCombinesRedactionBeforeScanning(t *testing.
 	loadTestCatalog(t)
 	for _, path := range []string{"/v1/chat/completions", "/v1/responses"} {
 		t.Run(path, func(t *testing.T) {
-			org, err := policy.CompileSource([]byte(`{"routing":{"fallbacks": 1},"plugins":{"redaction":{"literals":[{"values":["SAVED_PRIVATE"]}]}}}`))
+			org, err := policy.CompileSource([]byte(`{"routing":{"fallbacks": 1,"sort":[{"by":"blended_price(3, 1)"},{"by":"deployment.id"}]},"plugins":{"redaction":{"literals":[{"values":["SAVED_PRIVATE"]}]}}}`))
 			if err != nil {
 				t.Fatal(err)
 			}

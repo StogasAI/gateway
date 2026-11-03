@@ -460,7 +460,7 @@
     }
   },
   {
-    "name": "the broadest required order applies",
+    "name": "required orders apply broadest first",
     "sources": [
       {
         "routing": {
@@ -512,6 +512,10 @@
             },
             {
               "by": "model.id",
+              "direction": "desc"
+            },
+            {
+              "by": "deployment.id",
               "direction": "desc"
             }
           ]
@@ -575,7 +579,7 @@
     }
   },
   {
-    "name": "a required order replaces closer default orders",
+    "name": "required orders come before default orders, closest first",
     "sources": [
       {
         "rules": {
@@ -634,6 +638,14 @@
             {
               "by": "deployment.id",
               "direction": "desc"
+            },
+            {
+              "by": "model.id",
+              "direction": "asc"
+            },
+            {
+              "by": "provider.id",
+              "direction": "asc"
             }
           ]
         },
@@ -645,7 +657,7 @@
     }
   },
   {
-    "name": "the closest default order applies",
+    "name": "default orders apply closest first",
     "sources": [
       {
         "rules": {
@@ -687,12 +699,25 @@
       "plugins": null,
       "routing": {
         "allowedCatalogNodes": null,
-        "query": null,
+        "query": {
+          "orderBy": [
+            {
+              "deployments": [
+                "deployment-a"
+              ]
+            },
+            {
+              "by": "provider.id",
+              "direction": "asc"
+            },
+            {
+              "by": "model.id",
+              "direction": "desc"
+            }
+          ]
+        },
         "retries": 0,
-        "fallbacks": 2,
-        "order": [
-          "deployment-a"
-        ]
+        "fallbacks": 2
       },
       "requestPermission": false,
       "schema": "stogas.key-config.compiled.v1"
@@ -814,7 +839,7 @@
     }
   },
   {
-    "name": "required order replaces default sort within the smallest fallback count",
+    "name": "a required order comes before a default sort, with the smallest fallback count",
     "sources": [
       {
         "routing": {
@@ -851,11 +876,20 @@
       "plugins": null,
       "routing": {
         "allowedCatalogNodes": null,
-        "order": [
-          "deployment-b",
-          "deployment-a"
-        ],
-        "query": null,
+        "query": {
+          "orderBy": [
+            {
+              "deployments": [
+                "deployment-b",
+                "deployment-a"
+              ]
+            },
+            {
+              "by": "provider.id",
+              "direction": "asc"
+            }
+          ]
+        },
         "retries": 0,
         "fallbacks": 1
       },

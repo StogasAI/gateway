@@ -22,7 +22,7 @@ import (
 const (
 	CompilerVersion          = 1
 	MaxCompiledBytes         = 512 << 10
-	MaxSorts                 = 3
+	MaxSorts                 = 4
 	MaxRetries               = 3
 	MaxFallbacks             = 2
 	DefaultFallbacks         = 2
@@ -63,8 +63,8 @@ type Config struct {
 	hasRules               bool
 	activated              bool
 	requiredSettings       Permission
-	orderScope             Scope
-	orderDefault           bool
+	sortOrigins            []Origin
+	requiredSorts          int
 	EncryptionKeys         map[string]string `json:"-"`
 	RequiredEncryptionKeys []string          `json:"-"`
 	PluginSources          []*Plugins        `json:"-"`
@@ -103,14 +103,14 @@ func (t *Timeouts) OutputIdle() time.Duration {
 
 // Retries repeat a call to the same deployment and credential. Fallbacks move
 // to the next pair in routing order, so a request calls at most three pairs.
-// Order lists deployments that come first, in list order. It never adds a
-// deployment that selectors, filters or credentials exclude.
+// Query sorts candidates; a policy's routing.order becomes its leading
+// deployments list. Sorting never adds a deployment that selectors, filters
+// or credentials exclude.
 // MissingEncryptionKeys is empty when no policy sets it, which fails.
 type Routing struct {
 	AllowedCatalogNodes   *AllowedCatalogNodes `json:"allowedCatalogNodes"`
 	Fallbacks             int                  `json:"fallbacks"`
 	MissingEncryptionKeys string               `json:"missingEncryptionKeys,omitempty"`
-	Order                 []string             `json:"order,omitempty"`
 	Query                 *Query               `json:"query"`
 	Retries               int                  `json:"retries"`
 }
@@ -170,9 +170,6 @@ func (c *Config) validate() error {
 	if value := c.Routing.MissingEncryptionKeys; value != "" && value != MissingKeysFail && value != MissingKeysSkip {
 		return configError("routing.missingEncryptionKeys must be fail or skip")
 	}
-	if err := c.Routing.validateOrder(); err != nil {
-		return err
-	}
 	if c.Timeouts != nil {
 		for _, field := range []struct {
 			name  string
@@ -205,9 +202,6 @@ func (a *AllowedCatalogNodes) validate() error {
 	}
 	lists := [][]string{a.Authors, a.Deployments, a.Models, a.Providers, a.Routes}
 	for _, values := range lists {
-		if len(values) == 0 {
-			continue
-		}
 		seen := make(map[string]struct{}, len(values))
 		for _, value := range values {
 			if !nodeIDPattern.MatchString(value) {
@@ -222,17 +216,22 @@ func (a *AllowedCatalogNodes) validate() error {
 	return nil
 }
 
-func (r *Routing) validateOrder() error {
-	if r.Order == nil {
-		return nil
+func validateOrder(order []string) error {
+	if validateNodeIDs(order) != nil {
+		return configError("routing.order must list unique deployment IDs")
 	}
-	if len(r.Order) == 0 {
-		return configError("routing.order must list deployment IDs")
+	return nil
+}
+
+// validateNodeIDs requires a nonempty list of unique, well formed catalog IDs.
+func validateNodeIDs(ids []string) error {
+	if len(ids) == 0 {
+		return configError("a catalog ID list must not be empty")
 	}
-	seen := make(map[string]bool, len(r.Order))
-	for _, id := range r.Order {
+	seen := make(map[string]bool, len(ids))
+	for _, id := range ids {
 		if !nodeIDPattern.MatchString(id) || seen[id] {
-			return configError("routing.order must list unique deployment IDs")
+			return configError("catalog IDs must be valid and unique")
 		}
 		seen[id] = true
 	}

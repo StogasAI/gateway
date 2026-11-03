@@ -46,11 +46,10 @@ type Source struct {
 	size                    sourceSize
 }
 
-// ordering is routing.order with routing.sort. One applies to every candidate
-// of a request: the required one from the broadest scope, or else the default
-// one from the closest scope.
+// ordering is a policy's routing.sort, with routing.order as its leading
+// deployments list. Every ordering applies: each criterion orders the ties of
+// the ones before it.
 type ordering struct {
-	order []string
 	sorts []Sort
 	// rule names the default rule that set this ordering.
 	rule string
@@ -61,16 +60,11 @@ type ordering struct {
 // only some candidates, so they cannot set one.
 var orderingRanks = map[Scope]int{OrganizationScope: 0, FolderScope: 1, GrantScope: 2, KeyScope: 3, RequestScope: 4}
 
-func (o *ordering) same(other *ordering) bool {
-	return slices.Equal(o.order, other.order) && (&Query{OrderBy: o.sorts}).SameOrder(&Query{OrderBy: other.sorts})
-}
-
 // takeOrdering moves a default rule's ordering to its policy, so composition
-// chooses it without activating rules.
+// places it without activating rules.
 func (s *Source) takeOrdering(rule string) *ordering {
 	routing := &s.Config.Routing
-	taken := &ordering{order: routing.Order, rule: rule}
-	routing.Order = nil
+	taken := &ordering{rule: rule}
 	if query := routing.Query; query != nil {
 		taken.sorts, query.OrderBy = query.OrderBy, nil
 		if len(query.Filters) == 0 {
@@ -416,7 +410,15 @@ func (d *SourceDocument) compile(plugins map[[32]byte]*Plugins, compiler *celCom
 	}
 
 	if doc.Routing != nil {
-		if doc.Routing.Filter != nil || doc.Routing.Sort != nil {
+		sorts := doc.Routing.Sort
+		if doc.Routing.Order != nil {
+			if err := validateOrder(doc.Routing.Order); err != nil {
+				return nil, err
+			}
+			// routing.order is the deployments list that leads routing.sort.
+			sorts = append([]Sort{{Deployments: doc.Routing.Order}}, sorts...)
+		}
+		if doc.Routing.Filter != nil || sorts != nil {
 			filter := ""
 			if doc.Routing.Filter != nil {
 				filter = *doc.Routing.Filter
@@ -424,15 +426,14 @@ func (d *SourceDocument) compile(plugins map[[32]byte]*Plugins, compiler *celCom
 			if doc.Routing.Filter != nil && strings.TrimSpace(filter) == "" {
 				return nil, configError("routing filter must not be empty")
 			}
-			if filter != "" || len(doc.Routing.Sort) > 0 {
-				config.Routing.Query, err = compileRouting(filter, doc.Routing.Sort, compiler)
+			if filter != "" || len(sorts) > 0 {
+				config.Routing.Query, err = compileRouting(filter, sorts, compiler)
 				if err != nil {
 					return nil, err
 				}
 			}
 		}
 		config.Routing.AllowedCatalogNodes = doc.Routing.Allowed
-		config.Routing.Order = doc.Routing.Order
 		if doc.Routing.Retries != nil {
 			config.Routing.Retries = *doc.Routing.Retries
 		}
@@ -472,8 +473,8 @@ func (d *SourceDocument) compile(plugins map[[32]byte]*Plugins, compiler *celCom
 		if rule.Value.settings&orderingPermissions == 0 {
 			continue
 		}
-		if source.settings&orderingPermissions != 0 || source.defaultOrdering != nil {
-			return nil, configError("set routing.order and routing.sort once per policy: at the top level, or in one rule with mode default and no when")
+		if source.defaultOrdering != nil {
+			return nil, configError("set a default routing.sort in one rule with mode default and no when")
 		}
 		source.defaultOrdering = rule.Value.takeOrdering(rule.Name)
 	}
@@ -804,22 +805,14 @@ func (c *Config) MissingKeysOrigin() (Origin, bool) {
 	return Origin{}, false
 }
 
-// OrderOrigin locates the policy, and for a default ordering its rule, that
-// sets the composed routing order and sort.
-func (c *Config) OrderOrigin() (Origin, bool) {
-	for i, entry := range c.sources {
-		if entry.Scope != c.orderScope || entry.rule != "" {
-			continue
-		}
-		if c.orderDefault && entry.Value.defaultOrdering != nil {
-			return Origin{Source: i, Rule: entry.Value.defaultOrdering.rule}, true
-		}
-		if !c.orderDefault && entry.Value.settings&orderingPermissions != 0 {
-			return Origin{Source: i}, true
-		}
-	}
-	return Origin{}, false
-}
+// SortOrigins locates the policy, and for a default ordering its rule, that
+// sets each composed routing.sort criterion. The first RequiredSorts are
+// required; the rest are defaults.
+func (c *Config) SortOrigins() []Origin { return c.sortOrigins }
+
+// RequiredSorts counts the required criteria that lead the composed sort. A
+// request's provider order comes after them, before the defaults.
+func (c *Config) RequiredSorts() int { return c.requiredSorts }
 
 func ChainDigest(sources []ScopedSource) string {
 	values := make([][2]string, len(sources))
@@ -884,9 +877,9 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 	}
 	hasRequestPermission := false
 	var filters []*CELExpression
-	// A request may repeat a saved required ordering but not replace it.
-	var required, preferred, requested *ordering
-	var requiredScope, preferredScope Scope
+	// Required orderings apply from the broadest scope to the request, then
+	// defaults from the request to the broadest scope.
+	var required, defaults []placedOrdering
 	// The smallest value among the policies that set one applies.
 	var retries, fallbacks *int
 	// A candidate whose encryption key the request did not send fails the
@@ -894,7 +887,7 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 	missingKeys := ""
 	seenPlugins := map[*Plugins]bool{}
 	seenWindows := map[string]bool{}
-	for _, entry := range sources {
+	for index, entry := range sources {
 		scope, source := entry.Scope, entry.Value
 		if !scope.Valid() && scope != RequestScope || source == nil {
 			return nil, configError("invalid policy source scope or content")
@@ -921,30 +914,13 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 			if !ok {
 				return nil, configError("%s policies cannot set routing.order or routing.sort", scope)
 			}
-			// Top-level orderings are required. Rule parts carry none: compile
-			// moved each default ordering to its policy.
-			if source.settings&orderingPermissions != 0 {
-				own := &ordering{order: source.Config.Routing.Order}
-				if query := source.Config.Routing.Query; query != nil {
-					own.sorts = query.OrderBy
-				}
-				if scope == RequestScope {
-					requested = own
-				}
-				if required != nil && orderingRanks[requiredScope] == rank {
-					return nil, configError("several %s policies set routing.order or routing.sort", scope)
-				}
-				if required == nil || rank < orderingRanks[requiredScope] {
-					required, requiredScope = own, scope
-				}
+			// Rule parts carry no ordering: compile moved each default
+			// ordering to its policy.
+			if query := source.Config.Routing.Query; source.settings&orderingPermissions != 0 && query != nil && len(query.OrderBy) > 0 {
+				required = append(required, placedOrdering{query.OrderBy, Origin{Source: index}, rank})
 			}
 			if source.defaultOrdering != nil {
-				if preferred != nil && orderingRanks[preferredScope] == rank {
-					return nil, configError("several %s policies set routing.order or routing.sort", scope)
-				}
-				if preferred == nil || rank > orderingRanks[preferredScope] {
-					preferred, preferredScope = source.defaultOrdering, scope
-				}
+				defaults = append(defaults, placedOrdering{source.defaultOrdering.sorts, Origin{Source: index, Rule: source.defaultOrdering.rule}, rank})
 			}
 		}
 		config := source.Config
@@ -1010,19 +986,12 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 		out.Routing.Fallbacks = *fallbacks
 	}
 	out.Routing.MissingEncryptionKeys = missingKeys
-	if requested != nil && requested != required && !requested.same(required) {
-		return nil, configError("the saved policies require a different routing order; omit routing.order and routing.sort from the request policy")
+	sorts, err := out.placeSorts(required, defaults)
+	if err != nil {
+		return nil, err
 	}
-	chosen, sorts := required, []Sort{}
-	out.orderScope = requiredScope
-	if chosen == nil && preferred != nil {
-		chosen, out.orderScope, out.orderDefault = preferred, preferredScope, true
-	}
-	if chosen != nil {
-		out.Routing.Order = chosen.order
-		if len(chosen.sorts) > 0 {
-			sorts = chosen.sorts
-		}
+	if sorts == nil {
+		sorts = []Sort{}
 	}
 	if len(filters) > 0 || len(sorts) > 0 {
 		out.Routing.Query = &Query{OrderBy: sorts, Filters: filters}
@@ -1035,6 +1004,47 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 
 func (s *Source) orders() bool {
 	return s.settings&orderingPermissions != 0 || s.defaultOrdering != nil
+}
+
+// placedOrdering is one policy's ordering with its origin and chain rank.
+type placedOrdering struct {
+	sorts  []Sort
+	origin Origin
+	rank   int
+}
+
+// placeSorts joins the required orderings, broadest first, and then the
+// defaults, closest first, so a narrower policy breaks the ties that a
+// broader requirement leaves, and its defaults outrank broader defaults. A
+// criterion equal to an earlier one cannot break its ties, so it is left out.
+func (c *Config) placeSorts(required, defaults []placedOrdering) ([]Sort, error) {
+	for _, list := range [][]placedOrdering{required, defaults} {
+		slices.SortStableFunc(list, func(a, b placedOrdering) int { return a.rank - b.rank })
+		for i := 1; i < len(list); i++ {
+			if list[i].rank == list[i-1].rank {
+				return nil, configError("several policies of one scope set routing.order or routing.sort")
+			}
+		}
+	}
+	var sorts []Sort
+	seen := map[string]bool{}
+	add := func(placed placedOrdering) {
+		for _, criterion := range placed.sorts {
+			if key := criterion.key(); !seen[key] {
+				seen[key] = true
+				sorts = append(sorts, criterion)
+				c.sortOrigins = append(c.sortOrigins, placed.origin)
+			}
+		}
+	}
+	for _, placed := range required {
+		add(placed)
+	}
+	c.requiredSorts = len(sorts)
+	for i := len(defaults) - 1; i >= 0; i-- {
+		add(defaults[i])
+	}
+	return sorts, nil
 }
 
 // A credential policy applies only to that credential's candidates, so its
@@ -1083,9 +1093,8 @@ func (c *Config) validateCombined() error {
 	}
 	// Access windows have already been initialized once in their source. Calling
 	// validate here would mutate shared maps while other requests read them.
-	if err := c.Routing.Query.validate(); err != nil {
-		return err
-	}
+	// Each source checked its own filter and sort; the composed sort may hold
+	// more criteria and several lists of one kind, from different policies.
 	if err := c.Routing.AllowedCatalogNodes.validate(); err != nil {
 		return err
 	}

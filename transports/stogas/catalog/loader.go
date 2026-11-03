@@ -774,7 +774,7 @@ func validateCompiledModels(graph compiledGraph, selectors selectorRegistry) err
 }
 
 func validateCompiledModel(modelID string, model compiledModel) error {
-	// Groups name their newest model, so every model needs a release date.
+	// Policies sort on release dates and /v1/models shows them, so every model needs one.
 	if !validDate(model.ReleaseDate) {
 		return fmt.Errorf("model %s has an invalid releaseDate", modelID)
 	}

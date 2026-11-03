@@ -33,6 +33,8 @@ func TestRoutingSimulationNamesWhatRemovedEachCandidate(t *testing.T) {
 	}
 	week := `[{"days":["mon","tue","wed","thu","fri","sat","sun"],"start":"00:00","end":"24:00","timeZone":"UTC"}]`
 	shared := compose(`{"routing":{"filter":"provider.id == 'azure'"}}`)
+	// unsorted orders nothing, so candidates of several deployments tie.
+	unsorted := compose(`{}`)
 	expired := APIError{StatusCode: 403, Type: ErrorTypeInvalidRequest, Code: "credential_expired", Message: "credential expired"}
 	for _, test := range []struct {
 		name               string
@@ -61,13 +63,18 @@ func TestRoutingSimulationNamesWhatRemovedEachCandidate(t *testing.T) {
 			removed: []string{"service_tier azure"}, pairs: 1, tried: 1},
 		{name: "reasoning mode in every data zone", route: RouteResponses, model: "gpt-6-astra", mode: "pro", credentials: map[string][]int{"azure": {0}},
 			removed: []string{"no_credential openai"}, pairs: 4, tried: 3},
-		{name: "any model in a reasoning mode", route: RouteResponses, mode: "pro", credentials: map[string][]int{"openai": {0}},
+		{name: "any model in a reasoning mode", route: RouteResponses, mode: "pro", credentials: map[string][]int{"openai": {0}}, base: unsorted,
 			removed: []string{"no_credential azure"}, code: "model_ambiguous"},
-		{name: "approval and ambiguity", route: RouteResponses, model: "gpt-5.6", credentials: map[string][]int{"openai": {0}},
+		{name: "approval and ambiguity", route: RouteResponses, model: "gpt-5.6", credentials: map[string][]int{"openai": {0}}, base: unsorted,
 			removed: []string{"approval openai/openai-gpt-5.6-cyber", "no_credential azure"}, code: "model_ambiguous",
 			ambiguous: []string{"gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"}},
-		{name: "older models of a group", model: "gpt-6", credentials: map[string][]int{"openai": {0}},
-			removed: []string{"no_credential azure", "older_model openai/openai-gpt-6-astra", "older_model openai/openai-gpt-6-luna", "older_model openai/openai-gpt-6-sol"}, pairs: 1, tried: 1},
+		{name: "deployments of one model tie", model: "gpt-5.6-sol", credentials: map[string][]int{"azure": {0}}, base: unsorted,
+			removed: []string{"no_credential openai"}, code: "deployment_ambiguous",
+			ambiguous: []string{"azure-gpt-5.6-sol", "azure-gpt-5.6-sol-apac", "azure-gpt-5.6-sol-eu", "azure-gpt-5.6-sol-instant", "azure-gpt-5.6-sol-us"}},
+		// The test default sorts by release date, so the newest model of a
+		// group leads and the older ones follow.
+		{name: "every model of a group", model: "gpt-6", credentials: map[string][]int{"openai": {0}},
+			removed: []string{"no_credential azure"}, pairs: 4, tried: 3},
 		{name: "allowed nodes of the key", model: "gpt-5.6-sol", credentials: map[string][]int{"azure": {0}, "openai": {0}},
 			base: compose(`{}`, `{"routing":{"allowedCatalogNodes":{"deployments":["azure-gpt-5.6-sol-eu"]}}}`),
 			removed: []string{
@@ -89,7 +96,7 @@ func TestRoutingSimulationNamesWhatRemovedEachCandidate(t *testing.T) {
 			},
 			removed: []string{"credential openai/openai-gpt-5.6-sol#0 credential_expired"}, pairs: 1, tried: 1},
 		{name: "undecided condition", model: "gpt-5.6-sol", credentials: map[string][]int{"azure": {0}, "openai": {0}},
-			base:    compose(`{"rules":{"typed":{"when":"deployment.upstream.deploymentType == 'global_standard'","input":{"asciiOnly":true}}}}`),
+			base:    compose(`{"routing":{"sort":[{"by":"blended_price(3, 1)"},{"by":"deployment.id"}]},"rules":{"typed":{"when":"deployment.upstream.deploymentType == 'global_standard'","input":{"asciiOnly":true}}}}`),
 			removed: []string{"condition openai/openai-gpt-5.6-sol#0 @0typed deployment.upstream.deploymentType == 'global_standard'"}, pairs: 5, tried: 3},
 		// A deny period comes before the filters that would also remove a pair.
 		{name: "deny period of a rule", model: "gpt-5.6-sol", credentials: map[string][]int{"azure": {0}, "openai": {0}},
@@ -121,7 +128,7 @@ func TestRoutingSimulationNamesWhatRemovedEachCandidate(t *testing.T) {
 				"filter openai/openai-gpt-5.6-sol#0 @0 provider.id == 'azure'",
 				"filter openai/openai-gpt-5.6-sol#1 @0 provider.id == 'azure'",
 			}, code: "model_unavailable"},
-		{name: "any model", credentials: map[string][]int{"openai": {0}},
+		{name: "any model", credentials: map[string][]int{"openai": {0}}, base: unsorted,
 			removed: []string{"no_credential anthropic", "no_credential aws", "no_credential azure", "no_credential chutes", "no_credential google-cloud"}, code: "model_ambiguous"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -149,12 +156,18 @@ func TestRoutingSimulationNamesWhatRemovedEachCandidate(t *testing.T) {
 			if code := PublicError(simulation.Err).Code; simulation.Err != nil && code != test.code || simulation.Err == nil && test.code != "" {
 				t.Fatalf("error %v, want %s", simulation.Err, test.code)
 			}
-			if test.ambiguous != nil && !reflect.DeepEqual(simulation.Ambiguous, test.ambiguous) || test.code == "model_ambiguous" && len(simulation.Ambiguous) < 2 {
-				t.Errorf("ambiguous models %v", simulation.Ambiguous)
+			if test.ambiguous != nil && !reflect.DeepEqual(simulation.Ambiguous, test.ambiguous) || strings.HasSuffix(test.code, "_ambiguous") && len(simulation.Ambiguous) < 2 {
+				t.Errorf("ambiguous %v", simulation.Ambiguous)
 			}
-			// The error lists every tied model, however many.
-			if message := PublicError(simulation.Err).Message; len(simulation.Ambiguous) > 0 && !strings.HasSuffix(message, "matching models: "+strings.Join(simulation.Ambiguous, ", ")) {
-				t.Errorf("ambiguity error %q", message)
+			// The simulation lists every tie; the error names three and counts the rest.
+			if tied := simulation.Ambiguous; len(tied) > 0 {
+				named := strings.Join(tied[:min(3, len(tied))], ", ")
+				if more := len(tied) - 3; more > 0 {
+					named += fmt.Sprintf(" and %d more", more)
+				}
+				if message := PublicError(simulation.Err).Message; !strings.Contains(message, " "+named+" tie in the routing order.") {
+					t.Errorf("ambiguity error %q, want %q", message, named)
+				}
 			}
 			if len(simulation.Pairs) != test.pairs || simulation.Tried != test.tried {
 				t.Errorf("pairs %v, tried %d", describePairs(simulation.Pairs), simulation.Tried)
@@ -188,6 +201,7 @@ func TestRoutingSimulationLocatesOrderAndFallbacks(t *testing.T) {
 	simulation := SimulateRouting(input, RouteChat, "gpt-5.6-sol", "", "", nil, nil)
 	if simulation.Err != nil || simulation.Tried != 2 || simulation.Fallbacks != 1 ||
 		simulation.Order == nil || *simulation.Order != (policy.Origin{Rule: "newest"}) ||
+		len(simulation.Sort) != 1 || simulation.Sort[0].Sort.By != "deployment.id" || simulation.Sort[0].Origin != (policy.Origin{Rule: "newest"}) ||
 		simulation.FallbacksOrigin == nil || *simulation.FallbacksOrigin != (policy.Origin{}) {
 		t.Fatalf("simulation %+v", simulation)
 	}
@@ -206,7 +220,7 @@ func TestRoutingSimulationLocatesOrderAndFallbacks(t *testing.T) {
 
 func TestRoutingSimulationGivesEachPairTheRetriesOfItsPolicy(t *testing.T) {
 	loadTestCatalog(t)
-	source, err := policy.CompileSource([]byte(`{"rules":{"openai":{"when":"provider.id == 'openai'","routing":{"retries":2}}}}`))
+	source, err := policy.CompileSource([]byte(`{"routing":{"sort":[{"by":"blended_price(3, 1)"},{"by":"deployment.id"}]},"rules":{"openai":{"when":"provider.id == 'openai'","routing":{"retries":2}}}}`))
 	if err != nil {
 		t.Fatal(err)
 	}

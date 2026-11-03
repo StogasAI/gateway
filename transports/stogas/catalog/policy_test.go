@@ -75,12 +75,42 @@ func policyChatBody(extra string) []byte {
 }
 
 // policyConfig allows a request this many deployment and credential pairs.
+// testDefaultSort orders like the default that new organizations get, with
+// deployment ID in place of random() so that tests repeat.
+func testDefaultSort() []policy.Sort {
+	return []policy.Sort{{By: "model.releaseDate", Direction: "desc"}, {By: "blended_price(3, 1)"}, {By: "deployment.id"}}
+}
+
 func policyConfig(pairs int) *policy.Config {
+	query, err := policy.CompileRouting("", testDefaultSort())
+	if err != nil {
+		panic(err)
+	}
 	return &policy.Config{
 		CompilerVersion: policy.CompilerVersion,
-		Routing:         policy.Routing{Fallbacks: pairs - 1},
+		Routing:         policy.Routing{Fallbacks: pairs - 1, Query: query},
 		Schema:          "stogas.key-config.compiled.v1",
 	}
+}
+
+// composedPolicy composes one organization policy.
+func composedPolicy(t *testing.T, raw string) *policy.Config {
+	t.Helper()
+	source, err := policy.CompileSource([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := policy.ComposeSources([]policy.ScopedSource{{Scope: policy.OrganizationScope, Value: source}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return config
+}
+
+// orderedQuery lists deployments first, then applies the test default.
+func orderedQuery(t *testing.T, filter string, deployments ...string) *policy.Query {
+	t.Helper()
+	return mustRouting(t, filter, append([]policy.Sort{{Deployments: deployments}}, testDefaultSort()...))
 }
 
 func resolvePolicyChat(t *testing.T, config *policy.Config, extra string) (*ResolvedRequest, error) {
@@ -104,12 +134,13 @@ func TestRoutingFallbacksFollowCandidateOrderWithinTheirSlots(t *testing.T) {
 		failFirst   bool
 		wantFailure bool
 	}{
-		// Equal prices: the lower deployment ID, azure-gpt-5.6-sol, comes first.
-		{"default order", nil, "", []schemas.ModelProvider{schemas.Azure}, false, false},
-		{"default order falls back by default", nil, "", []schemas.ModelProvider{schemas.Azure, schemas.OpenAI}, true, false},
-		{"default order with fallback", policyConfig(2), "", []schemas.ModelProvider{schemas.Azure, schemas.OpenAI}, true, false},
-		{"explicit order without fallback", nil, `,"provider":{"order":["openai","azure"]}`, []schemas.ModelProvider{schemas.OpenAI}, false, false},
-		{"explicit order falls back by default", nil, `,"provider":{"order":["openai","azure"]}`, []schemas.ModelProvider{schemas.OpenAI, schemas.Azure}, true, false},
+		// Equal prices: the test default's last criterion, deployment ID, puts
+		// azure-gpt-5.6-sol first.
+		{"policy order", policyConfig(3), "", []schemas.ModelProvider{schemas.Azure}, false, false},
+		{"policy order falls back by default", policyConfig(3), "", []schemas.ModelProvider{schemas.Azure, schemas.OpenAI}, true, false},
+		{"policy order with fallback", policyConfig(2), "", []schemas.ModelProvider{schemas.Azure, schemas.OpenAI}, true, false},
+		{"explicit order without fallback", policyConfig(3), `,"provider":{"order":["openai","azure"]}`, []schemas.ModelProvider{schemas.OpenAI}, false, false},
+		{"explicit order falls back by default", policyConfig(3), `,"provider":{"order":["openai","azure"]}`, []schemas.ModelProvider{schemas.OpenAI, schemas.Azure}, true, false},
 		{"one pair never falls back", policyConfig(1), `,"provider":{"order":["openai","azure"]}`, []schemas.ModelProvider{schemas.OpenAI}, true, true},
 		{"explicit fallback", policyConfig(2), `,"provider":{"order":["openai","azure"]}`, []schemas.ModelProvider{schemas.OpenAI, schemas.Azure}, true, false},
 		{"client order", policyConfig(2), `,"provider":{"order":["azure","openai"]}`, []schemas.ModelProvider{schemas.Azure, schemas.OpenAI}, true, false},
@@ -314,14 +345,19 @@ func TestRoutingQueryFiltersAndDeterministicallySortsCandidates(t *testing.T) {
 		t.Fatalf("filter-only policy changed client order: %#v", resolved)
 	}
 
-	sorted := policyConfig(2)
-	sorted.Routing.Query = mustRouting(t, "", []policy.Sort{{Direction: "desc", By: "provider.id"}, stable})
-	resolved, err = resolvePolicyChat(t, sorted, `,"provider":{"order":["azure","openai"]}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resolved == nil || resolved.Provider != schemas.OpenAI {
-		t.Fatalf("policy-sorted candidates = %#v", resolved)
+	// A required sort outranks the request's provider order, which outranks a
+	// default sort.
+	for raw, want := range map[string]schemas.ModelProvider{
+		`{"routing":{"fallbacks":1,"sort":[{"by":"provider.id","direction":"desc"},{"by":"deployment.id"}]}}`:                                  schemas.OpenAI,
+		`{"rules":{"d":{"mode":"default","routing":{"fallbacks":1,"sort":[{"by":"provider.id","direction":"desc"},{"by":"deployment.id"}]}}}}`: schemas.Azure,
+	} {
+		resolved, err = resolvePolicyChat(t, composedPolicy(t, raw), `,"provider":{"order":["azure","openai"]}`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resolved == nil || resolved.Provider != want {
+			t.Fatalf("%s: policy-sorted candidates = %#v", raw, resolved)
+		}
 	}
 
 	missing := policyConfig(2)
@@ -531,8 +567,8 @@ func TestOmittedModelUsesRestrictedAndSortedCandidates(t *testing.T) {
 				t.Fatalf("empty allowed set: %v", err)
 			}
 			config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Providers: []string{"openai"}}
-			if _, err := resolve(config, ""); err == nil {
-				t.Fatal("multiple models without sorting were selected arbitrarily")
+			if _, err := resolve(config, ""); PublicError(err).Code != ErrModelAmbiguous.Code {
+				t.Fatalf("multiple models without sorting: %v", err)
 			}
 		})
 	}

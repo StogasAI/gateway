@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -110,21 +111,31 @@ func TestRequestPolicyPermissionsAndClosedDocument(t *testing.T) {
 	}
 }
 
-func TestRequiredSortingAllowsFiltersAndRejectsDifferentRequestSorts(t *testing.T) {
-	parent := requestParent(t, `{"delegation":{"request":true},"routing":{"sort":[{"by":"provider.id","direction":"desc"}]}}`)
+// A request's sort orders the ties that the saved requirements leave, ahead of
+// saved defaults.
+func TestRequestSortsFollowRequiredSorts(t *testing.T) {
+	parent := requestParent(t, `{"delegation":{"request":true},"routing":{"sort":[{"by":"provider.id","direction":"desc"}]},"rules":{"d":{"mode":"default","routing":{"sort":[{"by":"random()"}]}}}}`)
 	before, _ := json.Marshal(parent)
 	for _, sortBy := range []string{"model.id", "blended_price(3, 1)"} {
 		raw, _ := json.Marshal(map[string]any{"routing": map[string]any{"sort": []Sort{{By: sortBy, Direction: "desc"}}}})
-		if _, err := applyRequestJSON(parent, raw); err == nil {
-			t.Fatal("accepted conflicting required sort")
+		child, err := applyRequestJSON(parent, raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, criterion := range child.Routing.Query.OrderBy {
+			got = append(got, criterion.By)
+		}
+		if !slices.Equal(got, []string{"provider.id", sortBy, "random()"}) || child.RequiredSorts() != 2 {
+			t.Fatalf("request sort %s placed as %v, %d required", sortBy, got, child.RequiredSorts())
 		}
 	}
 	child, err := applyRequestJSON(parent, []byte(`{"routing":{"filter":"provider.id == 'openai'","sort":[{"by":"provider.id","direction":"desc"}]}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(child.Routing.Query.OrderBy) != 1 || child.Routing.Query.OrderBy[0].Direction != "desc" {
-		t.Fatal("filter request changed required ordering")
+	if len(child.Routing.Query.OrderBy) != 2 || child.Routing.Query.OrderBy[0].Direction != "desc" {
+		t.Fatal("a repeated sort changed the ordering")
 	}
 	after, _ := json.Marshal(parent)
 	if string(before) != string(after) {

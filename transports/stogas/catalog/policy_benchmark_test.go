@@ -239,5 +239,6 @@ func finalizeRoutingCandidates(resolved []*ResolvedRequest, config *policy.Confi
 			result.add(candidate, values)
 		}
 	}
-	return result.finish(preference)
+	groups, _, err := result.finish(preference)
+	return groups, err
 }

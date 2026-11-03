@@ -26,9 +26,11 @@ const (
 )
 
 var (
-	ErrCatalogUnavailable       = APIError{Code: "catalog_unavailable", StatusCode: http.StatusInternalServerError, Type: ErrorTypeInternal, Message: "Catalog unavailable"}
-	ErrInvalidJSON              = APIError{Code: "invalid_json", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Invalid JSON body"}
-	ErrModelAmbiguous           = APIError{Code: "model_ambiguous", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Several models match; specify a model, or add a routing order or sort"}
+	ErrCatalogUnavailable = APIError{Code: "catalog_unavailable", StatusCode: http.StatusInternalServerError, Type: ErrorTypeInternal, Message: "Catalog unavailable"}
+	ErrInvalidJSON        = APIError{Code: "invalid_json", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Invalid JSON body"}
+	// The ambiguity errors fill in the tied IDs.
+	ErrModelAmbiguous           = APIError{Code: "model_ambiguous", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Models %s tie in the routing order. Name one model, or add a routing.sort criterion that orders them."}
+	ErrDeploymentAmbiguous      = APIError{Code: "deployment_ambiguous", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Deployments %s tie in the routing order. Add a routing.sort criterion that orders them, such as {\"by\": \"random()\"}."}
 	ErrByokTargetUnavailable    = APIError{Code: "byok_target_unavailable", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "No assigned BYOK credential provides a deployment of this model. Check each credential's Region, hostings and Azure deployments."}
 	ErrByokTargetChanged        = APIError{Code: "byok_target_changed", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "The assigned Azure deployment now serves another model, version or SKU. Choose its new target in the dashboard."}
 	ErrModelUnavailable         = APIError{Code: "model_unavailable", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "No deployment is available for this request. Check the model, provider credentials and routing policies."}

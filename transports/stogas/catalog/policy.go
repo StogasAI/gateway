@@ -374,203 +374,87 @@ func (r *routingCandidates) add(candidate *ResolvedRequest, values *resolvedPoli
 }
 
 // finish returns the candidates in routing order, grouped by deployment and
-// provider. A group request keeps its newest models. Without a policy order or
-// sort, candidates of several models make the request ambiguous. Otherwise
-// candidates follow routing.order, then the policy sort, then the default
-// order: newest model, model ID, the request's provider order, the cheapest
-// blended price and deployment ID. Only the organization, folder, grant, key
-// and request policies set an order or sort, never in a conditional rule, so
-// every candidate carries the same ones.
-func (r *routingCandidates) finish(preference ProviderRoutingPreference) ([][]*ResolvedRequest, error) {
+// provider, and whether each group ties the one before it. Only policies order
+// candidates: the required sort criteria, then the request's provider order,
+// then the default criteria. Only the organization, folder, grant, key and
+// request policies set criteria, never in a conditional rule, so every
+// candidate carries the same ones. Tied candidates keep their input order,
+// which keeps each deployment's credential order.
+func (r *routingCandidates) finish(preference ProviderRoutingPreference) ([][]*ResolvedRequest, []bool, error) {
 	filtered, values := r.filtered, r.values
 	if len(filtered) == 0 {
-		return nil, ErrModelUnavailable
+		return nil, nil, ErrModelUnavailable
 	}
-	var ordering policy.Routing
+	var query *policy.Query
+	required := 0
 	if config := filtered[0].policy; config != nil {
-		ordering = config.Routing
+		query, required = config.Routing.Query, config.RequiredSorts()
 	}
-	if filtered[0].RequestedModel != "" {
-		newest := newestModelCandidates(filtered)
-		if r.trace != nil && len(newest) < len(filtered) {
-			r.recordOlderModels(filtered, releaseDate(newest[0]))
+	if len(preference.Order) > 0 {
+		snap := activeState()
+		if snap == nil {
+			return nil, nil, ErrCatalogUnavailable
 		}
-		filtered = newest
-	}
-	query := ordering.Query
-	if query != nil && len(query.OrderBy) == 0 {
-		query = nil
-	}
-	if len(ordering.Order) == 0 && query == nil && spansModels(filtered) {
-		models := candidateModels(filtered)
-		if r.trace != nil {
-			r.trace.ambiguous = models
-		}
-		return nil, ambiguousModelError(models)
-	}
-	snap := activeState()
-	if snap == nil {
-		return nil, ErrCatalogUnavailable
-	}
-	requestedOrder, err := snap.resolveProviderPreferences(preference.Order)
-	if err != nil {
-		return nil, err
-	}
-	providerRank := make(map[schemas.ModelProvider]int, len(requestedOrder))
-	for index, provider := range requestedOrder {
-		if _, ranked := providerRank[provider]; !ranked {
-			providerRank[provider] = index
-		}
-	}
-	// Each stable sort keeps the earlier order among its own ties, so the
-	// last sort applies the first key.
-	sort.SliceStable(filtered, func(i, j int) bool {
-		return defaultOrderLess(filtered[i], filtered[j], providerRank, values)
-	})
-	if query != nil {
-		candidates := make([]policy.Values, len(filtered))
-		for i, candidate := range filtered {
-			candidates[i] = values[candidate]
-		}
-		indexes, err := query.Sort(candidates)
+		providers, err := snap.resolveProviderPreferences(preference.Order)
 		if err != nil {
-			return nil, policyEvaluationError(err)
+			return nil, nil, err
 		}
-		sorted := make([]*ResolvedRequest, len(filtered))
-		for i, index := range indexes {
-			sorted[i] = filtered[index]
+		ids := make([]string, len(providers))
+		for i, provider := range providers {
+			ids[i] = string(provider)
 		}
-		filtered = sorted
+		query = query.WithSort(required, policy.ProviderOrder(ids))
 	}
-	if len(ordering.Order) > 0 {
-		listed := make(map[string]int, len(ordering.Order))
-		for index, id := range ordering.Order {
-			listed[id] = index
-		}
-		rank := func(candidate *ResolvedRequest) int {
-			if index, found := listed[candidate.Deployment.ID]; found {
-				return index
-			}
-			return len(ordering.Order)
-		}
-		sort.SliceStable(filtered, func(i, j int) bool { return rank(filtered[i]) < rank(filtered[j]) })
+	candidates := make([]policy.Values, len(filtered))
+	for i, candidate := range filtered {
+		candidates[i] = values[candidate]
+	}
+	indexes, ties, err := query.Sort(candidates)
+	if err != nil {
+		return nil, nil, policyEvaluationError(err)
 	}
 	groups := make([][]*ResolvedRequest, 0, len(filtered))
-	for _, candidate := range filtered {
+	groupTies := make([]bool, 0, len(filtered))
+	for i, index := range indexes {
+		candidate := filtered[index]
 		if last := len(groups) - 1; last >= 0 && groups[last][0].Deployment.ID == candidate.Deployment.ID && groups[last][0].Provider == candidate.Provider {
 			groups[last] = append(groups[last], candidate)
 			continue
 		}
 		groups = append(groups, []*ResolvedRequest{candidate})
+		groupTies = append(groupTies, ties[i])
 	}
-	return groups, nil
+	return groups, groupTies, nil
 }
 
-// defaultOrderBlend weighs input three times output, the usual ratio for a
-// blended model price. A deployment without both prices sorts last.
-var defaultOrderBlend = policy.BlendedPrice{InputWeight: 3, OutputWeight: 1}
+// maxAmbiguousIDs bounds the IDs that an ambiguity error names, so a request
+// cannot list the catalog through it.
+const maxAmbiguousIDs = 3
 
-// defaultOrderLess ends every routing order. Candidates of one deployment are
-// equal, so they keep their credential order.
-func defaultOrderLess(left, right *ResolvedRequest, providerRank map[schemas.ModelProvider]int, values map[*ResolvedRequest]*resolvedPolicyValues) bool {
-	if left.Deployment.ID == right.Deployment.ID {
-		return false
+// ambiguousError names what tied groups differ in: their models when they
+// span several, otherwise their deployments. It names the first few in ID
+// order and counts the rest, and returns every ID for a simulation.
+func ambiguousError(groups [][]*ResolvedRequest) (APIError, []string) {
+	models, deployments := map[string]bool{}, map[string]bool{}
+	for _, group := range groups {
+		models[group[0].Deployment.ModelID] = true
+		deployments[group[0].Deployment.ID] = true
 	}
-	if left.Deployment.ModelID != right.Deployment.ModelID {
-		leftReleased, rightReleased := releaseDate(left), releaseDate(right)
-		if leftReleased != rightReleased {
-			return leftReleased > rightReleased
-		}
-		return left.Deployment.ModelID < right.Deployment.ModelID
+	base, set := ErrDeploymentAmbiguous, deployments
+	if len(models) > 1 {
+		base, set = ErrModelAmbiguous, models
 	}
-	leftRank, leftRanked := providerRank[left.Provider]
-	rightRank, rightRanked := providerRank[right.Provider]
-	if leftRanked != rightRanked {
-		return leftRanked
+	ids := make([]string, 0, len(set))
+	for id := range set {
+		ids = append(ids, id)
 	}
-	if leftRank != rightRank {
-		return leftRank < rightRank
+	sort.Strings(ids)
+	named := strings.Join(ids[:min(len(ids), maxAmbiguousIDs)], ", ")
+	if more := len(ids) - maxAmbiguousIDs; more > 0 {
+		named += fmt.Sprintf(" and %d more", more)
 	}
-	leftPrice, leftOK := values[left].PolicyBlendedPrice(defaultOrderBlend)
-	rightPrice, rightOK := values[right].PolicyBlendedPrice(defaultOrderBlend)
-	if leftOK != rightOK {
-		return leftOK
-	}
-	if leftOK {
-		if compared := leftPrice.Decimal.Cmp(rightPrice.Decimal); compared != 0 {
-			return compared < 0
-		}
-	}
-	return left.Deployment.ID < right.Deployment.ID
-}
-
-// The loader accepts only YYYY-MM-DD release dates, which sort as text.
-func releaseDate(candidate *ResolvedRequest) string {
-	return candidate.Deployment.snapshot.graph.Models[candidate.Deployment.ModelID].ReleaseDate
-}
-
-// newestModelCandidates keeps the candidates of the most recently released
-// models. Models released on the same day all stay.
-func newestModelCandidates(candidates []*ResolvedRequest) []*ResolvedRequest {
-	newest := ""
-	var kept []*ResolvedRequest
-	for _, candidate := range candidates {
-		released := releaseDate(candidate)
-		if released < newest {
-			continue
-		}
-		if released > newest {
-			newest, kept = released, kept[:0]
-		}
-		kept = append(kept, candidate)
-	}
-	return kept
-}
-
-func spansModels(group []*ResolvedRequest) bool {
-	for _, candidate := range group[1:] {
-		if candidate.Deployment.ModelID != group[0].Deployment.ModelID {
-			return true
-		}
-	}
-	return false
-}
-
-// recordOlderModels names each deployment of a model released before newest.
-func (r *routingCandidates) recordOlderModels(candidates []*ResolvedRequest, newest string) {
-	type pair struct {
-		provider   schemas.ModelProvider
-		deployment string
-	}
-	seen := map[pair]bool{}
-	for _, candidate := range candidates {
-		key := pair{candidate.Provider, candidate.Deployment.ID}
-		if releaseDate(candidate) < newest && !seen[key] {
-			seen[key] = true
-			r.trace.removeSelection(routingSelection{provider: candidate.Provider, deployment: candidate.Deployment}, RemovedOlderModel, nil)
-		}
-	}
-}
-
-func candidateModels(resolved []*ResolvedRequest) []string {
-	models := make([]string, 0, len(resolved))
-	seen := map[string]bool{}
-	for _, candidate := range resolved {
-		model := candidate.Deployment.ModelID
-		if model != "" && !seen[model] {
-			seen[model] = true
-			models = append(models, model)
-		}
-	}
-	sort.Strings(models)
-	return models
-}
-
-// ambiguousModelError lists every tied model: the models that the key's policy allows for the
-// request, which the public model list does not show. The catalog bounds the list.
-func ambiguousModelError(models []string) APIError {
-	message := ErrModelAmbiguous.Message + "; matching models: " + strings.Join(models, ", ")
-	return APIError{Code: ErrModelAmbiguous.Code, StatusCode: ErrModelAmbiguous.StatusCode, Type: ErrModelAmbiguous.Type, Message: message}
+	base.Message = fmt.Sprintf(base.Message, named)
+	return base, ids
 }
 
 type policyIDs struct {

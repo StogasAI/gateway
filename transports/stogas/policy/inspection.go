@@ -27,8 +27,7 @@ type Inspection struct {
 
 // InspectionNote names another policy that affects the edited one. "kept"
 // lists sections that the policy no longer lets the edited one set; they still
-// apply. "order" means that policy's ordering applies instead of the edited
-// one's. "replaced" lists the edited policy's default settings that the
+// apply. "replaced" lists the edited policy's default settings that the
 // policy's required settings replace, on every request, or with Rules only on
 // the requests that those rules match.
 type InspectionNote struct {
@@ -226,31 +225,27 @@ func (v *Inspector) Finish() (*Inspection, error) {
 	if compiled.Routing.AllowedCatalogNodes != nil {
 		routing["allowedCatalogNodes"] = sortedAllowedNodes(compiled.Routing.AllowedCatalogNodes)
 	}
-	if len(compiled.Routing.Order) > 0 {
-		routing["order"] = compiled.Routing.Order
-	}
-	if compiled.orderScope != "" {
-		from := InspectionSource{Scope: compiled.orderScope}
-		for _, entry := range entries {
-			if entry.Scope == from.Scope {
-				from = entry
-			}
-		}
-		reference := inspectionReference(from)
-		reference["mode"] = map[bool]string{false: "required", true: "default"}[compiled.orderDefault]
-		routing["orderFrom"] = reference
-		for i, entry := range entries {
-			if edit.covers(entry) && entry.Scope != from.Scope && sources[i].Value.orders() {
-				notes = append(notes, InspectionNote{Kind: "order", Scope: from.Scope, ID: from.ID})
-			}
-		}
-	}
 	if compiled.Routing.Query != nil {
 		if len(compiled.Routing.Query.Filters) > 0 {
 			routing["filter"] = queryFilterSource(compiled.Routing.Query)
 		}
 		if len(compiled.Routing.Query.OrderBy) > 0 {
 			routing["sort"] = compiled.Routing.Query.OrderBy
+			// Each run of criteria that one policy sets names the policy, and
+			// a default run its rule. The editor links each policy object.
+			var from []map[string]any
+			for i, origin := range compiled.sortOrigins {
+				if i > 0 && origin == compiled.sortOrigins[i-1] {
+					from[len(from)-1]["criteria"] = from[len(from)-1]["criteria"].(int) + 1
+					continue
+				}
+				run := map[string]any{"policy": inspectionReference(entries[origin.Source]), "criteria": 1}
+				if origin.Rule != "" {
+					run["rule"] = origin.Rule
+				}
+				from = append(from, run)
+			}
+			routing["sortFrom"] = from
 		}
 	}
 	var limits, opaque, rules []map[string]any
@@ -528,22 +523,11 @@ func requirements(sources []ScopedSource) []requirement {
 // replacedDefaults finds, for each default rule, its settings that a required
 // setting of the same kind replaces, as request activation decides it: every
 // policy's own settings and every required rule apply on the requests they
-// match, and a default yields each kind that they set. One ordering applies
-// to a request: a required one, the organization's first, and otherwise the
-// closest default, which replaces the other default orderings. Each replaced
-// setting names one requirement, so the result grows with the defaults alone.
+// match, and a default yields each kind that they set. Orderings are never
+// replaced: a default ordering orders the ties that the others leave. Each
+// replaced setting names one requirement, so the result grows with the
+// defaults alone.
 func replacedDefaults(documents []*SourceDocument, sources []ScopedSource, required []requirement) map[ruleKey][]replacement {
-	order, orderRank, orderRule := -1, 0, ""
-	for i, entry := range sources {
-		if rank, ok := orderingRanks[entry.Scope]; ok && entry.Value.settings&orderingPermissions != 0 && (order < 0 || rank < orderRank) {
-			order, orderRank = i, rank
-		}
-	}
-	for i, entry := range sources {
-		if rank, ok := orderingRanks[entry.Scope]; ok && entry.Value.defaultOrdering != nil && (order < 0 || orderRule != "" && rank > orderRank) {
-			order, orderRank, orderRule = i, rank, entry.Value.defaultOrdering.rule
-		}
-	}
 	type reach struct {
 		always, sometimes   requirement
 		alwaysN, sometimesN int
@@ -559,9 +543,6 @@ func replacedDefaults(documents []*SourceDocument, sources []ScopedSource, requi
 			for _, setting := range ruleSettings(documents[i].rules[rule.Name].fields) {
 				kind := settingsMask(permissionSections[setting])
 				if kind&orderingPermissions != 0 {
-					if order >= 0 && (order != i || orderRule != rule.Name) {
-						out[key] = append(out[key], replacement{setting: setting, source: order, rule: orderRule})
-					}
 					continue
 				}
 				found := reaches[kind]
@@ -620,7 +601,7 @@ func ruleSettings(fields map[string]json.RawMessage) []string {
 // replacedNotes tells the edited policy which other policies' required
 // settings replace its defaults: on every request, or with rules on the
 // requests that they match. A setting replaced on every request is not
-// repeated for the rules that replace it on some, ordering has its own note,
+// repeated for the rules that replace it on some, orderings are never replaced,
 // and the edited policy shows its own requirements.
 func replacedNotes(entries []InspectionSource, documents []*SourceDocument, sources []ScopedSource, required []requirement, edit *InspectionEdit) []InspectionNote {
 	edited := map[int]bool{}
