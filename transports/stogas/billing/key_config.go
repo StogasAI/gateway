@@ -18,6 +18,8 @@ const (
 	keyConfigCacheTTL     = 3 * time.Minute
 	keyConfigCacheBytes   = 96 << 20
 	keyConfigFetchTimeout = 1500 * time.Millisecond
+	// A key's refused requests ask at most this often whether its cached configuration is current.
+	keyConfigRefusalCheckInterval = time.Second
 )
 
 const keyConfigArguments = `
@@ -143,13 +145,18 @@ func (s *Service) ConfigForDashboard(
 		encryptionKeys,
 		nil,
 	)
-	if err != nil {
+	if err != nil && (snapshot == nil || snapshot.Config == nil || !errors.Is(err, customerkey.ErrKey)) {
 		return nil, err
 	}
 	credential.Claims = snapshot.Claims
 	// Dashboard tokens sign the actor/session, not the caller-selected key ID.
 	// Charge the shared organization only after resolving that key's authority.
-	return snapshot, s.admitOrganization(dashboardAdmissionKey(credential), snapshot.Claims.OrganizationID, time.Now())
+	if admitted := s.admitOrganization(dashboardAdmissionKey(credential), snapshot.Claims.OrganizationID, time.Now()); admitted != nil {
+		return snapshot, admitted
+	}
+	// Settings that refuse only the request's encryption keys come back with the refusal, as for
+	// an API key, so the request can learn of a key that the organization registered since.
+	return snapshot, err
 }
 
 func (s *Service) cachedOrFetchKeyConfig(
@@ -370,6 +377,102 @@ func (s *Service) confirmKeyConfig(apiKeyHash string, dashboard *DashboardCreden
 		}
 		return s.fetchKeyConfig(context.Background(), key, hash, dashboard, expectedKeyID, nil, snapshot.Claims)
 	})
+}
+
+// RefreshRefusedConfig answers a request that its cached snapshot refused as the current
+// settings would. It returns the snapshot to route the request by again, the error that the
+// current settings answer it with, or neither to keep the refusal while stale is still current.
+// Routing refuses from the cache before any hold compares the snapshot, so without this a
+// credential just assigned, a target that a check found or a member chose, or a policy that now
+// allows the request would serve only once the snapshot expired, up to three minutes later. A
+// snapshot that another request or a hold already replaced needs no query. Otherwise one small
+// query a second per key asks whether the snapshot is still current, as a hold would, and only a
+// change reads the settings again, so refused requests cannot make the gateway reread a large one.
+func (s *Service) RefreshRefusedConfig(
+	ctx context.Context,
+	rawAPIKey string,
+	claims *APIKeyClaims,
+	dashboard *DashboardCredential,
+	encryptionKeys customerkey.Keys,
+	stale *KeyConfigSnapshot,
+) (*KeyConfigSnapshot, error) {
+	if s == nil || s.db == nil || s.keyConfigCurrentQuery == "" || stale == nil || stale.Claims == nil || stale.Versions == nil {
+		return nil, nil
+	}
+	// The settings are read as ConfigForAPIKey and ConfigForDashboard read them.
+	var cacheKey, keyID string
+	var hashedKey *string
+	var keyClaims *APIKeyClaims
+	switch {
+	case dashboard != nil:
+		cacheKey, keyID = dashboardConfigCacheKey(dashboard), dashboard.KeyID
+	case claims != nil:
+		hash := hashAPIKey(rawAPIKey, s.apiKeyPepper)
+		cacheKey, hashedKey, keyID, keyClaims = "api:"+hash, &hash, claims.KeyID, claims
+	default:
+		return nil, nil
+	}
+	checkedAt := time.Now()
+	newer, fetch, question, asks := s.keyConfigs.refusalCheck(cacheKey, stale, checkedAt)
+	if question != nil && !asks {
+		// Requests that the snapshot refused together, such as a batch sent again after a
+		// credential was assigned, wait for the one that asks, and then look again.
+		timer := time.NewTimer(keyConfigFetchTimeout)
+		select {
+		case <-question:
+			timer.Stop()
+		case <-timer.C:
+			return nil, nil
+		}
+		checkedAt = time.Now()
+		if newer, fetch, question, asks = s.keyConfigs.refusalCheck(cacheKey, stale, checkedAt); question != nil && !asks {
+			return nil, nil
+		}
+	}
+	if asks {
+		current, err := s.askKeyConfigCurrent(ctx, cacheKey, keyID, stale, checkedAt, question)
+		if err != nil {
+			return nil, nil
+		}
+		fetch = !current
+	}
+	var fresh *KeyConfigSnapshot
+	var err error
+	switch {
+	case newer != nil:
+		fresh, err = newer, newer.checkEncryptionKeys(encryptionKeys)
+	case fetch:
+		fresh, err = s.cachedOrFetchKeyConfig(ctx, cacheKey, hashedKey, dashboard, keyID, encryptionKeys, keyClaims)
+	default:
+		return nil, nil
+	}
+	if fresh == stale && err == nil {
+		return nil, nil
+	}
+	if dashboard != nil {
+		if err != nil {
+			return nil, err
+		}
+		dashboard.Claims = fresh.Claims
+	}
+	return fresh, err
+}
+
+// askKeyConfigCurrent asks whether stale is still current, as a hold would, and answers the
+// question for the requests that wait. A current snapshot serves for another full period, as
+// after a hold, and a stale one is read again.
+func (s *Service) askKeyConfigCurrent(ctx context.Context, cacheKey, keyID string, stale *KeyConfigSnapshot, checkedAt time.Time, question chan struct{}) (bool, error) {
+	defer s.keyConfigs.answerRefusalCheck(cacheKey, question)
+	queryCtx, cancel := context.WithTimeout(ctx, keyConfigFetchTimeout)
+	defer cancel()
+	var current bool
+	if err := s.db.pool.QueryRow(
+		queryCtx, s.keyConfigCurrentQuery, keyID, stale.CredentialsGeneration, stale.Versions,
+	).Scan(&current); err != nil {
+		return false, err
+	}
+	s.keyConfigs.confirm(cacheKey, stale, current, checkedAt, time.Now())
+	return current, nil
 }
 
 func validConfigDigest(value string) bool {
