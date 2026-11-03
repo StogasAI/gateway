@@ -3,6 +3,7 @@ package policy
 import (
 	"bytes"
 	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/json/jsontext"
@@ -307,9 +308,10 @@ func sourceDocument(canonical []byte, fields map[string]json.RawMessage, envelop
 	if contentBytes > MaxSourceBytes {
 		return nil, configError("source configuration exceeds size limit")
 	}
-	// Logs, receipts and Control's policy_version.sha256 name this digest, so like
+	// Logs, receipts and Control's policy_version.sha512 name this digest, so like
 	// every RFC 8785 identity it excludes the document file's trailing newline.
-	sum := sha256.Sum256(bytes.TrimSuffix(canonical, []byte{'\n'}))
+	// Customers write this content, so its hash resists collisions at ML-DSA-65's level.
+	sum := sha512.Sum512(bytes.TrimSuffix(canonical, []byte{'\n'}))
 	document.digest = hex.EncodeToString(sum[:])
 	document.size = sourceSize{digest: document.digest, settings: len(canonical), plugins: make(map[[32]byte]int)}
 	if raw := fields["plugins"]; raw != nil {

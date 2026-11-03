@@ -38,7 +38,7 @@ func FinalMetadata(ctx context.Context, state *State) proof.Metadata {
 func recordMetadata(metadata *proof.Metadata, event *billing.RequestEvent) {
 	metadata.CreatedAt = event.CreatedAt
 	if event.PolicyVersions != nil {
-		metadata.PolicyVersionsSHA256 = event.PolicyVersions.SHA256()
+		metadata.PolicyVersionsSHA512 = event.PolicyVersions.SHA512()
 	}
 	metadata.Timing = proof.Timing{TotalMS: event.Performance.TotalMS, ProviderMS: event.Performance.ProviderMS, TTFTMS: event.Performance.TTFTMS}
 	metadata.Meters = event.Usage.Meters

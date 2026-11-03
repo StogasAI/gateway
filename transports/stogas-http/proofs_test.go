@@ -2,7 +2,7 @@ package stogashttp
 
 import (
 	"context"
-	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/hex"
 	"strings"
 	"testing"
@@ -48,18 +48,18 @@ func TestFinalMetadataKeepsCanonicalRequestTiming(t *testing.T) {
 // Verifiers recompute it from the log's list in RFC 8785 form.
 func TestFinalMetadataNamesTheLoggedPolicyList(t *testing.T) {
 	versions := billing.LoggedPolicyVersions{
-		{PolicyVersion: billing.PolicyVersion{Scope: "organization", ID: "org<&>", Revision: 7}, SHA256: strings.Repeat("a", 64)},
-		{PolicyVersion: billing.PolicyVersion{Scope: "key", ID: "key", Revision: 1}, SHA256: strings.Repeat("b", 64)},
+		{PolicyVersion: billing.PolicyVersion{Scope: "organization", ID: "org<&>", Revision: 7}, SHA512: strings.Repeat("a", 128)},
+		{PolicyVersion: billing.PolicyVersion{Scope: "key", ID: "key", Revision: 1}, SHA512: strings.Repeat("b", 128)},
 	}
 	event := &billing.RequestEvent{PolicyVersions: &versions, Usage: billing.RequestUsage{UpstreamCostUSD: "0", BilledCostUSD: "0"}}
 	metadata := stogas.FinalMetadata(context.Background(), &stogas.State{Pair: stogas.Pair{Resolution: testResolution()}, FinalEvent: event})
-	want := sha256.Sum256([]byte(`[{"id":"org<&>","revision":7,"scope":"organization","sha256":"` + strings.Repeat("a", 64) +
-		`"},{"id":"key","revision":1,"scope":"key","sha256":"` + strings.Repeat("b", 64) + `"}]`))
-	if metadata.PolicyVersionsSHA256 != hex.EncodeToString(want[:]) {
-		t.Fatalf("receipt policy hash = %q", metadata.PolicyVersionsSHA256)
+	want := sha512.Sum512([]byte(`[{"id":"org<&>","revision":7,"scope":"organization","sha512":"` + strings.Repeat("a", 128) +
+		`"},{"id":"key","revision":1,"scope":"key","sha512":"` + strings.Repeat("b", 128) + `"}]`))
+	if metadata.PolicyVersionsSHA512 != hex.EncodeToString(want[:]) {
+		t.Fatalf("receipt policy hash = %q", metadata.PolicyVersionsSHA512)
 	}
 	event.PolicyVersions = nil
-	if metadata := stogas.FinalMetadata(context.Background(), &stogas.State{Pair: stogas.Pair{Resolution: testResolution()}, FinalEvent: event}); metadata.PolicyVersionsSHA256 != "" {
+	if metadata := stogas.FinalMetadata(context.Background(), &stogas.State{Pair: stogas.Pair{Resolution: testResolution()}, FinalEvent: event}); metadata.PolicyVersionsSHA512 != "" {
 		t.Fatal("a request without policies named a policy hash")
 	}
 }

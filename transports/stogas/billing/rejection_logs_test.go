@@ -311,8 +311,8 @@ func TestRejectionGroupsKeepDifferentPolicyVersionsSeparate(t *testing.T) {
 	at := time.Now().Add(time.Hour)
 	for i := 1; i <= 2; i++ {
 		s.RecordRejection(RejectionInput{Claims: &APIKeyClaims{KeyID: "key"}, RequestID: fmt.Sprint(i), Code: "policy_denied", StatusCode: 403, CreatedAt: at, PolicyVersions: &LoggedPolicyVersions{
-			{PolicyVersion: PolicyVersion{Scope: "organization", ID: "org", Revision: i}, SHA256: strings.Repeat(fmt.Sprint(i), 64)},
-			{PolicyVersion: PolicyVersion{Scope: "key", ID: "key", Revision: i}, SHA256: strings.Repeat(fmt.Sprint(i), 64)},
+			{PolicyVersion: PolicyVersion{Scope: "organization", ID: "org", Revision: i}, SHA512: strings.Repeat(fmt.Sprint(i), 128)},
+			{PolicyVersion: PolicyVersion{Scope: "key", ID: "key", Revision: i}, SHA512: strings.Repeat(fmt.Sprint(i), 128)},
 		}}, nil)
 	}
 	s.rejectionLogs.mu.Lock()

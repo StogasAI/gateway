@@ -2,7 +2,7 @@ package policy
 
 import (
 	"bytes"
-	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/hex"
 	"encoding/json"
 	"os"
@@ -41,10 +41,10 @@ func FuzzSourceCanonicalIdentity(f *testing.F) {
 	})
 }
 
-// Control keeps each saved revision under this hash in policy_version.sha256, and
+// Control keeps each saved revision under this hash in policy_version.sha512, and
 // a log's hash finds that revision only while both sides match these vectors.
 func TestSourceDigestsMatchSharedVectors(t *testing.T) {
-	raw, err := os.ReadFile("testdata/canonical-sha256.json")
+	raw, err := os.ReadFile("testdata/canonical-sha512.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestSourceDigestsMatchSharedVectors(t *testing.T) {
 			Name      string `json:"name"`
 			JSON      string `json:"json"`
 			Canonical string `json:"canonical"`
-			SHA256    string `json:"sha256"`
+			SHA512    string `json:"sha512"`
 		} `json:"valid"`
 		Invalid []struct {
 			Name string `json:"name"`
@@ -69,9 +69,9 @@ func TestSourceDigestsMatchSharedVectors(t *testing.T) {
 			t.Fatalf("%s: %v", vector.Name, err)
 		}
 		independent, err := jsoncanonicalizer.Transform([]byte(vector.JSON))
-		sum := sha256.Sum256([]byte(vector.Canonical))
+		sum := sha512.Sum512([]byte(vector.Canonical))
 		if err != nil || string(independent) != vector.Canonical || string(document.CanonicalJSON()) != vector.Canonical+"\n" ||
-			hex.EncodeToString(sum[:]) != vector.SHA256 || document.Digest() != vector.SHA256 {
+			hex.EncodeToString(sum[:]) != vector.SHA512 || document.Digest() != vector.SHA512 {
 			t.Fatalf("%s: canonical form or digest differs from the shared vector", vector.Name)
 		}
 	}

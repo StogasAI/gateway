@@ -616,7 +616,7 @@ func TestLargestRequestLogFitsTheLimit(t *testing.T) {
 	}
 	for range 36 {
 		*event.PolicyVersions = append(*event.PolicyVersions, LoggedPolicyVersion{
-			PolicyVersion: PolicyVersion{Scope: "credential", ID: uuid.NewString(), Revision: 1<<31 - 1}, SHA256: strings.Repeat("f", 64),
+			PolicyVersion: PolicyVersion{Scope: "credential", ID: uuid.NewString(), Revision: 1<<31 - 1}, SHA512: strings.Repeat("f", 128),
 		})
 	}
 	for range 12 {

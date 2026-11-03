@@ -30,7 +30,7 @@ type Metadata struct {
 	RequestID             string              `json:"request_id"`
 	CreatedAt             string              `json:"created_at"`
 	Catalog               Catalog             `json:"catalog"`
-	PolicyVersionsSHA256  string              `json:"policy_versions_sha256,omitempty"`
+	PolicyVersionsSHA512  string              `json:"policy_versions_sha512,omitempty"`
 	Meters                billing.EventMeters `json:"meters"`
 	UpstreamCostUSD       string              `json:"upstream_cost_usd"`
 	BilledCostUSD         string              `json:"billed_cost_usd"`
@@ -91,7 +91,7 @@ func ValidMetadata(metadata Metadata) bool {
 	if metadata.RequestID == "" || len(metadata.RequestID) > 128 ||
 		!validCreatedAt(metadata.CreatedAt) ||
 		!ValidCatalog(metadata.Catalog) ||
-		(metadata.PolicyVersionsSHA256 != "" && !isLowerHex(metadata.PolicyVersionsSHA256, 32)) ||
+		(metadata.PolicyVersionsSHA512 != "" && !isLowerHex(metadata.PolicyVersionsSHA512, 64)) ||
 		!validMeterCosts(metadata) ||
 		metadata.Timing.ProviderMS > metadata.Timing.TotalMS ||
 		(metadata.Timing.TTFTMS != nil && *metadata.Timing.TTFTMS > metadata.Timing.TotalMS) {
