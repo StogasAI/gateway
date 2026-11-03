@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/rand/v2"
 	"net"
 	"slices"
 	"sync"
@@ -14,6 +13,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/maximhq/bifrost/transports/stogas/retry"
 )
 
 const (
@@ -423,9 +424,9 @@ func (s *Service) callWithRetry(ctx context.Context, call func(context.Context) 
 			return nil
 		}
 		f.failedCalls.Add(1)
-		retry := ctx.Err() == nil && !contentError(err)
-		f.retrying.Store(retry)
-		if !retry || !sleepContext(ctx, jitteredRetryDelay(delay)) {
+		retrying := ctx.Err() == nil && !contentError(err)
+		f.retrying.Store(retrying)
+		if !retrying || !sleepContext(ctx, retry.Jitter(delay)) {
 			return err
 		}
 	}
@@ -586,7 +587,7 @@ func (s *Service) closeUnconfirmedAuthorization(requestID string, keyID string, 
 			if err == nil || ctx.Err() != nil || !(errors.Is(err, errClosePending) || errors.Is(err, context.DeadlineExceeded) || retryableDatabaseError(err)) {
 				return
 			}
-			wait = jitteredRetryDelay(delay)
+			wait = retry.Jitter(delay)
 		}
 	}()
 }
@@ -687,14 +688,6 @@ func (s *Service) settlementDiagnostics() SettlementDiagnostics {
 		UnderReserved: s.underReservedSettlements.Load(), NegativeBalance: s.negativeBalanceSettlements.Load(),
 		EncodingFailed: f.encodingFailed.Load(),
 	}
-}
-
-func jitteredRetryDelay(delay time.Duration) time.Duration {
-	if delay <= time.Nanosecond {
-		return delay
-	}
-	half := delay / 2
-	return half + time.Duration(rand.Int64N(int64(delay-half)+1))
 }
 
 func retryableDatabaseError(err error) bool {

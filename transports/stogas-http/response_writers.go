@@ -15,6 +15,7 @@ import (
 	stogas "github.com/maximhq/bifrost/transports/stogas"
 	stogasbilling "github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"github.com/maximhq/bifrost/transports/stogas/retry"
 	"net/http"
 )
 
@@ -62,29 +63,10 @@ func providerResponseHeader(bifrostCtx *schemas.BifrostContext, name string) str
 // OpenAI and Anthropic SDKs do: retry-after-ms first, then Retry-After in
 // seconds or as an HTTP date.
 func providerRetryAfter(bifrostCtx *schemas.BifrostContext) (time.Duration, bool) {
-	milliseconds, seconds := providerResponseHeader(bifrostCtx, "retry-after-ms"), providerResponseHeader(bifrostCtx, "retry-after")
-	if wait, ok := parseRetryAfter(milliseconds, time.Millisecond); ok {
+	if wait, ok := retry.AfterMilliseconds(providerResponseHeader(bifrostCtx, "retry-after-ms")); ok {
 		return wait, true
 	}
-	if wait, ok := parseRetryAfter(seconds, time.Second); ok {
-		return wait, true
-	}
-	if at, err := http.ParseTime(seconds); err == nil {
-		return max(0, time.Until(at)), true
-	}
-	return 0, false
-}
-
-func parseRetryAfter(value string, unit time.Duration) (time.Duration, bool) {
-	amount, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
-	if err != nil || !(amount >= 0) {
-		return 0, false
-	}
-	// Larger waits saturate; float64(math.MaxInt64) is 2^63.
-	if amount*float64(unit) >= math.MaxInt64 {
-		return math.MaxInt64, true
-	}
-	return time.Duration(amount * float64(unit)), true
+	return retry.After(providerResponseHeader(bifrostCtx, "retry-after"), time.Now())
 }
 
 // spreadRetryAfter turns a refusal's wait into Retry-After: whole seconds

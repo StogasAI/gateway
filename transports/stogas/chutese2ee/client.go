@@ -2,22 +2,19 @@ package chutese2ee
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"math"
-	"math/big"
 	"net"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/maximhq/bifrost/transports/stogas/http2health"
+	"github.com/maximhq/bifrost/transports/stogas/retry"
 )
 
 const maximumSafeReadAttempts = 3
@@ -140,18 +137,10 @@ func (c *apiClient) requestJSON(ctx context.Context, method, path string, reques
 	return response.StatusCode, time.Since(started), nil
 }
 
+// parseRetryAfter is the wait that a Chutes reply asks for, or 0.
 func parseRetryAfter(value string, now time.Time) time.Duration {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return 0
-	}
-	if seconds, err := strconv.ParseUint(value, 10, 64); err == nil {
-		return time.Duration(min(seconds, uint64(math.MaxInt64/int64(time.Second)))) * time.Second
-	}
-	if when, err := http.ParseTime(value); err == nil && when.After(now) {
-		return when.Sub(now)
-	}
-	return 0
+	wait, _ := retry.After(value, now)
+	return wait
 }
 
 func retryableChutesRead(err error, retryNotFound bool) bool {
@@ -160,20 +149,10 @@ func retryableChutesRead(err error, retryNotFound bool) bool {
 	}
 	var statusErr *httpStatusError
 	if errors.As(err, &statusErr) {
-		switch statusErr.StatusCode {
-		case http.StatusRequestTimeout,
-			http.StatusTooEarly,
-			http.StatusTooManyRequests,
-			http.StatusInternalServerError,
-			http.StatusBadGateway,
-			http.StatusServiceUnavailable,
-			http.StatusGatewayTimeout:
-			return true
-		case http.StatusNotFound:
+		if statusErr.StatusCode == http.StatusNotFound {
 			return retryNotFound
-		default:
-			return false
 		}
+		return retry.TransientStatus(statusErr.StatusCode)
 	}
 	var networkError net.Error
 	return errors.As(err, &networkError) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
@@ -191,18 +170,7 @@ func chutesReadRetryDelay(err error, attempt int, maximum time.Duration) (time.D
 	for index := 0; index < attempt && delay < maximum; index++ {
 		delay *= 2
 	}
-	if delay > maximum {
-		delay = maximum
-	}
-	half := delay / 2
-	if half <= 0 {
-		return delay, true
-	}
-	jitter, randomErr := rand.Int(rand.Reader, big.NewInt(int64(half)+1))
-	if randomErr != nil {
-		return delay, true
-	}
-	return half + time.Duration(jitter.Int64()), true
+	return retry.Jitter(min(delay, maximum)), true
 }
 
 func waitForChutesRetry(ctx context.Context, delay time.Duration) bool {

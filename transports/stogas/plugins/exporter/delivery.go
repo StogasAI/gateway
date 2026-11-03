@@ -8,13 +8,13 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
-	"strconv"
 	"sync"
 	"time"
 
 	"github.com/maximhq/bifrost/core/network"
 	"github.com/maximhq/bifrost/transports/stogas/http2health"
 	"github.com/maximhq/bifrost/transports/stogas/plugins/exporter/exportconfig"
+	"github.com/maximhq/bifrost/transports/stogas/retry"
 )
 
 const (
@@ -180,15 +180,10 @@ func (c deliveryClient) send(ctx context.Context, d exportconfig.Destination, r 
 	return attempt{delivered: response.StatusCode >= 200 && response.StatusCode < 300}
 }
 
-// retryAfter accepts delay seconds or an HTTP date, as RFC 9110 defines.
+// retryAfter is the wait that a destination asks for, nil without one.
 func retryAfter(value string) *time.Duration {
-	var delay time.Duration
-	if seconds, err := strconv.ParseUint(value, 10, 31); err == nil {
-		delay = time.Duration(seconds) * time.Second
-	} else if at, err := http.ParseTime(value); err == nil {
-		delay = max(0, time.Until(at))
-	} else {
-		return nil
+	if wait, ok := retry.After(value, time.Now()); ok {
+		return &wait
 	}
-	return &delay
+	return nil
 }

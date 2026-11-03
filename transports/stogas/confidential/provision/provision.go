@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/maximhq/bifrost/transports/stogas/http2health"
+	"github.com/maximhq/bifrost/transports/stogas/retry"
 )
 
 const DefaultMaxResponseBytes = 160 * 1024
@@ -64,7 +65,7 @@ func IsAuthoritativeRejection(err error) bool {
 	if !errors.As(err, &responseError) {
 		return false
 	}
-	if responseError.StatusCode < 400 || responseError.StatusCode >= 500 {
+	if responseError.StatusCode < 400 || retry.TransientStatus(responseError.StatusCode) {
 		return false
 	}
 	if responseError.StatusCode == http.StatusForbidden {
@@ -73,12 +74,7 @@ func IsAuthoritativeRejection(err error) bool {
 			return false
 		}
 	}
-	switch responseError.StatusCode {
-	case http.StatusRequestTimeout, http.StatusTooEarly, http.StatusTooManyRequests:
-		return false
-	default:
-		return true
-	}
+	return true
 }
 
 func (c Client) postJSON(ctx context.Context, path string, body any, out any) (http.Header, error) {
