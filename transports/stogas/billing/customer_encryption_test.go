@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -413,6 +414,21 @@ func BenchmarkEncryptedPolicyFullDictionary(b *testing.B) {
 		if _, err := s.ValidatePolicySources(validationSources(raw), org, key); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+// A check that sends no keys opens nothing, so it says what is wrong with the readable settings
+// that it sends.
+func TestCheckWithoutKeysNamesWhatIsWrong(t *testing.T) {
+	validation := &Service{}
+	check := func(plugins string) (*PolicyValidation, error) {
+		return validation.ValidatePolicySources(validationSources([]json.RawMessage{json.RawMessage(`{"plugins":` + plugins + `}`), json.RawMessage(`null`), json.RawMessage(`{}`)}), "test-organization", nil)
+	}
+	if result, err := check(`{"redaction":{"email_address":true,"literals":[{"values":["Project Falcon"]}]}}`); err != nil || result.Status != "valid" || len(result.UncheckedPlugins) != 0 {
+		t.Fatalf("readable settings were not checked: %+v %v", result, err)
+	}
+	if _, err := check(`{"redaction":{"email_adress":true}}`); !errors.Is(err, policy.ErrInvalidConfig) || !strings.HasSuffix(err.Error(), ": unknown redaction preset email_adress") {
+		t.Fatalf("an unknown preset was not named: %v", err)
 	}
 }
 

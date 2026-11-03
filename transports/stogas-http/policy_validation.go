@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
@@ -66,20 +67,39 @@ func (s *Server) validatePolicy(ctx *requestContext) {
 		s.writeBillingError(ctx, billing.ErrGatewayUnavailable)
 		return
 	}
-	claims, err := s.runtime.Billing().AuthorizePolicyValidation(ctx.request.Context(), credential.Raw, credential.Dashboard)
-	if err != nil {
-		s.writeBillingError(ctx, err)
-		return
+	// Control let the member of a grant check policy text for the organization, so their check
+	// reads nothing from the database.
+	var organizationID string
+	if credential.PolicyCheck != nil {
+		organizationID = credential.PolicyCheck.OrganizationID
+	} else {
+		claims, err := s.runtime.Billing().AuthorizePolicyValidation(ctx.request.Context(), credential.Raw, credential.Dashboard)
+		if err != nil {
+			s.writeBillingError(ctx, err)
+			return
+		}
+		organizationID = claims.OrganizationID
 	}
-	result, err := s.runtime.Billing().ValidatePolicySources(sources, claims.OrganizationID, key)
+	result, err := s.runtime.Billing().ValidatePolicySources(sources, organizationID, key)
 	if err != nil {
 		if errors.Is(err, customerkey.ErrKey) || errors.Is(err, billing.ErrGatewayUnavailable) {
 			s.writeBillingError(ctx, err)
 			return
 		}
-		// A decrypted error may contain private patterns or member names.
-		s.writeError(ctx, 400, map[string]any{"error": map[string]any{"code": "invalid_policy", "message": "Policy configuration is invalid", "type": "invalid_request_error"}})
+		s.writeError(ctx, 400, map[string]any{"error": map[string]any{"code": "invalid_policy", "message": invalidPolicyMessage(err, len(key) > 0), "type": "invalid_request_error"}})
 		return
 	}
 	s.writeJSON(ctx, http.StatusOK, result)
+}
+
+// invalidPolicyMessage says what is wrong with the sources unless the request sent keys: then
+// the error may come from decrypted settings, and could repeat a private pattern or member name.
+// Without keys nothing opened, so the error names only what the caller sent.
+func invalidPolicyMessage(err error, opened bool) string {
+	const message = "Policy configuration is invalid"
+	detail, ok := strings.CutPrefix(err.Error(), policy.ErrInvalidConfig.Error()+": ")
+	if opened || !errors.Is(err, policy.ErrInvalidConfig) || !ok || detail == "" {
+		return message
+	}
+	return message + ": " + detail
 }
