@@ -206,8 +206,8 @@ func TestReleaseLeavesRecordsOutOnceTheyRetire(t *testing.T) {
 		if _, served := snap.graph.Deployments[selector]; served {
 			t.Fatalf("retired %s is still in the graph", selector)
 		}
-		if retiredOn, retired := snap.retiredOn(selector, before); !retired || retiredOn != date {
-			t.Fatalf("%s retired on %q (%t), want %s", selector, retiredOn, retired, date)
+		if _, err := snap.parseModelSelection(selector); err != modelRetired(date) {
+			t.Fatalf("%s: %v, want it retired on %s", selector, err, date)
 		}
 	}
 	if _, ok := snap.graph.Models["deepseek-v4-flash-0423"]; ok {
@@ -230,8 +230,8 @@ func TestReleaseLeavesRecordsOutOnceTheyRetire(t *testing.T) {
 			t.Fatalf("deployment %s of the dated part is in the graph", id)
 		}
 	}
-	if retiredOn, retired := snap.retiredOn("azure-gpt-6-luna", datedPartLeaves); !retired || retiredOn != "2128-03-11" {
-		t.Fatalf("azure-gpt-6-luna retired on %q (%t)", retiredOn, retired)
+	if _, err := snap.parseModelSelection("azure-gpt-6-luna"); err != modelRetired("2128-03-11") {
+		t.Fatalf("azure-gpt-6-luna: %v, want it retired on 2128-03-11", err)
 	}
 	if _, ok := snap.parts[dated.SHA256]; ok || len(snap.parts) != len(held) {
 		t.Fatal("the release holds a part that it did not come with")
@@ -261,8 +261,8 @@ func TestRoutesServeUntilTheirDateHasEndedEverywhere(t *testing.T) {
 	if _, ok := snap.deploymentFromCompiledAt(deploymentID, route, now); ok {
 		t.Fatalf("%s served through a retired route", deploymentID)
 	}
-	if id, _ := snap.deploymentIDFor(route, deploymentID); id != "" {
-		t.Fatalf("a retired route selected %s", id)
+	if servesAt(snap.graph.Deployments[deploymentID], route, now) {
+		t.Fatalf("a retired route served %s", deploymentID)
 	}
 	route.RetirementDate = stringPointer(now.AddDate(0, 0, 1).Format(time.DateOnly))
 	if _, ok := snap.deploymentFromCompiledAt(deploymentID, route, now); !ok {

@@ -467,12 +467,11 @@ func servedRoot(root []byte, identity Identity) []byte {
 }
 
 // validateRetired checks that each selector that retired has the day it retired, and that no
-// request can reach it in the graph: a deployment by its ID, and a model by its ID or an alias.
+// request can reach it in the graph: no model, alias, group or deployment matches it as the model
+// field matches IDs.
 func validateRetired(retired map[string]string, base *snapshot) error {
 	for selector, date := range retired {
-		_, deployment := base.graph.Deployments[selector]
-		_, model := base.modelSelectors[selector]
-		if deployment || model || !validDate(date) {
+		if _, live := base.index.names[normalizedID(selector)]; live || !validDate(date) {
 			return fmt.Errorf("retired selector %s is invalid", selector)
 		}
 	}
@@ -506,6 +505,7 @@ func snapshotFromCompiled(catalog compiledCatalog) (*snapshot, error) {
 	for _, state := range base.states() {
 		state.retired = catalog.Retired
 	}
+	base.index.retired = normalizedRetired(catalog.Retired)
 	return base, nil
 }
 
@@ -527,18 +527,14 @@ func stateFromGraph(graph compiledGraph, places *location.Places) (*snapshot, er
 		return nil, err
 	}
 	modelSelectors := make(map[string]string)
-	groups := make(map[string]bool)
 	for modelID, model := range graph.Models {
 		modelSelectors[modelID] = modelID
 		for _, alias := range model.Aliases {
 			modelSelectors[alias] = modelID
 		}
-		for _, groupID := range model.GroupIDs {
-			groups[groupID] = true
-		}
 	}
 	graph.Routes = indexedRoutes(graph)
-	state := &snapshot{graph: graph, groups: groups, modelSelectors: modelSelectors, places: places}
+	state := &snapshot{graph: graph, modelSelectors: modelSelectors, index: newSelectorIndex(graph), places: places}
 	if err := validatePolicyVocabulary(state, graph); err != nil {
 		return nil, err
 	}
@@ -563,7 +559,7 @@ func (base *snapshot) datedState(entry compiledGraph) (*snapshot, error) {
 	if len(entry.Deployments) > 0 || len(entry.Routes) > 0 {
 		graph.Routes = indexedRoutes(graph)
 	}
-	state := &snapshot{graph: graph, groups: base.groups, modelSelectors: base.modelSelectors, places: base.places}
+	state := &snapshot{graph: graph, modelSelectors: base.modelSelectors, index: base.index, places: base.places}
 	if err := validatePolicyVocabulary(state, entry); err != nil {
 		return nil, err
 	}
@@ -692,22 +688,23 @@ func validateCompiledGraph(graph compiledGraph) error {
 	if err := validateCompiledRoutes(graph); err != nil {
 		return err
 	}
-	if err := validateCompiledDeployments(graph, selectors); err != nil {
-		return err
-	}
-	return validateCanonicalRouteDeployments(graph)
+	return validateCompiledDeployments(graph, selectors)
 }
 
+// selectorRegistry holds the owner of each selector by its normalized form, since the model
+// field matches IDs that way. Selectors that differ only by case, dots or underscores must name
+// the same node.
 type selectorRegistry map[string]string
 
 func (selectors selectorRegistry) add(selector, owner string) error {
-	if strings.TrimSpace(selector) != selector || selector == "" || strings.Contains(selector, "/") {
+	if selector == "" || strings.ContainsAny(selector, "/: \t\r\n") {
 		return fmt.Errorf("selector %q is not canonical", selector)
 	}
-	if existing := selectors[selector]; existing != "" {
+	normalized := normalizedID(selector)
+	if existing := selectors[normalized]; existing != "" && existing != owner {
 		return fmt.Errorf("selector %s is shared by %s and %s", selector, existing, owner)
 	}
-	selectors[selector] = owner
+	selectors[normalized] = owner
 	return nil
 }
 
@@ -782,7 +779,11 @@ func validateCompiledModel(modelID string, model compiledModel) error {
 }
 
 func validateCompiledRoutes(graph compiledGraph) error {
+	routeQualifiers := make(map[string]string)
 	for routeID, route := range graph.Routes {
+		if err := validateQualifierAliases(routeQualifiers, "route", routeID, nil); err != nil {
+			return err
+		}
 		if err := validateCompiledRoute(graph, routeID, route); err != nil {
 			return err
 		}
@@ -985,35 +986,6 @@ func validateCloudClaudeSelector(deploymentID, providerID string, deployment *co
 	for routeID := range deployment.Routes {
 		if routeID != route {
 			return fmt.Errorf("deployment %s must use route %s", deploymentID, route)
-		}
-	}
-	return nil
-}
-
-func validateCanonicalRouteDeployments(graph compiledGraph) error {
-	for routeID, deploymentIDs := range routeDeploymentsForGraph(graph) {
-		route := graph.Routes[routeID]
-		deploymentsByModel := make(map[string][]string)
-		for _, deploymentID := range deploymentIDs {
-			deployment := graph.Deployments[deploymentID]
-			deploymentsByModel[deployment.ModelID] = append(
-				deploymentsByModel[deployment.ModelID],
-				deploymentID,
-			)
-		}
-		for modelID, modelDeploymentIDs := range deploymentsByModel {
-			if len(modelDeploymentIDs) < 2 {
-				continue
-			}
-			baseID := route.ProviderID + "-" + modelID
-			if !stringIn(modelDeploymentIDs, baseID) {
-				return fmt.Errorf(
-					"route %s model %s has multiple deployments but no canonical base %s",
-					routeID,
-					modelID,
-					baseID,
-				)
-			}
 		}
 	}
 	return nil
@@ -1257,12 +1229,12 @@ func validateQualifierAliases(
 		return fmt.Errorf("%s %s has too many aliases", kind, id)
 	}
 	for _, qualifier := range append([]string{id}, aliases...) {
-		if strings.TrimSpace(qualifier) != qualifier ||
-			qualifier == "" ||
-			strings.Contains(qualifier, "/") {
+		if qualifier == "" || strings.ContainsAny(qualifier, "/: \t\r\n") {
 			return fmt.Errorf("%s qualifier %q is not canonical", kind, qualifier)
 		}
-		if existing := owners[qualifier]; existing != "" {
+		// The model field matches qualifiers as it matches IDs.
+		qualifier = normalizedID(qualifier)
+		if existing := owners[qualifier]; existing != "" && existing != id {
 			return fmt.Errorf(
 				"%s qualifier %s is shared by %s and %s",
 				kind,

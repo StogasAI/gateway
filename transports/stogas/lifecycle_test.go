@@ -539,7 +539,7 @@ func TestCalculateUpstreamCostSelectsContextTierFromActualUsage(t *testing.T) {
 	// actual usage above it. Settlement must change tiers and charge above hold.
 	const longPrompt = 272001 // gpt-5.5 charges more above 272K prompt tokens
 	longText := strings.Repeat("a", longPrompt)
-	body := []byte(`{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"` + longText + `"}],"max_completion_tokens":16}`)
+	body := []byte(`{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"` + longText + `"}],"max_completion_tokens":16}`)
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
@@ -1215,32 +1215,32 @@ func TestOpenAIDefaultAndAutoUseExplicitStandardTierAndConservativeHoldRate(t *t
 		{
 			name: "chat omitted",
 			path: "/v1/chat/completions",
-			body: `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16}`,
+			body: `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16}`,
 		},
 		{
 			name: "chat auto",
 			path: "/v1/chat/completions",
-			body: `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"service_tier":"auto","max_completion_tokens":16}`,
+			body: `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"service_tier":"auto","max_completion_tokens":16}`,
 		},
 		{
 			name: "chat default",
 			path: "/v1/chat/completions",
-			body: `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"service_tier":"default","max_completion_tokens":16}`,
+			body: `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"service_tier":"default","max_completion_tokens":16}`,
 		},
 		{
 			name: "responses omitted",
 			path: "/v1/responses",
-			body: `{"model":"openai/gpt-5.5","input":"hi","max_output_tokens":16}`,
+			body: `{"model":"provider:openai gpt-5.5","input":"hi","max_output_tokens":16}`,
 		},
 		{
 			name: "responses auto",
 			path: "/v1/responses",
-			body: `{"model":"openai/gpt-5.5","input":"hi","service_tier":"auto","max_output_tokens":16}`,
+			body: `{"model":"provider:openai gpt-5.5","input":"hi","service_tier":"auto","max_output_tokens":16}`,
 		},
 		{
 			name: "responses default",
 			path: "/v1/responses",
-			body: `{"model":"openai/gpt-5.5","input":"hi","service_tier":"default","max_output_tokens":16}`,
+			body: `{"model":"provider:openai gpt-5.5","input":"hi","service_tier":"default","max_output_tokens":16}`,
 		},
 	} {
 		t.Run(item.name, func(t *testing.T) {
@@ -1296,12 +1296,12 @@ func TestOpenAICacheReadCalculateUpstreamCostStaysCoveredByNoCacheHold(t *testin
 		{
 			name: "chat",
 			path: "/v1/chat/completions",
-			body: `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"prompt_cache_key":"tenant-a","max_completion_tokens":16}`,
+			body: `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"prompt_cache_key":"tenant-a","max_completion_tokens":16}`,
 		},
 		{
 			name: "responses",
 			path: "/v1/responses",
-			body: `{"model":"openai/gpt-5.5","input":"hi","prompt_cache_key":"tenant-a","max_output_tokens":16}`,
+			body: `{"model":"provider:openai gpt-5.5","input":"hi","prompt_cache_key":"tenant-a","max_output_tokens":16}`,
 		},
 	} {
 		t.Run(item.name, func(t *testing.T) {
@@ -1763,7 +1763,7 @@ func TestCalculateUpstreamCostUsesSelectedDeploymentForUnknownActualTier(t *test
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"service_tier":"auto","max_completion_tokens":16}`),
+		Body:   []byte(`{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"service_tier":"auto","max_completion_tokens":16}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -1809,7 +1809,7 @@ func TestProviderExecutionMetadataCannotRetargetUnauthorizedDeployment(t *testin
 		{
 			name:        "reported fallback model is diagnostic only",
 			path:        "/v1/chat/completions",
-			body:        `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16}`,
+			body:        `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16}`,
 			actualModel: "gpt-5-nano-2025-08-07",
 		},
 	}
@@ -3848,7 +3848,7 @@ func TestOpenAIChatSearchModelHoldAndFinalMetersUseContextRate(t *testing.T) {
 
 func TestInputTextBytesIsUnpricedAndDistinguishesZeroFromUnknown(t *testing.T) {
 	for _, text := range []string{"", "é🙂"} {
-		body, err := json.Marshal(map[string]any{"model": "openai/gpt-5.5", "input": text})
+		body, err := json.Marshal(map[string]any{"model": "provider:openai gpt-5.5", "input": text})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -3875,22 +3875,22 @@ func TestOpenAIPromptCacheHoldCoversAllPossibleWrites(t *testing.T) {
 	}{
 		{
 			name:     "implicit breakpoint",
-			body:     `{"model":"openai/gpt-5.6-luna","messages":[{"role":"user","content":"hello"}],"max_completion_tokens":16}`,
+			body:     `{"model":"provider:openai gpt-5.6-luna","messages":[{"role":"user","content":"hello"}],"max_completion_tokens":16}`,
 			meterKey: billing.MeterCacheWriteInputTokens,
 		},
 		{
 			name:     "explicit mode without breakpoints",
-			body:     `{"model":"openai/gpt-5.6-luna","messages":[{"role":"user","content":"hello"}],"prompt_cache_options":{"mode":"explicit"},"max_completion_tokens":16}`,
+			body:     `{"model":"provider:openai gpt-5.6-luna","messages":[{"role":"user","content":"hello"}],"prompt_cache_options":{"mode":"explicit"},"max_completion_tokens":16}`,
 			meterKey: billing.MeterInputTokens,
 		},
 		{
 			name:     "two explicit breakpoints",
-			body:     `{"model":"openai/gpt-5.6-luna","messages":[{"role":"user","content":[{"type":"text","text":"one","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"text","text":"two","prompt_cache_breakpoint":{"mode":"explicit"}}]}],"prompt_cache_options":{"mode":"explicit"},"max_completion_tokens":16}`,
+			body:     `{"model":"provider:openai gpt-5.6-luna","messages":[{"role":"user","content":[{"type":"text","text":"one","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"text","text":"two","prompt_cache_breakpoint":{"mode":"explicit"}}]}],"prompt_cache_options":{"mode":"explicit"},"max_completion_tokens":16}`,
 			meterKey: billing.MeterCacheWriteInputTokens,
 		},
 		{
 			name:     "implicit and four explicit breakpoints",
-			body:     `{"model":"openai/gpt-5.6-luna","messages":[{"role":"user","content":[{"type":"text","text":"one","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"text","text":"two","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"text","text":"three","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"text","text":"four","prompt_cache_breakpoint":{"mode":"explicit"}}]}],"max_completion_tokens":16}`,
+			body:     `{"model":"provider:openai gpt-5.6-luna","messages":[{"role":"user","content":[{"type":"text","text":"one","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"text","text":"two","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"text","text":"three","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"text","text":"four","prompt_cache_breakpoint":{"mode":"explicit"}}]}],"max_completion_tokens":16}`,
 			meterKey: billing.MeterCacheWriteInputTokens,
 		},
 	}
@@ -4071,7 +4071,7 @@ func TestAnthropicHoldCoversCombinedFastUSCacheAndHostedToolPricing(t *testing.T
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"anthropic/anthropic-claude-opus-5-fast-us","input":[{"role":"user","content":[{"type":"input_text","text":"hello","cache_control":{"type":"ephemeral","ttl":"1h"}}]}],"tools":[{"type":"web_search_20250305","name":"web_search"}],"max_tool_calls":2,"max_output_tokens":16}`),
+		Body:   []byte(`{"model":"provider:anthropic anthropic-claude-opus-5-fast-us","input":[{"role":"user","content":[{"type":"input_text","text":"hello","cache_control":{"type":"ephemeral","ttl":"1h"}}]}],"tools":[{"type":"web_search_20250305","name":"web_search"}],"max_tool_calls":2,"max_output_tokens":16}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)

@@ -99,7 +99,7 @@ func resolveCloudState(t *testing.T, path, deploymentID, extra string) *State {
 func resolveCloudRequest(t *testing.T, path, deploymentID, extra string) (*State, error) {
 	t.Helper()
 	provider, _, _ := strings.Cut(deploymentID, "-claude")
-	body := `{` + extra + `"model":"` + provider + `/claude-fable-5-1"}`
+	body := `{` + extra + `"model":"provider:` + provider + ` claude-fable-5-1"}`
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Body: []byte(body), Method: "POST", Path: path,
 		AvailableCredentials: map[string][]int{provider: {0}},

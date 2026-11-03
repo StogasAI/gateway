@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -15,7 +17,25 @@ import (
 )
 
 func testDeploymentForRoute(provider schemas.ModelProvider, model string, route Route) (Deployment, bool) {
-	return activeState().deploymentForRoute(provider, model, route, variant{})
+	return testDeploymentAt(provider, model, route, variant{})
+}
+
+// testDeploymentAt returns the provider's deployment that a model field selects at a variant: the
+// one that it names, or else the one with the shortest ID, which carries no region or other
+// suffix.
+func testDeploymentAt(provider schemas.ModelProvider, model string, route Route, want variant) (Deployment, bool) {
+	snap := activeState()
+	selection, err := snap.parseModelSelection(model)
+	if err != nil {
+		return Deployment{}, false
+	}
+	var found Deployment
+	for _, candidate := range snap.routingSelections(route, selection, want, nil, nil) {
+		if candidate.provider == provider && (found.ID == "" || len(candidate.deployment.ID) < len(found.ID)) {
+			found = candidate.deployment
+		}
+	}
+	return found, found.ID != ""
 }
 
 func TestClientHeaderCatalogOmitsRemovedProviderSecrets(t *testing.T) {
@@ -292,7 +312,7 @@ func TestGPT56ProDeploymentsUseFixedResponsesModeWithoutChangingTheUpstreamModel
 	standard, err := ResolveRequest(RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"openai/gpt-5.6-sol","input":"hello"}`),
+		Body:   []byte(`{"model":"provider:openai gpt-5.6-sol","input":"hello"}`),
 	})
 	if err != nil {
 		t.Fatalf("resolve standard GPT-5.6: %v", err)
@@ -317,62 +337,64 @@ func TestGPT56ProDeploymentsUseFixedResponsesModeWithoutChangingTheUpstreamModel
 	}
 }
 
-func TestCatalogResolvesStructuralQualificationWithoutGeneratedPermutations(t *testing.T) {
+// The model field names what serves a request by a bare ID, OpenRouter's author/model form or
+// typed terms, and matches IDs whatever their case, dots or underscores.
+func TestModelFieldTerms(t *testing.T) {
 	loadTestCatalog(t)
 	snap := active.Load()
-	if snap == nil {
-		t.Fatal("catalog is not loaded")
+	providers := func(field string) []string {
+		t.Helper()
+		selection, err := snap.parseModelSelection(field)
+		if err != nil {
+			t.Fatalf("%s: %v", field, err)
+		}
+		seen := map[string]bool{}
+		for _, candidate := range snap.routingSelections(RouteResponses, selection, variant{}, nil, nil) {
+			seen[string(candidate.provider)] = true
+		}
+		return slices.Sorted(maps.Keys(seen))
 	}
-	for _, requested := range []string{
-		"openai/gpt-5.5-2026-04-23",
-		"openai/openai/gpt-5.5-2026-04-23",
-		"open-ai/gpt-5.5-2026-04-23",
-		"open-ai/open-ai/gpt-5.5-2026-04-23",
+	for field, want := range map[string][]string{
+		"gpt-5.5-2026-04-23":                              {"azure", "openai"},
+		"openai/gpt-5.5-2026-04-23":                       {"azure", "openai"},
+		"Open_AI/GPT-5.5-2026-04-23":                      {"azure", "openai"},
+		"provider:openai gpt-5.5-2026-04-23":              {"openai"},
+		"gpt-5.5-2026-04-23 provider:open-ai":             {"openai"},
+		"route:openai-responses model:gpt-5.5-2026-04-23": {"openai"},
+		"deployment:openai-gpt-5.5-2026-04-23":            {"openai"},
+		"provider:gcp claude-haiku-4.5":                   {},
+		"author:anthropic provider:anthropic":             {"anthropic"},
 	} {
-		providers := snap.routeModelProviders(RouteResponses, requested, nil, nil)
-		if len(providers) != 1 || providers[0] != schemas.OpenAI {
-			t.Fatalf("%s: providers=%v", requested, providers)
+		if got := providers(field); !slices.Equal(got, want) {
+			t.Errorf("%s: providers %v, want %v", field, got, want)
 		}
 	}
-	for _, requested := range []string{
-		"anthropic/gpt-5.5-2026-04-23",
-		"anthropic/openai/gpt-5.5-2026-04-23",
-		"open_ai/gpt-5.5-2026-04-23",
-		"openai/openai/openai/gpt-5.5-2026-04-23",
-		"gpt-5.5-latest",
-	} {
-		if providers := snap.routeModelProviders(RouteResponses, requested, nil, nil); len(providers) != 0 {
-			t.Fatalf("%s: expected a closed miss, providers=%v", requested, providers)
+	// A dot or an underscore matches a hyphen, so the dotted alias and the deployment ID with a
+	// dot name the same nodes.
+	for _, field := range []string{"claude-haiku-4-5", "claude-haiku-4.5", "anthropic/claude-haiku-4.5", "anthropic-claude-haiku-4.5-20251001"} {
+		deployment, ok := testDeploymentForRoute(schemas.Anthropic, field, RouteChat)
+		if !ok || deployment.ID != "anthropic-claude-haiku-4-5-20251001" || deployment.Upstream.Model != "claude-haiku-4-5-20251001" {
+			t.Fatalf("%s did not select Claude Haiku 4.5: %#v", field, deployment)
 		}
 	}
-	for _, requested := range []string{
-		"claude-haiku-4-5",
-		"claude-haiku-4.5",
-		"anthropic/claude-haiku-4.5",
+	for field, want := range map[string]string{
+		"anthropic/gpt-5.5-2026-04-23":                 "gpt-5.5-2026-04-23 is a model by openai, not by anthropic.",
+		"openai/openai/gpt-5.5-2026-04-23":             `Write "openai/openai/gpt-5.5-2026-04-23" as author/model`,
+		"chutes/glm-5.2":                               "chutes is not an author. To choose a provider, write provider:chutes glm-5.2.",
+		"azure":                                        "azure is a provider. Write provider:azure",
+		"gpt-5.5-latest":                               "The catalog has no model, group or deployment gpt-5.5-latest.",
+		"vendor:openai":                                `Unknown term "vendor:openai"`,
+		"provider:":                                    `Write "provider:" as kind:ID`,
+		"provider:azure provider:openai":               "names more than one provider",
+		"gpt-5.5-2026-04-23 claude-haiku-4-5":          "names more than one model, group or deployment",
+		"model:claude":                                 "claude is a group. Write group:claude",
+		"anthropic-claude-opus-4-8-us-fast":            "The catalog has no model, group or deployment",
+		"author:openai author:anthropic gpt-5 a b c d": "at most 6 terms",
+		strings.Repeat("a", maxModelFieldBytes+1):      "at most 1024 bytes",
 	} {
-		deployment, ok := testDeploymentForRoute(schemas.Anthropic, requested, RouteChat)
-		if !ok || deployment.ID != "anthropic-claude-haiku-4-5-20251001" ||
-			deployment.Upstream.Model != "claude-haiku-4-5-20251001" {
-			t.Fatalf("%s did not resolve through the simple model node: %#v", requested, deployment)
-		}
-	}
-	if _, ok := testDeploymentForRoute(
-		schemas.Anthropic,
-		"anthropic-claude-haiku-4.5-20251001",
-		RouteChat,
-	); ok {
-		t.Fatal("an unlisted deployment alias was generated")
-	}
-	for _, rotated := range []struct {
-		provider schemas.ModelProvider
-		route    Route
-		selector string
-	}{
-		{provider: schemas.Anthropic, route: RouteResponses, selector: "anthropic-claude-opus-4-8-us-fast"},
-		{provider: schemas.OpenAI, route: RouteResponses, selector: "gpt-5.6-sol-fast-pro"},
-	} {
-		if _, ok := testDeploymentForRoute(rotated.provider, rotated.selector, rotated.route); ok {
-			t.Fatalf("rotated deployment modifier alias %s was generated", rotated.selector)
+		_, err := snap.parseModelSelection(field)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: %v, want %q", field, err, want)
 		}
 	}
 }
@@ -400,8 +422,8 @@ func TestResolveRequestSupportsModelProviderAndDeploymentSelectors(t *testing.T)
 		provider   schemas.ModelProvider
 		selector   string
 	}{
-		{selector: "openai/gpt-5.6-sol", provider: schemas.OpenAI, deployment: "openai-gpt-5.6-sol"},
-		{selector: "azure/azure-gpt-5.6-sol", provider: schemas.Azure, deployment: "azure-gpt-5.6-sol"},
+		{selector: "provider:openai gpt-5.6-sol", provider: schemas.OpenAI, deployment: "openai-gpt-5.6-sol"},
+		{selector: "provider:azure azure-gpt-5.6-sol", provider: schemas.Azure, deployment: "azure-gpt-5.6-sol"},
 		{selector: "openai-gpt-5.6-sol", provider: schemas.OpenAI, deployment: "openai-gpt-5.6-sol"},
 	}
 	for _, route := range []struct {
@@ -515,24 +537,24 @@ func TestServiceTierSpellingsSelectOneTier(t *testing.T) {
 		wire       schemas.BifrostServiceTier
 		err        error
 	}{
-		{fields: `"model":"openai/gpt-5.5"`, deployment: "openai-gpt-5.5-2026-04-23", wire: "default"},
-		{fields: `"model":"openai/gpt-5.5","service_tier":"auto"`, deployment: "openai-gpt-5.5-2026-04-23", wire: "default"},
-		{fields: `"model":"openai/gpt-5.5","service_tier":"standard"`, deployment: "openai-gpt-5.5-2026-04-23", wire: "default"},
-		{fields: `"model":"openai/gpt-5.5","service_tier":"priority"`, deployment: "openai-gpt-5.5-2026-04-23-fast", wire: "fast"},
-		{fields: `"model":"openai/gpt-5.5","service_tier":"flex"`, deployment: "openai-gpt-5.5-2026-04-23-flex", wire: "flex"},
-		{fields: `"model":"azure/gpt-5.6-sol","service_tier":"fast"`, deployment: "azure-gpt-5.6-sol-fast", wire: "priority"},
-		{fields: `"model":"azure/gpt-6-astra","service_tier":"flex"`, deployment: "azure-gpt-6-astra-flex", wire: "flex"},
-		{fields: `"model":"openai/gpt-6-astra","service_tier":"ultrafast"`, deployment: "openai-gpt-6-astra-ultrafast", wire: "ultrafast"},
-		{fields: `"model":"anthropic/claude-opus-5","service_tier":"fast",` + multiRegion, deployment: "anthropic-claude-opus-5-fast", wire: "default"},
-		{fields: `"model":"anthropic/claude-opus-5","service_tier":"auto",` + multiRegion, deployment: "anthropic-claude-opus-5", wire: "default"},
-		{fields: `"model":"azure/claude-fable-5-1","service_tier":"default"`, deployment: "azure-claude-fable-5-1-anthropic-hosted"},
+		{fields: `"model":"provider:openai gpt-5.5"`, deployment: "openai-gpt-5.5-2026-04-23", wire: "default"},
+		{fields: `"model":"provider:openai gpt-5.5","service_tier":"auto"`, deployment: "openai-gpt-5.5-2026-04-23", wire: "default"},
+		{fields: `"model":"provider:openai gpt-5.5","service_tier":"standard"`, deployment: "openai-gpt-5.5-2026-04-23", wire: "default"},
+		{fields: `"model":"provider:openai gpt-5.5","service_tier":"priority"`, deployment: "openai-gpt-5.5-2026-04-23-fast", wire: "fast"},
+		{fields: `"model":"provider:openai gpt-5.5","service_tier":"flex"`, deployment: "openai-gpt-5.5-2026-04-23-flex", wire: "flex"},
+		{fields: `"model":"provider:azure gpt-5.6-sol","service_tier":"fast"`, deployment: "azure-gpt-5.6-sol-fast", wire: "priority"},
+		{fields: `"model":"provider:azure gpt-6-astra","service_tier":"flex"`, deployment: "azure-gpt-6-astra-flex", wire: "flex"},
+		{fields: `"model":"provider:openai gpt-6-astra","service_tier":"ultrafast"`, deployment: "openai-gpt-6-astra-ultrafast", wire: "ultrafast"},
+		{fields: `"model":"provider:anthropic claude-opus-5","service_tier":"fast",` + multiRegion, deployment: "anthropic-claude-opus-5-fast", wire: "default"},
+		{fields: `"model":"provider:anthropic claude-opus-5","service_tier":"auto",` + multiRegion, deployment: "anthropic-claude-opus-5", wire: "default"},
+		{fields: `"model":"provider:azure claude-fable-5-1","service_tier":"default"`, deployment: "azure-claude-fable-5-1-anthropic-hosted"},
 		// Azure sells Claude Fast as its own model, so the request names no tier.
-		{fields: `"model":"azure/claude-opus-5-5","service_tier":"fast"`, deployment: "azure-claude-opus-5-5-fast"},
-		{fields: `"model":"openai/gpt-5.6-sol","service_tier":"ultrafast"`, err: ErrServiceTierUnavailable},
-		{fields: `"model":"anthropic/claude-opus-4-8","service_tier":"flex"`, err: ErrServiceTierUnavailable},
+		{fields: `"model":"provider:azure claude-opus-5-5","service_tier":"fast"`, deployment: "azure-claude-opus-5-5-fast"},
+		{fields: `"model":"provider:openai gpt-5.6-sol","service_tier":"ultrafast"`, err: ErrServiceTierUnavailable},
+		{fields: `"model":"provider:anthropic claude-opus-4-8","service_tier":"flex"`, err: ErrServiceTierUnavailable},
 		{fields: `"model":"openai-gpt-5.5-2026-04-23-flex","service_tier":"fast"`, err: ErrServiceTierUnavailable},
-		{fields: `"model":"openai/gpt-5.5","service_tier":"scale"`, err: ErrUnsupportedServiceTier},
-		{fields: `"model":"anthropic/claude-opus-4-8","service_tier":"standard_only"`, err: ErrUnsupportedServiceTier},
+		{fields: `"model":"provider:openai gpt-5.5","service_tier":"scale"`, err: ErrUnsupportedServiceTier},
+		{fields: `"model":"provider:anthropic claude-opus-4-8","service_tier":"standard_only"`, err: ErrUnsupportedServiceTier},
 	} {
 		resolution, err := ResolveRequest(RequestInput{Method: "POST", Path: "/v1/responses", Body: []byte(`{"input":"hello",` + test.fields + `}`), Policy: config})
 		if test.err != nil {
@@ -565,31 +587,31 @@ func TestReasoningModeSelectsDeployments(t *testing.T) {
 		effort     string
 		err        error
 	}{
-		{fields: `"model":"openai/gpt-5.6-sol","reasoning":{"mode":"pro"}`, deployment: "openai-gpt-5.6-sol-pro"},
-		{fields: `"model":"openai/gpt-5.6-sol","reasoning":{"mode":"standard","effort":"high"}`, deployment: "openai-gpt-5.6-sol", effort: "high"},
-		{fields: `"model":"openai/gpt-5.6-sol","reasoning":{"mode":null}`, deployment: "openai-gpt-5.6-sol"},
-		{fields: `"model":"openai/gpt-5.6-sol","reasoning":{"mode":"pro"},"service_tier":"flex"`, deployment: "openai-gpt-5.6-sol-pro-flex"},
-		{fields: `"model":"azure/gpt-6-astra","reasoning":{"mode":"pro"}`, deployment: "azure-gpt-6-astra-pro"},
+		{fields: `"model":"provider:openai gpt-5.6-sol","reasoning":{"mode":"pro"}`, deployment: "openai-gpt-5.6-sol-pro"},
+		{fields: `"model":"provider:openai gpt-5.6-sol","reasoning":{"mode":"standard","effort":"high"}`, deployment: "openai-gpt-5.6-sol", effort: "high"},
+		{fields: `"model":"provider:openai gpt-5.6-sol","reasoning":{"mode":null}`, deployment: "openai-gpt-5.6-sol"},
+		{fields: `"model":"provider:openai gpt-5.6-sol","reasoning":{"mode":"pro"},"service_tier":"flex"`, deployment: "openai-gpt-5.6-sol-pro-flex"},
+		{fields: `"model":"provider:azure gpt-6-astra","reasoning":{"mode":"pro"}`, deployment: "azure-gpt-6-astra-pro"},
 		{fields: `"model":"openai-gpt-5.6-sol-pro","reasoning":{"mode":"pro"}`, deployment: "openai-gpt-5.6-sol-pro"},
 		// A group selects its newest model in the mode.
-		{fields: `"model":"openai/gpt-6","reasoning":{"mode":"pro"}`, deployment: "openai-gpt-6.1-sol-pro"},
+		{fields: `"model":"provider:openai gpt-6","reasoning":{"mode":"pro"}`, deployment: "openai-gpt-6.1-sol-pro"},
 		{fields: `"model":"openai-gpt-5.6-sol-pro","reasoning":{"mode":"standard"}`, err: ErrReasoningModeUnavailable},
 		{fields: `"model":"openai-gpt-5.6-sol","reasoning":{"mode":"pro"}`, err: ErrReasoningModeUnavailable},
-		{fields: `"model":"openai/gpt-5.5","reasoning":{"mode":"pro"}`, err: ErrReasoningModeUnavailable},
+		{fields: `"model":"provider:openai gpt-5.5","reasoning":{"mode":"pro"}`, err: ErrReasoningModeUnavailable},
 		{fields: `"model":"claude","reasoning":{"mode":"pro"}`, err: ErrReasoningModeUnavailable},
 		// The mode applies before the tier.
-		{fields: `"model":"openai/gpt-5.5","reasoning":{"mode":"pro"},"service_tier":"ultrafast"`, err: ErrReasoningModeUnavailable},
-		{fields: `"model":"openai/gpt-6-astra","reasoning":{"mode":"pro"},"service_tier":"ultrafast"`, err: ErrServiceTierUnavailable},
-		{fields: `"model":"openai/gpt-5.6-sol","reasoning":{"mode":"turbo"}`, err: ErrUnsupportedReasoningMode},
-		{fields: `"model":"openai/gpt-5.6-sol","reasoning":{"mode":1}`, err: ErrInvalidJSON},
+		{fields: `"model":"provider:openai gpt-5.5","reasoning":{"mode":"pro"},"service_tier":"ultrafast"`, err: ErrReasoningModeUnavailable},
+		{fields: `"model":"provider:openai gpt-6-astra","reasoning":{"mode":"pro"},"service_tier":"ultrafast"`, err: ErrServiceTierUnavailable},
+		{fields: `"model":"provider:openai gpt-5.6-sol","reasoning":{"mode":"turbo"}`, err: ErrUnsupportedReasoningMode},
+		{fields: `"model":"provider:openai gpt-5.6-sol","reasoning":{"mode":1}`, err: ErrInvalidJSON},
 		// A key that allows only some deployments names the field that its allowed nodes exclude.
-		{fields: `"model":"openai/gpt-5.6-sol","reasoning":{"mode":"pro"},"service_tier":"flex"`, config: allowing("openai-gpt-5.6-sol-pro"), err: ErrServiceTierUnavailable},
-		{fields: `"model":"openai/gpt-5.6-sol","reasoning":{"mode":"pro"},"service_tier":"flex"`, config: allowing("openai-gpt-5.6-sol-flex"), err: ErrReasoningModeUnavailable},
-		{fields: `"model":"openai/gpt-5.6-sol","reasoning":{"mode":"standard"}`, config: allowing("openai-gpt-5.6-sol-pro"), err: ErrReasoningModeUnavailable},
-		{fields: `"model":"openai/gpt-5.6-sol"`, config: allowing("openai-gpt-5.6-sol-pro"), err: ErrModelUnavailable},
+		{fields: `"model":"provider:openai gpt-5.6-sol","reasoning":{"mode":"pro"},"service_tier":"flex"`, config: allowing("openai-gpt-5.6-sol-pro"), err: ErrServiceTierUnavailable},
+		{fields: `"model":"provider:openai gpt-5.6-sol","reasoning":{"mode":"pro"},"service_tier":"flex"`, config: allowing("openai-gpt-5.6-sol-flex"), err: ErrReasoningModeUnavailable},
+		{fields: `"model":"provider:openai gpt-5.6-sol","reasoning":{"mode":"standard"}`, config: allowing("openai-gpt-5.6-sol-pro"), err: ErrReasoningModeUnavailable},
+		{fields: `"model":"provider:openai gpt-5.6-sol"`, config: allowing("openai-gpt-5.6-sol-pro"), err: ErrModelUnavailable},
 		// The key serves Pro only at Flex, so the tier that the request leaves to the model fails.
-		{fields: `"model":"openai/gpt-5.6-sol","reasoning":{"mode":"pro"}`, config: allowing("openai-gpt-5.6-sol-pro-flex"), err: ErrModelUnavailable},
-		{fields: `"model":"openai/gpt-5.6-sol","reasoning":{"mode":"pro"},"service_tier":"fast"`, config: allowing("openai-gpt-5.6-sol-pro-flex"), err: ErrServiceTierUnavailable},
+		{fields: `"model":"provider:openai gpt-5.6-sol","reasoning":{"mode":"pro"}`, config: allowing("openai-gpt-5.6-sol-pro-flex"), err: ErrModelUnavailable},
+		{fields: `"model":"provider:openai gpt-5.6-sol","reasoning":{"mode":"pro"},"service_tier":"fast"`, config: allowing("openai-gpt-5.6-sol-pro-flex"), err: ErrServiceTierUnavailable},
 		// A key that can use no Claude model gets no mode named.
 		{fields: `"model":"claude","reasoning":{"mode":"pro"}`, config: allowing("openai-gpt-5.6-sol"), err: ErrModelUnavailable},
 	} {
@@ -619,7 +641,7 @@ func TestReasoningModeSelectsDeployments(t *testing.T) {
 	if _, err := ResolveRequest(RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"openai/gpt-5.6-sol","messages":[{"role":"user","content":"hello"}],"reasoning":{"mode":"pro"}}`),
+		Body:   []byte(`{"model":"provider:openai gpt-5.6-sol","messages":[{"role":"user","content":"hello"}],"reasoning":{"mode":"pro"}}`),
 	}); err == nil || !strings.Contains(err.Error(), "reasoning.mode is not supported") {
 		t.Fatalf("Chat Completions reasoning.mode error = %v", err)
 	}
@@ -709,12 +731,12 @@ func TestAzureClaudeUsesNativeRoute(t *testing.T) {
 		{
 			Method: "POST",
 			Path:   "/v1/chat/completions",
-			Body:   []byte(`{"model":"azure/claude-fable-5-1","messages":[{"role":"user","content":"hello"}],"max_completion_tokens":8192}`),
+			Body:   []byte(`{"model":"provider:azure claude-fable-5-1","messages":[{"role":"user","content":"hello"}],"max_completion_tokens":8192}`),
 		},
 		{
 			Method: "POST",
 			Path:   "/v1/responses",
-			Body:   []byte(`{"model":"azure/claude-fable-5-1","input":"hello","max_output_tokens":8192}`),
+			Body:   []byte(`{"model":"provider:azure claude-fable-5-1","input":"hello","max_output_tokens":8192}`),
 		},
 	} {
 		resolution, err := ResolveRequest(input)
@@ -826,12 +848,12 @@ func TestRetiredAnthropicOpus41IsNotRoutableOrListed(t *testing.T) {
 func TestRequestedTierMovesOnlyModelSelectors(t *testing.T) {
 	loadTestCatalog(t)
 	for tier, want := range map[string]string{TierFlex: "openai-gpt-5.5-2026-04-23-flex", TierFast: "openai-gpt-5.5-2026-04-23-fast"} {
-		if deployment, ok := activeState().deploymentForRoute(schemas.OpenAI, "gpt-5.5-2026-04-23", RouteResponses, variant{tier: tier}); !ok || deployment.ID != want {
+		if deployment, ok := testDeploymentAt(schemas.OpenAI, "gpt-5.5-2026-04-23", RouteResponses, variant{tier: tier}); !ok || deployment.ID != want {
 			t.Fatalf("%s request selected %#v, want %s", tier, deployment, want)
 		}
 	}
 	for _, selector := range []string{"openai-gpt-5.5-2026-04-23", "openai-gpt-5.5-2026-04-23-fast"} {
-		if deployment, ok := activeState().deploymentForRoute(schemas.OpenAI, selector, RouteResponses, variant{tier: TierFlex}); ok {
+		if deployment, ok := testDeploymentAt(schemas.OpenAI, selector, RouteResponses, variant{tier: TierFlex}); ok {
 			t.Fatalf("a requested tier retargeted the exact selector %s to %s", selector, deployment.ID)
 		}
 	}
@@ -866,9 +888,9 @@ func TestGroupsFollowThePolicyOrder(t *testing.T) {
 	}{
 		{body: `{"model":"gpt-5.5","input":"hello"}`, credentials: openAI, deployment: "openai-gpt-5.5-2026-04-23"},
 		{body: `{"model":"gpt-6","input":"hello"}`, credentials: openAI, deployment: "openai-gpt-6.1-sol"},
-		{body: `{"model":"openai/gpt-6","input":"hello"}`, credentials: openAI, deployment: "openai-gpt-6.1-sol"},
+		{body: `{"model":"provider:openai gpt-6","input":"hello"}`, credentials: openAI, deployment: "openai-gpt-6.1-sol"},
 		{body: `{"model":"gpt-6","input":"hello","service_tier":"flex"}`, credentials: openAI, deployment: "openai-gpt-6.1-sol-flex"},
-		{body: `{"model":"anthropic/gpt-6","input":"hello"}`, code: ErrModelUnavailable.Code},
+		{body: `{"model":"provider:anthropic gpt-6","input":"hello"}`, code: ErrModelUnavailable.Code},
 		// Every Claude Mythos deployment needs approval, which only an exact selector requests.
 		{body: `{"model":"claude-mythos","input":"hello"}`, code: ErrModelUnavailable.Code},
 		// Without a sort, the models of a group tie.
@@ -1062,7 +1084,7 @@ func TestResolvedRequestPinsCatalogIdentityAndFiveNodeChain(t *testing.T) {
 	resolution, err := ResolveRequest(RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"openai/gpt-5.5","input":"hello","reasoning":{"effort":"high"}}`),
+		Body:   []byte(`{"model":"provider:openai gpt-5.5","input":"hello","reasoning":{"effort":"high"}}`),
 	})
 	if err != nil {
 		t.Fatalf("resolve request: %v", err)
@@ -1272,6 +1294,57 @@ func TestSnapshotValidationBoundsExplicitAliases(t *testing.T) {
 	if _, err := snapshotFromCatalogBytes(broken); err == nil ||
 		!strings.Contains(err.Error(), "too many aliases") {
 		t.Fatalf("catalog with an unbounded alias list was accepted: %v", err)
+	}
+}
+
+// One spelling names one node: IDs and aliases that match under the model field's normalization
+// must belong to the same node, while a model's own dot alias stays allowed.
+func TestSnapshotValidationRefusesSelectorsThatCollideWhenNormalized(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		edit func(graph map[string]any)
+		// The owners of the colliding spellings, which the error names in either order.
+		owners []string
+	}{
+		{"a model alias spells another model", func(graph map[string]any) {
+			graph["models"].(map[string]any)["claude-haiku-4-5"].(map[string]any)["aliases"] = []any{"claude-opus-4.8"}
+		}, []string{"model:claude-haiku-4-5", "model:claude-opus-4-8"}},
+		{"a group spells a deployment", func(graph map[string]any) {
+			model := graph["models"].(map[string]any)["claude-haiku-4-5"].(map[string]any)
+			model["groupIds"] = append(model["groupIds"].([]any), "OpenAI_GPT_5.6_Sol")
+		}, []string{"group:OpenAI_GPT_5.6_Sol", "deployment:openai-gpt-5.6-sol"}},
+		{"a provider alias spells another provider", func(graph map[string]any) {
+			graph["providers"].(map[string]any)["openai"].(map[string]any)["aliases"] = []any{"Google_Cloud"}
+		}, []string{"openai", "google-cloud"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var whole map[string]any
+			if err := json.Unmarshal(testCatalogJSON, &whole); err != nil {
+				t.Fatal(err)
+			}
+			test.edit(whole["graph"].(map[string]any))
+			broken, err := json.Marshal(whole)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = snapshotFromCatalogBytes(broken)
+			if err == nil || !strings.Contains(err.Error(), "is shared by") ||
+				!strings.Contains(err.Error(), test.owners[0]) || !strings.Contains(err.Error(), test.owners[1]) {
+				t.Fatalf("got %v, want a selector shared by %v", err, test.owners)
+			}
+		})
+	}
+	var whole map[string]any
+	if err := json.Unmarshal(testCatalogJSON, &whole); err != nil {
+		t.Fatal(err)
+	}
+	whole["graph"].(map[string]any)["models"].(map[string]any)["claude-haiku-4-5"].(map[string]any)["aliases"] = []any{"claude-haiku-4.5"}
+	own, err := json.Marshal(whole)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := snapshotFromCatalogBytes(own); err != nil {
+		t.Fatalf("a model's own spellings were refused: %v", err)
 	}
 }
 

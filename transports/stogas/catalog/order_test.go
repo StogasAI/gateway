@@ -51,7 +51,7 @@ func TestRoutingOrderPutsListedDeploymentsFirstWithinThePairSlots(t *testing.T) 
 
 func TestRoutingOrderNeverWidensCatalogAuthorizationOrPinnedSelectors(t *testing.T) {
 	loadTestCatalog(t)
-	for _, model := range []string{"", "gpt-5.6-sol", "openai/gpt-5.6-sol", "openai-gpt-5.6-sol"} {
+	for _, model := range []string{"", "gpt-5.6-sol", "provider:openai gpt-5.6-sol", "openai-gpt-5.6-sol"} {
 		config := policyConfig(3)
 		config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Providers: []string{"anthropic"}}
 		config.Routing.Query = orderedQuery(t, "", "openai-gpt-5.6-sol", "anthropic-claude-sonnet-4-6")

@@ -69,8 +69,8 @@ func TestPreprocessingAcceptsBurstAndFinishesFailedResolution(t *testing.T) {
 
 func TestPreprocessingExcludesAuthorization(t *testing.T) {
 	for _, request := range []struct{ path, body string }{
-		{"/v1/chat/completions", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hello"}]}`},
-		{"/v1/responses", `{"model":"openai/gpt-5.5","input":"hello"}`},
+		{"/v1/chat/completions", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hello"}]}`},
+		{"/v1/responses", `{"model":"provider:openai gpt-5.5","input":"hello"}`},
 	} {
 		t.Run(request.path, func(t *testing.T) {
 			server := &Server{}

@@ -1,7 +1,6 @@
 package catalog
 
 import (
-	"cmp"
 	"slices"
 	"sort"
 	"strings"
@@ -72,32 +71,6 @@ func DeploymentForUpstreamModel(provider schemas.ModelProvider, upstreamModel st
 	return match, found
 }
 
-// deploymentForRoute resolves a model selector on the provider's routes. A model selector moves to
-// the deployment that runs at the requested variant; an exact deployment selector must already run
-// at it.
-func (s *snapshot) deploymentForRoute(provider schemas.ModelProvider, model string, route Route, want variant) (Deployment, bool) {
-	for _, routeNode := range s.routes(provider, route) {
-		deploymentID, pinned := s.deploymentIDFor(routeNode, model)
-		if deploymentID == "" {
-			continue
-		}
-		current := s.graph.Deployments[deploymentID]
-		if pinned {
-			if !want.matches(current.Upstream) {
-				continue
-			}
-		} else if tier := cmp.Or(want.tier, current.Upstream.ServiceTier); current.Upstream.ServiceTier != tier ||
-			current.Upstream.ReasoningMode != want.upstreamMode() {
-			deploymentID = s.sibling(routeNode, current, tier, want.upstreamMode(), time.Now())
-		}
-		deployment, ok := s.deploymentFromCompiled(deploymentID, routeNode)
-		if ok {
-			return deployment, true
-		}
-	}
-	return Deployment{}, false
-}
-
 // deploymentAvailableAt says whether a deployment serves at now: until its retirement date has
 // ended everywhere on Earth.
 func deploymentAvailableAt(deployment *compiledDeployment, now time.Time) bool {
@@ -109,33 +82,6 @@ func deploymentAvailableAt(deployment *compiledDeployment, now time.Time) bool {
 // already; one that another route serves too goes on through that one.
 func servesAt(deployment *compiledDeployment, route compiledRoute, now time.Time) bool {
 	return deploymentAvailableAt(deployment, now) && !retiredAt(route.RetirementDate, now)
-}
-
-// retiredOn is the day that the deployment or model a request names retired: one whose
-// deployments have all retired by now, or one that had retired when the release loaded.
-func (s *snapshot) retiredOn(requested string, now time.Time) (string, bool) {
-	_, selector := splitQualifiedModel(requested)
-	if deployment, ok := s.graph.Deployments[selector]; ok {
-		if deploymentAvailableAt(deployment, now) {
-			return "", false
-		}
-		return *deployment.RetirementDate, true
-	}
-	if modelID, ok := s.modelSelectors[selector]; ok {
-		last := ""
-		for _, deployment := range s.graph.Deployments {
-			if deployment.ModelID != modelID {
-				continue
-			}
-			if deploymentAvailableAt(deployment, now) {
-				return "", false
-			}
-			last = max(last, *deployment.RetirementDate)
-		}
-		return last, last != ""
-	}
-	date, ok := s.retired[selector]
-	return date, ok
 }
 
 // sibling returns the deployment available at an instant on the route that differs from current
@@ -195,61 +141,6 @@ func providerInList(provider schemas.ModelProvider, providers []schemas.ModelPro
 	return false
 }
 
-// routeModelProviders returns the providers whose routes serve the requested
-// model on the interface and have a credential. A trace names the others.
-func (s *snapshot) routeModelProviders(route Route, requested string, allowed map[string][]int, trace *routingTrace) []schemas.ModelProvider {
-	seen := map[schemas.ModelProvider]bool{}
-	providers := []schemas.ModelProvider{}
-	skipped := providerSkips{trace: trace}
-	// Exact deployment selectors visit only that deployment's routes.
-	_, selector := splitQualifiedModel(requested)
-	if deployment, pinned := s.graph.Deployments[selector]; pinned {
-		for _, routeID := range sortedRouteIDs(deployment) {
-			routeNode := s.graph.Routes[routeID]
-			provider := schemas.ModelProvider(routeNode.ProviderID)
-			if !routeSupportsInterface(routeNode, route) || (allowed != nil && len(allowed[routeNode.ProviderID]) == 0) {
-				if trace != nil && s.servesModel(routeNode, requested) {
-					skipped.add(provider, routeSupportsInterface(routeNode, route))
-				}
-				continue
-			}
-			if deploymentID, _ := s.deploymentIDFor(routeNode, requested); deploymentID != "" && !seen[provider] {
-				seen[provider] = true
-				skipped.served(provider)
-				providers = append(providers, provider)
-			}
-		}
-		skipped.record()
-		return providers
-	}
-	for _, routeNode := range s.graph.Routes {
-		provider := schemas.ModelProvider(routeNode.ProviderID)
-		if !routeSupportsInterface(routeNode, route) || allowed != nil && len(allowed[string(provider)]) == 0 {
-			if trace != nil && s.servesModel(routeNode, requested) {
-				skipped.add(provider, routeSupportsInterface(routeNode, route))
-			}
-			continue
-		}
-		if deploymentID, _ := s.deploymentIDFor(routeNode, requested); deploymentID == "" {
-			continue
-		}
-		if seen[provider] {
-			continue
-		}
-		seen[provider] = true
-		skipped.served(provider)
-		providers = append(providers, provider)
-	}
-	skipped.record()
-	sort.Slice(providers, func(i, j int) bool { return providers[i] < providers[j] })
-	return providers
-}
-
-func (s *snapshot) servesModel(route compiledRoute, requested string) bool {
-	deploymentID, _ := s.deploymentIDFor(route, requested)
-	return deploymentID != ""
-}
-
 func (s *snapshot) resolveProviderPreferences(preferences []string) ([]schemas.ModelProvider, error) {
 	if len(preferences) == 0 {
 		return nil, nil
@@ -270,17 +161,11 @@ func (s *snapshot) resolveProviderPreferences(preferences []string) ([]schemas.M
 	return providers, nil
 }
 
+// providerForPreference finds a provider by its ID or an alias, matched as the model field
+// matches IDs.
 func (s *snapshot) providerForPreference(preference string) (schemas.ModelProvider, bool) {
-	normalized := strings.ToLower(strings.TrimSpace(preference))
-	if normalized == "" {
-		return "", false
-	}
-	for providerID, provider := range s.graph.Providers {
-		if qualifierMatchesIDOrAlias(normalized, providerID, provider.Aliases) {
-			return schemas.ModelProvider(providerID), true
-		}
-	}
-	return "", false
+	providerID, ok := s.index.providers[normalizedID(strings.TrimSpace(preference))]
+	return schemas.ModelProvider(providerID), ok
 }
 
 func RouteForPath(path string) (Route, bool) {
@@ -380,99 +265,6 @@ func catalogRouteForRequest(provider schemas.ModelProvider, route Route) (compil
 		return compiledRoute{}, false
 	}
 	return snap.route(provider, route)
-}
-
-func (s *snapshot) deploymentIDFor(route compiledRoute, requestedModel string) (string, bool) {
-	qualifier, selector := splitQualifiedModel(requestedModel)
-	if selector == "" {
-		return "", false
-	}
-	now := time.Now()
-	if deployment, ok := s.graph.Deployments[selector]; ok {
-		if _, attached := deployment.Routes[route.ID]; !attached ||
-			!servesAt(deployment, route, now) ||
-			!s.qualifierMatches(qualifier, route.ProviderID, deployment.ModelID) {
-			return "", false
-		}
-		return selector, true
-	}
-	modelID, ok := s.modelSelectors[selector]
-	if !ok || !s.qualifierMatches(qualifier, route.ProviderID, modelID) {
-		return "", false
-	}
-	matchingDeploymentIDs := make([]string, 0, 1)
-	for _, deploymentID := range route.DeploymentIDs {
-		deployment, exists := s.graph.Deployments[deploymentID]
-		if exists &&
-			servesAt(deployment, route, now) &&
-			deployment.ModelID == modelID {
-			matchingDeploymentIDs = append(matchingDeploymentIDs, deploymentID)
-		}
-	}
-	if len(matchingDeploymentIDs) == 1 {
-		return matchingDeploymentIDs[0], false
-	}
-	baseID := route.ProviderID + "-" + modelID
-	if stringIn(matchingDeploymentIDs, baseID) {
-		return baseID, false
-	}
-	return "", false
-}
-
-func splitQualifiedModel(requested string) ([]string, string) {
-	parts := strings.Split(strings.ToLower(strings.TrimSpace(requested)), "/")
-	switch len(parts) {
-	case 1:
-		if parts[0] == "" {
-			return nil, ""
-		}
-		return nil, parts[0]
-	case 2, 3:
-		for _, part := range parts {
-			if part == "" || strings.TrimSpace(part) != part {
-				return nil, ""
-			}
-		}
-		return parts[:len(parts)-1], parts[len(parts)-1]
-	default:
-		return nil, ""
-	}
-}
-
-func (s *snapshot) qualifierMatches(qualifier []string, providerID, modelID string) bool {
-	if len(qualifier) == 0 {
-		return true
-	}
-	provider, ok := s.graph.Providers[providerID]
-	if !ok ||
-		!qualifierMatchesIDOrAlias(
-			qualifier[len(qualifier)-1],
-			providerID,
-			provider.Aliases,
-		) {
-		return false
-	}
-	if len(qualifier) == 1 {
-		return true
-	}
-	model, ok := s.graph.Models[modelID]
-	if !ok {
-		return false
-	}
-	author, ok := s.graph.Authors[model.AuthorID]
-	return ok && qualifierMatchesIDOrAlias(qualifier[0], model.AuthorID, author.Aliases)
-}
-
-func qualifierMatchesIDOrAlias(value, id string, aliases []string) bool {
-	if strings.EqualFold(value, id) {
-		return true
-	}
-	for _, alias := range aliases {
-		if strings.EqualFold(value, alias) {
-			return true
-		}
-	}
-	return false
 }
 
 func stringIn(values []string, expected string) bool {

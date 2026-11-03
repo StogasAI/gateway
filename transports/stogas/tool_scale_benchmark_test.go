@@ -18,8 +18,8 @@ func toolScaleBodies(count int) (chat, responses string) {
 		responsesTools[index] = fmt.Sprintf(`{"type":"function","name":"tool_%d","parameters":{"type":"object"}}`, index)
 		allowed[index] = fmt.Sprintf(`{"type":"function","name":"tool_%d"}`, index)
 	}
-	chat = `{"model":"openai/gpt-5.6-luna","messages":[{"role":"user","content":"hi"}],"tools":[` + strings.Join(chatTools, ",") + `]}`
-	responses = `{"model":"openai/gpt-5.6-luna","input":"hi","tools":[` + strings.Join(responsesTools, ",") +
+	chat = `{"model":"provider:openai gpt-5.6-luna","messages":[{"role":"user","content":"hi"}],"tools":[` + strings.Join(chatTools, ",") + `]}`
+	responses = `{"model":"provider:openai gpt-5.6-luna","input":"hi","tools":[` + strings.Join(responsesTools, ",") +
 		`],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[` + strings.Join(allowed, ",") + `]}}`
 	return chat, responses
 }
@@ -73,7 +73,7 @@ func BenchmarkProviderToolChecks(b *testing.B) {
 // bounds also bound tool work.
 func BenchmarkToolRequestAdmission(b *testing.B) {
 	chat, responses := toolScaleBodies(4_096)
-	messages := `{"model":"openai/gpt-5.6-luna","messages":[` +
+	messages := `{"model":"provider:openai gpt-5.6-luna","messages":[` +
 		strings.Repeat(`{"role":"user","content":"hi"},`, 99_999) + `{"role":"user","content":"hi"}]}`
 	for _, request := range []struct{ name, path, body string }{
 		{"chat_4096_tools", "/v1/chat/completions", chat},

@@ -12,7 +12,7 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
 
-const checkedToolsRequest = `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[` +
+const checkedToolsRequest = `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[` +
 	`{"type":"function","function":{"name":"lookup","parameters":{"type":"object","properties":{"q":{"type":"string"},"limit":{"type":"integer","minimum":1}},"required":["q"],"additionalProperties":false}}},` +
 	`{"type":"function","function":{"name":"free"}}]}`
 
@@ -134,7 +134,7 @@ func TestToolCallChecksReadStreamedArgumentsOnceComplete(t *testing.T) {
 func TestStructuredOutputChecksFollowTheResponseFormat(t *testing.T) {
 	const schemaFormat = `"response_format":{"type":"json_schema","json_schema":{"name":"answer","strict":true,"schema":{"type":"object","properties":{"city":{"type":"string","enum":["Paris","Rome"]}},"required":["city"],"additionalProperties":false}}}`
 	request := func(format string) string {
-		return `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],` + format + `}`
+		return `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],` + format + `}`
 	}
 	reply := func(finish string, content *string, refusal *string) *schemas.BifrostChatResponse {
 		response := validUnaryChatProviderResponse()
@@ -241,7 +241,7 @@ func responsesText(text string) schemas.ResponsesMessageContentBlock {
 }
 
 func TestResponsesChecksReadTheCompletedOutput(t *testing.T) {
-	request := `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup","parameters":{"type":"object","properties":{"q":{"type":"string"}},"required":["q"]}}],` +
+	request := `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup","parameters":{"type":"object","properties":{"q":{"type":"string"}},"required":["q"]}}],` +
 		`"text":{"format":{"type":"json_schema","name":"answer","schema":{"type":"object","properties":{"n":{"type":"integer"}},"required":["n"]}}}}`
 	refusal := schemas.ResponsesMessageContentBlock{
 		Type:                                 schemas.ResponsesOutputMessageContentTypeRefusal,

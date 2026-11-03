@@ -34,7 +34,7 @@ func TestRequestLogFindsTheResultsOfTheLatestTurn(t *testing.T) {
 		"a system message after them": {user + "," + chatCalls("c1") + "," + chatResult("c1") + `,{"role":"system","content":"brief"}`, []string{"c1"}},
 	} {
 		t.Run("chat "+name, func(t *testing.T) {
-			state := resolvedChatValidationState(t, `{"model":"openai/gpt-5.5",`+chatTools+`,"messages":[`+test.messages+`]}`)
+			state := resolvedChatValidationState(t, `{"model":"provider:openai gpt-5.5",`+chatTools+`,"messages":[`+test.messages+`]}`)
 			if !slices.Equal(state.answeredCallIDs, test.want) {
 				t.Fatalf("answered = %v, want %v", state.answeredCallIDs, test.want)
 			}
@@ -65,7 +65,7 @@ func TestRequestLogFindsTheResultsOfTheLatestTurn(t *testing.T) {
 		"a reply after results":  {`[` + user + "," + call("c1") + "," + output("c1") + `,{"role":"assistant","content":"done"}]`, nil},
 	} {
 		t.Run("responses "+name, func(t *testing.T) {
-			state := resolvedResponseValidationState(t, `{"model":"openai/gpt-5.5",`+responsesTools+`,"input":`+test.input+`}`)
+			state := resolvedResponseValidationState(t, `{"model":"provider:openai gpt-5.5",`+responsesTools+`,"input":`+test.input+`}`)
 			if !slices.Equal(state.answeredCallIDs, test.want) {
 				t.Fatalf("answered = %v, want %v", state.answeredCallIDs, test.want)
 			}
@@ -76,7 +76,7 @@ func TestRequestLogFindsTheResultsOfTheLatestTurn(t *testing.T) {
 // A streamed call runs from the event that adds it to the one that ends it, and a call that the
 // client answers keeps the ID that its result names.
 func TestRequestLogTimesStreamedToolCalls(t *testing.T) {
-	state := resolvedResponseValidationState(t, `{"model":"openai/gpt-5.5","input":"hi","tools":[`+mcpServerTool+`,{"type":"function","name":"lookup"}]}`)
+	state := resolvedResponseValidationState(t, `{"model":"provider:openai gpt-5.5","input":"hi","tools":[`+mcpServerTool+`,{"type":"function","name":"lookup"}]}`)
 	sequence := 0
 	send := func(event *schemas.BifrostResponsesStreamResponse) {
 		t.Helper()
@@ -128,7 +128,7 @@ func TestRequestLogTimesStreamedToolCalls(t *testing.T) {
 }
 
 func TestRequestLogKeepsWholeResponsesUntimed(t *testing.T) {
-	state := resolvedResponseValidationState(t, `{"model":"openai/gpt-5.5","input":"hi","tool_choice":"required","tools":[`+mcpServerTool+`]}`)
+	state := resolvedResponseValidationState(t, `{"model":"provider:openai gpt-5.5","input":"hi","tool_choice":"required","tools":[`+mcpServerTool+`]}`)
 	response := validUnaryResponsesProviderResponse("resp_mcp_approval")
 	response.Output = []schemas.ResponsesMessage{mcpListing("mcpl_1", "wiki"), mcpApprovalRequest("mcpr_1", "wiki")}
 	if err := validateProviderResponsesResponse(state, response); err != nil {
@@ -150,7 +150,7 @@ func TestRequestLogKeepsWholeResponsesUntimed(t *testing.T) {
 }
 
 func TestRequestLogTimesChatToolCallsFromTheirDeltas(t *testing.T) {
-	state := resolvedChatValidationState(t, `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}}]}`)
+	state := resolvedChatValidationState(t, `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}}]}`)
 	role := string(schemas.ChatMessageRoleAssistant)
 	for index, arguments := range []string{`{"q":`, `"x"}`} {
 		chunk := validChatProviderChunk("chatcmpl_tool", false)
