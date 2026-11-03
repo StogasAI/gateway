@@ -26,7 +26,7 @@ type PublicBillingError struct {
 
 type billingAuthorizer interface {
 	Authorize(ctx context.Context, request gatewaybilling.HoldRequest) (*gatewaybilling.Authorization, error)
-	FinalizeRequest(authorization *gatewaybilling.Authorization, event gatewaybilling.RequestEvent) error
+	FinalizeRequest(authorization *gatewaybilling.Authorization, event *gatewaybilling.RequestEvent) error
 }
 
 func PublicBillingErrorFor(err error) PublicBillingError {
@@ -292,7 +292,7 @@ func FinalizeState(ctx context.Context, billing billingAuthorizer, state *State)
 		return
 	}
 	finalizeExportMetrics(state)
-	if err := billing.FinalizeRequest(state.Authorization, *event); err != nil {
+	if err := billing.FinalizeRequest(state.Authorization, event); err != nil {
 		reason, errorType := "finalization_failed", safeOperationalErrorType(err)
 		var settlementErr *gatewaybilling.SettlementError
 		if errors.As(err, &settlementErr) {

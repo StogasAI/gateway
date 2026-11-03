@@ -9,9 +9,11 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	verifier "github.com/StogasAI/stogas/go"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
+	"github.com/maximhq/bifrost/transports/stogas/billing/batchtest"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proof"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proof/prooftest"
 )
@@ -210,5 +212,49 @@ func testMetadata() proof.Metadata {
 			ProviderMS: 15,
 			TTFTMS:     &ttft,
 		},
+	}
+}
+
+// The boot's key signs a log batch over leaves that a separate checker computes from the rows,
+// and signs nothing once the runtime closes.
+func TestLogBatchesSignUnderTheBootKeyUntilClosed(t *testing.T) {
+	service, boot, public := receiptService(t)
+	if service.NodeID() != "amber-anchor-00" {
+		t.Fatalf("the service names node %q", service.NodeID())
+	}
+	// Key order and spacing never change a leaf.
+	rows := [][]byte{
+		[]byte(`{"node_id":"amber-anchor-00","log_batch":{"sequence":7,"index":0},"metadata":{"b":"<&>","a":"\u00e9"}}`),
+		[]byte(`{ "log_batch": {"index": 1, "sequence": 7}, "node_id": "amber-anchor-00", "usage": {"input": 0.5} }`),
+	}
+	leaves := make([][64]byte, len(rows))
+	raw := []byte{}
+	for i, row := range rows {
+		leaf, err := service.LogRowLeaf(row)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want, err := batchtest.Leaf(row); err != nil || leaf != want {
+			t.Fatalf("row %d has leaf %x, the checker computes %x: %v", i, leaf, want, err)
+		}
+		leaves[i] = leaf
+		raw = append(raw, leaf[:]...)
+	}
+	opened := time.UnixMilli(1_790_000_000_123)
+	signed, err := service.SignLogBatch(7, opened, opened.Add(time.Minute), leaves)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := append(bytes.TrimSuffix(signed, []byte("}")), `,"leaves":"`+base64.RawURLEncoding.EncodeToString(raw)+`"}`...)
+	batch, err := batchtest.Verify(public, boot, line, rows...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if batch.Sequence != 7 || batch.NodeID != "amber-anchor-00" || batch.OpenedAt != "2026-09-21T14:13:20.123Z" || batch.SealedAt != "2026-09-21T14:14:20.123Z" {
+		t.Fatalf("the batch is %+v", batch)
+	}
+	service.Close()
+	if _, err := service.SignLogBatch(8, opened, opened, leaves); err == nil {
+		t.Fatal("the service signed after closing")
 	}
 }

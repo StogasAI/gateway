@@ -196,9 +196,9 @@ func TestParseDatabaseMoneyRejectsMissingOrMalformedValues(t *testing.T) {
 }
 
 func TestEncodeRequestLogDefaultsPricing(t *testing.T) {
-	payload, err := encodeRequestLog(RequestEvent{SchemaVersion: RequestLogSchemaVersion, RequestID: "request"}, "")
+	payload, err := encodeRequestRow(&RequestEvent{SchemaVersion: RequestLogSchemaVersion, RequestID: "request"})
 	if err != nil {
-		t.Fatalf("encodeRequestLog returned error: %v", err)
+		t.Fatalf("encodeRequestRow returned error: %v", err)
 	}
 
 	decoded := map[string]any{}
@@ -223,10 +223,12 @@ func TestEncodeRequestLogDefaultsPricing(t *testing.T) {
 // Settlement checks the hold binding and removes it before storing the log.
 func TestEncodeRequestLogCarriesTheHoldBinding(t *testing.T) {
 	hash := strings.Repeat("a", 64)
-	payload, err := encodeRequestLog(testGatewayRequestEvent(), hash)
+	event := testGatewayRequestEvent()
+	row, err := encodeRequestRow(&event)
 	if err != nil {
 		t.Fatal(err)
 	}
+	payload := withHoldParamsHash(row, hash)
 	var wire map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(payload), &wire); err != nil {
 		t.Fatal(err)
@@ -240,7 +242,7 @@ func TestRequestLogRejectsUnsupportedSchemaVersions(t *testing.T) {
 	for _, version := range []uint8{0, 2} {
 		event := testGatewayRequestEvent()
 		event.SchemaVersion = version
-		if _, err := encodeRequestLog(event, ""); err == nil {
+		if _, err := encodeRequestRow(&event); err == nil {
 			t.Fatalf("encoded unsupported version %d", version)
 		}
 	}
@@ -574,7 +576,7 @@ func mustNewRequestEvent(t testing.TB, input EventInput) RequestEvent {
 func TestEncodeRequestLogRejectsOversizedPayload(t *testing.T) {
 	event := testGatewayRequestEvent()
 	event.GatewayVersion = strings.Repeat("v", requestLogMaxEventBytes)
-	if _, err := encodeRequestLog(event, ""); err == nil || !strings.Contains(err.Error(), "limit") {
+	if _, err := encodeRequestRow(&event); err == nil || !strings.Contains(err.Error(), "limit") {
 		t.Fatalf("oversized gateway request event error = %v, want bounded-payload rejection", err)
 	}
 }
@@ -630,11 +632,11 @@ func TestLargestRequestLogFitsTheLimit(t *testing.T) {
 		rate := strings.Repeat("r", 64)
 		event.Usage.Meters[fmt.Sprintf("%064d", i)] = EventMeter{Quantity: "18446744073709551615", RateKey: &rate, RateUSD: &usd, USD: &usd}
 	}
-	payload, err := encodeRequestLog(event, strings.Repeat("h", 64))
+	row, err := encodeRequestRow(&event)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("largest request log: %d of %d bytes", len(payload), requestLogMaxEventBytes)
+	t.Logf("largest request log: %d of %d bytes", len(withHoldParamsHash(row, strings.Repeat("h", 64))), requestLogMaxEventBytes)
 }
 
 func TestRequestHoldExpiryOutlivesEverySupportedRoute(t *testing.T) {
@@ -744,7 +746,7 @@ func TestRequestUsagePreservesExactStandardTextAndPluginPresence(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		payload, err := encodeRequestLog(event, "")
+		payload, err := encodeRequestRow(&event)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -772,7 +774,7 @@ func TestRequestUsagePreservesExactStandardTextAndPluginPresence(t *testing.T) {
 	}
 	event := testGatewayRequestEvent()
 	event.Plugins = plugins.Metrics{Redaction: &plugins.RedactionMetrics{}, Export: &plugins.ExportMetrics{}}
-	payload, err := encodeRequestLog(event, "")
+	payload, err := encodeRequestRow(&event)
 	if err != nil || !strings.Contains(payload, `"plugins":{"redaction":{"items_redacted":0,"duration_us":0},"export":{"duration_us":0}}`) {
 		t.Fatalf("configured plugins with measured zero disappeared: %s, %v", payload, err)
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	verifier "github.com/StogasAI/stogas/go"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proof"
@@ -33,6 +34,22 @@ func New(bootSHA256 [32]byte, nodeID string, keys *verifier.NodeKeys) (*Service,
 		return nil, errors.New("invalid receipt identity")
 	}
 	return &Service{keys: keys, boot: bootSHA256, nodeID: nodeID}, nil
+}
+
+// NodeID names the attested node whose key signs receipts and log batches.
+func (s *Service) NodeID() string { return s.nodeID }
+
+// LogRowLeaf hashes one request log row for its signed batch.
+func (s *Service) LogRowLeaf(row []byte) ([64]byte, error) { return verifier.LogRowLeaf(row) }
+
+// SignLogBatch signs one batch of this boot's request log rows. It fails once the
+// runtime has closed and erased the key.
+func (s *Service) SignLogBatch(sequence uint32, openedAt, sealedAt time.Time, leaves [][64]byte) ([]byte, error) {
+	keys := s.keys
+	if keys == nil {
+		return nil, errors.New("the boot's signing key is closed")
+	}
+	return keys.SignLogBatch(s.boot, s.nodeID, sequence, openedAt, sealedAt, leaves)
 }
 
 func (s *Service) Build(ctx context.Context, input Input) (*Output, error) {
