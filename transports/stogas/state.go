@@ -361,6 +361,23 @@ func (s *State) setProviderAttemptUpstream(index int, record billing.UpstreamRec
 	}
 }
 
+// setLatestProviderAttemptUpstream fills what the latest call's record lacks, so a value that
+// its reply already gave is kept.
+func (s *State) setLatestProviderAttemptUpstream(record billing.UpstreamRecord) {
+	s.providerAttemptsMu.Lock()
+	defer s.providerAttemptsMu.Unlock()
+	if len(s.providerAttempts) == 0 {
+		return
+	}
+	upstream := &s.providerAttempts[len(s.providerAttempts)-1].Upstream
+	if upstream.RequestID == "" {
+		upstream.RequestID = record.RequestID
+	}
+	if upstream.Model == "" {
+		upstream.Model = record.Model
+	}
+}
+
 func (s *State) completeLatestProviderAttempt(completedAt time.Time) {
 	s.providerAttemptsMu.Lock()
 	defer s.providerAttemptsMu.Unlock()
@@ -407,6 +424,11 @@ func (s *State) providerAttemptInputs() []billing.ProviderAttemptInput {
 	finalAttempt.OutputObserved = s.ProviderOutputObserved
 	if s.Response != nil {
 		finalAttempt.Response = s.Response
+	}
+	// A streamed call ends without the hook that reads its reply, so its model comes from the
+	// final response. Azure names the model only in the header read as the stream started.
+	if finalAttempt.Upstream.Model == "" && finalAttempt.Provider != string(schemas.Azure) {
+		finalAttempt.Upstream.Model = replyModel(finalAttempt.Response)
 	}
 	if s.BifrostError != nil {
 		finalAttempt.Error = s.BifrostError
