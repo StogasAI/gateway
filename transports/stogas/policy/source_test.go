@@ -166,6 +166,8 @@ func TestSavedSourceRejectsMalformedRuntimePolicy(t *testing.T) {
 		`{"routing":{"retries":-1}}`, `{"routing":{"retries":4}}`, `{"routing":{"retries":1.5}}`, `{"routing":{"retries":null}}`,
 		`{"routing":{"fallbacks":-1}}`, `{"routing":{"fallbacks":3}}`, `{"routing":{"fallbacks":null}}`,
 		`{"routing":{"fallbacks":{"maxPreDispatchCandidates":2}}}`,
+		`{"routing":{"missingEncryptionKeys":null}}`, `{"routing":{"missingEncryptionKeys":"retry"}}`,
+		`{"routing":{"missingEncryptionKeys":true}}`, `{"routing":{"missingEncryptionKeys":""}}`,
 		`{"routing":{"order":[]}}`, `{"routing":{"order":["deployment","deployment"]}}`,
 		`{"routing":{"order":["provider/model"]}}`, `{"routing":{"order":"deployment"}}`,
 		`{"routing":{"sort":[{"by":"provider.id","direction":"up"}]}}`,

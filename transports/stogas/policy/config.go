@@ -32,6 +32,14 @@ const (
 	MaxCustomPatternBytes    = 512
 )
 
+// routing.missingEncryptionKeys decides what a candidate does when its
+// content needs an encryption key that the request did not send: fail the
+// request, the default, or skip only that candidate.
+const (
+	MissingKeysFail = "fail"
+	MissingKeysSkip = "skip"
+)
+
 var (
 	ErrInvalidConfig = errors.New("invalid compiled API key configuration")
 	redactionPresets = stringSet(
@@ -97,13 +105,19 @@ func (t *Timeouts) OutputIdle() time.Duration {
 // to the next pair in routing order, so a request calls at most three pairs.
 // Order lists deployments that come first, in list order. It never adds a
 // deployment that selectors, filters or credentials exclude.
+// MissingEncryptionKeys is empty when no policy sets it, which fails.
 type Routing struct {
-	AllowedCatalogNodes *AllowedCatalogNodes `json:"allowedCatalogNodes"`
-	Fallbacks           int                  `json:"fallbacks"`
-	Order               []string             `json:"order,omitempty"`
-	Query               *Query               `json:"query"`
-	Retries             int                  `json:"retries"`
+	AllowedCatalogNodes   *AllowedCatalogNodes `json:"allowedCatalogNodes"`
+	Fallbacks             int                  `json:"fallbacks"`
+	MissingEncryptionKeys string               `json:"missingEncryptionKeys,omitempty"`
+	Order                 []string             `json:"order,omitempty"`
+	Query                 *Query               `json:"query"`
+	Retries               int                  `json:"retries"`
 }
+
+// SkipsMissingKeys reports whether a candidate whose encryption key the
+// request did not send leaves only itself out.
+func (r Routing) SkipsMissingKeys() bool { return r.MissingEncryptionKeys == MissingKeysSkip }
 
 type AllowedCatalogNodes struct {
 	Authors     []string `json:"authors,omitzero"`
@@ -152,6 +166,9 @@ func (c *Config) validate() error {
 	}
 	if c.Routing.Fallbacks < 0 || c.Routing.Fallbacks > MaxFallbacks {
 		return configError("routing.fallbacks must be an integer from 0 to 2")
+	}
+	if value := c.Routing.MissingEncryptionKeys; value != "" && value != MissingKeysFail && value != MissingKeysSkip {
+		return configError("routing.missingEncryptionKeys must be fail or skip")
 	}
 	if err := c.Routing.validateOrder(); err != nil {
 		return err

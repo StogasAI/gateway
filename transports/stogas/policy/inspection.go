@@ -268,6 +268,9 @@ func (v *Inspector) Finish() (*Inspection, error) {
 		if settings&permissionFallbacks != 0 {
 			routing["fallbacks"] = compiled.Routing.Fallbacks
 		}
+		if settings&permissionMissingKeys != 0 {
+			routing["missingEncryptionKeys"] = compiled.Routing.MissingEncryptionKeys
+		}
 		if document.Encrypted() {
 			if !customerkey.Registered(compiled.EncryptionKeys, document.encrypted.KeyID) {
 				return nil, configError("register the plugin encryption key identifier in the organization policy")

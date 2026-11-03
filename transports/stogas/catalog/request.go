@@ -106,8 +106,10 @@ type RequestInput struct {
 	// non-cryptographic failures. Invalid encryption keys or content are terminal.
 	// It runs before any redaction or tokenization and must not place a hold.
 	CheckCandidate func(schemas.ModelProvider, int, Deployment) error
-	// CheckRoots receives every pair the request may try, before any is
-	// prepared, and fails when one needs a root the request did not send.
+	// CheckRoots receives pairs before any is prepared and fails, naming the
+	// labels, when one needs a root the request did not send. Planning leaves
+	// out each pair whose policy skips missing roots, and then passes it every
+	// pair that the request may try.
 	CheckRoots func([]PlannedPair) error
 	// ReserveBody accounts for the transformed JSON before typed decoding and
 	// tokenization. The transport keeps this reservation until the request ends.

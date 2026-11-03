@@ -541,6 +541,94 @@ func TestMissingRootsFailBeforeAnyPairIsPrepared(t *testing.T) {
 	}
 }
 
+// A pair whose policy skips missing roots leaves the plan before it takes a
+// slot, whether it shares its policy with later credentials or has its own.
+// Without that policy, the first tried pair that lacks a root fails the
+// request; with every pair skipped, the request names every missing label.
+func TestMissingRootsSkipOnlyPairsWhosePolicySkips(t *testing.T) {
+	loadTestCatalog(t)
+	config := func(mode string) *policy.Config {
+		value := policyConfig(1)
+		value.Routing.MissingEncryptionKeys = mode
+		return value
+	}
+	for _, test := range []struct {
+		name     string
+		mode     string
+		shared   bool
+		missing  map[int]string
+		want     int
+		prepared []int
+		labels   []string
+		removed  []int
+	}{
+		{name: "shared policy skips the first credential", mode: policy.MissingKeysSkip, shared: true, missing: map[int]string{0: "billing"}, want: 1, prepared: []int{1}, removed: []int{0}},
+		{name: "own policies skip the first credential", mode: policy.MissingKeysSkip, missing: map[int]string{0: "billing"}, want: 1, prepared: []int{1}, removed: []int{0}},
+		{name: "skipped credentials take no slot", mode: policy.MissingKeysSkip, shared: true, missing: map[int]string{0: "billing", 1: "audit"}, want: 2, prepared: []int{2}, removed: []int{0, 1}},
+		{name: "every credential skipped", mode: policy.MissingKeysSkip, shared: true, missing: map[int]string{0: "billing", 1: "audit", 2: "audit"}, want: -1, labels: []string{"audit", "billing"}, removed: []int{0, 1, 2}},
+		{name: "fail is the default", mode: "", shared: true, missing: map[int]string{0: "billing"}, want: -1, labels: []string{"billing"}},
+		{name: "explicit fail", mode: policy.MissingKeysFail, missing: map[int]string{0: "billing"}, want: -1, labels: []string{"billing"}},
+		{name: "nothing missing", mode: policy.MissingKeysSkip, shared: true, want: 0, prepared: []int{0}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			shared := config(test.mode)
+			input := RequestInput{
+				Body:   []byte(`{"model":"openai-gpt-5.6-sol","messages":[{"role":"user","content":"hello"}]}`),
+				Method: "POST", Path: "/v1/chat/completions", Policy: shared,
+				AvailableCredentials: map[string][]int{"openai": {0, 1, 2}},
+				CredentialPolicy: func(_ schemas.ModelProvider, index int) (RequestPolicy, error) {
+					if test.shared {
+						return RequestPolicy{Config: shared}, nil
+					}
+					return RequestPolicy{Config: config(test.mode)}, nil
+				},
+				CheckRoots: func(pairs []PlannedPair) error {
+					var labels []string
+					for _, pair := range pairs {
+						if label := test.missing[pair.Credential]; label != "" && !slices.Contains(labels, label) {
+							labels = append(labels, label)
+						}
+					}
+					if len(labels) == 0 {
+						return nil
+					}
+					slices.Sort(labels)
+					return &customerkey.MissingError{Labels: labels}
+				},
+			}
+			var prepared []int
+			input.CheckCandidate = func(_ schemas.ModelProvider, index int, _ Deployment) error {
+				prepared = append(prepared, index)
+				return nil
+			}
+			resolved, err := ResolveRequest(input)
+			var missing *customerkey.MissingError
+			switch {
+			case test.want >= 0 && (err != nil || resolved.CredentialIndex != test.want):
+				t.Fatalf("resolved %v, %v; want credential %d", resolved, err, test.want)
+			case test.want < 0 && (!errors.As(err, &missing) || !slices.Equal(missing.Labels, test.labels) || resolved != nil):
+				t.Fatalf("resolved %v, %v; want labels %v", resolved, err, test.labels)
+			case !slices.Equal(prepared, test.prepared):
+				t.Fatalf("prepared %v, want %v", prepared, test.prepared)
+			}
+			input.CheckCandidate = nil
+			simulation := SimulateRouting(input, RouteChat, "openai-gpt-5.6-sol", "", "")
+			var removed []int
+			for _, entry := range simulation.Removed {
+				if entry.Reason == RemovedEncryptionKey {
+					if len(entry.Labels) != 1 || entry.Labels[0] != test.missing[*entry.Credential] {
+						t.Fatalf("removal %+v does not name its label", entry)
+					}
+					removed = append(removed, *entry.Credential)
+				}
+			}
+			if !slices.Equal(removed, test.removed) {
+				t.Fatalf("simulation removed %v, want %v", removed, test.removed)
+			}
+		})
+	}
+}
+
 func TestCredentialOrderCannotChooseBetweenDeployments(t *testing.T) {
 	loadTestCatalog(t)
 	var attempts []string

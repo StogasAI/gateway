@@ -11,18 +11,22 @@ import (
 )
 
 // The scalar settings that compose by minimum. Fallbacks and the total wait
-// cover the whole request; retries and the idle wait belong to each pair.
+// cover the whole request; retries, the idle wait and what a pair does without
+// its encryption key belong to each pair. Names spell a value that policies
+// write as a string, where the first name is the smallest.
 type scalarUnit struct {
 	section, field string
 	choices        []int
 	requestWide    bool
+	names          []string
 }
 
 var scalarUnits = []scalarUnit{
-	{"routing", "retries", []int{0, 1, 2, 3}, false},
-	{"routing", "fallbacks", []int{0, 1, 2}, true},
-	{"timeouts", "totalSeconds", []int{1, 30, 600, 3600}, true},
-	{"timeouts", "outputIdleSeconds", []int{1, 15, 300, 3600}, false},
+	{"routing", "retries", []int{0, 1, 2, 3}, false, nil},
+	{"routing", "fallbacks", []int{0, 1, 2}, true, nil},
+	{"timeouts", "totalSeconds", []int{1, 30, 600, 3600}, true, nil},
+	{"timeouts", "outputIdleSeconds", []int{1, 15, 300, 3600}, false, nil},
+	{"routing", "missingEncryptionKeys", []int{0, 1}, false, []string{MissingKeysFail, MissingKeysSkip}},
 }
 
 // A policy part: a source's top level, which is required, or one of its rules.
@@ -76,7 +80,11 @@ func (p scalarPart) fields() map[string]any {
 			section = map[string]any{}
 			out[unit.section] = section
 		}
-		section[unit.field] = value
+		if unit.names != nil {
+			section[unit.field] = unit.names[value]
+		} else {
+			section[unit.field] = value
+		}
 	}
 	return out
 }
@@ -140,6 +148,11 @@ func activeScalar(t *testing.T, config *Config, unit int) (int, bool) {
 		return config.Routing.Retries, true
 	case "fallbacks":
 		return config.Routing.Fallbacks, true
+	case "missingEncryptionKeys":
+		if config.Routing.MissingEncryptionKeys == "" {
+			return 0, false
+		}
+		return slices.Index(scalarUnits[unit].names, config.Routing.MissingEncryptionKeys), true
 	case "totalSeconds":
 		if config.Timeouts == nil || config.Timeouts.TotalSeconds == nil {
 			return int(config.Timeouts.Total() / time.Second), false
@@ -158,7 +171,7 @@ func activeScalar(t *testing.T, config *Config, unit int) (int, bool) {
 // says, whatever order the non-organization sources arrive in.
 func TestScalarCompositionMatchesTheReferenceModelInEveryOrder(t *testing.T) {
 	rng := rand.New(rand.NewPCG(9, 31))
-	builtIn := map[string]int{"retries": 0, "fallbacks": DefaultFallbacks, "totalSeconds": int(MaxRequestTimeout / time.Second), "outputIdleSeconds": int(DefaultOutputIdleTimeout / time.Second)}
+	builtIn := map[string]int{"retries": 0, "fallbacks": DefaultFallbacks, "totalSeconds": int(MaxRequestTimeout / time.Second), "outputIdleSeconds": int(DefaultOutputIdleTimeout / time.Second), "missingEncryptionKeys": 0}
 	scopes := []Scope{FolderScope, GrantScope, RoleScope, RoleScope, MemberScope, KeyScope}
 	for trial := range 3000 {
 		var parts []scalarPart
@@ -242,23 +255,24 @@ func TestEverySettingDeclaresItsScopeAndCombination(t *testing.T) {
 		combine string
 	}
 	settings := map[string]declared{
-		"access":                      {"candidate", "union of deny periods"},
-		"input":                       {"candidate", "any true requires ASCII"},
-		"limits":                      {"saved", "every limit applies"},
-		"plugins.redaction":           {"candidate", "union of presets and expressions"},
-		"plugins.encrypted":           {"candidate", "every section applies"},
-		"plugins.textExtraction":      {"candidate", "any true extracts"},
-		"plugins.export":              {"candidate", "union of destinations"},
-		"routing.filter":              {"candidate", "every filter must match"},
-		"routing.allowedCatalogNodes": {"candidate", "intersection"},
-		"routing.retries":             {"candidate", "minimum"},
-		"timeouts.outputIdleSeconds":  {"candidate", "minimum"},
-		"routing.order":               {"request", "one ordering: broadest required, else closest default"},
-		"routing.sort":                {"request", "one ordering: broadest required, else closest default"},
-		"routing.fallbacks":           {"request", "minimum"},
-		"timeouts.totalSeconds":       {"request", "minimum"},
-		"delegation":                  {"saved", "permissions intersect"},
-		"encryption":                  {"saved", "organization only"},
+		"access":                        {"candidate", "union of deny periods"},
+		"input":                         {"candidate", "any true requires ASCII"},
+		"limits":                        {"saved", "every limit applies"},
+		"plugins.redaction":             {"candidate", "union of presets and expressions"},
+		"plugins.encrypted":             {"candidate", "every section applies"},
+		"plugins.textExtraction":        {"candidate", "any true extracts"},
+		"plugins.export":                {"candidate", "union of destinations"},
+		"routing.filter":                {"candidate", "every filter must match"},
+		"routing.allowedCatalogNodes":   {"candidate", "intersection"},
+		"routing.retries":               {"candidate", "minimum"},
+		"routing.missingEncryptionKeys": {"candidate", "fail wins"},
+		"timeouts.outputIdleSeconds":    {"candidate", "minimum"},
+		"routing.order":                 {"request", "one ordering: broadest required, else closest default"},
+		"routing.sort":                  {"request", "one ordering: broadest required, else closest default"},
+		"routing.fallbacks":             {"request", "minimum"},
+		"timeouts.totalSeconds":         {"request", "minimum"},
+		"delegation":                    {"saved", "permissions intersect"},
+		"encryption":                    {"saved", "organization only"},
 	}
 	var covered, requestWide, savedOnly Permission
 	for section, setting := range settings {

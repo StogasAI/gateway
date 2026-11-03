@@ -35,6 +35,9 @@ const (
 	RemovedFilter = "filter"
 	// A request tries at most 1 + policy.MaxFallbacks credentials of a deployment.
 	RemovedPairLimit = "pair_limit"
+	// The request did not send an encryption key that the pair needs, and
+	// routing.missingEncryptionKeys skips such pairs. Labels names the keys.
+	RemovedEncryptionKey = "encryption_key"
 	// A group request uses only its most recently released models.
 	RemovedOlderModel = "older_model"
 )
@@ -54,6 +57,7 @@ type RemovedCandidate struct {
 	Expression string
 	Unknown    bool
 	Code       string
+	Labels     []string
 }
 
 // SimulatedPair is one deployment and credential in routing order.
