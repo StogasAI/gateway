@@ -423,7 +423,7 @@ func startProviderCall[T any](r *providerRun, wait time.Duration, call providerC
 		chutese2ee.SetInvocationBudget(attempt, 1+r.pair.Resolution.Retries()-r.retries, r.waiting)
 	}
 	request, state, idle := r.pair.request, r.state, r.pair.Resolution.RequestTimeouts().OutputIdle()
-	server, provider, authorization := r.server, r.pair.Resolution.Provider, r.pair.Authorization
+	server, resolution, provider, authorization := r.server, r.pair.Resolution, r.pair.Resolution.Provider, r.pair.Authorization
 	ready := make(chan providerResult[T], 1)
 	go func() {
 		result := providerResult[T]{ctx: attempt}
@@ -453,6 +453,9 @@ func startProviderCall[T any](r *providerRun, wait time.Duration, call providerC
 			defer server.providerCalls.begin(provider, time.Now())()
 		}
 		result.response, result.failure = call(attempt, request)
+		if _, streamed := any(result.response).(chan *schemas.BifrostStreamChunk); streamed && result.failure == nil {
+			stogas.RecordStreamUpstream(attempt, state, resolution)
+		}
 		if server != nil {
 			server.providers.observe(provider, result.failure)
 			if authorization != nil && authorization.AzureBinding != nil {

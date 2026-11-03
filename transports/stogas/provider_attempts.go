@@ -191,6 +191,15 @@ func (t *providerAttemptTracer) ClearDeferredSpan(traceID string) {
 	t.Tracer.ClearDeferredSpan(traceID)
 }
 
+// RecordStreamUpstream reads the provider's headers for the call that a stream comes from, as the
+// stream starts. Core reads a stream's reply only in a trace, which this gateway does not keep, so
+// they would otherwise go unread. The stream's model comes from its final response instead.
+func RecordStreamUpstream(ctx *schemas.BifrostContext, state *State, resolution *catalog.ResolvedRequest) {
+	if state != nil {
+		state.setLatestProviderAttemptUpstream(readUpstreamRecord(ctx, resolution, nil))
+	}
+}
+
 // readUpstreamRecord reads what the provider said about the call that just ended. The response
 // headers on the context are this call's, because each call starts without them.
 func readUpstreamRecord(ctx *schemas.BifrostContext, resolution *catalog.ResolvedRequest, response *schemas.BifrostResponse) billing.UpstreamRecord {

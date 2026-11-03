@@ -327,6 +327,116 @@ func TestUpstreamRecordReadsEachProvidersHeaders(t *testing.T) {
 	}
 }
 
+// The gateway keeps no trace, so core never completes a stream's call through the tracer. The
+// stream's record must still name the call, from its headers as it starts and its final response.
+func TestStreamedCallRecordsProviderIDsWithoutATrace(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("X-Request-Id", "req_stream")
+		for _, chunk := range []string{
+			`{"id":"chatcmpl-stream","object":"chat.completion.chunk","created":1,"model":"gpt-5-2026-01-01","choices":[{"index":0,"delta":{"role":"assistant","content":"ok"},"finish_reason":null}]}`,
+			`{"id":"chatcmpl-stream","object":"chat.completion.chunk","created":1,"model":"gpt-5-2026-01-01","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`,
+		} {
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", chunk)
+		}
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	t.Cleanup(server.Close)
+	providerConfig := newProviderConfig(server.URL, true, false)
+	providerConfig.OpenAIConfig = &schemas.OpenAIConfig{DisableStore: true}
+	client, err := bifrost.Init(context.Background(), schemas.BifrostConfig{
+		Account: &account{
+			keys: map[schemas.ModelProvider]schemas.Key{schemas.OpenAI: {
+				ID: "openai-test", Name: "openai-test", Value: *schemas.NewSecretVar("sk-test"),
+				Models: schemas.WhiteList{"*"}, Weight: 1, Enabled: schemas.Ptr(true),
+			}},
+			providerConfigs: map[schemas.ModelProvider]schemas.ProviderConfig{schemas.OpenAI: providerConfig},
+		},
+		InitialPoolSize: 1,
+		Logger:          bifrost.NewDefaultLogger(schemas.LogLevelError),
+		// As the gateway runs: no trace, so core stores no deferred stream span.
+		Tracer: newProviderAttemptTracer(schemas.DefaultTracer()),
+	})
+	if err != nil {
+		t.Fatalf("initialize Bifrost: %v", err)
+	}
+	t.Cleanup(client.Shutdown)
+	resolution := &catalog.ResolvedRequest{
+		Route: catalog.RouteChat, RequestType: schemas.ChatCompletionStreamRequest, Provider: schemas.OpenAI, Model: "gpt-5",
+	}
+	state := &State{
+		Pair: Pair{
+			Resolution: resolution,
+			Authorization: &billing.Authorization{
+				AuthorizedBilledCostUSD: new(money.USD), ProviderKey: "openai", RequestID: "request-stream-ids",
+			},
+		},
+		StartedAt: time.Now().UTC(), RequestType: string(schemas.ChatCompletionStreamRequest), UpstreamCostUSD: "0",
+	}
+	ctx := schemas.NewBifrostContext(context.Background(), time.Now().Add(10*time.Second))
+	SetState(ctx, state)
+	state.MarkProviderStarted()
+	stream, bifrostErr := client.ChatCompletionStreamRequest(ctx, &schemas.BifrostChatRequest{
+		Provider: schemas.OpenAI,
+		Model:    "gpt-5",
+		Input: []schemas.ChatMessage{{
+			Role:    schemas.ChatMessageRoleUser,
+			Content: &schemas.ChatMessageContent{ContentStr: schemas.Ptr("hello")},
+		}},
+	})
+	if bifrostErr != nil {
+		t.Fatalf("stream: %s", bifrostErr.GetErrorString())
+	}
+	RecordStreamUpstream(ctx, state, resolution)
+	for chunk := range stream {
+		// The adapter keeps each chunk as the response, so the last one is the final response.
+		if chunk.BifrostChatResponse != nil {
+			state.Response = &schemas.BifrostResponse{ChatResponse: chunk.BifrostChatResponse}
+		}
+	}
+	state.MarkProviderCompleted()
+
+	event := PrepareFinalState(state)
+	if event == nil || len(event.ProviderAttempts) != 1 {
+		t.Fatalf("event = %#v", event)
+	}
+	got := event.ProviderAttempts[0]
+	if got.ProviderRequestID != "req_stream" || got.ProviderResponseID != "chatcmpl-stream" || got.ProviderModel != "gpt-5-2026-01-01" {
+		t.Fatalf("streamed attempt = request %q, response %q, model %q", got.ProviderRequestID, got.ProviderResponseID, got.ProviderModel)
+	}
+}
+
+// A streamed Azure call takes its model from the header read as the stream started, never from the
+// reply, which can repeat the customer's deployment name. A reply's own values are not replaced.
+func TestStreamUpstreamKeepsAzuresHeaderModelAndEarlierValues(t *testing.T) {
+	azure := &catalog.ResolvedRequest{Provider: schemas.Azure}
+	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	ctx.SetValue(schemas.BifrostContextKeyProviderResponseHeaders, map[string]string{
+		"apim-request-id": "apim-stream", "x-ms-served-model": "gpt-5.6-sol-2026-07-09",
+	})
+	deployment := &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{ID: "chatcmpl-azure", Model: "customer-sol"}}
+	for _, test := range []struct {
+		name    string
+		ctx     *schemas.BifrostContext
+		earlier billing.UpstreamRecord
+		want    billing.UpstreamRecord
+	}{
+		{"headers", ctx, billing.UpstreamRecord{}, billing.UpstreamRecord{RequestID: "apim-stream", Model: "gpt-5.6-sol-2026-07-09"}},
+		{"no headers", schemas.NewBifrostContext(context.Background(), schemas.NoDeadline), billing.UpstreamRecord{}, billing.UpstreamRecord{}},
+		{"earlier values", ctx, billing.UpstreamRecord{RequestID: "apim-reply", Model: "gpt-5.6-sol-2026-07-10"}, billing.UpstreamRecord{RequestID: "apim-reply", Model: "gpt-5.6-sol-2026-07-10"}},
+	} {
+		state := &State{Pair: Pair{Resolution: azure}, Response: deployment}
+		index := state.beginProviderAttempt(time.Now())
+		state.setProviderAttemptProvider(index, string(schemas.Azure))
+		state.setProviderAttemptUpstream(index, test.earlier)
+		RecordStreamUpstream(test.ctx, state, azure)
+		attempts := state.providerAttemptInputs()
+		if len(attempts) != 1 || attempts[0].Upstream != test.want {
+			t.Errorf("%s: record = %#v, want %#v", test.name, attempts, test.want)
+		}
+	}
+}
+
 func TestProviderAttemptTracerRetainsDeferredStreamingAttempt(t *testing.T) {
 	base := time.Now().UTC().Add(-time.Second)
 	timestamps := []time.Time{
