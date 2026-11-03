@@ -24,11 +24,17 @@ func init() {
 
 // activeState returns the state of the active catalog in effect now.
 func activeState() *snapshot {
+	return stateAt(time.Now())
+}
+
+// stateAt returns the state of the active catalog in effect at an instant. A request reads the
+// catalog at the instant that it started, so every step sees the same state and dates.
+func stateAt(at time.Time) *snapshot {
 	snap := active.Load()
 	if snap == nil {
 		return nil
 	}
-	return snap.at(time.Now())
+	return snap.at(at)
 }
 
 // at returns the catalog state in effect at an instant.
@@ -257,14 +263,6 @@ func (s *snapshot) routes(provider schemas.ModelProvider, route Route) []compile
 		return routes[i].ID < routes[j].ID
 	})
 	return routes
-}
-
-func catalogRouteForRequest(provider schemas.ModelProvider, route Route) (compiledRoute, bool) {
-	snap := activeState()
-	if snap == nil {
-		return compiledRoute{}, false
-	}
-	return snap.route(provider, route)
 }
 
 func stringIn(values []string, expected string) bool {

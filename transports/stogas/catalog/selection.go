@@ -282,7 +282,7 @@ func (s *snapshot) retiredSelection(sel modelSelection, now time.Time) (string, 
 // and, for a selection that names a model, group or deployment, providers that serve it only at
 // another tier or reasoning mode. A selection without a name leaves out providers without the
 // interface, since every provider would show.
-func (s *snapshot) routingSelections(route Route, sel modelSelection, want variant, availableCredentials map[string][]int, trace *routingTrace) []routingSelection {
+func (s *snapshot) routingSelections(route Route, sel modelSelection, want variant, availableCredentials map[string][]int, trace *routingTrace, now time.Time) []routingSelection {
 	pinned := sel.deployment != ""
 	tier, mode := cmp.Or(want.tier, TierStandard), want.upstreamMode()
 	selections := make([]routingSelection, 0)
@@ -290,7 +290,6 @@ func (s *snapshot) routingSelections(route Route, sel modelSelection, want varia
 	// otherVariant holds the providers that serve the selection only at another variant, and
 	// whether they serve it in the requested mode.
 	otherVariant := map[schemas.ModelProvider]bool{}
-	now := time.Now()
 	for _, routeNode := range s.graph.Routes {
 		if sel.route != "" && routeNode.ID != sel.route || sel.provider != "" && routeNode.ProviderID != sel.provider {
 			continue
@@ -323,13 +322,13 @@ func (s *snapshot) routingSelections(route Route, sel modelSelection, want varia
 			}
 			if compiled.ApprovalRequired && !sel.approved() {
 				if trace != nil {
-					if deployment, ok := s.deploymentFromCompiled(id, routeNode); ok {
+					if deployment, ok := s.deploymentFromCompiledAt(id, routeNode, now); ok {
 						trace.removeSelection(routingSelection{deployment: deployment, provider: provider}, RemovedApproval, nil)
 					}
 				}
 				continue
 			}
-			if deployment, ok := s.deploymentFromCompiled(id, routeNode); ok {
+			if deployment, ok := s.deploymentFromCompiledAt(id, routeNode, now); ok {
 				selections = append(selections, routingSelection{deployment: deployment, provider: provider})
 			}
 		}

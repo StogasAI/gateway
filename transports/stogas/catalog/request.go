@@ -833,7 +833,7 @@ func planRoutes(input RequestInput, route Route, rawData map[string]json.RawMess
 	if err != nil {
 		return nil, err
 	}
-	selections, err := routingSelectionsForRequest(route, base.Model, base.variant, input.AvailableCredentials, input.trace)
+	selections, err := routingSelectionsForRequest(input.now, route, base.Model, base.variant, input.AvailableCredentials, input.trace)
 	if err != nil {
 		return nil, err
 	}
@@ -842,11 +842,11 @@ func planRoutes(input RequestInput, route Route, rawData map[string]json.RawMess
 		// The variant, a credential or the key's allowed nodes left no deployment. Try the
 		// model's other variants to find which field to name.
 		return nil, base.variant.unavailable(func(other variant) bool {
-			inVariant, err := routingSelectionsForRequest(route, base.Model, other, input.AvailableCredentials, nil)
+			inVariant, err := routingSelectionsForRequest(input.now, route, base.Model, other, input.AvailableCredentials, nil)
 			return err == nil && len(filterRoutingSelectionsByPolicy(inVariant, input.Policy, nil)) > 0
 		})
 	}
-	selections, err = filterProviderSelections(selections, providerPreference)
+	selections, err = filterProviderSelections(input.now, selections, providerPreference)
 	if err != nil {
 		return nil, err
 	}
@@ -1099,7 +1099,10 @@ func resolveOpenAIRequest(
 ) (*ResolvedRequest, error) {
 	provider := selection.provider
 	deployment := selection.deployment
-	if _, ok := catalogRouteForRequest(provider, route); !ok {
+	if deployment.snapshot == nil {
+		return nil, ErrRouteUnavailable
+	}
+	if _, ok := deployment.snapshot.route(provider, route); !ok {
 		return nil, ErrRouteUnavailable
 	}
 	model := requestedModel

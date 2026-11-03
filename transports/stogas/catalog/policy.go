@@ -80,13 +80,14 @@ type policyNode struct {
 // the variant. It returns none when the variant, a credential or the interface leaves no
 // deployment, and the caller names the field.
 func routingSelectionsForRequest(
+	now time.Time,
 	route Route,
 	requestedModel string,
 	want variant,
 	availableCredentials map[string][]int,
 	trace *routingTrace,
 ) ([]routingSelection, error) {
-	snap := activeState()
+	snap := stateAt(now)
 	if snap == nil {
 		return nil, ErrCatalogUnavailable
 	}
@@ -94,9 +95,9 @@ func routingSelectionsForRequest(
 	if err != nil {
 		return nil, err
 	}
-	selections := snap.routingSelections(route, selection, want, availableCredentials, trace)
+	selections := snap.routingSelections(route, selection, want, availableCredentials, trace, now)
 	if len(selections) == 0 {
-		if date, retired := snap.retiredSelection(selection, time.Now()); retired {
+		if date, retired := snap.retiredSelection(selection, now); retired {
 			return nil, modelRetired(date)
 		}
 	}
@@ -105,8 +106,8 @@ func routingSelectionsForRequest(
 
 // Strict provider choices are eligibility filters. Ordering is applied after
 // every candidate's credential policy has been intersected.
-func filterProviderSelections(selections []routingSelection, preference ProviderRoutingPreference) ([]routingSelection, error) {
-	snap := activeState()
+func filterProviderSelections(now time.Time, selections []routingSelection, preference ProviderRoutingPreference) ([]routingSelection, error) {
+	snap := stateAt(now)
 	if snap == nil {
 		return nil, ErrCatalogUnavailable
 	}
@@ -164,6 +165,8 @@ type routingCandidates struct {
 	filtered []*ResolvedRequest
 	values   map[*ResolvedRequest]*resolvedPolicyValues
 	trace    *routingTrace
+	// now is when the request started.
+	now time.Time
 }
 
 // policyFilterFailure returns the index of the first routing filter that
@@ -205,7 +208,7 @@ func (r *routingCandidates) finish(preference ProviderRoutingPreference) ([][]*R
 		query, required = config.Routing.Query, config.RequiredSorts()
 	}
 	if len(preference.Order) > 0 {
-		snap := activeState()
+		snap := stateAt(r.now)
 		if snap == nil {
 			return nil, nil, ErrCatalogUnavailable
 		}
