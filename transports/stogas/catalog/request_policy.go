@@ -110,7 +110,7 @@ func stopsPlan(err error) bool {
 func planRequest(input RequestInput, route Route, model string, preference ProviderRoutingPreference, variants *requestVariants) (*requestPlan, error) {
 	const maxPairs = 1 + policy.MaxFallbacks
 	trace := input.trace
-	candidates := routingCandidates{trace: trace}
+	candidates := routingCandidates{trace: trace, now: input.now}
 	credentials := make(map[*ResolvedRequest][]int, len(variants.selections))
 	ranks := make(map[credentialCandidate]int)
 	var firstErr error
