@@ -7,7 +7,7 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 )
 
-// Vertex, Bedrock Mantle and Azure cannot use Anthropic's native structured output
+// Vertex and Bedrock Mantle cannot use Anthropic's native structured output
 // (output_config.format), so ToBifrostResponsesRequest turns the caller's json_schema
 // into a forced tool call and the stream converter reassembles that tool call back
 // into an assistant text message.

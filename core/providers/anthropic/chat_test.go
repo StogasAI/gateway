@@ -1422,7 +1422,11 @@ func makeSOResponseFormat(schemaName string) interface{} {
 // endpoints reject native `output_config.format` and must instead receive
 // structured output as a synthetic bf_so_* tool call. Any provider added here
 // in the future must also be added to the branch under test in chat.go/responses.go.
-var toolConversionProviders = []schemas.ModelProvider{schemas.Vertex, schemas.BedrockMantle, schemas.Azure}
+var toolConversionProviders = []schemas.ModelProvider{schemas.Vertex, schemas.BedrockMantle}
+
+// nativeStructuredOutputProviders serve output_config.format themselves: Anthropic, and Microsoft
+// Foundry on both of its Claude hostings since 2026-08-17.
+var nativeStructuredOutputProviders = []schemas.ModelProvider{schemas.Anthropic, schemas.Azure}
 
 // TestToAnthropicChatRequest_StructuredOutput_ToolConversion_NoThinking verifies that when
 // response_format=json_schema is sent to a provider whose native Anthropic endpoint rejects
@@ -1606,39 +1610,44 @@ func TestToAnthropicChatRequest_StructuredOutput_ToolConversion_ThinkingMaxToken
 	}
 }
 
-// TestToAnthropicChatRequest_StructuredOutput_NativeOutputConfig_Anthropic verifies the
-// negative case: a provider whose native Anthropic endpoint DOES support output_config.format
-// (i.e. Anthropic itself) gets the native field set and no synthetic tool is added. This is
-// the control that the regression (Azure missing from toolConversionProviders) would have
-// broken in reverse — Azure incorrectly took this branch instead of the tool-conversion one.
-func TestToAnthropicChatRequest_StructuredOutput_NativeOutputConfig_Anthropic(t *testing.T) {
-	rf := makeSOResponseFormat("my_schema")
-	bifrostReq := &schemas.BifrostChatRequest{
-		Provider: schemas.Anthropic,
-		Model:    "claude-opus-4-6",
-		Input: []schemas.ChatMessage{
-			{Role: schemas.ChatMessageRoleUser, Content: &schemas.ChatMessageContent{ContentStr: schemas.Ptr("Hello")}},
-		},
-		Params: &schemas.ChatParameters{
-			ResponseFormat: &rf,
-		},
-	}
+// TestToAnthropicChatRequest_StructuredOutput_NativeOutputConfig verifies the negative case: a
+// provider whose Anthropic endpoint supports output_config.format gets the native field and no
+// synthetic tool, so the schema is enforced, thinking can stay on and the caller's tool_choice
+// stands.
+func TestToAnthropicChatRequest_StructuredOutput_NativeOutputConfig(t *testing.T) {
+	for _, provider := range nativeStructuredOutputProviders {
+		t.Run(string(provider), func(t *testing.T) {
+			rf := makeSOResponseFormat("my_schema")
+			bifrostReq := &schemas.BifrostChatRequest{
+				Provider: provider,
+				Model:    "claude-opus-4-6",
+				Input: []schemas.ChatMessage{
+					{Role: schemas.ChatMessageRoleUser, Content: &schemas.ChatMessageContent{ContentStr: schemas.Ptr("Hello")}},
+				},
+				Params: &schemas.ChatParameters{
+					ResponseFormat: &rf,
+				},
+			}
 
-	ctx, cancel := schemas.NewBifrostContextWithCancel(context.Background())
-	defer cancel()
-	result, err := ToAnthropicChatRequest(ctx, bifrostReq)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+			ctx, cancel := schemas.NewBifrostContextWithCancel(context.Background())
+			defer cancel()
+			result, err := ToAnthropicChatRequest(ctx, bifrostReq)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 
-	if result.OutputConfig == nil || result.OutputConfig.Format == nil {
-		t.Fatal("expected OutputConfig.Format to be set natively for Anthropic")
-	}
-
-	for _, tool := range result.Tools {
-		if len(tool.Name) > 6 && tool.Name[:6] == "bf_so_" {
-			t.Errorf("did not expect a synthetic bf_so_* tool for Anthropic, got %q", tool.Name)
-		}
+			if result.OutputConfig == nil || result.OutputConfig.Format == nil {
+				t.Fatalf("expected OutputConfig.Format to be set natively for %s", provider)
+			}
+			if result.ToolChoice != nil {
+				t.Errorf("expected no forced tool_choice for %s, got %+v", provider, result.ToolChoice)
+			}
+			for _, tool := range result.Tools {
+				if len(tool.Name) > 6 && tool.Name[:6] == "bf_so_" {
+					t.Errorf("did not expect a synthetic bf_so_* tool for %s, got %q", provider, tool.Name)
+				}
+			}
+		})
 	}
 }
 

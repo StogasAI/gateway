@@ -116,8 +116,10 @@ func ValidateChatToolsForProvider(tools []schemas.ChatTool, caps schemas.ModelCa
 // the synthetic bf_so_* tool instead. Single source of truth for the typed converters and for the
 // raw-body passthrough guards, which have to agree: a body the converter would have rewritten must
 // never reach the provider verbatim ("output_config.format: Extra inputs are not permitted").
+// Microsoft Foundry serves native structured outputs for Claude on both its Azure and Anthropic
+// hostings since 2026-08-17, so Azure takes the native field like Anthropic does.
 func ProviderRequiresSyntheticStructuredOutput(provider schemas.ModelProvider) bool {
-	return provider == schemas.Vertex || provider == schemas.BedrockMantle || provider == schemas.Azure
+	return provider == schemas.Vertex || provider == schemas.BedrockMantle
 }
 
 // ValidateResponsesToolsForProvider is the Responses-path mirror of

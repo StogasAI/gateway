@@ -234,6 +234,68 @@ func TestAzureClaudeUsesAnthropicPolicyAndExactMessagesWireFormat(t *testing.T) 
 	}
 }
 
+// Foundry enforces a JSON schema itself on both Claude hostings, so Azure Claude gets
+// output_config.format as Anthropic does. A synthetic tool would leave the schema unenforced,
+// go unforced with thinking on, and take over tool_choice from the client's own tools.
+func TestAzureClaudeSendsStructuredOutputsNatively(t *testing.T) {
+	const schema = `{"type":"object","properties":{"city":{"type":"string"}},"required":["city"],"additionalProperties":false}`
+	const parameters = `{"type":"object","properties":{"q":{"type":"string"}},"required":["q"],"additionalProperties":false}`
+	for _, model := range []string{"azure-claude-opus-4-8", "azure-claude-opus-4-8-anthropic-hosted"} {
+		for path, body := range map[string]string{
+			"/v1/chat/completions": `{"model":"` + model + `","messages":[{"role":"user","content":"hi"}],"tool_choice":"auto",` +
+				`"tools":[{"type":"function","function":{"name":"lookup","parameters":` + parameters + `,"strict":true}}],` +
+				`"response_format":{"type":"json_schema","json_schema":{"name":"place","strict":true,"schema":` + schema + `}}}`,
+			"/v1/responses": `{"model":"` + model + `","input":"hi","tool_choice":"auto",` +
+				`"tools":[{"type":"function","name":"lookup","parameters":` + parameters + `,"strict":true}],` +
+				`"text":{"format":{"type":"json_schema","name":"place","strict":true,"schema":` + schema + `}}}`,
+		} {
+			t.Run(model+path, func(t *testing.T) {
+				state := resolveAzureState(t, path, body)
+				ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+				ctx.SetValue(schemas.BifrostContextKeyHTTPRequestType, state.Resolution.RequestType)
+				request, err := state.Resolution.ToBifrost(ctx)
+				if err != nil {
+					t.Fatalf("ToBifrost returned error: %v", err)
+				}
+				if err := PrepareProviderRequest(ctx, state, request); err != nil {
+					t.Fatalf("PrepareProviderRequest returned error: %v", err)
+				}
+				var wire []byte
+				if request.ChatRequest != nil {
+					wire = preparedProviderBody(t, ctx, request.ChatRequest)
+				} else {
+					wire = preparedProviderBody(t, ctx, request.ResponsesRequest)
+				}
+				var decoded struct {
+					OutputConfig struct {
+						Format struct {
+							Type   string          `json:"type"`
+							Schema json.RawMessage `json:"schema"`
+						} `json:"format"`
+					} `json:"output_config"`
+					ToolChoice map[string]any `json:"tool_choice"`
+					Tools      []struct {
+						Name   string `json:"name"`
+						Strict bool   `json:"strict"`
+					} `json:"tools"`
+				}
+				if err := sonic.Unmarshal(wire, &decoded); err != nil {
+					t.Fatalf("decode Azure Claude wire request: %v", err)
+				}
+				if decoded.OutputConfig.Format.Type != "json_schema" || !strings.Contains(string(decoded.OutputConfig.Format.Schema), `"city"`) {
+					t.Fatalf("output_config.format missing: %s", wire)
+				}
+				if strings.Contains(string(wire), "bf_so_") || len(decoded.Tools) != 1 || decoded.Tools[0].Name != "lookup" || !decoded.Tools[0].Strict {
+					t.Fatalf("tools are not the client's strict tool alone: %s", wire)
+				}
+				if decoded.ToolChoice["type"] != "auto" {
+					t.Fatalf("tool_choice = %v, want the client's auto: %s", decoded.ToolChoice, wire)
+				}
+			})
+		}
+	}
+}
+
 // Customers name their Azure deployments, so core must take the wire format from the catalog model.
 func TestAzureClaudeWithCustomDeploymentNameUsesAnthropicEndpoint(t *testing.T) {
 	const deploymentName = "sonnet-prod"
