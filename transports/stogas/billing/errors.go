@@ -34,6 +34,9 @@ var (
 	ErrDashboardKeyDenied  = &RequestError{"dashboard_key_denied", "API key is not available to this dashboard session", 403}
 	ErrGatewayUnavailable  = &RequestError{"gateway_unavailable", "The gateway is temporarily unavailable. Retry the request later.", 503}
 
+	// The dashboard shows members their organization's restriction, but never why.
+	ErrOrganizationRestricted = &RequestError{"organization_restricted", "The organization is restricted. Its API requests are refused until the restriction is lifted.", 403}
+
 	errByokNotAllowed = &RequestError{"byok_not_allowed", "The credential is not allowed by this API key", 400}
 )
 
@@ -70,7 +73,8 @@ var policyResultErrors = func() map[string]*RequestError {
 var databaseRefusals = func() map[string]*RequestError {
 	refusals := map[string]*RequestError{
 		"invalid_key": ErrInvalidAPIKey, "key_secret_replaced": ErrAPIKeyOldSecret,
-		"insufficient_balance": ErrInsufficientBalance, "byok_disabled": ErrByok,
+		"insufficient_balance": ErrInsufficientBalance, "organization_restricted": ErrOrganizationRestricted,
+		"byok_disabled": ErrByok,
 		"byok_required": ErrByokRequired, "byok_target_unavailable": ErrByokTarget,
 		"byok_target_changed": ErrByokTargetChanged,
 		"byok_not_allowed":    errByokNotAllowed, "dashboard_forbidden": ErrDashboardKeyDenied,
@@ -100,7 +104,7 @@ func NormalizeStogasErrorCode(code string, status int) string {
 		"catalog_unavailable", "dashboard_key_denied", "gateway_capacity_exceeded", "gateway_draining",
 		"gateway_unavailable", "input_ascii_required", "insufficient_balance", "internal_error",
 		"invalid_api_key", "invalid_json", "invalid_request", "key_configuration_changed", "key_configuration_too_large", "key_secret_replaced", "policy_work_limit_exceeded",
-		"method_not_allowed", "platform_rate_limited",
+		"method_not_allowed", "organization_restricted", "platform_rate_limited",
 		"model_ambiguous", "model_retired", "model_unavailable", "parameter_limit_exceeded", "permission_denied",
 		"provider_not_allowed", "provider_unavailable", "rate_limit_exceeded",
 		"request_body_timeout", "request_timeout", "request_too_large", "response_encoding_failed",
