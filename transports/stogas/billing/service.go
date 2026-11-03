@@ -216,10 +216,12 @@ type Service struct {
 	refusals                   refusalCache
 	rejectionLogs              rejectionLogBuffer
 	finalizations              finalizationState
+	logBatches                 logBatchState
 	underReservedSettlements   atomic.Uint64
 	negativeBalanceSettlements atomic.Uint64
 	settleQuery                string
 	keepFailedLogQuery         string
+	storeLogBatchQuery         string
 	sanctionedSourceQuery      string
 	sanctionedNetworksQuery    string
 	claimAzureCheckQuery       string
@@ -241,6 +243,7 @@ type DiagnosticsSnapshot struct {
 	Database       *DatabaseDiagnostics      `json:"database,omitempty"`
 	LocalAdmission LocalAdmissionDiagnostics `json:"localAdmission"`
 	Settlement     SettlementDiagnostics     `json:"settlement"`
+	LogBatches     LogBatchDiagnostics       `json:"logBatches"`
 	// APIKeyPepperFingerprint names the pepper that signs and hashes API keys.
 	APIKeyPepperFingerprint string `json:"apiKeyPepperFingerprint,omitempty"`
 }
@@ -276,6 +279,7 @@ func NewService(
 		toolQueries:             make(chan struct{}, poolConns/3),
 		settleQuery:             db.functionQuery("settle_gateway_request_logs", "request_id, result", "$1::json, $2::json"),
 		keepFailedLogQuery:      db.functionQuery("keep_failed_gateway_request_log", "*", "$1::uuid, $2::json"),
+		storeLogBatchQuery:      db.functionQuery("store_gateway_log_batch", "*", "$1::json"),
 		sanctionedSourceQuery:   db.functionQuery("gateway_sanctioned_networks_source", "*", ""),
 		sanctionedNetworksQuery: db.functionQuery("gateway_sanctioned_networks", "first_address, last_address", ""),
 		claimAzureCheckQuery:    db.functionQuery("gateway_claim_azure_check", "claimed, verified_at, started_at, unavailable", "$1::uuid, make_interval(secs => $2::double precision)"),
@@ -295,6 +299,7 @@ func NewService(
 		service.keyConfigQuery,
 		service.settleQuery,
 		service.keepFailedLogQuery,
+		service.storeLogBatchQuery,
 		service.sanctionedSourceQuery,
 		service.sanctionedNetworksQuery,
 		service.claimAzureCheckQuery,
@@ -313,6 +318,7 @@ func (s *Service) Close() {
 	if done := s.stopRejectionLogs(); done != nil {
 		<-done
 	}
+	s.closeLogBatches()
 	if s.db != nil {
 		s.db.Close()
 	}
@@ -329,6 +335,7 @@ func (s *Service) Diagnostics() DiagnosticsSnapshot {
 		Database:       s.db.Diagnostics(),
 		LocalAdmission: s.localAdmissionDiagnostics(),
 		Settlement:     s.settlementDiagnostics(),
+		LogBatches:     s.logBatchDiagnostics(),
 		// The monitor compares it with Control's and with its probe key's.
 		APIKeyPepperFingerprint: s.apiKeyPepperFingerprint,
 	}

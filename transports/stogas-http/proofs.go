@@ -9,6 +9,7 @@ import (
 	verifier "github.com/StogasAI/stogas/go"
 	"github.com/maximhq/bifrost/core/schemas"
 	stogas "github.com/maximhq/bifrost/transports/stogas"
+	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proof"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proofhttp"
@@ -59,6 +60,20 @@ func retainResponseFailure(state *stogas.State, failure *schemas.BifrostError) {
 	state.FinalEvent = nil
 }
 
+// recordReceipt keeps a receipt with the request's export, and its commitments
+// with the request's log row, which the boot's key also signs. Neither holds the
+// salts.
+func recordReceipt(state *stogas.State, output *proofhttp.Output) {
+	if state == nil {
+		return
+	}
+	state.Export.Metadata(output.Export)
+	if state.FinalEvent != nil {
+		receipt := output.Object.Receipt
+		state.FinalEvent.ReceiptCommitments = &billing.ReceiptCommitments{Request: receipt.RequestCommitment, Response: receipt.ResponseCommitment}
+	}
+}
+
 func (s *Server) writeInferenceJSON(ctx *requestContext, bifrostCtx *schemas.BifrostContext, state *stogas.State, statusCode int, payload any) {
 	data, err := marshalPayload(payload)
 	if err != nil {
@@ -94,9 +109,7 @@ func (s *Server) writeInferenceJSON(ctx *requestContext, bifrostCtx *schemas.Bif
 			s.writeProofError(ctx)
 			return
 		}
-		if state != nil {
-			state.Export.Metadata(output.Export)
-		}
+		recordReceipt(state, output)
 		data, err = appendStogasReceipt(data, output.JSON)
 		defer clear(data)
 		if err != nil {

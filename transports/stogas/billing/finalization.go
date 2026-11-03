@@ -148,8 +148,10 @@ func (s *Service) FinalizationReady() bool {
 }
 
 // FinalizeRequest settles the request's hold with its log and returns once the
-// database has decided. The caller keeps the request's admission until then.
-func (s *Service) FinalizeRequest(authorization *Authorization, event RequestEvent) error {
+// database has decided. The caller keeps the request's admission until then. The
+// event receives the row's normalized costs and its place in the signed log, so an
+// export of the event carries the row that analytics stores.
+func (s *Service) FinalizeRequest(authorization *Authorization, event *RequestEvent) error {
 	if authorization == nil {
 		return nil
 	}
@@ -168,11 +170,12 @@ func (s *Service) FinalizeRequest(authorization *Authorization, event RequestEve
 	event.Usage.UpstreamCostUSD = upstreamCostUSD.String()
 	billedCostUSD := calculateBilledCostUSD(authorization, upstreamCostUSD)
 	event.Usage.BilledCostUSD = billedCostUSD.String()
-	payload, err := encodeRequestLog(event, createHoldParamsHash(authorization.ProviderKey, authorization.ProductKey, authorization.UpstreamTargetJSON))
+	row, err := s.encodeSignedRow(event)
 	if err != nil {
 		s.finalizations.encodingFailed.Store(true)
 		return &SettlementError{Reason: "encoding_failed"}
 	}
+	payload := withHoldParamsHash(row, createHoldParamsHash(authorization.ProviderKey, authorization.ProductKey, authorization.UpstreamTargetJSON))
 	item := &settlement{requestID: authorization.RequestID, payload: payload, done: make(chan error, 1)}
 	if requestID, err := uuid.Parse(authorization.RequestID); err == nil {
 		s.finalizations.finish(authorization.OrganizationID, requestID)
@@ -217,13 +220,13 @@ func (f *finalizationState) finishedRequests(organizationID string) []uuid.UUID 
 }
 
 // settleRejections stores rejections through settlement and reports which ones
-// the database kept.
+// the database kept. Each row already holds its place in the signed log.
 func (s *Service) settleRejections(events []RequestEvent) []bool {
 	stored := make([]bool, len(events))
 	items := make([]*settlement, 0, len(events))
 	indexes := make([]int, 0, len(events))
 	for index, event := range events {
-		payload, err := encodeRequestLog(event, "")
+		payload, err := encodeRequestRow(&event)
 		if err != nil {
 			continue
 		}
@@ -611,8 +614,9 @@ func (s *Service) closeRequestOnce(ctx context.Context, requestID string, keyID 
 }
 
 // Call after stopping inference admission and after every request ended, so no
-// log remains to settle. It stores buffered rejections and waits for closes.
-// Shutdown uses the server's existing cleanup deadline.
+// log remains to settle. It stores buffered rejections, waits for closes, and then
+// stores the last signed log batch. Shutdown uses the server's existing cleanup
+// deadline.
 func (s *Service) DrainFinalizations(ctx context.Context) error {
 	if s == nil {
 		return nil
@@ -626,7 +630,7 @@ func (s *Service) DrainFinalizations(ctx context.Context) error {
 		idle := len(f.logs)+len(f.rejections)+f.settling == 0 && f.closing.Load() == 0
 		f.mu.Unlock()
 		if idle && !blocked(rejections) {
-			return nil
+			return s.drainLogBatches(ctx)
 		}
 		select {
 		case <-ticker.C:

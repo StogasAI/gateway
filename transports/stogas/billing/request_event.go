@@ -85,6 +85,24 @@ type RequestEvent struct {
 	Usage            RequestUsage          `json:"usage"`
 	Plugins          plugins.Metrics       `json:"plugins,omitzero"`
 	GatewayVersion   string                `json:"gateway_version"`
+	// LogBatch names the signed batch that holds this row and the row's leaf in it, or
+	// is null when no boot key signs the gateway's rows.
+	LogBatch *LogPosition `json:"log_batch"`
+	// ReceiptCommitments are those of the receipt that answered the request, when the
+	// caller asked for one. They match the receipt in the response's Stogas metadata.
+	ReceiptCommitments *ReceiptCommitments `json:"receipt_commitments"`
+}
+
+// LogPosition is a row's place in its boot's signed log batches.
+type LogPosition struct {
+	Sequence uint32 `json:"sequence"`
+	Index    uint32 `json:"index"`
+}
+
+// ReceiptCommitments are the lowercase hex commitments that a receipt signs.
+type ReceiptCommitments struct {
+	Request  string `json:"request"`
+	Response string `json:"response"`
 }
 
 // RequestSettings records the settings that control what the model generates,
@@ -343,36 +361,33 @@ type EventMeters map[string]EventMeter
 // text up to half as long again, within its 128 KiB check.
 const requestLogMaxEventBytes = 72 * 1024
 
-// settlementLog carries the hold binding, which settlement checks and removes
-// before the log reaches customer history.
-type settlementLog struct {
-	RequestEvent
-	HoldParamsHash string `json:"hold_params_hash"`
-}
-
-// encodeRequestLog encodes a request's log for settlement. Rejections have no
-// hold and pass an empty hash.
-func encodeRequestLog(event RequestEvent, holdParamsHash string) (string, error) {
+// encodeRequestRow encodes a row as analytics stores it. It writes missing meters into the
+// event as the empty object that the row holds, so an export of the event matches the row.
+func encodeRequestRow(event *RequestEvent) (string, error) {
 	if event.SchemaVersion != RequestLogSchemaVersion {
 		return "", fmt.Errorf("unsupported request log schema version: %d", event.SchemaVersion)
 	}
 	if event.Usage.Meters == nil {
 		event.Usage.Meters = EventMeters{}
 	}
-	var log any = event
-	if holdParamsHash != "" {
-		log = settlementLog{event, holdParamsHash}
-	}
 	// HTML escaping would write <, > and & in client metadata as six bytes.
 	var encoded strings.Builder
 	encoder := json.NewEncoder(&encoded)
 	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(log); err != nil {
+	if err := encoder.Encode(event); err != nil {
 		return "", fmt.Errorf("marshal request log: %w", err)
 	}
-	payload := strings.TrimSuffix(encoded.String(), "\n")
-	if len(payload) > requestLogMaxEventBytes {
-		return "", fmt.Errorf("request log is %d bytes, limit is %d", len(payload), requestLogMaxEventBytes)
+	row := strings.TrimSuffix(encoded.String(), "\n")
+	if len(row) > requestLogMaxEventBytes {
+		return "", fmt.Errorf("request log is %d bytes, limit is %d", len(row), requestLogMaxEventBytes)
 	}
-	return payload, nil
+	return row, nil
+}
+
+// withHoldParamsHash adds the hold binding to an encoded row. Settlement checks and removes
+// it before the row reaches customer history, so the row that analytics stores is the one
+// whose leaf its batch signs.
+func withHoldParamsHash(row string, holdParamsHash string) string {
+	hash, _ := json.Marshal(holdParamsHash)
+	return row[:len(row)-1] + `,"hold_params_hash":` + string(hash) + "}"
 }

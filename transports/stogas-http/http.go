@@ -624,7 +624,7 @@ func (s *Server) startSSEStream(ctx *requestContext, run *providerRun, started p
 					sendClientError(proofFailure)
 					return
 				}
-				state.Export.Metadata(output.Export)
+				recordReceipt(state, output)
 				sent, _ := reader.send(deliveryContext, frameSSEComment(proofhttp.SSECommentPrefix+string(output.JSON)))
 				if !sent {
 					return
@@ -1016,6 +1016,14 @@ func (s *Server) shutdownWithContext(ctx context.Context) {
 	}
 	shutdowns.Wait()
 
+	// Rejection counts end with the requests, so every row now has its place in
+	// the signed log, and the boot's key signs the last batch before the
+	// confidential runtime erases it. The counts' exports leave before the
+	// exporter closes, and the drain below stores the rows and batches.
+	if s.runtime != nil {
+		s.runtime.Billing().CloseRejectionLogs()
+		s.runtime.Billing().SealLogBatches()
+	}
 	if s.secure != nil {
 		closed := make(chan struct{})
 		go func() { s.secure.Close(); close(closed) }()
@@ -1027,11 +1035,6 @@ func (s *Server) shutdownWithContext(ctx context.Context) {
 			}
 			return
 		}
-	}
-	// Rejection counts end with the requests. Their exports leave before the
-	// exporter closes, and the drain below stores their rows.
-	if s.runtime != nil {
-		s.runtime.Billing().CloseRejectionLogs()
 	}
 	if s.exports != nil {
 		s.exports.Close()

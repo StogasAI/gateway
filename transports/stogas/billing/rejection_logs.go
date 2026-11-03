@@ -58,6 +58,8 @@ type RejectionLogDiagnostics struct {
 
 type rejectionLogRequest struct {
 	id, at string
+	// The row's place in the signed log, given when the rejection arrived.
+	place *LogPosition
 }
 
 type rejectionLogGroup struct {
@@ -66,6 +68,9 @@ type rejectionLogGroup struct {
 	// The export of the first repeat, whose request ID the count keeps. It
 	// leaves with the count.
 	export RejectionExport
+	// The count's row has its place in the signed log: it took it when the
+	// window ended, or when the gateway closed while an export waited for it.
+	placed bool
 	// Individual rows not yet handed to settlement, and how many the window
 	// has recorded. They leave at once; only the count waits for the window
 	// to end.
@@ -205,13 +210,14 @@ func (s *Service) recordRejection(input RejectionInput, export *RejectionExport)
 		if len(group.individual) == 0 {
 			group.queuedAt = now
 		}
-		group.individual = append(group.individual, rejectionLogRequest{input.RequestID, stamp})
+		// The row that nextBatch sends takes its place in the signed log now, so
+		// its export carries the row that analytics stores.
+		row := group.individualRow(rejectionLogRequest{id: input.RequestID, at: stamp})
+		s.placeRow(&row)
+		group.individual = append(group.individual, rejectionLogRequest{input.RequestID, stamp, row.LogBatch})
 		if *export == nil {
 			return true, nil
 		}
-		// The row that nextBatch sends.
-		row := group.RequestEvent
-		row.RequestID, row.CreatedAt, row.LastRequestAt, row.RequestCount = input.RequestID, stamp, stamp, 1
 		return true, &row
 	}
 	if group.RequestCount == ^uint32(0) {
@@ -270,8 +276,26 @@ func (g *rejectionLogGroup) readyAt(key rejectionLogKey, now time.Time) time.Tim
 	return time.Time{}
 }
 
-// nextBatch returns the rows to settle and the exports of its counts.
-func (b *rejectionLogBuffer) nextBatch(now time.Time, closing bool) ([]RequestEvent, []countExport) {
+// individualRow is the row of one rejection that keeps its own row.
+func (g *rejectionLogGroup) individualRow(request rejectionLogRequest) RequestEvent {
+	row := g.RequestEvent
+	row.RequestID, row.CreatedAt, row.LastRequestAt, row.RequestCount = request.id, request.at, request.at, 1
+	row.LogBatch = request.place
+	return row
+}
+
+// placeCount gives the group's count row its place in the signed log, once.
+func (s *Service) placeCount(group *rejectionLogGroup) {
+	if !group.placed {
+		group.placed = true
+		s.placeRow(&group.RequestEvent)
+	}
+}
+
+// nextBatch returns the rows to settle and the exports of its counts. A count's
+// row takes its place in the signed log as it leaves.
+func (s *Service) nextBatch(now time.Time, closing bool) ([]RequestEvent, []countExport) {
+	b := &s.rejectionLogs
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	current := now.Truncate(rejectionLogWindow).Unix()
@@ -290,16 +314,14 @@ func (b *rejectionLogBuffer) nextBatch(now time.Time, closing bool) ([]RequestEv
 			b.pendingAt = at
 		}
 		for _, request := range group.individual {
-			event := group.RequestEvent
-			event.RequestID, event.CreatedAt, event.LastRequestAt = request.id, request.at, request.at
-			event.RequestCount = 1
-			batch = append(batch, event)
+			batch = append(batch, group.individualRow(request))
 		}
 		group.individual = nil
 		if !ended {
 			continue
 		}
 		if group.RequestCount > 0 {
+			s.placeCount(group)
 			batch = append(batch, group.RequestEvent)
 			if group.export != nil {
 				exports = append(exports, countExport{group.export, group.RequestEvent})
@@ -339,7 +361,7 @@ func (s *Service) runRejectionLogs() {
 			}
 		}
 		for {
-			batch, exports := b.nextBatch(time.Now(), closing)
+			batch, exports := s.nextBatch(time.Now(), closing)
 			if len(batch) == 0 {
 				break
 			}
@@ -366,9 +388,10 @@ func (s *Service) runRejectionLogs() {
 	}
 }
 
-// CloseRejectionLogs refuses new rejections and sends the exports of the
-// counts, which can no longer change, so that they leave before the exporter
-// closes. DrainFinalizations stores the rows.
+// CloseRejectionLogs refuses new rejections, gives each count's row its place
+// in the signed log, and sends the counts' exports, which can no longer change,
+// so that they leave before the exporter closes. DrainFinalizations stores the
+// rows.
 func (s *Service) CloseRejectionLogs() {
 	if s != nil {
 		s.stopRejectionLogs()
@@ -384,7 +407,12 @@ func (s *Service) stopRejectionLogs() <-chan struct{} {
 	b.mu.Lock()
 	if !b.closed {
 		b.closed = true
+		// No count changes after this, so each count's row takes its place in
+		// the signed log now, while the boot's key can still sign its batch.
 		for _, group := range b.groups {
+			if group.RequestCount > 0 {
+				s.placeCount(group)
+			}
 			if group.export != nil {
 				exports = append(exports, countExport{group.export, group.RequestEvent})
 				group.export = nil

@@ -61,8 +61,8 @@ func (f *fakeBillingAuthorizer) Authorize(_ context.Context, request billing.Hol
 	return nil, nil
 }
 
-func (f *fakeBillingAuthorizer) FinalizeRequest(authorization *billing.Authorization, event billing.RequestEvent) error {
-	f.finalEvents = append(f.finalEvents, event)
+func (f *fakeBillingAuthorizer) FinalizeRequest(authorization *billing.Authorization, event *billing.RequestEvent) error {
+	f.finalEvents = append(f.finalEvents, *event)
 	return nil
 }
 

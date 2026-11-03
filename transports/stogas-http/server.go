@@ -129,6 +129,10 @@ func New(ctx context.Context, config stogas.Config, logger schemas.Logger) (*Ser
 		}
 		return nil, fmt.Errorf("%w: %w", ErrGatewayRuntimeInitialization, err)
 	}
+	if secure != nil {
+		// The boot's key signs every request log row in minute batches.
+		runtime.Billing().SetLogSigner(secure.Proofs)
+	}
 	sanctioned, err := startSanctionedNetworks(ctx, runtime.Billing(), logger)
 	if err != nil {
 		runtime.Close()

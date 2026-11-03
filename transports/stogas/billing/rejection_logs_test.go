@@ -346,7 +346,7 @@ func TestRejectionLogsSendIndividualRowsAtOnceAndCountsWhenTheMinuteEnds(t *test
 	if got := b.snapshot(); got.OldestPendingAt == nil || got.OldestPendingAt.After(time.Now()) {
 		t.Fatalf("waiting individual rows must report their arrival: %+v", got)
 	}
-	if batch, _ := b.nextBatch(minute.Add(10*time.Second), false); len(batch) != rejectionLogIndividualLimit {
+	if batch, _ := service.nextBatch(minute.Add(10*time.Second), false); len(batch) != rejectionLogIndividualLimit {
 		t.Fatalf("sent %d rows inside the minute, want the %d individual rows", len(batch), rejectionLogIndividualLimit)
 	}
 	settled()
@@ -354,10 +354,10 @@ func TestRejectionLogsSendIndividualRowsAtOnceAndCountsWhenTheMinuteEnds(t *test
 	if got := b.snapshot(); got.OldestPendingAt != nil || got.PendingGroups != 1 {
 		t.Fatalf("a count inside its minute must not look delayed: %+v", got)
 	}
-	if batch, _ := b.nextBatch(minute.Add(59*time.Second), false); len(batch) != 0 {
+	if batch, _ := service.nextBatch(minute.Add(59*time.Second), false); len(batch) != 0 {
 		t.Fatalf("sent %d rows before the minute ended", len(batch))
 	}
-	batch, _ := b.nextBatch(minute.Add(rejectionLogWindow), false)
+	batch, _ := service.nextBatch(minute.Add(rejectionLogWindow), false)
 	if len(batch) != 1 || batch[0].RequestCount != 3 || batch[0].CreatedAt != stamp(minute.Add(5*time.Second)) || batch[0].LastRequestAt != stamp(minute.Add(30*time.Second)) {
 		t.Fatalf("count row: %+v", batch)
 	}
@@ -375,7 +375,7 @@ func TestRejectionLogsSendIndividualRowsAtOnceAndCountsWhenTheMinuteEnds(t *test
 	if got := b.snapshot(); got.OldestPendingAt == nil || got.OldestPendingAt.Before(started) {
 		t.Fatalf("a late rejection must age from its arrival, not its minute: %+v", got)
 	}
-	if batch, _ := b.nextBatch(time.Now(), false); len(batch) != rejectionLogIndividualLimit+1 {
+	if batch, _ := service.nextBatch(time.Now(), false); len(batch) != rejectionLogIndividualLimit+1 {
 		t.Fatalf("an ended minute sent %d rows, want its individual rows and count together", len(batch))
 	}
 }
@@ -540,10 +540,10 @@ func TestRejectionCountExportsLeaveWhenTheMinuteEnds(t *testing.T) {
 		}
 		service.RecordRejection(repeat, exports.export(repeat.RequestID))
 	}
-	if batch, held := b.nextBatch(minute.Add(30*time.Second), false); len(batch) != rejectionLogIndividualLimit || len(held) != 0 {
+	if batch, held := service.nextBatch(minute.Add(30*time.Second), false); len(batch) != rejectionLogIndividualLimit || len(held) != 0 {
 		t.Fatalf("inside the minute: %d rows and %d count exports", len(batch), len(held))
 	}
-	batch, held := b.nextBatch(minute.Add(rejectionLogWindow), false)
+	batch, held := service.nextBatch(minute.Add(rejectionLogWindow), false)
 	if len(batch) != 1 || len(held) != 1 || held[0].row.RequestID != first || held[0].row.RequestCount != 2 {
 		t.Fatalf("at the minute's end: %+v and %+v", batch, held)
 	}
