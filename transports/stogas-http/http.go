@@ -486,6 +486,7 @@ func (s *Server) startSSEStream(ctx *requestContext, run *providerRun, started p
 
 	go func() {
 		defer completion()
+		defer streamProof.Close()
 		defer responseMemory.release()
 		defer func() { s.finalizeState(outcome, state, memory) }()
 		defer func() { finishProviderStream(run.cancel, pending, stream) }()
@@ -610,10 +611,10 @@ func (s *Server) startSSEStream(ctx *requestContext, run *providerRun, started p
 			}
 			if streamProof != nil {
 				if len(pendingTerminal) > 0 {
-					streamProof.WriteSentChunk(pendingTerminal)
+					streamProof.SentEvent(pendingTerminal)
 				}
 				if sendDone {
-					streamProof.WriteSentChunk(frameSSEDone())
+					streamProof.SentEvent(frameSSEDone())
 				}
 				streamProof.SetMetadata(stogas.FinalMetadata(outcome, state))
 				output, err := s.proofs.FinishStream(request, streamProof)
@@ -623,7 +624,7 @@ func (s *Server) startSSEStream(ctx *requestContext, run *providerRun, started p
 					sendClientError(proofFailure)
 					return
 				}
-				state.Export.Metadata(output.JSON)
+				state.Export.Metadata(output.Export)
 				sent, _ := reader.send(deliveryContext, frameSSEComment(proofhttp.SSECommentPrefix+string(output.JSON)))
 				if !sent {
 					return
@@ -828,10 +829,10 @@ func (s *Server) startSSEStream(ctx *requestContext, run *providerRun, started p
 				}
 				continue
 			}
-			// Hash before handing ownership to the delivery reader, which clears
+			// Read before handing ownership to the delivery reader, which clears
 			// consumed bytes. Failed delivery cannot produce normal completion.
 			if streamProof != nil {
-				streamProof.WriteSentChunk(frame)
+				streamProof.SentEvent(frame)
 			}
 			sent, deliveryCapacityExceeded := reader.send(deliveryContext, frame)
 			if !sent {

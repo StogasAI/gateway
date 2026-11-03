@@ -3,10 +3,10 @@ package stogashttp
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 
+	verifier "github.com/StogasAI/stogas/go"
 	"github.com/maximhq/bifrost/core/schemas"
 	stogas "github.com/maximhq/bifrost/transports/stogas"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
@@ -95,7 +95,7 @@ func (s *Server) writeInferenceJSON(ctx *requestContext, bifrostCtx *schemas.Bif
 			return
 		}
 		if state != nil {
-			state.Export.Metadata(output.JSON)
+			state.Export.Metadata(output.Export)
 		}
 		data, err = appendStogasReceipt(data, output.JSON)
 		defer clear(data)
@@ -157,14 +157,34 @@ func (s *Server) writeProofError(ctx *requestContext) {
 	s.writeBifrostError(ctx, responseProofFailure())
 }
 
-// receiptRequestDigest commits to the original received bytes once. Keeping the
-// digest lets the handler discard its input body before waiting on the provider.
-func (ctx *requestContext) receiptRequestDigest() (*[32]byte, error) {
+// receiptContentError explains why a request that asks for a receipt cannot
+// have one. The gateway admits every other request a receipt can hold.
+func receiptContentError(err error) (catalog.APIError, bool) {
+	refusal := catalog.APIError{StatusCode: http.StatusBadRequest, Code: "invalid_request", Type: catalog.ErrorTypeInvalidRequest}
+	switch {
+	case errors.Is(err, verifier.ErrInexactInteger):
+		refusal.Message = "Your request has an integer beyond -9007199254740991 to 9007199254740991, which a receipt cannot hold exactly. Send it as a string, or send the request without Stogas-Metadata."
+	case errors.Is(err, verifier.ErrReceiptContent):
+		refusal.Message = "Your request has a number beyond -1.7976931348623157e308 to 1.7976931348623157e308, which a receipt cannot hold. Send it as a string, or send the request without Stogas-Metadata."
+	default:
+		return catalog.APIError{}, false
+	}
+	return refusal, true
+}
+
+// receiptRequestDigest commits to the received request once, as RFC 8785 JSON without
+// its encryption keys. Keeping the digest lets the handler discard its input body before
+// waiting on the provider.
+func (ctx *requestContext) receiptRequestDigest() (*[64]byte, error) {
 	if ctx.requestDigest == nil {
 		if len(ctx.body) == 0 {
 			return nil, errors.New("receipt request content is empty")
 		}
-		ctx.requestDigest = new(sha256.Sum256(ctx.body))
+		digest, err := verifier.RequestDigest(ctx.body)
+		if err != nil {
+			return nil, err
+		}
+		ctx.requestDigest = (*[64]byte)(&digest)
 	}
 	return ctx.requestDigest, nil
 }

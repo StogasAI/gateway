@@ -5,17 +5,15 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
 
 	verifier "github.com/StogasAI/stogas/go"
-	"github.com/StogasAI/stogas/go/reference"
-	"github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proof"
+	"github.com/maximhq/bifrost/transports/stogas/confidential/proof/prooftest"
 )
 
 const testCatalogDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -59,32 +57,19 @@ func receiptService(t *testing.T) (*Service, [32]byte, []byte) {
 	return service, sha256.Sum256(document), public
 }
 
-// verifyReceipt is an independent Go check of the Rust signer's message and digests.
-func verifyReceipt(public []byte, object proof.Object, boot, request, response [32]byte) bool {
-	receipt := object.Receipt
-	encoded, err := json.Marshal(object)
-	var bag map[string]json.RawMessage
-	if err != nil || json.Unmarshal(encoded, &bag) != nil {
-		return false
+func requestDigest(t *testing.T, body []byte) *[64]byte {
+	t.Helper()
+	digest, err := verifier.RequestDigest(body)
+	if err != nil {
+		t.Fatal(err)
 	}
-	delete(bag, "receipt")
-	if encoded, err = json.Marshal(bag); err != nil {
-		return false
-	}
-	canonical, err := jsoncanonicalizer.Transform(encoded)
-	signature, signatureErr := base64.RawURLEncoding.DecodeString(receipt.Signature)
-	if err != nil || signatureErr != nil || receipt.Schema != "stogas.receipt.v1" || receipt.BootSHA256 != hex.EncodeToString(boot[:]) ||
-		receipt.RequestSHA256 != hex.EncodeToString(request[:]) || receipt.ResponseSHA256 != hex.EncodeToString(response[:]) {
-		return false
-	}
-	digest := sha256.Sum256(canonical)
-	message := bytes.Join([][]byte{[]byte("stogas.receipt.v1\x00"), request[:], response[:], digest[:]}, nil)
-	return reference.VerifySignature(public, message, signature) == nil
+	return (*[64]byte)(&digest)
 }
 
 func TestReceiptSignsContentAndFinalMetadata(t *testing.T) {
 	service, boot, public := receiptService(t)
-	input := Input{RequestDigest: new(sha256.Sum256([]byte(`{"request":true}`))), ResponseBody: []byte(`{"response":true}`), Metadata: testMetadata()}
+	request := []byte(`{ "request" : true, "encryption_keys" : {"vault":"secret"} }`)
+	input := Input{RequestDigest: requestDigest(t, request), ResponseBody: []byte(`{"response":true}`), Metadata: testMetadata()}
 	output, err := service.Build(context.Background(), input)
 	if err != nil {
 		t.Fatal(err)
@@ -93,31 +78,40 @@ func TestReceiptSignsContentAndFinalMetadata(t *testing.T) {
 	if err = json.Unmarshal(output.JSON, &decoded); err != nil || !reflect.DeepEqual(decoded, output.Object) {
 		t.Fatal("metadata encoding differs", err)
 	}
-	if !verifyReceipt(public, decoded, boot, *input.RequestDigest, sha256.Sum256(input.ResponseBody)) {
+	if !prooftest.VerifyReceipt(public, decoded, boot, []byte(`{"request":true}`), input.ResponseBody) {
 		t.Fatal("receipt does not verify")
+	}
+	// Logs and exports keep the receipt but never the salts.
+	var exported map[string]json.RawMessage
+	if err := json.Unmarshal(output.Export, &exported); err != nil || exported["salts"] != nil || exported["receipt"] == nil {
+		t.Fatalf("export holds the salts or lacks the receipt: %s", output.Export)
 	}
 	input.Metadata.BilledCostUSD = "21"
 	input.Metadata.Timing.TotalMS++
 	other, err := service.Build(context.Background(), input)
-	if err != nil || other.Object.Receipt == decoded.Receipt {
-		t.Fatal("metadata change did not change the signature", err)
+	if err != nil || other.Object.Receipt == decoded.Receipt || *other.Object.Salts == *decoded.Salts {
+		t.Fatal("a new receipt reused a signature or salts", err)
 	}
 	if bytes.Contains(output.JSON, []byte("durability")) || bytes.Contains(output.JSON, []byte("observed")) {
 		t.Fatal("unexpected receipt claim")
 	}
 }
 
-func TestStreamSignsExactChunksAndFinalMetadataOnce(t *testing.T) {
+func TestStreamSignsTheAssembledResponseAndFinalMetadataOnce(t *testing.T) {
 	service, boot, public := receiptService(t)
 	request := []byte(`{"stream":true}`)
-	requestDigest := sha256.Sum256(request)
-	stream, err := service.NewStream(context.Background(), Input{RequestDigest: &requestDigest, Metadata: testMetadata()})
+	stream, err := service.NewStream(context.Background(), Input{RequestDigest: requestDigest(t, request), Metadata: testMetadata()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	clear(request) // The stream retains only the digest of the received bytes.
-	stream.WriteSentChunk([]byte("data: one\n\n"))
-	stream.WriteSentChunk([]byte("data: two\n\n"))
+	defer stream.Close()
+	for _, event := range []string{
+		"data: {\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"one\"}}]}\n\n",
+		"data: {\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" two\"}}]}\n\n",
+		"data: [DONE]\n\n",
+	} {
+		stream.SentEvent([]byte(event))
+	}
 	final := testMetadata()
 	final.BilledCostUSD = "21"
 	stream.SetMetadata(final)
@@ -125,12 +119,23 @@ func TestStreamSignsExactChunksAndFinalMetadataOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if output.Object.BilledCostUSD != "21" || !verifyReceipt(public, output.Object, boot, requestDigest, sha256.Sum256([]byte("data: one\n\ndata: two\n\n"))) {
+	completion := []byte(`{"object":"chat.completion","choices":[{"index":0,"message":{"content":"one two"}}]}`)
+	if output.Object.BilledCostUSD != "21" || !prooftest.VerifyReceipt(public, output.Object, boot, request, completion) {
 		t.Fatal("stream signature or final metadata differs")
 	}
-	stream.WriteSentChunk([]byte("late"))
+	stream.SentEvent([]byte("late"))
 	if _, err := service.FinishStream(context.Background(), stream); err == nil {
 		t.Fatal("stream finalized twice")
+	}
+	broken, err := service.NewStream(context.Background(), Input{RequestDigest: requestDigest(t, request), Metadata: testMetadata()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer broken.Close()
+	broken.SentEvent([]byte("data: not json\n\n"))
+	broken.SentEvent([]byte("data: [DONE]\n\n"))
+	if _, err := service.FinishStream(context.Background(), broken); err == nil {
+		t.Fatal("signed a stream whose events carry no response")
 	}
 }
 
@@ -157,7 +162,7 @@ func TestReceiptRejectsWrongIdentityAndInvalidOrCancelledWork(t *testing.T) {
 	if _, err := service.NewStream(ctx, Input{}); err == nil {
 		t.Fatal("cancelled stream created")
 	}
-	if _, err := service.Build(context.Background(), Input{RequestDigest: new(sha256.Sum256([]byte("a"))), ResponseBody: []byte("b")}); err == nil {
+	if _, err := service.Build(context.Background(), Input{RequestDigest: requestDigest(t, []byte(`{}`)), ResponseBody: []byte(`{}`)}); err == nil {
 		t.Fatal("invalid metadata accepted")
 	}
 	if _, err := (&Service{}).NewStream(context.Background(), Input{}); err == nil {
@@ -171,13 +176,13 @@ func TestReceiptRejectsWrongIdentityAndInvalidOrCancelledWork(t *testing.T) {
 
 func TestReceiptLeavesRoomForMetadataAndStillBoundsTheCompleteResponseBag(t *testing.T) {
 	service, boot, public := receiptService(t)
-	input := Input{RequestDigest: new(sha256.Sum256([]byte(`{}`))), ResponseBody: []byte(`{}`), Metadata: testMetadata()}
+	input := Input{RequestDigest: requestDigest(t, []byte(`{}`)), ResponseBody: []byte(`{}`), Metadata: testMetadata()}
 	input.Metadata.Provider = map[string]any{"detail": strings.Repeat("x", 7*1024)}
 	output, err := service.Build(t.Context(), input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(output.JSON) <= 8*1024 || !verifyReceipt(public, output.Object, boot, *input.RequestDigest, sha256.Sum256(input.ResponseBody)) {
+	if len(output.JSON) <= 8*1024 || !prooftest.VerifyReceipt(public, output.Object, boot, []byte(`{}`), input.ResponseBody) {
 		t.Fatal("post-quantum signature crowded out previously supported metadata")
 	}
 	input.Metadata.Provider["detail"] = strings.Repeat("x", proof.MaxObjectBytes)

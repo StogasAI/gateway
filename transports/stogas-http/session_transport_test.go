@@ -28,6 +28,7 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/confidential/attest"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/channel"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proof"
+	"github.com/maximhq/bifrost/transports/stogas/confidential/proof/prooftest"
 )
 
 type sessionTestAttester struct {
@@ -929,7 +930,7 @@ func TestSessionHTTPBufferedMetadataReceiptsAndOuterQueryRejection(t *testing.T)
 		(&Server{proofs: service}).writeInferenceJSON(ctx, bifrostCtx, state, 429, map[string]any{"error": "limited"})
 	}, true)
 	body := []byte(`{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}]}`)
-	metadata, _ := json.Marshal(sessionRequestMetadata{Method: "POST", Path: "/v1/chat/completions", Headers: map[string]string{"Authorization": "Bearer secret", "Content-Type": "application/json", "Stogas-Metadata": "v1", "X-Request-ID": "client-chosen"}})
+	metadata, _ := json.Marshal(sessionRequestMetadata{Method: "POST", Path: "/v1/chat/completions", Headers: map[string]string{"Authorization": "Bearer secret", "Content-Type": "application/json", "Stogas-Metadata": "v2", "X-Request-ID": "client-chosen"}})
 	wire, decoder := f.request(t, metadata, body)
 	request, err := http.NewRequest(http.MethodPost, f.endpoint.URL+sessionPath+"?unbound=true", bytes.NewReader(wire))
 	if err != nil {
@@ -960,7 +961,7 @@ func TestSessionHTTPBufferedMetadataReceiptsAndOuterQueryRejection(t *testing.T)
 	if inner.Status != 429 || inner.Headers["Retry-After"] != "1" {
 		t.Fatal("lost inner status or retry guidance", inner)
 	}
-	if !verifyReceipt(publicKey, result.Receipt, boot, sha256.Sum256(body), sha256.Sum256([]byte(`{"error":"limited"}`))) {
+	if !prooftest.VerifyReceipt(publicKey, result.Receipt, boot, body, plain) {
 		t.Fatal("binary E2EE receipt does not cover original content")
 	}
 }

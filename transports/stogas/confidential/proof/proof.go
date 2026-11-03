@@ -41,26 +41,37 @@ type Metadata struct {
 }
 
 type Input struct {
-	RequestDigest *[32]byte
+	// RequestDigest is the SHA-512 of the request body's RFC 8785 form.
+	RequestDigest *[64]byte
 	ResponseBody  []byte
 	Metadata      Metadata
 }
 
-// Receipt is the gateway's signature over exact content hashes and the canonical
-// metadata bag. BootSHA256 resolves the hardware-bound signer.
+// Receipt is the gateway's signature over salted commitments to the request and the
+// response, and over the canonical metadata bag. BootSHA256 resolves the hardware-bound
+// signer.
 type Receipt struct {
-	Schema         string `json:"schema"`
-	BootSHA256     string `json:"boot_sha256"`
-	RequestSHA256  string `json:"request_sha256"`
-	ResponseSHA256 string `json:"response_sha256"`
-	Signature      string `json:"signature"`
+	Schema             string `json:"schema"`
+	BootSHA256         string `json:"boot_sha256"`
+	RequestCommitment  string `json:"request_commitment"`
+	ResponseCommitment string `json:"response_commitment"`
+	Signature          string `json:"signature"`
 }
 
-// Object is the opt-in metadata covered by the receipt, excluding Receipt itself.
+// Salts are what each commitment hides its content under. Only the caller receives them:
+// with them, a commitment proves its content; without them, it reveals nothing about it.
+// Logs and exports never hold them.
+type Salts struct {
+	Request  string `json:"request"`
+	Response string `json:"response"`
+}
+
+// Object is the opt-in metadata covered by the receipt, excluding Receipt and Salts.
 type Object struct {
 	Metadata
 	NodeID  string  `json:"node_id"`
 	Receipt Receipt `json:"receipt"`
+	Salts   *Salts  `json:"salts,omitempty"`
 }
 
 func ValidCatalogSelectionIDs(selectionIDs []string) bool {

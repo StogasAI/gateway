@@ -2,10 +2,8 @@ package proofhttp
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
-	"hash"
 
 	verifier "github.com/StogasAI/stogas/go"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proof"
@@ -21,7 +19,10 @@ type Service struct {
 
 type Input = proof.Input
 type Output struct {
-	JSON   []byte
+	// JSON is the bag that the caller receives, salts included.
+	JSON []byte
+	// Export is the bag for logs and exports, which never hold the salts.
+	Export []byte
 	Object proof.Object
 }
 
@@ -44,10 +45,14 @@ func (s *Service) Build(ctx context.Context, input Input) (*Output, error) {
 	if input.RequestDigest == nil || len(input.ResponseBody) == 0 {
 		return nil, errors.New("receipt content is empty")
 	}
-	return s.output(input.Metadata, *input.RequestDigest, sha256.Sum256(input.ResponseBody))
+	response, err := verifier.ResponseDigest(input.ResponseBody)
+	if err != nil {
+		return nil, err
+	}
+	return s.output(input.Metadata, verifier.ContentDigest(*input.RequestDigest), response)
 }
 
-func (s *Service) output(metadata proof.Metadata, request, response [32]byte) (*Output, error) {
+func (s *Service) output(metadata proof.Metadata, request, response verifier.ContentDigest) (*Output, error) {
 	if s.nodeID == "" || !proof.ValidMetadata(metadata) {
 		return nil, errors.New("receipt metadata or identity is invalid")
 	}
@@ -56,13 +61,23 @@ func (s *Service) output(metadata proof.Metadata, request, response [32]byte) (*
 	if err != nil {
 		return nil, err
 	}
-	receipt, err := s.keys.SignReceipt(s.boot, request, response, unsigned)
+	signed, err := s.keys.SignReceipt(s.boot, request, response, unsigned)
 	if err != nil {
 		return nil, err
 	}
-	if err := json.Unmarshal(receipt, &object.Receipt); err != nil {
+	var parts struct {
+		Receipt proof.Receipt `json:"receipt"`
+		Salts   proof.Salts   `json:"salts"`
+	}
+	if err := json.Unmarshal(signed, &parts); err != nil {
 		return nil, err
 	}
+	object.Receipt = parts.Receipt
+	export, err := json.Marshal(object)
+	if err != nil {
+		return nil, err
+	}
+	object.Salts = &parts.Salts
 	encoded, err := json.Marshal(object)
 	if err != nil {
 		return nil, err
@@ -70,13 +85,15 @@ func (s *Service) output(metadata proof.Metadata, request, response [32]byte) (*
 	if len(encoded) > proof.MaxObjectBytes {
 		return nil, errors.New("response metadata exceeds its encoded size limit")
 	}
-	return &Output{JSON: encoded, Object: object}, nil
+	return &Output{JSON: encoded, Export: export, Object: object}, nil
 }
 
-// Stream belongs to one response writer. It retains digests, never request bodies.
+// Stream belongs to one response writer. It retains digests and the response that the
+// stream's events carry, never request bodies. Close it when the stream ends.
 type Stream struct {
-	request  [32]byte
-	response hash.Hash
+	request  verifier.ContentDigest
+	content  *verifier.StreamContent
+	err      error
 	metadata proof.Metadata
 	finished bool
 }
@@ -91,12 +108,21 @@ func (s *Service) NewStream(ctx context.Context, input Input) (*Stream, error) {
 	if s.nodeID == "" || s.keys == nil || input.RequestDigest == nil || !proof.ValidCatalog(input.Metadata.Catalog) {
 		return nil, errors.New("receipt context is incomplete")
 	}
-	return &Stream{request: *input.RequestDigest, response: sha256.New(), metadata: input.Metadata}, nil
+	return &Stream{request: verifier.ContentDigest(*input.RequestDigest), content: verifier.NewStreamContent(), metadata: input.Metadata}, nil
 }
 
-func (s *Stream) WriteSentChunk(chunk []byte) {
-	if s != nil && !s.finished {
-		_, _ = s.response.Write(chunk)
+// SentEvent reads one complete event as the caller receives it. A block of comments, such as
+// a keepalive or the receipt, changes nothing.
+func (s *Stream) SentEvent(event []byte) {
+	if s != nil && !s.finished && s.err == nil {
+		s.err = s.content.Push(event)
+	}
+}
+
+// Close releases the response that the stream's events assembled to.
+func (s *Stream) Close() {
+	if s != nil {
+		s.content.Close()
 	}
 }
 func (s *Stream) SetMetadata(metadata proof.Metadata) {
@@ -115,7 +141,15 @@ func (s *Service) FinishStream(ctx context.Context, stream *Stream) (*Output, er
 		return nil, errors.New("receipt stream is already finished")
 	}
 	stream.finished = true
-	return s.output(stream.metadata, stream.request, [32]byte(stream.response.Sum(nil)))
+	defer stream.Close()
+	if stream.err != nil {
+		return nil, stream.err
+	}
+	response, err := stream.content.Digest()
+	if err != nil {
+		return nil, err
+	}
+	return s.output(stream.metadata, stream.request, response)
 }
 
 // Close is called after all admitted requests finish.
