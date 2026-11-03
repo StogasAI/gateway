@@ -2,10 +2,12 @@ package stogas
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 	"github.com/maximhq/bifrost/transports/stogas/chutese2ee"
 )
@@ -32,6 +34,7 @@ type providerAttemptSpan struct {
 	mu       sync.Mutex
 	response *schemas.BifrostResponse
 	err      *schemas.BifrostError
+	upstream billing.UpstreamRecord
 }
 
 func newProviderAttemptTracer(inner schemas.Tracer) *providerAttemptTracer {
@@ -63,6 +66,10 @@ func (t *providerAttemptTracer) wrapAttempt(ctx context.Context, kind schemas.Sp
 	if !ok {
 		return inner
 	}
+	// Providers put their response headers on the context, and retries share it, so a call that
+	// gets no reply would otherwise read the previous call's request ID. Core clears them only
+	// between providers.
+	bifrostCtx.ClearValue(schemas.BifrostContextKeyProviderResponseHeaders)
 	span := &providerAttemptSpan{
 		inner: inner,
 		state: state,
@@ -97,9 +104,11 @@ func (t *providerAttemptTracer) EndSpan(handle schemas.SpanHandle, status schema
 		span.mu.Lock()
 		response := span.response
 		bifrostErr := span.err
+		upstream := span.upstream
 		index := span.index
 		span.mu.Unlock()
 		span.state.finishProviderAttempt(index, t.now(), response, bifrostErr)
+		span.state.setProviderAttemptUpstream(index, upstream)
 		t.Tracer.EndSpan(span.inner, status, statusMsg)
 	})
 }
@@ -142,9 +151,11 @@ func (t *providerAttemptTracer) PopulateLLMRequestAttributes(handle schemas.Span
 func (t *providerAttemptTracer) PopulateLLMResponseAttributes(ctx *schemas.BifrostContext, handle schemas.SpanHandle, response *schemas.BifrostResponse, bifrostErr *schemas.BifrostError) {
 	span, inner := providerAttemptHandle(handle)
 	if span != nil {
+		upstream := readUpstreamRecord(ctx, span.state.Resolution, response)
 		span.mu.Lock()
 		span.response = response
 		span.err = bifrostErr
+		span.upstream = upstream
 		span.mu.Unlock()
 	}
 	t.Tracer.PopulateLLMResponseAttributes(ctx, inner, response, bifrostErr)
@@ -178,6 +189,71 @@ func (t *providerAttemptTracer) ClearDeferredSpan(traceID string) {
 	delete(t.deferred, traceID)
 	t.deferredMu.Unlock()
 	t.Tracer.ClearDeferredSpan(traceID)
+}
+
+// readUpstreamRecord reads what the provider said about the call that just ended. The response
+// headers on the context are this call's, because each call starts without them.
+func readUpstreamRecord(ctx *schemas.BifrostContext, resolution *catalog.ResolvedRequest, response *schemas.BifrostResponse) billing.UpstreamRecord {
+	if ctx == nil || resolution == nil {
+		return billing.UpstreamRecord{}
+	}
+	headers, _ := ctx.Value(schemas.BifrostContextKeyProviderResponseHeaders).(map[string]string)
+	var record billing.UpstreamRecord
+	for _, name := range providerRequestIDHeaders(resolution.Provider) {
+		if record.RequestID = upstreamHeader(headers, name); record.RequestID != "" {
+			break
+		}
+	}
+	if resolution.Provider == schemas.Azure {
+		// Azure replies can repeat the deployment's name, which the customer chose. Its header
+		// names the model with its version, where Azure reports it.
+		record.Model = upstreamHeader(headers, "x-ms-served-model")
+	} else {
+		record.Model = replyModel(response)
+	}
+	return record
+}
+
+// providerRequestIDHeaders are the response headers that name a call to its provider's support,
+// most useful first. Azure sends apim-request-id, which its support asks for, with x-request-id.
+// AWS names each call in x-amzn-requestid; Claude on AWS can also carry Anthropic's request-id.
+func providerRequestIDHeaders(provider schemas.ModelProvider) []string {
+	switch provider {
+	case schemas.OpenAI:
+		return []string{"x-request-id"}
+	case schemas.Anthropic:
+		return []string{"request-id"}
+	case schemas.Azure:
+		return []string{"apim-request-id", "x-request-id"}
+	case catalog.ProviderAWS:
+		return []string{"x-amzn-requestid", "request-id"}
+	default:
+		return []string{"x-request-id", "request-id"}
+	}
+}
+
+func upstreamHeader(headers map[string]string, name string) string {
+	for key, value := range headers {
+		if strings.EqualFold(key, name) {
+			return value
+		}
+	}
+	return ""
+}
+
+// replyModel is the model that a reply names.
+func replyModel(response *schemas.BifrostResponse) string {
+	switch {
+	case response == nil:
+		return ""
+	case response.ChatResponse != nil:
+		return response.ChatResponse.Model
+	case response.ResponsesResponse != nil:
+		return response.ResponsesResponse.Model
+	case response.ResponsesStreamResponse != nil && response.ResponsesStreamResponse.Response != nil:
+		return response.ResponsesStreamResponse.Response.Model
+	}
+	return ""
 }
 
 func providerAttemptHandle(handle schemas.SpanHandle) (*providerAttemptSpan, schemas.SpanHandle) {

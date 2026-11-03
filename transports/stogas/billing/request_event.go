@@ -12,6 +12,9 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/plugins"
 )
 
+// ProviderAttempt is one provider call. ProviderRequestID is the ID from the provider's response
+// headers, which its support asks for. ProviderResponseID is the ID of the provider's reply, which
+// the client also received. ProviderModel is the model that the provider reported serving.
 type ProviderAttempt struct {
 	CatalogChainHash         string  `json:"catalog_chain_hash"`
 	ResolvedCatalogChainHash string  `json:"resolved_catalog_chain_hash,omitempty"`
@@ -22,6 +25,8 @@ type ProviderAttempt struct {
 	LatencyMS                uint32  `json:"latency_ms"`
 	OutputObserved           bool    `json:"output_observed"`
 	ProviderRequestID        string  `json:"provider_request_id"`
+	ProviderResponseID       string  `json:"provider_response_id"`
+	ProviderModel            string  `json:"provider_model"`
 	FinishReason             string  `json:"finish_reason"`
 	Byok                     *string `json:"byok"`
 }
@@ -334,7 +339,7 @@ type EventMeter struct {
 
 type EventMeters map[string]EventMeter
 
-// The largest log the contract allows is about 65 KiB. Postgres stores its
+// The largest log the contract allows is about 66 KiB. Postgres stores its
 // text up to half as long again, within its 128 KiB check.
 const requestLogMaxEventBytes = 72 * 1024
 

@@ -12,9 +12,13 @@ import (
 )
 
 const (
-	maxProviderNameBytes      = 64
-	maxProviderRequestIDBytes = 512
-	maxProviderReasonBytes    = 128
+	maxProviderNameBytes   = 64
+	maxProviderReasonBytes = 128
+	// Providers' IDs are UUIDs or prefixed random strings of up to about 60 characters, and
+	// their model names are shorter still.
+	maxProviderRequestIDBytes  = 128
+	maxProviderResponseIDBytes = 256
+	maxProviderModelBytes      = 128
 )
 
 type EventInput struct {
@@ -54,6 +58,14 @@ type ProviderAttemptInput struct {
 	OutputObserved           bool
 	Response                 *schemas.BifrostResponse
 	Error                    *schemas.BifrostError
+	Upstream                 UpstreamRecord
+}
+
+// UpstreamRecord is what a provider said about one call, as far as it says it: the request ID
+// that its support uses to find the call and the model that served it.
+type UpstreamRecord struct {
+	RequestID string
+	Model     string
 }
 
 func NewRequestEvent(input EventInput) (RequestEvent, error) {
@@ -216,7 +228,9 @@ func requestProviderAttempts(input EventInput, startedAt time.Time, totalTimeMS 
 			StartMS:                  startMS,
 			LatencyMS:                min(uint32Duration(observed.CompletedAt.Sub(observed.StartedAt)), totalTimeMS-startMS),
 			OutputObserved:           observed.OutputObserved,
-			ProviderRequestID:        upstreamRequestID(observed.Response),
+			ProviderRequestID:        boundedTelemetryValue(observed.Upstream.RequestID, maxProviderRequestIDBytes),
+			ProviderResponseID:       providerResponseID(observed.Response),
+			ProviderModel:            boundedTelemetryValue(observed.Upstream.Model, maxProviderModelBytes),
 			FinishReason:             finishReason(observed.Response),
 			Byok:                     loggedCredentialID(observed.Byok),
 		}
@@ -468,21 +482,21 @@ func finishReason(resp *schemas.BifrostResponse) string {
 	return ""
 }
 
-func upstreamRequestID(resp *schemas.BifrostResponse) string {
+func providerResponseID(resp *schemas.BifrostResponse) string {
 	if resp == nil {
 		return ""
 	}
 	if resp.ChatResponse != nil {
-		return boundedTelemetryValue(resp.ChatResponse.ID, maxProviderRequestIDBytes)
+		return boundedTelemetryValue(resp.ChatResponse.ID, maxProviderResponseIDBytes)
 	}
 	if resp.TextCompletionResponse != nil {
-		return boundedTelemetryValue(resp.TextCompletionResponse.ID, maxProviderRequestIDBytes)
+		return boundedTelemetryValue(resp.TextCompletionResponse.ID, maxProviderResponseIDBytes)
 	}
 	if resp.ResponsesResponse != nil && resp.ResponsesResponse.ID != nil {
-		return boundedTelemetryValue(*resp.ResponsesResponse.ID, maxProviderRequestIDBytes)
+		return boundedTelemetryValue(*resp.ResponsesResponse.ID, maxProviderResponseIDBytes)
 	}
 	if resp.ResponsesStreamResponse != nil && resp.ResponsesStreamResponse.Response != nil && resp.ResponsesStreamResponse.Response.ID != nil {
-		return boundedTelemetryValue(*resp.ResponsesStreamResponse.Response.ID, maxProviderRequestIDBytes)
+		return boundedTelemetryValue(*resp.ResponsesStreamResponse.Response.ID, maxProviderResponseIDBytes)
 	}
 	return ""
 }
