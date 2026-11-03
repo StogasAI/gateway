@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -15,6 +16,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/transports/stogas/accesstoken"
+	"github.com/maximhq/bifrost/transports/stogas/azureauth"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 	"github.com/maximhq/bifrost/transports/stogas/customerkey"
@@ -25,7 +28,8 @@ import (
 // The check makes the free read that Control's check of a stored credential makes, and reports
 // and records the result in the same words, so the dashboard shows both kinds alike. A 2xx answer
 // accepts the credential, a 4xx answer other than 408, 409, 425 and 429 rejects it, and anything
-// else leaves it unverified.
+// else leaves it unverified. An Azure credential's check signs in to Entra anew and discovers the
+// account's targets, as Control's check of a stored one does.
 const (
 	byokCheckTimeout       = 8 * time.Second
 	byokCheckLimit         = 4
@@ -38,14 +42,21 @@ var byokProviderNames = map[string]string{
 }
 
 // ByokCheckResult is a recorded check. CheckError is nil when the provider accepted the
-// credential, and otherwise the message that the dashboard shows for it.
+// credential, and otherwise the message that the dashboard shows for it. AzureTargets counts an
+// Azure credential's model matches after the check, as the dashboard does, and is nil for other
+// providers.
 type ByokCheckResult struct {
-	CheckedAt  time.Time `json:"checkedAt"`
-	CheckError *string   `json:"checkError"`
+	CheckedAt    time.Time                  `json:"checkedAt"`
+	CheckError   *string                    `json:"checkError"`
+	AzureTargets *billing.AzureTargetCounts `json:"azureTargets"`
 }
 
 type googleSignIn interface {
 	SignIn(context.Context, googleauth.Credential) error
+}
+
+type azureSignIn interface {
+	SignIn(context.Context, azureauth.Credential) (string, error)
 }
 
 type byokChecker struct {
@@ -56,19 +67,23 @@ type byokChecker struct {
 	// reaches AWS, whose endpoints offer TLS 1.3 with classical key exchange.
 	client *http.Client
 	aws    *http.Client
+	// arm reads Azure Resource Manager as the gateway's checks of Azure deployments do.
+	arm    *http.Client
 	google googleSignIn
+	azure  azureSignIn
 	now    func() time.Time
 	slots  chan struct{}
 }
 
-// newByokChecker reaches each provider as requests do. The runtime sets google once its token
-// cache starts.
+// newByokChecker reaches each provider as requests do. The runtime sets google and azure once
+// their token caches start.
 func newByokChecker(config Config) (*byokChecker, error) {
 	chutesAPIBaseURL, err := chutesE2EEAPIBaseURL(config.ChutesBaseURL)
 	if err != nil {
 		return nil, err
 	}
 	production := confidentialProduction(config)
+	armClient, _ := accesstoken.NewClient(false)
 	modern := &tls.Config{MinVersion: tls.VersionTLS12}
 	awsTLS := &tls.Config{MinVersion: tls.VersionTLS12}
 	if production {
@@ -81,6 +96,7 @@ func newByokChecker(config Config) (*byokChecker, error) {
 		chutesAPIBaseURL: chutesAPIBaseURL,
 		client:           byokCheckClient(modern),
 		aws:              byokCheckClient(awsTLS),
+		arm:              armClient,
 		now:              time.Now,
 		slots:            make(chan struct{}, byokCheckLimit),
 	}, nil
@@ -115,7 +131,7 @@ func (r *Runtime) CheckByok(ctx context.Context, grant *billing.ByokCheckGrant, 
 
 type byokCheckStore interface {
 	ByokCheckTarget(context.Context, *billing.ByokCheckGrant) (*billing.ByokCheckTarget, error)
-	RecordByokCheck(context.Context, *billing.ByokCheckTarget, string) (time.Time, error)
+	RecordByokCheck(context.Context, *billing.ByokCheckTarget, string, *billing.AzureDiscoveryResult) (*billing.ByokCheckRecord, error)
 }
 
 func checkByok(ctx context.Context, store byokCheckStore, checker *byokChecker, grant *billing.ByokCheckGrant, keys customerkey.Keys) (*ByokCheckResult, error) {
@@ -132,13 +148,19 @@ func checkByok(ctx context.Context, store byokCheckStore, checker *byokChecker, 
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
-	failure := checker.check(ctx, target.Provider, secret, target.Target)
+	var failure string
+	var discovery *billing.AzureDiscoveryResult
+	if target.Provider == "azure" {
+		failure, discovery = checker.discover(ctx, secret, target.AzureAccountID, target.StartedAt)
+	} else {
+		failure = checker.check(ctx, target.Provider, secret, target.Target)
+	}
 	<-checker.slots
-	checkedAt, err := store.RecordByokCheck(ctx, target, failure)
+	record, err := store.RecordByokCheck(ctx, target, failure, discovery)
 	if err != nil {
 		return nil, err
 	}
-	result := &ByokCheckResult{CheckedAt: checkedAt}
+	result := &ByokCheckResult{CheckedAt: record.CheckedAt, AzureTargets: record.AzureTargets}
 	if failure != "" {
 		result.CheckError = &failure
 	}
@@ -184,6 +206,48 @@ func (c *byokChecker) check(ctx context.Context, provider, secret string, regist
 		return c.checkGoogle(ctx, secret, registered)
 	}
 	return byokUnavailable(provider)
+}
+
+// discover signs in to Entra anew with the application in secret, bypassing the token cache, so
+// an application whose secret expired or was deleted fails now. It then discovers the targets of
+// the account from startedAt, the database's time, as Control's check of a stored credential does.
+func (c *byokChecker) discover(ctx context.Context, secret, accountID string, startedAt time.Time) (string, *billing.AzureDiscoveryResult) {
+	app, err := parseAzureByokCredential(secret)
+	if err != nil {
+		return invalidByokSecret("azure"), nil
+	}
+	if c.azure == nil {
+		return azureAppUnavailable, nil
+	}
+	// The sign-in and the discovery share the discovery's bound, so the member's wait has one.
+	ctx, cancel := context.WithTimeout(ctx, azureDiscoveryTimeout)
+	defer cancel()
+	token, err := c.azure.SignIn(ctx, azureauth.Credential{TenantID: app.TenantID, ClientID: app.ClientID, Secret: app.ClientSecret, Scope: armScope})
+	if err != nil {
+		if errors.Is(err, azureauth.ErrCredential) {
+			return azureAppRejected, nil
+		}
+		return azureAppUnavailable, nil
+	}
+	return azureDiscoveryOutcome(discoverAzure(ctx, c.arm, token, accountID, startedAt))
+}
+
+// azureDiscoveryOutcome is a discovery as a check records it: the message, empty when nothing is
+// wrong, and what the discovery found, nil when it read no deployments. A problem that leaves the
+// targets in place, such as a missing data role, comes with them.
+func azureDiscoveryOutcome(found *azureDiscovery, err error) (string, *billing.AzureDiscoveryResult) {
+	if err != nil {
+		return azureDiscoveryMessage(err), nil
+	}
+	bindings := found.Bindings
+	if bindings == nil {
+		bindings = []azureDiscoveredBinding{}
+	}
+	encoded, err := json.Marshal(bindings)
+	if err != nil {
+		return azureDiscoveryUnavailable, nil
+	}
+	return found.CheckError, &billing.AzureDiscoveryResult{Bindings: encoded, Deployments: found.Deployments}
 }
 
 // checkAWS makes the cheapest request that each AWS credential can: an access key asks STS who it
@@ -289,10 +353,13 @@ func (c *byokChecker) read(provider string, client *http.Client, request *http.R
 }
 
 // byokCredentialName names what a provider's secret is: AWS and Google Cloud take a credential
-// document rather than an API key.
+// document rather than an API key, and Azure an application's tenant, client ID and secret.
 func byokCredentialName(provider string) string {
-	if provider == "aws" || provider == "google-cloud" {
+	switch provider {
+	case "aws", "google-cloud":
 		return "credential"
+	case "azure":
+		return "application"
 	}
 	return "API key"
 }

@@ -21,8 +21,10 @@ import (
 
 // A gateway confirms an Azure credential's targets against the deployments that its account
 // lists when a request uses one, so a deployment that Azure upgraded, deleted or failed stops
-// serving within minutes instead of at Control's daily check. Confirmations are shared through
-// PostgreSQL, so one gateway reads Azure for the fleet.
+// serving within minutes instead of at the daily discovery. Confirmations are shared through
+// PostgreSQL, so one gateway reads Azure for the fleet. Control discovers a stored credential's
+// targets; only gateways can open a customer-encrypted one, so a request that finds its discovery
+// due starts one in the background, under the same claim.
 const (
 	// A younger confirmation needs no check, and an older one starts a check in the background.
 	azureCheckFresh = 10 * time.Minute
@@ -63,6 +65,8 @@ type azureCheckStore interface {
 	ClaimAzureCheck(ctx context.Context, byokID string, staleAfter time.Duration) (billing.AzureClaim, error)
 	RecordAzureCheck(ctx context.Context, byokID string, startedAt time.Time, deployments []billing.AzureDeployment) (billing.AzureCheckResult, error)
 	StopAzureTarget(ctx context.Context, byokID, bindingID, servedModel string) (bool, error)
+	ClaimAzureDiscovery(ctx context.Context, byokID string) (bool, time.Time, error)
+	RecordAzureDiscovery(ctx context.Context, byokID string, startedAt time.Time, envelope string, failure string, discovery *billing.AzureDiscoveryResult) (billing.AzureCheckResult, error)
 }
 
 type azureTargetChecker interface {
@@ -70,13 +74,17 @@ type azureTargetChecker interface {
 }
 
 // azureCheckTarget is the Azure target that a request holds. VerifiedAt is the credential's last
-// confirmation when the hold ran, zero when there was none. Unreported marks a request whose reply
-// will not name the model version that served it.
+// confirmation when the hold ran, zero when there was none. DiscoverAt is when a customer-encrypted
+// credential's next discovery is due, zero for a stored credential, and Envelope that credential's
+// envelope, so a discovery records only while the credential holds the application that it used.
+// Unreported marks a request whose reply will not name the model version that served it.
 type azureCheckTarget struct {
 	ByokID     string
 	BindingID  string
 	AccountID  string
 	VerifiedAt time.Time
+	DiscoverAt time.Time
+	Envelope   string
 	Unreported bool
 	Credential azureauth.Credential
 }
@@ -143,6 +151,7 @@ func (c *AzureChecks) Confirm(ctx context.Context, target azureCheckTarget) erro
 	if !azureAccountIDPattern.MatchString(target.AccountID) || target.ByokID == "" || target.BindingID == "" {
 		return billing.ErrByok
 	}
+	c.discover(target)
 	fresh, stale, key := target.windows()
 	age := c.age(target.VerifiedAt)
 	if age < fresh {
@@ -277,6 +286,84 @@ func (c *AzureChecks) background(target azureCheckTarget, key string, fresh time
 	})
 }
 
+// discover discovers a customer-encrypted credential's targets in the background once they are
+// due, unless this gateway tried recently. The request goes on with the targets that it holds: a
+// discovery adds and returns targets for later requests, and confirms them as a check does.
+func (c *AzureChecks) discover(target azureCheckTarget) {
+	key := target.ByokID + "/discover"
+	if target.DiscoverAt.IsZero() || target.Envelope == "" || c.now().Before(target.DiscoverAt) || !c.due(key) {
+		return
+	}
+	go c.flights.Do(key, func() (any, error) {
+		// The claim, the wait for a slot, the sign-in and the reads end within the discovery's bound,
+		// and the record has its own, so a discovery records before its 30-second claim lapses.
+		ctx, cancel := context.WithTimeout(c.ctx, azureDiscoveryTimeout)
+		defer cancel()
+		claimed, startedAt, err := c.store.ClaimAzureDiscovery(ctx, target.ByokID)
+		if err != nil {
+			c.fail(key)
+			return nil, nil
+		}
+		if !claimed {
+			// Another gateway holds the claim for at most 30 seconds, or recorded since the hold.
+			c.pause(key, azureCheckRetry)
+			return nil, nil
+		}
+		select {
+		case c.slots <- struct{}{}:
+		case <-ctx.Done():
+			// This gateway was too busy, which says nothing about the credential: the claim lapses,
+			// and a later request tries again.
+			c.fail(key)
+			writeOperationalLog(operationalLogEvent{Event: "azure_discovery_failed", ReasonCode: "busy", Severity: "warning"})
+			return nil, nil
+		}
+		failure, discovery, reason := c.discoverTargets(ctx, target, startedAt)
+		<-c.slots
+		result, err := c.store.RecordAzureDiscovery(c.ctx, target.ByokID, startedAt, target.Envelope, failure, discovery)
+		switch {
+		case err != nil:
+			c.fail(key)
+			reason = "record_failed"
+		case result.Changed:
+			// The credential holds another application now, whose holds bring their own due time.
+			reason = "credential_changed"
+		default:
+			c.pause(key, azureCheckFresh)
+		}
+		if reason != "" {
+			writeOperationalLog(operationalLogEvent{Event: "azure_discovery_failed", ReasonCode: reason, Severity: "warning"})
+		}
+		return nil, nil
+	})
+}
+
+// discoverTargets discovers the target's account from startedAt, the database's time, with a
+// cached token: requests sign in with the same one. It returns the message to record, empty when
+// nothing is wrong, what the discovery found, nil when it read no deployments, and a code-owned
+// reason when the discovery failed.
+func (c *AzureChecks) discoverTargets(ctx context.Context, target azureCheckTarget, startedAt time.Time) (string, *billing.AzureDiscoveryResult, string) {
+	credential := target.Credential
+	credential.Scope = armScope
+	token, err := c.tokens.Token(ctx, credential)
+	if err != nil {
+		if errors.Is(err, azureauth.ErrCredential) {
+			return azureAppRejected, nil, "sign_in_rejected"
+		}
+		return azureAppUnavailable, nil, "sign_in_unavailable"
+	}
+	found, err := discoverAzure(ctx, c.client, token, target.AccountID, startedAt)
+	failure, discovery := azureDiscoveryOutcome(found, err)
+	var problem *azureDiscoveryError
+	switch {
+	case errors.As(err, &problem) && problem.rejected:
+		return failure, discovery, "account_rejected"
+	case err != nil:
+		return failure, discovery, "discovery_unavailable"
+	}
+	return failure, discovery, ""
+}
+
 // Stop stops a target in the background after its reply named served, another model version,
 // before the request moves on to its next pair.
 func (c *AzureChecks) Stop(target azureCheckTarget, served string) {
@@ -375,7 +462,7 @@ func (c *AzureChecks) check(ctx context.Context, target azureCheckTarget, claim 
 	return azureCheckOutcome{unavailable: claim.Unavailable}
 }
 
-// deployments lists the account's deployments as Control's discovery reports them. On failure
+// deployments lists the account's deployments as discoveries report them. On failure
 // it returns a code-owned reason.
 func (c *AzureChecks) deployments(ctx context.Context, target azureCheckTarget) ([]billing.AzureDeployment, string, error) {
 	credential := target.Credential
@@ -490,26 +577,37 @@ func armDeployment(value json.RawMessage, prefix string, account string) (billin
 		(name != strings.ToLower(leaf) && name != account+"/"+strings.ToLower(leaf)) {
 		return billing.AzureDeployment{}, false
 	}
-	return billing.AzureDeployment{
-		ID:             prefix + strings.ToLower(leaf),
-		ModelFormat:    jsonText(value, "properties", "model", "format"),
-		ModelName:      jsonText(value, "properties", "model", "name"),
-		ModelVersion:   jsonText(value, "properties", "model", "version"),
-		SkuName:        jsonText(value, "sku", "name"),
-		State:          jsonText(value, "properties", "provisioningState"),
-		VersionUpgrade: jsonText(value, "properties", "versionUpgradeOption"),
-	}, true
+	return armDeploymentFact(value, prefix+strings.ToLower(leaf)), true
 }
 
-// jsonText reads the string at path, trimmed, or "" when there is none.
-func jsonText(value json.RawMessage, path ...string) string {
-	for _, key := range path {
-		var object map[string]json.RawMessage
-		if json.Unmarshal(value, &object) != nil {
-			return ""
-		}
-		value = object[key]
+// armDeploymentFact reads a listed deployment as gateways' checks and discoveries report it: its
+// model, SKU, provisioning state and version upgrade option, each trimmed, or "" where the
+// deployment has no such string. Each object is decoded once, which keeps a listing at the bound on
+// targets quick to read.
+func armDeploymentFact(value json.RawMessage, id string) billing.AzureDeployment {
+	deployment, _ := armObject(value)
+	properties, _ := armObject(deployment["properties"])
+	model, _ := armObject(properties["model"])
+	sku, _ := armObject(deployment["sku"])
+	return armDeploymentFactOf(id, properties, model, sku)
+}
+
+// armDeploymentFactOf reads the fact from a deployment's decoded objects, each nil when the
+// deployment has no such object.
+func armDeploymentFactOf(id string, properties, model, sku map[string]json.RawMessage) billing.AzureDeployment {
+	return billing.AzureDeployment{
+		ID:             id,
+		ModelFormat:    jsonText(model["format"]),
+		ModelName:      jsonText(model["name"]),
+		ModelVersion:   jsonText(model["version"]),
+		SkuName:        jsonText(sku["name"]),
+		State:          jsonText(properties["provisioningState"]),
+		VersionUpgrade: jsonText(properties["versionUpgradeOption"]),
 	}
+}
+
+// jsonText reads a string, trimmed, or "" when value is not one.
+func jsonText(value json.RawMessage) string {
 	var text string
 	if json.Unmarshal(value, &text) != nil {
 		return ""

@@ -1,0 +1,9 @@
+{
+	"name": "account-other-kind",
+	"description": "Discovery fails closed when ARM answers {\"status\":200,\"body\":{\"id\":\"/subscriptions/00000000-0000-4000-8000-000000000003/resourceGroups/stogas/providers/Microsoft.CognitiveServices/accounts/stogas-east\",\"kind\":\"SpeechServices\",\"location\":\"eastus\",\"name\":\"stogas-east\",\"properties\":{}}} for stogas-east",
+	"accountId": "/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/stogas-east",
+	"responses": [
+		{"path":"/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/stogas-east","query":"api-version=2025-06-01","status":200,"body":{"id":"/subscriptions/00000000-0000-4000-8000-000000000003/resourceGroups/stogas/providers/Microsoft.CognitiveServices/accounts/stogas-east","kind":"SpeechServices","location":"eastus","name":"stogas-east","properties":{}}}
+	],
+	"outcome": {"error":{"message":"This resource is not a Foundry or Azure OpenAI account","status":400}}
+}

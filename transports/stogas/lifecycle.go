@@ -235,6 +235,8 @@ func applyUpstreamCredentials(
 					BindingID:  authorization.AzureBinding.ID,
 					AccountID:  authorization.AzureAccountID,
 					VerifiedAt: authorization.AzureVerifiedAt,
+					DiscoverAt: authorization.AzureDiscoverAt,
+					Envelope:   authorization.UpstreamByokEnvelope,
 					Unreported: !azureRepliesNameVersion(state.Resolution.Route, state.Resolution.Deployment),
 					Credential: azureauth.Credential{
 						TenantID: azure.TenantID.GetValue(),

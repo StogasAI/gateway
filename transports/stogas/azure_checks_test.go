@@ -34,6 +34,21 @@ type fakeAzureCheckStore struct {
 	stopped []string
 	// onClaim runs on each claim, such as to move the test clock.
 	onClaim func()
+
+	// Discoveries: whether each claim succeeds, from when, and what the records got and return.
+	discoverClaimed  bool
+	discoverStarted  time.Time
+	discoverClaims   int
+	discoverErr      error
+	discoveries      []recordedAzureDiscovery
+	discoveryOutcome billing.AzureCheckResult
+	discoveryErr     error
+}
+
+type recordedAzureDiscovery struct {
+	byokID, envelope, failure string
+	startedAt                 time.Time
+	discovery                 *billing.AzureDiscoveryResult
 }
 
 func (s *fakeAzureCheckStore) ClaimAzureCheck(_ context.Context, byokID string, staleAfter time.Duration) (billing.AzureClaim, error) {
@@ -70,6 +85,29 @@ func (s *fakeAzureCheckStore) StopAzureTarget(_ context.Context, byokID, binding
 	}
 	s.stopped = append(s.stopped, servedModel)
 	return len(s.stopped) == 1, nil
+}
+
+func (s *fakeAzureCheckStore) ClaimAzureDiscovery(_ context.Context, byokID string) (bool, time.Time, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if byokID != "byok-1" {
+		return false, time.Time{}, fmt.Errorf("unexpected credential %s", byokID)
+	}
+	s.discoverClaims++
+	return s.discoverClaimed, s.discoverStarted, s.discoverErr
+}
+
+func (s *fakeAzureCheckStore) RecordAzureDiscovery(_ context.Context, byokID string, startedAt time.Time, envelope, failure string, discovery *billing.AzureDiscoveryResult) (billing.AzureCheckResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.discoveries = append(s.discoveries, recordedAzureDiscovery{byokID, envelope, failure, startedAt, discovery})
+	return s.discoveryOutcome, s.discoveryErr
+}
+
+func (s *fakeAzureCheckStore) discoveryCounts() (int, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.discoverClaims, len(s.discoveries)
 }
 
 func (s *fakeAzureCheckStore) counts() (int, int) {
@@ -655,5 +693,168 @@ func TestTrimJSMatchesJavaScript(t *testing.T) {
 	// JavaScript trims U+FEFF but not U+0085 or U+200B.
 	if got := trimJS("\ufeff\u00a0 \u2028gpt\u0085\u200b\u3000\t"); got != "gpt\u0085\u200b" {
 		t.Fatalf("trimJS() = %q", got)
+	}
+}
+
+// newTestAzureDiscoveries is a checker whose Azure Resource Manager answers as the named discovery
+// case does, and whose sign-ins fail with signInErr.
+func newTestAzureDiscoveries(t *testing.T, store *fakeAzureCheckStore, name string, signInErr error) (*AzureChecks, *azureDiscoveryARM, *testClock, azureDiscoveryCase) {
+	t.Helper()
+	entry := azureDiscoveryCaseNamed(t, name)
+	arm, client := serveAzureDiscoveryCase(t, entry)
+	clock := &testClock{now: time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)}
+	checks := NewAzureChecks(context.Background(), store, azureTokenFunc(func(_ context.Context, credential azureauth.Credential) (string, error) {
+		if credential.Scope != armScope || credential.Secret != "azure-client-secret" {
+			t.Errorf("unexpected token request for scope %q", credential.Scope)
+		}
+		return "arm-token", signInErr
+	}))
+	checks.client = client
+	checks.now = clock.Now
+	return checks, arm, clock, entry
+}
+
+// testDiscoveryTarget is a request's target on a customer-encrypted credential whose discovery is
+// due, with a fresh confirmation, so only the discovery reads Azure.
+func testDiscoveryTarget(clock *testClock, accountID string) azureCheckTarget {
+	target := testCheckTarget(clock.Ago(time.Minute))
+	target.AccountID = accountID
+	target.DiscoverAt = clock.Ago(time.Second)
+	target.Envelope = `{"v":1}`
+	return target
+}
+
+func TestAzureChecksDiscoverAnEncryptedCredentialOnceWhenDue(t *testing.T) {
+	started := time.Date(2026, 11, 3, 11, 59, 59, 0, time.UTC)
+	store := &fakeAzureCheckStore{discoverClaimed: true, discoverStarted: started}
+	checks, arm, clock, entry := newTestAzureDiscoveries(t, store, "named-deployments", nil)
+	target := testDiscoveryTarget(clock, entry.AccountID)
+	for range 5 {
+		if err := checks.Confirm(context.Background(), target); err != nil {
+			t.Fatal(err)
+		}
+	}
+	waitFor(t, "the discovery", func() bool { _, recorded := store.discoveryCounts(); return recorded == 1 })
+	claims, _ := store.discoveryCounts()
+	answered, unexpected := arm.counts()
+	if claims != 1 || answered != len(entry.Responses) || len(unexpected) > 0 {
+		t.Fatalf("discoveries: claims=%d reads=%d unexpected=%v", claims, answered, unexpected)
+	}
+	recorded := store.discoveries[0]
+	if recorded.byokID != "byok-1" || !recorded.startedAt.Equal(started) || recorded.envelope != target.Envelope ||
+		recorded.failure != "" || recorded.discovery == nil {
+		t.Fatalf("recorded %+v", recorded)
+	}
+	var bindings []azureDiscoveredBinding
+	if err := json.Unmarshal(recorded.discovery.Bindings, &bindings); err != nil {
+		t.Fatal(err)
+	}
+	assertSameJSON(t, "bindings", bindings, entry.Outcome.Result.Bindings)
+	assertSameJSON(t, "deployments", recorded.discovery.Deployments, entry.Outcome.Result.Deployments)
+	// A fresh confirmation needs no check of the deployments.
+	if claimed, _ := store.counts(); claimed != 0 {
+		t.Fatalf("a fresh confirmation claimed %d checks", claimed)
+	}
+	// Holds made before the record still show the discovery due; this gateway waits.
+	if checks.due("byok-1/discover") {
+		t.Fatal("a recorded discovery left the credential due here")
+	}
+}
+
+func TestAzureChecksDiscoverOnlyDueEncryptedCredentials(t *testing.T) {
+	for name, change := range map[string]func(*azureCheckTarget, *testClock){
+		"stored":      func(target *azureCheckTarget, _ *testClock) { target.DiscoverAt = time.Time{} },
+		"not yet due": func(target *azureCheckTarget, clock *testClock) { target.DiscoverAt = clock.Ago(-time.Minute) },
+		"no envelope": func(target *azureCheckTarget, _ *testClock) { target.Envelope = "" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			store := &fakeAzureCheckStore{discoverClaimed: true}
+			checks, _, clock, entry := newTestAzureDiscoveries(t, store, "named-deployments", nil)
+			target := testDiscoveryTarget(clock, entry.AccountID)
+			change(&target, clock)
+			if err := checks.Confirm(context.Background(), target); err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(50 * time.Millisecond)
+			if claims, recorded := store.discoveryCounts(); claims != 0 || recorded != 0 {
+				t.Fatalf("claims=%d records=%d", claims, recorded)
+			}
+		})
+	}
+}
+
+func TestAzureChecksLeaveADiscoveryThatAnotherGatewayClaimed(t *testing.T) {
+	store := &fakeAzureCheckStore{discoverClaimed: false}
+	checks, arm, clock, entry := newTestAzureDiscoveries(t, store, "named-deployments", nil)
+	if err := checks.Confirm(context.Background(), testDiscoveryTarget(clock, entry.AccountID)); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the claim", func() bool { claims, _ := store.discoveryCounts(); return claims == 1 })
+	waitFor(t, "the pause", func() bool {
+		checks.mu.Lock()
+		defer checks.mu.Unlock()
+		return checks.marks["byok-1/discover"].until.Equal(clock.Now().Add(azureCheckRetry))
+	})
+	if _, recorded := store.discoveryCounts(); recorded != 0 {
+		t.Fatal("an unclaimed discovery recorded")
+	}
+	if answered, _ := arm.counts(); answered != 0 {
+		t.Fatalf("an unclaimed discovery made %d Azure reads", answered)
+	}
+}
+
+func TestAzureChecksRecordDiscoveryFailuresForTheDashboard(t *testing.T) {
+	for _, test := range []struct {
+		name, caseName string
+		signInErr      error
+		want           string
+	}{
+		{"application rejected", "named-deployments", azureauth.ErrCredential, azureAppRejected},
+		{"sign-in unavailable", "named-deployments", azureauth.ErrUnavailable, azureAppUnavailable},
+		{"account denied", "account-denied", nil, azureAccountDenied},
+		{"no data role", "no-data-role", nil, azureRoleMissing},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := &fakeAzureCheckStore{discoverClaimed: true, discoverStarted: time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)}
+			checks, _, clock, entry := newTestAzureDiscoveries(t, store, test.caseName, test.signInErr)
+			if err := checks.Confirm(context.Background(), testDiscoveryTarget(clock, entry.AccountID)); err != nil {
+				t.Fatal(err)
+			}
+			waitFor(t, "the record", func() bool { _, recorded := store.discoveryCounts(); return recorded == 1 })
+			recorded := store.discoveries[0]
+			// A missing role keeps the targets that the discovery found; other failures keep the last.
+			if recorded.failure != test.want || (recorded.discovery != nil) != (test.want == azureRoleMissing) {
+				t.Fatalf("recorded %q with %+v", recorded.failure, recorded.discovery)
+			}
+		})
+	}
+}
+
+func TestAzureChecksRetryDiscoveriesThatRecordedNothing(t *testing.T) {
+	store := &fakeAzureCheckStore{discoverClaimed: true, discoveryErr: billing.ErrGatewayUnavailable}
+	checks, _, clock, entry := newTestAzureDiscoveries(t, store, "named-deployments", nil)
+	if err := checks.Confirm(context.Background(), testDiscoveryTarget(clock, entry.AccountID)); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the failed record", func() bool { return checks.failing("byok-1/discover") })
+
+	// A gateway too busy to discover records nothing: the claim lapses for a later request.
+	busy := &fakeAzureCheckStore{discoverClaimed: true}
+	checks, arm, clock, entry := newTestAzureDiscoveries(t, busy, "named-deployments", nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	checks.ctx = ctx
+	for range azureCheckLimit {
+		checks.slots <- struct{}{}
+	}
+	if err := checks.Confirm(context.Background(), testDiscoveryTarget(clock, entry.AccountID)); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the busy discovery", func() bool { return checks.failing("byok-1/discover") })
+	if _, recorded := busy.discoveryCounts(); recorded != 0 {
+		t.Fatal("a busy gateway recorded a discovery")
+	}
+	if answered, _ := arm.counts(); answered != 0 {
+		t.Fatal("a busy gateway read Azure")
 	}
 }

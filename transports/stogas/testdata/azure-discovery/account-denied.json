@@ -1,0 +1,9 @@
+{
+	"name": "account-denied",
+	"description": "Discovery fails closed when ARM answers {\"status\":403} for stogas-east",
+	"accountId": "/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/stogas-east",
+	"responses": [
+		{"path":"/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/stogas-east","query":"api-version=2025-06-01","status":403}
+	],
+	"outcome": {"error":{"message":"This application cannot read the account. Check the account ID and give the application the Foundry User role on the account.","status":400}}
+}

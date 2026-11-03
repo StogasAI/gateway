@@ -1,0 +1,9 @@
+{
+	"name": "account-outage",
+	"description": "Discovery fails closed when ARM answers {\"status\":500} for stogas-east",
+	"accountId": "/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/stogas-east",
+	"responses": [
+		{"path":"/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/stogas-east","query":"api-version=2025-06-01","status":500}
+	],
+	"outcome": {"error":{"message":"Could not inspect Azure resources. Try again.","status":503}}
+}

@@ -348,7 +348,7 @@ func validateCredentials(claims *APIKeyClaims, credentials map[string][]Credenti
 					return errors.New("credential scope differs")
 				}
 				if credential.Kind == "stored" && (credential.EncryptedSecret == "" || credential.EncryptionKeyID != "") ||
-					credential.Kind == "encrypted" && (provider == "azure" || credential.EncryptedSecret == "" || !validConfigDigest(credential.EncryptionKeyID)) {
+					credential.Kind == "encrypted" && (credential.EncryptedSecret == "" || !validConfigDigest(credential.EncryptionKeyID)) {
 					return errors.New("invalid credential material")
 				}
 				if credential.Policy.Scope != policy.CredentialScope || credential.Policy.ID != credential.ID || credential.Policy.Revision < 1 || len(credential.Policy.Source) == 0 {

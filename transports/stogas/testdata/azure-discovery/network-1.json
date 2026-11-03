@@ -1,0 +1,9 @@
+{
+	"name": "network-1",
+	"description": "An account serves only when all networks can reach it: {\"publicNetworkAccess\":\"Disabled\"}",
+	"accountId": "/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/stogas-east",
+	"responses": [
+		{"path":"/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/stogas-east","query":"api-version=2025-06-01","status":200,"body":{"id":"/subscriptions/00000000-0000-4000-8000-000000000003/resourceGroups/stogas/providers/Microsoft.CognitiveServices/accounts/stogas-east","kind":"AIServices","location":"eastus","name":"stogas-east","properties":{"publicNetworkAccess":"Disabled","customSubDomainName":"stogas-east","endpoints":{"OpenAI Language Model Instance API":"https://stogas-east.openai.azure.com/"}}}}
+	],
+	"outcome": {"error":{"message":"This account admits only selected networks or private endpoints. Allow access from all networks to use it.","status":400}}
+}
