@@ -30,7 +30,7 @@ var (
 	ErrByokRequired        = &RequestError{"byok_required", "A BYOK key is required for this provider", 400}
 	ErrByokTarget          = &RequestError{"byok_target_unavailable", "The assigned BYOK credential does not provide this deployment", 400}
 	ErrByokTargetChanged   = &RequestError{"byok_target_changed", "The assigned Azure deployment now serves another model, version or SKU. Choose its new target in the dashboard.", 400}
-	ErrByokKeyUnregistered = &RequestError{"byok_key_unregistered", "The credential's encryption key is not registered in the organization policy", 400}
+	ErrByokKeyUnregistered = &RequestError{"byok_key_unregistered", "Register the key that encrypted this credential under encryption.keys in your organization policy. Requests skip the credential until then.", 400}
 	ErrDashboardKeyDenied  = &RequestError{"dashboard_key_denied", "API key is not available to this dashboard session", 403}
 	ErrGatewayUnavailable  = &RequestError{"gateway_unavailable", "The gateway is temporarily unavailable. Retry the request later.", 503}
 

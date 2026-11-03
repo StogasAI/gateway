@@ -15,7 +15,9 @@ type apiCredential struct {
 	EncryptionKeys customerkey.Keys
 	Claims         *billing.APIKeyClaims
 	Dashboard      *billing.DashboardCredential
-	Raw            string
+	// Check is the grant that a credential check carries instead of an API key.
+	Check *billing.ByokCheckGrant
+	Raw   string
 }
 
 var (
@@ -94,7 +96,7 @@ func validCredentialValue(value string) bool {
 
 func (s *Server) requireAPIKey(ctx *requestContext) (apiCredential, bool) {
 	route, ok := catalog.RouteForPath(ctx.request.URL.Path)
-	if ctx.request.URL.Path == policyValidationPath || ctx.request.URL.Path == policySimulationPath {
+	if ctx.request.URL.Path == policyValidationPath || ctx.request.URL.Path == policySimulationPath || ctx.request.URL.Path == byokCheckPath {
 		route, ok = catalog.RouteChat, true
 	}
 	if !ok {
@@ -125,6 +127,16 @@ func (s *Server) requireAPIKey(ctx *requestContext) (apiCredential, bool) {
 
 	if s.runtime == nil {
 		return apiCredential{Raw: token}, true
+	}
+	// A credential check takes only its grant, and only a credential check takes one.
+	if ctx.request.URL.Path == byokCheckPath {
+		grant, err := s.runtime.ParseByokCheckGrant(token)
+		if err != nil {
+			s.writeBillingError(ctx, err)
+			return apiCredential{}, false
+		}
+		clearInferenceCredentials(ctx)
+		return apiCredential{Check: grant}, true
 	}
 	if ctx.encrypted && billing.IsDashboardCredential(token) {
 		dashboard, dashboardErr := s.runtime.ParseDashboardCredential(token)

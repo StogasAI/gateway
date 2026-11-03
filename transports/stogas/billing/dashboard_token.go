@@ -123,11 +123,9 @@ func parseDashboardCredential(
 	}, nil
 }
 
-func verifyDashboardToken(
-	token string,
-	publicKey *inferenceTokenKey,
-	now time.Time,
-) (*dashboardTokenClaims, error) {
+// verifySignedToken checks a JWT that Control signed with its composite key and returns its
+// claims' JSON, which each kind of token then reads strictly.
+func verifySignedToken(token string, publicKey *inferenceTokenKey) ([]byte, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
 		return nil, ErrInvalidAPIKey
@@ -149,6 +147,18 @@ func verifyDashboardToken(
 	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
 		return nil, ErrInvalidAPIKey
+	}
+	return payloadBytes, nil
+}
+
+func verifyDashboardToken(
+	token string,
+	publicKey *inferenceTokenKey,
+	now time.Time,
+) (*dashboardTokenClaims, error) {
+	payloadBytes, err := verifySignedToken(token, publicKey)
+	if err != nil {
+		return nil, err
 	}
 	var claims dashboardTokenClaims
 	if err := decodeStrictJSON(payloadBytes, &claims); err != nil {

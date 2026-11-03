@@ -227,6 +227,8 @@ type Service struct {
 	claimAzureCheckQuery       string
 	recordAzureCheckQuery      string
 	stopAzureTargetQuery       string
+	byokCheckTargetQuery       string
+	recordByokCheckQuery       string
 	// Each hold records the boot that owns it, so Control can release the
 	// holds of a boot that stopped.
 	nodeID                  string
@@ -285,6 +287,8 @@ func NewService(
 		claimAzureCheckQuery:    db.functionQuery("gateway_claim_azure_check", "claimed, verified_at, started_at, unavailable", "$1::uuid, make_interval(secs => $2::double precision)"),
 		recordAzureCheckQuery:   db.functionQuery("gateway_record_azure_check", "result, unavailable", "$1::uuid, $2::timestamptz, $3::jsonb"),
 		stopAzureTargetQuery:    db.functionQuery("gateway_stop_azure_target", "stopped", "$1::uuid, $2::uuid, $3::text"),
+		byokCheckTargetQuery:    db.functionQuery("gateway_byok_check_target", "result, provider, encrypted_secret, encryption_key_id, target, encryption_keys, checked_at", "$1::text, $2::text, $3::uuid"),
+		recordByokCheckQuery:    db.functionQuery("gateway_record_byok_check", "result, checked_at", "$1::text, $2::text, $3::uuid, $4::text, $5::timestamptz, $6::text"),
 		inferenceTokenPublicKey: publicKey,
 		nodeID:                  nodeID,
 		apiKeyPepper:            apiKeyPepper,
@@ -305,6 +309,8 @@ func NewService(
 		service.claimAzureCheckQuery,
 		service.recordAzureCheckQuery,
 		service.stopAzureTargetQuery,
+		service.byokCheckTargetQuery,
+		service.recordByokCheckQuery,
 	); err != nil {
 		db.Close()
 		return nil, err
