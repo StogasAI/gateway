@@ -191,7 +191,7 @@ func TestRandomSortWeighsDeploymentsAndKeepsEachTogether(t *testing.T) {
 	const runs = 4000
 	first := 0
 	for range runs {
-		order, err := query.Sort(candidates)
+		order, _, err := query.Sort(candidates)
 		if err != nil {
 			t.Fatal(err)
 		}

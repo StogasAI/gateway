@@ -343,7 +343,9 @@ func TestChutesReasoningEffortsUseVerifiedWireMapping(t *testing.T) {
 
 func TestChutesReasoningPolicyRejectsUnreviewedControls(t *testing.T) {
 	// Each request passes without the control, so each refusal is the control's.
-	for _, model := range []string{"glm-5.2", "kimi-k3"} {
+	// The provider prefix keeps routing on Chutes, where other providers also
+	// serve GLM 5.2.
+	for _, model := range []string{"chutes/glm-5.2", "chutes/kimi-k3"} {
 		if err := validateResolvedChat(t, chutesBodyForModel(model, "")); err != nil {
 			t.Fatalf("the %s request without a reasoning control was refused: %v", model, err)
 		}
@@ -354,7 +356,7 @@ func TestChutesReasoningPolicyRejectsUnreviewedControls(t *testing.T) {
 		`"reasoning_max_tokens":100`,
 	} {
 		t.Run(field, func(t *testing.T) {
-			if validateResolvedChat(t, chutesBodyForModel("glm-5.2", field)) == nil {
+			if validateResolvedChat(t, chutesBodyForModel("chutes/glm-5.2", field)) == nil {
 				t.Fatal("unsupported Chutes reasoning control was accepted")
 			}
 		})

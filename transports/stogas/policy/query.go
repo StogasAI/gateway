@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/big"
 	"math/rand/v2"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -21,11 +22,86 @@ type Query struct {
 	OrderBy []Sort           `json:"orderBy"`
 }
 
-// Sort is one criterion. Direction defaults to asc; a random() criterion has none.
+// Sort is one routing criterion: a CEL expression in By, which Direction
+// orders asc by default, or one list of catalog node IDs, which ranks
+// candidates by position. Missing values and unlisted candidates sort last. A
+// random() criterion has no direction.
 type Sort struct {
-	By         string `json:"by"`
-	Direction  string `json:"direction,omitempty"`
-	expression *CELExpression
+	By          string   `json:"by,omitempty"`
+	Direction   string   `json:"direction,omitempty"`
+	Authors     []string `json:"authors,omitempty"`
+	Models      []string `json:"models,omitempty"`
+	Deployments []string `json:"deployments,omitempty"`
+	Routes      []string `json:"routes,omitempty"`
+	Providers   []string `json:"providers,omitempty"`
+	expression  *CELExpression
+	// ranks maps each listed ID to its position.
+	ranks map[string]int
+}
+
+// sortLists names each list a criterion can hold and the candidate field it
+// ranks. Lists name the same nodes as routing.allowedCatalogNodes.
+var sortLists = [...]struct {
+	name, field string
+	ids         func(*Sort) []string
+}{
+	{"authors", "author.id", func(s *Sort) []string { return s.Authors }},
+	{"models", "model.id", func(s *Sort) []string { return s.Models }},
+	{"deployments", "deployment.id", func(s *Sort) []string { return s.Deployments }},
+	{"routes", "route.id", func(s *Sort) []string { return s.Routes }},
+	{"providers", "provider.id", func(s *Sort) []string { return s.Providers }},
+}
+
+const sortKinds = "each routing.sort criterion takes by or one list of authors, models, deployments, routes or providers"
+
+// UnmarshalJSON requires exactly one kind, so an empty by cannot sit beside
+// a list unnoticed.
+func (s *Sort) UnmarshalJSON(raw []byte) error {
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &members); err != nil {
+		return err
+	}
+	type plain Sort
+	var value plain
+	if err := decodeStrict(raw, &value); err != nil {
+		return err
+	}
+	kinds := 0
+	for name := range members {
+		if name != "direction" {
+			kinds++
+		}
+	}
+	if kinds != 1 {
+		return configError(sortKinds)
+	}
+	*s = Sort(value)
+	return nil
+}
+
+// list returns the criterion's list kind, ranked field and IDs, or empty
+// values for an expression.
+func (s *Sort) list() (name, field string, ids []string) {
+	for _, kind := range sortLists {
+		if ids := kind.ids(s); ids != nil {
+			return kind.name, kind.field, ids
+		}
+	}
+	return "", "", nil
+}
+
+// key identifies what a criterion compares. A later criterion with the key
+// of an earlier one can never break its ties, whatever its direction: values
+// that tie one way tie the other. Composition keeps the first.
+func (s *Sort) key() string {
+	if name, _, ids := s.list(); name != "" {
+		return name + "\x00" + strings.Join(ids, "\x00")
+	}
+	by := strings.TrimSpace(s.By)
+	if s.expression != nil && s.expression.normalized != "" {
+		by = s.expression.normalized
+	}
+	return "by\x00" + by
 }
 
 // CompositionBytes estimates this configuration's own retained structures.
@@ -63,6 +139,31 @@ func (c *Config) CompositionBytes() int64 {
 
 func (e *CELExpression) MarshalJSON() ([]byte, error) { return json.Marshal(e.Source) }
 
+// ProviderOrder ranks providers by their position in ids, as a request's
+// provider.order lists them.
+func ProviderOrder(ids []string) Sort {
+	criterion := Sort{Providers: ids, ranks: make(map[string]int, len(ids))}
+	for rank, id := range ids {
+		if _, listed := criterion.ranks[id]; !listed {
+			criterion.ranks[id] = rank
+		}
+	}
+	return criterion
+}
+
+// WithSort returns a query that sorts by q's criteria with criterion placed at
+// index at. It shares q's filters and leaves q unchanged.
+func (q *Query) WithSort(at int, criterion Sort) *Query {
+	out := &Query{}
+	if q != nil {
+		out.Filters = q.Filters
+		out.OrderBy = slices.Insert(slices.Clone(q.OrderBy), min(at, len(q.OrderBy)), criterion)
+	} else {
+		out.OrderBy = []Sort{criterion}
+	}
+	return out
+}
+
 func CompileRouting(filter string, order []Sort) (*Query, error) {
 	return compileRouting(filter, order, &celCompiler{prepare: true})
 }
@@ -86,6 +187,13 @@ func compileRouting(filter string, order []Sort, compiler *celCompiler) (*Query,
 	}
 	for i := range query.OrderBy {
 		criterion := &query.OrderBy[i]
+		if _, _, ids := criterion.list(); ids != nil {
+			criterion.ranks = make(map[string]int, len(ids))
+			for rank, id := range ids {
+				criterion.ranks[id] = rank
+			}
+			continue
+		}
 		expression, err := compiler.compile(criterion.By, false)
 		if err != nil {
 			return nil, err
@@ -141,7 +249,7 @@ func (q *Query) validate() error {
 		return configError("routing requires a filter or sort")
 	}
 	if len(q.OrderBy) > MaxSorts {
-		return configError("use no more than three sort expressions")
+		return configError("use no more than four sort criteria, counting routing.order")
 	}
 	for _, filter := range q.Filters {
 		if filter == nil || strings.TrimSpace(filter.Source) == "" || len(filter.Source) > MaxCELBytes {
@@ -151,16 +259,44 @@ func (q *Query) validate() error {
 	seen := map[string]bool{}
 	for i := range q.OrderBy {
 		item := &q.OrderBy[i]
+		name, _, ids := item.list()
+		kinds := 0
+		for _, kind := range sortLists {
+			if kind.ids(item) != nil {
+				kinds++
+			}
+		}
+		if item.By != "" {
+			kinds++
+		}
+		if kinds != 1 {
+			return configError(sortKinds)
+		}
+		if name != "" {
+			// Two lists of one kind rank the same field, so one list says
+			// the same.
+			if seen[name] {
+				return configError("use one %s list per policy; list its IDs in order", name)
+			}
+			seen[name] = true
+			if item.Direction != "" {
+				return configError("a %s list takes no direction; list the IDs in the order to try", name)
+			}
+			if err := validateNodeIDs(ids); err != nil {
+				return configError("routing.sort %s must list unique catalog IDs", name)
+			}
+			continue
+		}
 		if item.Direction != "" && item.Direction != "asc" && item.Direction != "desc" {
 			return configError("sort direction must be asc or desc")
 		}
-		if seen[strings.TrimSpace(item.By)] {
-			return configError("sort expressions must be unique")
-		}
-		seen[strings.TrimSpace(item.By)] = true
 		if strings.TrimSpace(item.By) == "" || len(item.By) > MaxCELBytes {
 			return configError("routing sort expression size is invalid")
 		}
+		if seen["by\x00"+strings.TrimSpace(item.By)] {
+			return configError("sort expressions must be unique")
+		}
+		seen["by\x00"+strings.TrimSpace(item.By)] = true
 	}
 	return nil
 }
@@ -188,57 +324,57 @@ func (q *Query) FirstFailure(values Values) (index int, known bool, err error) {
 	return -1, true, nil
 }
 
-func (q *Query) SameOrder(other *Query) bool {
-	if q == nil || other == nil {
-		return q == nil && other == nil
-	}
-	if len(q.OrderBy) != len(other.OrderBy) {
-		return false
-	}
-	for i, order := range q.OrderBy {
-		left, right := strings.TrimSpace(order.By), strings.TrimSpace(other.OrderBy[i].By)
-		if order.expression != nil && other.OrderBy[i].expression != nil {
-			left, right = order.expression.normalized, other.OrderBy[i].expression.normalized
-		}
-		if left != right || order.Direction != other.OrderBy[i].Direction {
-			return false
-		}
-	}
-	return true
-}
-
-// Sort returns indexes in order. Missing values sort last in either direction,
-// and candidates with equal keys keep their input order. Evaluation errors
-// reject the whole ordering.
+// Sort returns indexes in order and, for each position after the first,
+// whether that candidate ties the one before it on every criterion. Missing
+// values and unlisted IDs sort last in either direction, and tied candidates
+// keep their input order. Evaluation errors reject the whole ordering.
 //
 // random(weight) draws one key per deployment, Exp(1) / weight, and sorts it
 // ascending (Efraimidis and Spirakis). Each deployment then comes first with
 // probability weight / total weight, and the rest follow as weighted sampling
-// without replacement. A weight below 1 counts as missing.
-func (q *Query) Sort(candidates []Values) ([]int, error) {
+// without replacement. A weight below 1 counts as missing. Each random()
+// criterion draws on its own.
+func (q *Query) Sort(candidates []Values) ([]int, []bool, error) {
 	order := make([]int, len(candidates))
 	for i := range order {
 		order[i] = i
 	}
+	ties := make([]bool, len(candidates))
 	if q == nil || len(q.OrderBy) == 0 {
-		return order, nil
+		for i := 1; i < len(ties); i++ {
+			ties[i] = true
+		}
+		return order, ties, nil
 	}
 	type item struct {
 		value   Value
-		draw    float64
+		number  float64
 		present bool
 	}
+	type drawKey struct {
+		criterion  int
+		deployment string
+	}
 	keys := make([][]item, len(candidates))
-	draws := map[string]float64{}
+	draws := map[drawKey]float64{}
 	for i, candidate := range candidates {
 		keys[i] = make([]item, len(q.OrderBy))
-		for j, criterion := range q.OrderBy {
+		for j := range q.OrderBy {
+			criterion := &q.OrderBy[j]
+			if criterion.ranks != nil {
+				_, field, _ := criterion.list()
+				id, present := candidate.PolicyValue(field)
+				if rank, listed := criterion.ranks[id.String]; present && listed {
+					keys[i][j] = item{number: float64(rank), present: true}
+				}
+				continue
+			}
 			if criterion.expression == nil {
-				return nil, configError("routing sort has not been compiled")
+				return nil, nil, configError("routing sort has not been compiled")
 			}
 			result, _, err := criterion.expression.evaluate(candidate, policyTime(candidate))
 			if err != nil {
-				return nil, fmt.Errorf("routing sort evaluation failed: %w", err)
+				return nil, nil, fmt.Errorf("routing sort evaluation failed: %w", err)
 			}
 			if types.IsUnknown(result) {
 				continue
@@ -246,18 +382,19 @@ func (q *Query) Sort(candidates []Values) ([]int, error) {
 			if criterion.expression.random {
 				weight, ok := result.(types.Int)
 				if !ok {
-					return nil, configError("routing sort returned an invalid value")
+					return nil, nil, configError("routing sort returned an invalid value")
 				}
 				id, present := candidate.PolicyValue("deployment.id")
 				if weight < 1 || !present {
 					continue
 				}
-				draw, drawn := draws[id.String]
+				key := drawKey{j, id.String}
+				draw, drawn := draws[key]
 				if !drawn {
 					draw = rand.ExpFloat64()
-					draws[id.String] = draw
+					draws[key] = draw
 				}
-				keys[i][j] = item{draw: draw / float64(weight), present: true}
+				keys[i][j] = item{number: draw / float64(weight), present: true}
 				continue
 			}
 			value := Value{Type: criterion.expression.kind}
@@ -271,23 +408,28 @@ func (q *Query) Sort(candidates []Values) ([]int, error) {
 			case celDecimal:
 				value.Decimal = result.Decimal
 			default:
-				return nil, configError("routing sort returned an invalid value")
+				return nil, nil, configError("routing sort returned an invalid value")
 			}
 			keys[i][j] = item{value: value, present: true}
 		}
 	}
-	sort.SliceStable(order, func(a, b int) bool {
-		left, right := keys[order[a]], keys[order[b]]
-		for i, criterion := range q.OrderBy {
+	// compare orders two candidates: negative when a comes first.
+	compare := func(a, b int) int {
+		left, right := keys[a], keys[b]
+		for i := range q.OrderBy {
+			criterion := &q.OrderBy[i]
 			if left[i].present != right[i].present {
-				return left[i].present
+				if left[i].present {
+					return -1
+				}
+				return 1
 			}
 			if !left[i].present {
 				continue
 			}
 			var comparison int
-			if criterion.expression.random {
-				comparison = cmp.Compare(left[i].draw, right[i].draw)
+			if criterion.ranks != nil || criterion.expression.random {
+				comparison = cmp.Compare(left[i].number, right[i].number)
 			} else {
 				comparison = compareValues(left[i].value, right[i].value)
 			}
@@ -295,13 +437,17 @@ func (q *Query) Sort(candidates []Values) ([]int, error) {
 				continue
 			}
 			if criterion.Direction == "desc" {
-				return comparison > 0
+				return -comparison
 			}
-			return comparison < 0
+			return comparison
 		}
-		return false
-	})
-	return order, nil
+		return 0
+	}
+	sort.SliceStable(order, func(a, b int) bool { return compare(order[a], order[b]) < 0 })
+	for i := 1; i < len(order); i++ {
+		ties[i] = compare(order[i-1], order[i]) == 0
+	}
+	return order, ties, nil
 }
 
 func policyTime(values Values) time.Time {

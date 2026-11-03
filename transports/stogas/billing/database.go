@@ -18,9 +18,11 @@ import (
 var ErrSchemaIncompatible = errors.New("database schema is incompatible with this gateway")
 
 const (
-	// Six connections serve about 1,000 authorizations a second. A transaction
-	// pooler shares its few server connections among all gateways, so more
-	// would add no database capacity. All six stay open: an idle client
+	// Six connections served 996 of 1,000 authorizations a second at p99 59 ms
+	// in the October 20 benchmark, with settlement on its own connection; that
+	// is close to the most one gateway gets. A transaction pooler shares its few
+	// server connections among all gateways, so more would add no database
+	// capacity. All six stay open: an idle client
 	// connection holds no server connection, and a burst then waits for no
 	// new ones.
 	poolConns                 = 6

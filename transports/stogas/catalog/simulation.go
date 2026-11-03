@@ -38,8 +38,6 @@ const (
 	// The request did not send an encryption key that the pair needs, and
 	// routing.missingEncryptionKeys skips such pairs. Labels names the keys.
 	RemovedEncryptionKey = "encryption_key"
-	// A group request uses only its most recently released models.
-	RemovedOlderModel = "older_model"
 	// The deployment's route does not run every hosted tool that the request lists. Tools names
 	// the missing ones.
 	RemovedHostedTool = "hosted_tool"
@@ -74,19 +72,30 @@ type SimulatedPair struct {
 	Retries int
 }
 
+// SimulatedCriterion is one composed routing.sort criterion and the policy,
+// and for a default criterion its rule, that sets it.
+type SimulatedCriterion struct {
+	Sort   policy.Sort
+	Origin policy.Origin
+}
+
 // RoutingSimulation shows how routing treats a request that names only a
 // model, a service tier, a reasoning mode and its tools. A request tries the
 // first Tried pairs in order.
-// Order and FallbacksOrigin locate settings in the first pair's policy.
+// Sort locates each criterion in the key's policy, which every pair shares,
+// even when routing fails; Order is the origin of the first criterion.
+// FallbacksOrigin locates the count in the first pair's policy.
 type RoutingSimulation struct {
 	Pairs           []SimulatedPair
 	Tried           int
 	Removed         []RemovedCandidate
 	Truncated       int
+	Sort            []SimulatedCriterion
 	Order           *policy.Origin
 	Fallbacks       int
 	FallbacksOrigin *policy.Origin
-	// Ambiguous lists the models of an ambiguous request.
+	// Ambiguous lists the tied models of a model_ambiguous request, or the
+	// tied deployments of a deployment_ambiguous one.
 	Ambiguous []string
 	Err       error
 }
@@ -126,6 +135,16 @@ func SimulateRouting(input RequestInput, route Route, model, tier, mode string, 
 	}
 	plan, err := planRoutes(input, route, fields)
 	result := &RoutingSimulation{Removed: trace.removed, Truncated: trace.truncated, Ambiguous: trace.ambiguous, Err: err}
+	// Credential policies and conditional rules set no criteria, so the key's
+	// policy holds the ones that every pair uses.
+	if config := input.Policy; config != nil && config.Routing.Query != nil {
+		for i, origin := range config.SortOrigins() {
+			result.Sort = append(result.Sort, SimulatedCriterion{Sort: config.Routing.Query.OrderBy[i], Origin: origin})
+		}
+	}
+	if len(result.Sort) > 0 {
+		result.Order = &result.Sort[0].Origin
+	}
 	if err != nil {
 		return result
 	}
@@ -138,9 +157,6 @@ func SimulateRouting(input RequestInput, route Route, model, tier, mode string, 
 	}
 	result.Tried, result.Fallbacks = min(plan.slots, len(plan.choices)), plan.slots-1
 	if config := plan.choices[0].candidate.policy; config != nil {
-		if origin, ok := config.OrderOrigin(); ok && (len(config.Routing.Order) > 0 || config.Routing.Query != nil && len(config.Routing.Query.OrderBy) > 0) {
-			result.Order = &origin
-		}
 		if origin, ok := config.FallbacksOrigin(); ok {
 			result.FallbacksOrigin = &origin
 		}

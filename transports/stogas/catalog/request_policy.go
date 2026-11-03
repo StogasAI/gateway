@@ -297,7 +297,7 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 		}
 		return nil, ErrByokTargetUnavailable
 	}
-	ordered, err := candidates.finish(preference)
+	ordered, ties, err := candidates.finish(preference)
 	if err != nil {
 		return nil, err
 	}
@@ -306,10 +306,15 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 	if config := candidates.filtered[0].policy; config != nil {
 		plan.slots = 1 + config.Routing.Fallbacks
 	}
+	// planned counts the deployments that the tried pairs come from.
+	planned := 0
 	for _, group := range ordered {
 		// Equal policies share routing work. Merge their credential choices
 		// back into the original preference order for this deployment.
 		start := len(plan.choices)
+		if start < plan.slots {
+			planned++
+		}
 		for _, candidate := range group {
 			for _, index := range credentials[candidate] {
 				plan.choices = append(plan.choices, pairChoice{candidate, index})
@@ -323,6 +328,25 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 		if len(plan.choices) >= plan.slots && trace == nil {
 			break
 		}
+	}
+	// A tie that reaches the tried pairs would let input order choose what
+	// the policies left open. Ties among untried deployments change nothing.
+	for g := 1; g <= planned && g < len(ordered); g++ {
+		if !ties[g] {
+			continue
+		}
+		first, last := g-1, g
+		for first > 0 && ties[first] {
+			first--
+		}
+		for last+1 < len(ordered) && ties[last+1] {
+			last++
+		}
+		err, ids := ambiguousError(ordered[first : last+1])
+		if trace != nil {
+			trace.ambiguous = ids
+		}
+		return nil, err
 	}
 	// Unless its policy skips it, a pair that needs a root the request did
 	// not send fails the request whichever tried pair it is, before any

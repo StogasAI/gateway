@@ -314,7 +314,8 @@ func TestRulesExplicitEmptySettingsReplaceDefaultsWithoutWeakeningRequirements(t
 			if err != nil {
 				t.Fatal(err)
 			}
-			if (active.Input != nil && active.Input.ASCIIOnly) != withRequired || (len(active.Access.Deny) > 0) != withRequired || (len(active.Routing.Query.OrderBy) > 0) != withRequired {
+			// Orderings stack, so the default sort applies beside an empty one.
+			if (active.Input != nil && active.Input.ASCIIOnly) != withRequired || (len(active.Access.Deny) > 0) != withRequired || len(active.Routing.Query.OrderBy) != 1 {
 				t.Fatalf("required=%v: wrong active restrictions: %+v", withRequired, active)
 			}
 			// The smallest required value applies; the default rule's never does.
@@ -339,26 +340,38 @@ func TestRulesExplicitEmptySettingsReplaceDefaultsWithoutWeakeningRequirements(t
 	}
 }
 
-// One ordering applies to a request: the required one from the broadest scope,
-// or else the default one from the closest scope.
-func TestOneRoutingOrderingApplies(t *testing.T) {
+// Every ordering applies. Required criteria run from the broadest scope to
+// the closest, then default criteria from the closest scope to the broadest,
+// so each later criterion orders the ties of the ones before it.
+func TestRoutingOrderingsStack(t *testing.T) {
 	required := func(by string) string { return `{"routing":{"sort":[{"by":"` + by + `"}]}}` }
 	preferred := func(by string) string {
 		return `{"rules":{"d":{"mode":"default","routing":{"sort":[{"by":"` + by + `"}]}}}}`
 	}
+	both := func(want, prefer string) string {
+		return `{"routing":{"sort":[{"by":"` + want + `"}]},"rules":{"d":{"mode":"default","routing":{"sort":[{"by":"` + prefer + `"}]}}}}`
+	}
 	scopes := []Scope{OrganizationScope, FolderScope, GrantScope, KeyScope}
 	for _, test := range []struct {
-		name      string
-		sources   [4]string
-		sortBy    string
-		from      Scope
-		isDefault bool
+		name     string
+		sources  [4]string
+		sortBy   []string
+		origins  []Origin
+		required int
 	}{
-		{"broadest required", [4]string{required("provider.id"), required("model.id"), "", required("deployment.id")}, "provider.id", OrganizationScope, false},
-		{"required before closer defaults", [4]string{preferred("provider.id"), required("model.id"), preferred("route.id"), preferred("deployment.id")}, "model.id", FolderScope, false},
-		{"closest default", [4]string{preferred("provider.id"), "", preferred("route.id"), `{}`}, "route.id", GrantScope, true},
-		{"explicit empty requirement", [4]string{preferred("provider.id"), "", "", `{"routing":{"sort":[]}}`}, "", KeyScope, false},
-		{"none", [4]string{`{}`, "", "", `{}`}, "", "", false},
+		{"requirements broadest first", [4]string{required("provider.id"), required("model.id"), "", required("deployment.id")},
+			[]string{"provider.id", "model.id", "deployment.id"}, []Origin{{0, ""}, {1, ""}, {2, ""}}, 3},
+		{"requirements then defaults closest first", [4]string{preferred("provider.id"), required("model.id"), preferred("route.id"), preferred("deployment.id")},
+			[]string{"model.id", "deployment.id", "route.id", "provider.id"}, []Origin{{1, ""}, {3, "d"}, {2, "d"}, {0, "d"}}, 1},
+		{"defaults only", [4]string{preferred("provider.id"), "", preferred("route.id"), `{}`},
+			[]string{"route.id", "provider.id"}, []Origin{{1, "d"}, {0, "d"}}, 0},
+		{"one policy requires and prefers", [4]string{both("provider.id", "random()"), "", "", required("model.id")},
+			[]string{"provider.id", "model.id", "random()"}, []Origin{{0, ""}, {1, ""}, {0, "d"}}, 2},
+		{"an equal criterion is left out", [4]string{preferred("provider.id"), required("provider.id"), "", preferred("model.id")},
+			[]string{"provider.id", "model.id"}, []Origin{{1, ""}, {2, "d"}}, 1},
+		{"an empty requirement adds nothing", [4]string{preferred("provider.id"), "", "", `{"routing":{"sort":[]}}`},
+			[]string{"provider.id"}, []Origin{{0, "d"}}, 0},
+		{"none", [4]string{`{}`, "", "", `{}`}, nil, nil, 0},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var sources []ScopedSource
@@ -376,22 +389,28 @@ func TestOneRoutingOrderingApplies(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, config := range []*Config{combined, active} {
-				sortBy := ""
-				if config.Routing.Query != nil && len(config.Routing.Query.OrderBy) > 0 {
-					sortBy = config.Routing.Query.OrderBy[0].By
+				var sortBy []string
+				if config.Routing.Query != nil {
+					for _, criterion := range config.Routing.Query.OrderBy {
+						sortBy = append(sortBy, criterion.By)
+					}
 				}
-				if sortBy != test.sortBy || config.orderScope != test.from || config.orderDefault != test.isDefault {
-					t.Fatalf("ordering = %q from %s (default %v)", sortBy, config.orderScope, config.orderDefault)
+				if !slices.Equal(sortBy, test.sortBy) || !slices.Equal(config.SortOrigins(), test.origins) || config.RequiredSorts() != test.required {
+					t.Fatalf("sort %q from %v, %d required", sortBy, config.SortOrigins(), config.RequiredSorts())
 				}
 			}
 		})
 	}
-	// routing.order and routing.sort form one ordering from one policy.
+	// routing.order is the deployments list that leads its policy's sort.
 	org := ruleSource(t, `{"routing":{"order":["deployment-b"],"sort":[{"by":"provider.id"}]}}`)
 	key := ruleSource(t, `{"routing":{"order":["deployment-a"]}}`)
 	combined, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: org}, {Scope: KeyScope, Value: key}})
-	if err != nil || !slices.Equal(combined.Routing.Order, []string{"deployment-b"}) || len(combined.Routing.Query.OrderBy) != 1 {
-		t.Fatalf("ordering mixed policies: %+v, %v", combined, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sorts := combined.Routing.Query.OrderBy
+	if len(sorts) != 3 || !slices.Equal(sorts[0].Deployments, []string{"deployment-b"}) || sorts[1].By != "provider.id" || !slices.Equal(sorts[2].Deployments, []string{"deployment-a"}) {
+		t.Fatalf("ordering mixed policies: %+v", sorts)
 	}
 }
 
@@ -408,16 +427,17 @@ func TestRuleOrderingsAreUnconditionalDefaults(t *testing.T) {
 			t.Fatalf("conditional or required rule ordering accepted: %s: %v", raw, err)
 		}
 	}
-	for _, raw := range []string{
-		`{"routing":{` + sort + `},"rules":{"r":{"mode":"default","routing":{"order":["deployment-a"]}}}}`,
-		`{"rules":{"a":{"mode":"default","routing":{` + sort + `}},"b":{"mode":"default","routing":{"order":["deployment-a"]}}}}`,
-	} {
-		if _, err := CompileSource([]byte(raw)); err == nil || !strings.Contains(err.Error(), "once per policy") {
-			t.Fatalf("second ordering accepted: %s: %v", raw, err)
-		}
+	// A policy may require one ordering and prefer another, but it prefers
+	// at most one.
+	if _, err := CompileSource([]byte(`{"routing":{` + sort + `},"rules":{"r":{"mode":"default","routing":{"order":["deployment-a"]}}}}`)); err != nil {
+		t.Fatalf("required and default ordering rejected: %v", err)
+	}
+	raw := `{"rules":{"a":{"mode":"default","routing":{` + sort + `}},"b":{"mode":"default","routing":{"order":["deployment-a"]}}}}`
+	if _, err := CompileSource([]byte(raw)); err == nil || !strings.Contains(err.Error(), "in one rule with mode default") {
+		t.Fatalf("second default ordering accepted: %s: %v", raw, err)
 	}
 	source := ruleSource(t, `{"rules":{"r":{"mode":"default","routing":{"filter":"provider.id != 'x'","order":["deployment-a"],`+sort+`}}}}`)
-	if source.defaultOrdering == nil || len(source.defaultOrdering.sorts) != 1 || source.Rules[0].Value.orders() || len(source.Rules[0].Value.Config.Routing.Query.Filters) != 1 {
+	if source.defaultOrdering == nil || len(source.defaultOrdering.sorts) != 2 || source.Rules[0].Value.orders() || len(source.Rules[0].Value.Config.Routing.Query.Filters) != 1 {
 		t.Fatalf("default ordering did not move to its policy: %+v", source)
 	}
 }
@@ -459,7 +479,6 @@ func TestOriginsLocateTheDecidingPolicyAndRule(t *testing.T) {
 		{"rule nodes", located(active.NodesOrigin("openai", "gpt", "openai-b", "openai", "openai")), "2chat true"},
 		{"allowed nodes", located(active.NodesOrigin("openai", "gpt", "openai-a", "openai", "openai")), "0 false"},
 		{"smallest fallbacks", located(active.FallbacksOrigin()), "1 true"},
-		{"default order", located(active.OrderOrigin()), "0order true"},
 	} {
 		if test.got != test.want {
 			t.Errorf("%s: origin %s, want %s", test.name, test.got, test.want)
@@ -472,8 +491,11 @@ func TestOriginsLocateTheDecidingPolicyAndRule(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := located(required.OrderOrigin()); got != "1 true" {
-		t.Fatalf("required order origin %s", got)
+	if got := required.SortOrigins(); !slices.Equal(got, []Origin{{Source: 1}}) || required.RequiredSorts() != 1 {
+		t.Fatalf("required order origins %v", got)
+	}
+	if got := active.SortOrigins(); !slices.Equal(got, []Origin{{Source: 0, Rule: "order"}}) || active.RequiredSorts() != 0 {
+		t.Fatalf("default order origins %v", got)
 	}
 	if got := located(required.FallbacksOrigin()); got != "0 false" {
 		t.Fatalf("default fallbacks origin %s", got)

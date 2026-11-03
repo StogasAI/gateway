@@ -377,7 +377,7 @@ func TestCatalogResolvesStructuralQualificationWithoutGeneratedPermutations(t *t
 	}
 }
 
-func TestProviderRestrictionUsesTheDefaultOrder(t *testing.T) {
+func TestProviderRestrictionKeepsThePolicyOrder(t *testing.T) {
 	loadTestCatalog(t)
 	for _, route := range []Route{RouteChat, RouteResponses} {
 		path := "/v1/responses"
@@ -386,7 +386,7 @@ func TestProviderRestrictionUsesTheDefaultOrder(t *testing.T) {
 			path = "/v1/chat/completions"
 			body = `{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"hello"}],"provider":{"only":["azure"]}}`
 		}
-		resolution, err := ResolveRequest(RequestInput{Method: "POST", Path: path, Body: []byte(body)})
+		resolution, err := ResolveRequest(RequestInput{Method: "POST", Path: path, Body: []byte(body), Policy: policyConfig(3)})
 		if err != nil || resolution.Deployment.ID != "azure-gpt-5.6-sol" {
 			t.Fatalf("provider restriction skipped the cheapest region: resolution=%#v err=%v", resolution, err)
 		}
@@ -463,7 +463,7 @@ func TestRequestCompatibilityPrecedesProviderPreference(t *testing.T) {
 	}
 }
 
-func TestUnusablePreferredProviderLeavesTheDefaultOrder(t *testing.T) {
+func TestUnusablePreferredProviderLeavesThePolicyOrder(t *testing.T) {
 	snap := loadTestCatalog(t)
 
 	openAI := *snap.graph.Deployments["openai-gpt-5.6-sol"]
@@ -489,6 +489,7 @@ func TestUnusablePreferredProviderLeavesTheDefaultOrder(t *testing.T) {
 			Method: "POST",
 			Path:   "/v1/chat/completions",
 			Body:   []byte(`{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"hello"}],"max_completion_tokens":2` + providerRule + `}`),
+			Policy: policyConfig(3),
 		})
 		if err != nil || resolution.Deployment.ID != want {
 			t.Fatalf("%q: resolution=%v err=%v, want %s", providerRule, resolution, err, want)
@@ -500,7 +501,7 @@ func TestServiceTierSpellingsSelectOneTier(t *testing.T) {
 	loadTestCatalog(t)
 	// Claude runs in several regions, so the request must choose one.
 	multiRegion := `"policy":{"routing":{"filter":"deployment.upstream.inferenceGeo == 'global'"}}`
-	source, err := policy.CompileSource([]byte(`{"delegation":{"request":["routing.filter"]}}`))
+	source, err := policy.CompileSource([]byte(`{"delegation":{"request":["routing.filter"]},"routing":{"sort":[{"by":"model.releaseDate","direction":"desc"},{"by":"blended_price(3, 1)"},{"by":"deployment.id"}]}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -592,7 +593,11 @@ func TestReasoningModeSelectsDeployments(t *testing.T) {
 		// A key that can use no Claude model gets no mode named.
 		{fields: `"model":"claude","reasoning":{"mode":"pro"}`, config: allowing("openai-gpt-5.6-sol"), err: ErrModelUnavailable},
 	} {
-		resolution, err := ResolveRequest(RequestInput{Method: "POST", Path: "/v1/responses", Body: []byte(`{"input":"hello",` + test.fields + `}`), Policy: test.config})
+		config := test.config
+		if config == nil {
+			config = policyConfig(3)
+		}
+		resolution, err := ResolveRequest(RequestInput{Method: "POST", Path: "/v1/responses", Body: []byte(`{"input":"hello",` + test.fields + `}`), Policy: config})
 		if test.err != nil {
 			if !errors.Is(err, test.err) {
 				t.Fatalf("%s error = %v, want %v", test.fields, err, test.err)
@@ -847,7 +852,9 @@ func TestRequestedTierMovesOnlyModelSelectors(t *testing.T) {
 	}
 }
 
-func TestGroupsSelectTheirNewestModel(t *testing.T) {
+// Only the policy decides which model of a group serves: no hidden rule picks
+// the newest one. The test default sorts by release date, then price.
+func TestGroupsFollowThePolicyOrder(t *testing.T) {
 	loadTestCatalog(t)
 	openAI, anthropic := map[string][]int{"openai": {0}}, map[string][]int{"anthropic": {0}}
 	for _, test := range []struct {
@@ -864,23 +871,31 @@ func TestGroupsSelectTheirNewestModel(t *testing.T) {
 		{body: `{"model":"anthropic/gpt-6","input":"hello"}`, code: ErrModelUnavailable.Code},
 		// Every Claude Mythos deployment needs approval, which only an exact selector requests.
 		{body: `{"model":"claude-mythos","input":"hello"}`, code: ErrModelUnavailable.Code},
-		// GPT-5.6 Luna, Sol and Terra share the newest release date, so only a policy order
-		// chooses among them.
-		{body: `{"model":"gpt-5.6","input":"hello"}`, credentials: openAI, code: ErrModelAmbiguous.Code},
+		// Without a sort, the models of a group tie.
+		{body: `{"model":"gpt-5.6","input":"hello"}`, credentials: openAI, policy: `{}`, code: ErrModelAmbiguous.Code},
+		// GPT-5.6 Luna, Sol and Terra share a release date, so price decides.
+		{body: `{"model":"gpt-5.6","input":"hello"}`, credentials: openAI, deployment: "openai-gpt-5.6-luna"},
 		{
 			body:        `{"model":"gpt-5.6","input":"hello"}`,
 			credentials: openAI,
 			policy:      `{"routing":{"sort":[{"by":"blended_price(3, 1)","direction":"asc"}]}}`,
 			deployment:  "openai-gpt-5.6-luna",
 		},
+		// A price sort alone picks the cheapest Claude, whatever its age.
 		{
 			body:        `{"model":"claude","input":"hello"}`,
 			credentials: anthropic,
-			policy:      `{"routing":{"filter":"'claude-opus' in model.groupIds"}}`,
+			policy:      `{"routing":{"sort":[{"by":"blended_price(3, 1)"},{"by":"deployment.id"}]}}`,
+			deployment:  "anthropic-claude-haiku-5-5",
+		},
+		{
+			body:        `{"model":"claude","input":"hello"}`,
+			credentials: anthropic,
+			policy:      `{"routing":{"filter":"'claude-opus' in model.groupIds","sort":[{"by":"model.releaseDate","direction":"desc"},{"by":"blended_price(3, 1)"},{"by":"deployment.id"}]}}`,
 			deployment:  "anthropic-claude-opus-5-5",
 		},
 	} {
-		var config *policy.Config
+		config := policyConfig(3)
 		if test.policy != "" {
 			source, err := policy.CompileSource([]byte(test.policy))
 			if err != nil {
@@ -916,7 +931,9 @@ func TestGroupsSelectTheirNewestModel(t *testing.T) {
 	for _, model := range models.Data {
 		listed[model.ID] = true
 	}
-	for selector, want := range map[string]bool{"gpt-5.5": true, "gpt-6": true, "gpt-5.6": false, "claude-mythos": false} {
+	// Every group with a deployment that needs no approval is listed, even
+	// one whose newest models share a release date: policies choose.
+	for selector, want := range map[string]bool{"gpt-5.5": true, "gpt-6": true, "gpt-5.6": true, "claude-mythos": false} {
 		if listed[selector] != want {
 			t.Fatalf("/v1/models lists %s: %t, want %t", selector, listed[selector], want)
 		}

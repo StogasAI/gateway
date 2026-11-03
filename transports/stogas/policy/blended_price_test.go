@@ -173,7 +173,7 @@ func TestBlendedPriceSortingAndIntersection(t *testing.T) {
 		t.Fatal(err)
 	}
 	merged := active.Routing.Query
-	order, err := merged.Sort([]Values{left, right})
+	order, _, err := merged.Sort([]Values{left, right})
 	if err != nil || len(order) != 2 || order[0] != 1 {
 		t.Fatalf("blended ordering=%v err=%v", order, err)
 	}
@@ -182,7 +182,7 @@ func TestBlendedPriceSortingAndIntersection(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		order, err := query.Sort([]Values{testValues{}, left})
+		order, _, err := query.Sort([]Values{testValues{}, left})
 		if err != nil || order[0] != 1 {
 			t.Fatalf("missing blend did not sort last: %v %v", order, err)
 		}

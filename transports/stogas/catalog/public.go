@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"maps"
 	"sort"
 	"time"
 )
@@ -36,8 +37,8 @@ func ActiveIdentity() (Identity, bool) {
 }
 
 // PublicModelsPayload lists the selectors that reach an available deployment. Each entry shows
-// the release date and author of the model it names. A group names its newest model, so a group
-// whose newest models share a release date is left out.
+// the release date and author of the model it names; a group shows its newest model's, because
+// policies, not the list, decide which of its models serves a request.
 func PublicModelsPayload() (PublicModelsResponse, bool) {
 	snap := activeState()
 	if snap == nil {
@@ -45,11 +46,8 @@ func PublicModelsPayload() (PublicModelsResponse, bool) {
 	}
 	modelIDsBySelector := make(map[string]string)
 	available := make(map[string]bool)
-	type newestModel struct {
-		id   string
-		tied bool
-	}
-	groups := make(map[string]newestModel)
+	// groups maps each group to its newest model, the first by ID on a tie.
+	groups := make(map[string]string)
 	now := time.Now()
 	for deploymentID, deployment := range snap.graph.Deployments {
 		if !deploymentAvailableAt(deployment, now) {
@@ -63,10 +61,8 @@ func PublicModelsPayload() (PublicModelsResponse, bool) {
 		released := snap.graph.Models[deployment.ModelID].ReleaseDate
 		for _, groupID := range snap.graph.Models[deployment.ModelID].GroupIDs {
 			newest, listed := groups[groupID]
-			if !listed || snap.graph.Models[newest.id].ReleaseDate < released {
-				groups[groupID] = newestModel{id: deployment.ModelID}
-			} else if newest.id != deployment.ModelID && snap.graph.Models[newest.id].ReleaseDate == released {
-				groups[groupID] = newestModel{id: newest.id, tied: true}
+			if !listed || snap.graph.Models[newest].ReleaseDate < released || snap.graph.Models[newest].ReleaseDate == released && deployment.ModelID < newest {
+				groups[groupID] = deployment.ModelID
 			}
 		}
 	}
@@ -75,11 +71,7 @@ func PublicModelsPayload() (PublicModelsResponse, bool) {
 			modelIDsBySelector[selector] = modelID
 		}
 	}
-	for groupID, newest := range groups {
-		if !newest.tied {
-			modelIDsBySelector[groupID] = newest.id
-		}
-	}
+	maps.Copy(modelIDsBySelector, groups)
 	ids := make([]string, 0, len(modelIDsBySelector))
 	for selector := range modelIDsBySelector {
 		ids = append(ids, selector)

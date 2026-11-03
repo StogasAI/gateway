@@ -16,7 +16,7 @@ func TestRoutingOrderPutsListedDeploymentsFirstWithinThePairSlots(t *testing.T) 
 	for _, path := range []string{"/v1/chat/completions", "/v1/responses"} {
 		for _, limit := range []int{1, 2, 3} {
 			config := policyConfig(limit)
-			config.Routing.Order = []string{"openai-gpt-5.6-sol", "anthropic-claude-sonnet-4-6"}
+			config.Routing.Query = orderedQuery(t, "", "openai-gpt-5.6-sol", "anthropic-claude-sonnet-4-6")
 			body := []byte(`{"messages":[{"role":"user","content":"hello"}]}`)
 			if path == "/v1/responses" {
 				body = []byte(`{"input":"hello"}`)
@@ -54,7 +54,7 @@ func TestRoutingOrderNeverWidensCatalogAuthorizationOrPinnedSelectors(t *testing
 	for _, model := range []string{"", "gpt-5.6-sol", "openai/gpt-5.6-sol", "openai-gpt-5.6-sol"} {
 		config := policyConfig(3)
 		config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Providers: []string{"anthropic"}}
-		config.Routing.Order = []string{"openai-gpt-5.6-sol", "anthropic-claude-sonnet-4-6"}
+		config.Routing.Query = orderedQuery(t, "", "openai-gpt-5.6-sol", "anthropic-claude-sonnet-4-6")
 		body := map[string]any{"input": "hello"}
 		if model != "" {
 			body["model"] = model
@@ -141,9 +141,12 @@ func TestWeightedRandomSortSplitsFirstAttemptsByWeight(t *testing.T) {
 	}
 }
 
-func TestPolicyOrderingFollowsTheDefaultOrderOnTies(t *testing.T) {
+// Only policy criteria order candidates. A tie that reaches the tried pairs
+// fails the request and names the tied models or deployments.
+func TestPolicyCriteriaDecideEveryTriedTie(t *testing.T) {
 	loadTestCatalog(t)
 	anthropic := map[string][]int{"anthropic": {0}}
+	tiebreak := `{"by":"blended_price(3, 1)"},{"by":"deployment.id"}`
 	for _, test := range []struct {
 		name, body, policy, deployment, code string
 		credentials                          map[string][]int
@@ -152,7 +155,23 @@ func TestPolicyOrderingFollowsTheDefaultOrderOnTies(t *testing.T) {
 			name:        "latest model from an author",
 			body:        `{"input":"hello"}`,
 			credentials: map[string][]int{"openai": {0}},
+			policy:      `{"routing":{"filter":"author.id == 'openai'","sort":[{"by":"model.releaseDate","direction":"desc"},` + tiebreak + `]}}`,
+			deployment:  "openai-gpt-6.1-sol",
+		},
+		{
+			// GPT-6 Luna and Sol share a release date behind GPT-6.1 Sol, so the
+			// first fallback is a tie.
+			name:        "a tie among fallbacks fails",
+			body:        `{"input":"hello"}`,
+			credentials: map[string][]int{"openai": {0}},
 			policy:      `{"routing":{"filter":"author.id == 'openai'","sort":[{"by":"model.releaseDate","direction":"desc"}]}}`,
+			code:        ErrModelAmbiguous.Code,
+		},
+		{
+			name:        "a tie beyond the fallbacks changes nothing",
+			body:        `{"input":"hello"}`,
+			credentials: map[string][]int{"openai": {0}},
+			policy:      `{"routing":{"fallbacks":0,"filter":"author.id == 'openai'","sort":[{"by":"model.releaseDate","direction":"desc"}]}}`,
 			deployment:  "openai-gpt-6.1-sol",
 		},
 		{
@@ -163,34 +182,40 @@ func TestPolicyOrderingFollowsTheDefaultOrderOnTies(t *testing.T) {
 			deployment:  "anthropic-claude-haiku-5-5",
 		},
 		{
-			// Claude Sonnet 5 and 5.5 cost the same, so the newer model wins
-			// although its deployment ID sorts later.
-			name:        "equal prices prefer the newer model",
+			// Claude Sonnet 5 and 5.5 cost the same.
+			name:        "equal prices tie",
 			body:        `{"input":"hello"}`,
 			credentials: anthropic,
 			policy:      `{"routing":{"filter":"'claude-sonnet' in model.groupIds","sort":[{"by":"blended_price(3, 1)"}]}}`,
+			code:        ErrModelAmbiguous.Code,
+		},
+		{
+			name:        "a later criterion breaks a price tie",
+			body:        `{"input":"hello"}`,
+			credentials: anthropic,
+			policy:      `{"routing":{"filter":"'claude-sonnet' in model.groupIds","sort":[{"by":"blended_price(3, 1)"},{"by":"model.releaseDate","direction":"desc"},{"by":"deployment.id"}]}}`,
 			deployment:  "anthropic-claude-sonnet-5-5",
 		},
 		{
-			name:        "a group stays its newest model under a sort",
+			name:        "a group follows the sort to its oldest model",
 			body:        `{"model":"claude-sonnet","input":"hello"}`,
 			credentials: anthropic,
-			policy:      `{"routing":{"sort":[{"by":"model.releaseDate"}]}}`,
-			deployment:  "anthropic-claude-sonnet-5-5",
+			policy:      `{"routing":{"sort":[{"by":"model.releaseDate"},` + tiebreak + `]}}`,
+			deployment:  "anthropic-claude-sonnet-4-6",
 		},
 		{
 			name:        "an order lists a model the request did not name",
 			body:        `{"input":"hello"}`,
 			credentials: anthropic,
-			policy:      `{"routing":{"order":["anthropic-claude-opus-4-8"]}}`,
+			policy:      `{"routing":{"order":["anthropic-claude-opus-4-8"],"sort":[` + tiebreak + `]}}`,
 			deployment:  "anthropic-claude-opus-4-8",
 		},
 		{
-			name:        "an order cannot pick an older model of a group",
+			name:        "an order picks any model of a group",
 			body:        `{"model":"claude-opus","input":"hello"}`,
 			credentials: anthropic,
-			policy:      `{"routing":{"order":["anthropic-claude-opus-4-8"]}}`,
-			deployment:  "anthropic-claude-opus-5-5",
+			policy:      `{"routing":{"sort":[{"deployments":["anthropic-claude-opus-4-8"]},` + tiebreak + `]}}`,
+			deployment:  "anthropic-claude-opus-4-8",
 		},
 		{
 			name:        "the order outranks the sort",
@@ -200,11 +225,19 @@ func TestPolicyOrderingFollowsTheDefaultOrderOnTies(t *testing.T) {
 			deployment:  "anthropic-claude-opus-5-5-us",
 		},
 		{
-			name:        "several models without an order",
+			name:        "several models without a sort",
 			body:        `{"input":"hello"}`,
 			credentials: anthropic,
 			policy:      `{"routing":{"filter":"'claude-sonnet' in model.groupIds"}}`,
 			code:        ErrModelAmbiguous.Code,
+		},
+		{
+			// Claude Sonnet 4.6 runs worldwide and in the US.
+			name:        "deployments of one model tie",
+			body:        `{"model":"claude-sonnet-4-6","input":"hello"}`,
+			credentials: anthropic,
+			policy:      `{"routing":{"sort":[{"by":"model.releaseDate"}]}}`,
+			code:        ErrDeploymentAmbiguous.Code,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {

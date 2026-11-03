@@ -332,9 +332,8 @@ func (s *Service) composeKeyConfig(row keyConfigRow, pins policySourcePins, encr
 // queryForTool runs a configuration read for a tool that serves no request,
 // such as policy validation or a routing simulation. Tools share a third of
 // the database connections, so a burst of them leaves requests two thirds of
-// the capacity for their reads and holds. Two of six connections still serve
-// about 250 tool reads a second, far more than people editing policies send,
-// and one slow read does not block the others.
+// the capacity for their reads and holds. With two connections, one slow
+// read does not block the other.
 func (s *Service) queryForTool(ctx context.Context, query string, arguments []any, destinations ...any) error {
 	select {
 	case s.toolQueries <- struct{}{}:

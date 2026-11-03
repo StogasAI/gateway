@@ -123,7 +123,7 @@ type MeterEstimate = billing.MeterEstimate
 // that follow it.
 type snapshot struct {
 	graph compiledGraph
-	// groups holds every model group. Each is a request selector for its newest model.
+	// groups holds every model group. Each is a request selector for its models.
 	groups         map[string]bool
 	identity       Identity
 	modelSelectors map[string]string

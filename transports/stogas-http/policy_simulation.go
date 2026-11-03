@@ -72,11 +72,19 @@ type policySimulation struct {
 	Fallbacks       int                               `json:"fallbacks"`
 	FallbacksOrigin *simulationOrigin                 `json:"fallbacksOrigin"`
 	Order           *simulationOrigin                 `json:"order"`
+	Sort            []simulationCriterion             `json:"sort"`
 	Removed         []simulationRemoval               `json:"removed"`
 	Truncated       int                               `json:"truncated"`
 	Ambiguous       []string                          `json:"ambiguous"`
 	Credentials     map[string][]simulationCredential `json:"credentials"`
 	Error           *simulationError                  `json:"error"`
+}
+
+// simulationCriterion is one routing.sort criterion that the key's policies
+// combine, in the order that they apply, with the policy that sets it.
+type simulationCriterion struct {
+	Criterion policy.Sort       `json:"criterion"`
+	Origin    *simulationOrigin `json:"origin"`
 }
 
 type simulationCandidate struct {
@@ -197,7 +205,7 @@ func (s *Server) simulatePolicy(ctx *requestContext) {
 		s.writeBillingError(ctx, err)
 		return
 	}
-	result := policySimulation{Pairs: []simulationPair{}, Removed: []simulationRemoval{}, Ambiguous: []string{}, Credentials: map[string][]simulationCredential{}}
+	result := policySimulation{Pairs: []simulationPair{}, Removed: []simulationRemoval{}, Sort: []simulationCriterion{}, Ambiguous: []string{}, Credentials: map[string][]simulationCredential{}}
 	if input.Policy != nil {
 		result.Draft = "not_applicable"
 		if applied {
@@ -307,6 +315,12 @@ func (s *Server) simulatePolicy(ctx *requestContext) {
 		result.Removed = append(result.Removed, entry)
 	}
 	result.Truncated = simulation.Truncated
+	// The key's policy chain sets every criterion.
+	for _, criterion := range simulation.Sort {
+		origin, _ := originFor(&criterion.Origin, config.Versions, input.Policy)
+		result.Sort = append(result.Sort, simulationCriterion{Criterion: criterion.Sort, Origin: origin})
+	}
+	result.Order, _ = originFor(simulation.Order, config.Versions, input.Policy)
 	if simulation.Ambiguous != nil {
 		result.Ambiguous = simulation.Ambiguous
 	}
@@ -324,7 +338,6 @@ func (s *Server) simulatePolicy(ctx *requestContext) {
 	}
 	first := chains[simulationCandidate{simulation.Pairs[0].Provider, simulation.Pairs[0].Credential}]
 	result.Tried, result.Fallbacks = simulation.Tried, simulation.Fallbacks
-	result.Order, _ = originFor(simulation.Order, first, input.Policy)
 	result.FallbacksOrigin, _ = originFor(simulation.FallbacksOrigin, first, input.Policy)
 	s.writeJSON(ctx, http.StatusOK, result)
 }
