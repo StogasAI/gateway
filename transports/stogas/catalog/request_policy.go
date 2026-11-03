@@ -51,6 +51,28 @@ type requestVariants struct {
 	budget        policy.SourceBudget
 	// attachments are the request's attachments, where they can narrow the candidates.
 	attachments []Attachment
+	// hostedTools are the hosted tools that the request lets the model call, whose data
+	// handling joins each candidate's.
+	hostedTools []HostedTool
+	// ruledOut are the deployments that the request's parameters or hosted tools ruled out.
+	ruledOut []ruledOut
+}
+
+// ruledOutError gives the error of the first deployment that the request's own content ruled
+// out and that an available credential reaches, or nil when the credentials reach none.
+func (v *requestVariants) ruledOutError(input RequestInput, route Route) error {
+	for _, out := range v.ruledOut {
+		indexes := []int{0}
+		if input.AvailableCredentials != nil {
+			indexes = input.AvailableCredentials[string(out.selection.provider)]
+		}
+		for _, index := range indexes {
+			if input.DeploymentEligible == nil || input.DeploymentEligible(out.selection.provider, index, route, out.selection.deployment) {
+				return out.err
+			}
+		}
+	}
+	return nil
 }
 
 // pairChoice is one deployment and credential in routing order.
@@ -128,6 +150,7 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 		template := ResolvedRequest{
 			Route: route, RequestedModel: model, Provider: selection.provider, Deployment: selection.deployment,
 			policyTime: input.now, policyBudget: input.policyBudget, policyBodyBytes: len(input.Body),
+			hostedTools: variants.hostedTools,
 		}
 		values, ok := newResolvedPolicyValues(&template)
 		if !ok {
@@ -266,6 +289,9 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 		return nil, firstErr
 	}
 	if len(candidates.filtered) == 0 && targetRemoved && !targetPassed {
+		if err := variants.ruledOutError(input, route); err != nil {
+			return nil, err
+		}
 		if targetChanged {
 			return nil, ErrByokTargetChanged
 		}

@@ -153,7 +153,7 @@ func enabledMCPServers(rawBody map[string]json.RawMessage, rawTools []map[string
 	var servers []mcpServer
 	allowed := mcpLabelsAllowedByToolChoice(rawBody)
 	for index, tool := range rawTools {
-		if canonicalResponsesToolType(rawString(tool["type"])) != schemas.ResponsesToolTypeMCP {
+		if catalog.CanonicalResponsesToolType(rawString(tool["type"])) != schemas.ResponsesToolTypeMCP {
 			continue
 		}
 		server, err := validateResponsesMCPTool(tool, "tools["+strconv.Itoa(index)+"]")
@@ -186,14 +186,14 @@ func mcpLabelsAllowedByToolChoice(rawBody map[string]json.RawMessage) map[string
 		var tools []map[string]json.RawMessage
 		if sonic.Unmarshal(object["tools"], &tools) == nil {
 			for _, tool := range tools {
-				if canonicalResponsesToolType(rawString(tool["type"])) == schemas.ResponsesToolTypeMCP {
+				if catalog.CanonicalResponsesToolType(rawString(tool["type"])) == schemas.ResponsesToolTypeMCP {
 					selected[rawString(tool["server_label"])] = true
 				}
 			}
 		}
 		return selected
 	}
-	if canonicalResponsesToolType(rawString(object["type"])) == schemas.ResponsesToolTypeMCP {
+	if catalog.CanonicalResponsesToolType(rawString(object["type"])) == schemas.ResponsesToolTypeMCP {
 		selected[rawString(object["server_label"])] = true
 	}
 	return selected

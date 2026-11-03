@@ -84,14 +84,14 @@ func (AzureAdapter) ValidateRawResponsesToolType(state *State, tool map[string]j
 	if azureDeploymentUsesAnthropicWire(state) {
 		return (AnthropicAdapter{}).ValidateRawResponsesToolType(state, tool)
 	}
-	switch toolType := canonicalResponsesToolType(rawString(tool["type"])); toolType {
+	switch toolType := catalog.CanonicalResponsesToolType(rawString(tool["type"])); toolType {
 	case schemas.ResponsesToolTypeFunction, schemas.ResponsesToolTypeCustom:
 		return nil
-	case schemas.ResponsesToolTypeMCP:
-		return invalidRequest("Remote MCP tools are supported only for OpenAI deployments")
-	case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview, schemas.ResponsesToolTypeWebFetch:
-		return invalidRequest("Hosted tools are not supported because this Azure route has no cataloged tool pricing")
 	default:
+		// The catalog offers no hosted tool on Azure's own routes.
+		if err := hostedToolOffered(state, string(toolType)); err != nil {
+			return err
+		}
 		return invalidRequest("Only function and custom tools are supported for Azure deployments")
 	}
 }

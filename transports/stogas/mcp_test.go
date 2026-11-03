@@ -70,8 +70,8 @@ func TestResponsesPolicyRefusesUnsupportedRemoteMCP(t *testing.T) {
 		{"approval without decision", `{"model":"openai/gpt-5.5","tools":[` + mcpServerTool + `],"input":[{"role":"user","content":"hi"},{"type":"mcp_approval_response","approval_request_id":"mcpr_1"}]}`, "approve must be a boolean"},
 		{"listing without tools", `{"model":"openai/gpt-5.5","tools":[` + mcpServerTool + `],"input":[{"role":"user","content":"hi"},{"type":"mcp_list_tools","id":"mcpl_1","server_label":"wiki"}]}`, "tools must list the server's tools"},
 		{"call without name", `{"model":"openai/gpt-5.5","tools":[` + mcpServerTool + `],"input":[{"role":"user","content":"hi"},{"type":"mcp_call","id":"mcp_1","server_label":"wiki","arguments":"{}"}]}`, "name is required"},
-		{"azure", `{"model":"azure/gpt-5.5","input":"hi","tools":[` + mcpServerTool + `]}`, "supported only for OpenAI deployments"},
-		{"anthropic", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[` + mcpServerTool + `]}`, "provider execution cannot be bounded or approved"},
+		{"azure", `{"model":"azure/gpt-5.5","input":"hi","tools":[` + mcpServerTool + `]}`, "No deployment for this request runs mcp."},
+		{"anthropic", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[` + mcpServerTool + `]}`, "No deployment for this request runs mcp."},
 		{"anthropic replayed item", `{"model":"anthropic-claude-sonnet-4-6","input":[{"role":"user","content":"hi"},{"type":"mcp_approval_response","approval_request_id":"mcpr_1","approve":true}]}`, "supported only for OpenAI deployments"},
 	} {
 		t.Run(item.name, func(t *testing.T) {

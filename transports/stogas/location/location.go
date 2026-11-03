@@ -162,6 +162,46 @@ func (p *Places) Within(actual, boundary string) bool {
 		slices.Contains(p.within[actual], boundary)
 }
 
+// Join gives the smallest location that holds both a and b: a location joins none to itself
+// and unknown to unknown, and two places join to the smallest place that contains both. Where
+// several places contain both without one holding another, as Asia and the EU both hold Cyprus,
+// their own join answers, so the result is always one location that holds both.
+func (p *Places) Join(a, b string) string {
+	switch {
+	case a == b:
+		return a
+	case a == None:
+		return b
+	case b == None:
+		return a
+	case a == Unknown || b == Unknown || p == nil || !p.Place(a) || !p.Place(b):
+		return Unknown
+	}
+	var common []string
+	for _, place := range p.within[a] {
+		if slices.Contains(p.within[b], place) {
+			common = append(common, place)
+		}
+	}
+	// The smallest common places are those that contain no other.
+	var smallest []string
+	for _, place := range common {
+		if !slices.ContainsFunc(common, func(other string) bool {
+			return other != place && slices.Contains(p.within[other], place)
+		}) {
+			smallest = append(smallest, place)
+		}
+	}
+	if len(smallest) == 0 {
+		return World
+	}
+	joined := smallest[0]
+	for _, place := range smallest[1:] {
+		joined = p.Join(joined, place)
+	}
+	return joined
+}
+
 var (
 	unknownOnly = []string{Unknown}
 	noneOnly    = []string{None}

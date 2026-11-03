@@ -8,11 +8,25 @@ routes:
     mediaTypes: [application/pdf, text/plain]
   dataHandling:
     endToEndEncrypted: false
-  # Foundry bills Anthropic's per-feature rates; the US Data Zone multiplier applies only to tokens.
-  # Reviewed 2026-10-11: https://platform.claude.com/docs/en/about-claude/pricing#claude-in-microsoft-foundry-pricing
-  pricing:
-    anthropic_web_search_calls:
-      per_1k_calls: '10'
+  # Claude runs the basic web search and web fetch versions on both hostings. Foundry bills Anthropic's
+  # per-feature rates; the US Data Zone multiplier applies only to tokens.
+  # Prices reviewed 2026-10-11: https://platform.claude.com/docs/en/about-claude/pricing#claude-in-microsoft-foundry-pricing
+  # Data handling reviewed 2026-11-03: https://platform.claude.com/docs/en/manage-claude/api-and-data-retention
+  # and https://platform.claude.com/docs/en/manage-claude/data-residency. inference_geo covers model inference
+  # only, so a search or a fetch can run anywhere. Website publishers can keep the URLs that web fetch requests.
+  hostedTools:
+    - tool: web_search
+      pricing:
+        anthropic_web_search_calls:
+          per_1k_calls: '10'
+      dataHandling:
+        processingLocation: unknown
+    - tool: web_fetch
+      dataHandling:
+        processingLocation: unknown
+        storageLocation: unknown
+        retentionDays: null
+        zeroDataRetention: false
   overrides:
     capabilities:
       implicitPromptCaching: false

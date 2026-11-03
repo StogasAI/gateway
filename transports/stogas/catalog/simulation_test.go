@@ -141,7 +141,7 @@ func TestRoutingSimulationNamesWhatRemovedEachCandidate(t *testing.T) {
 					return test.eligible(index, deployment.ID)
 				}
 			}
-			simulation := SimulateRouting(input, route, test.model, test.tier, test.mode)
+			simulation := SimulateRouting(input, route, test.model, test.tier, test.mode, nil, nil)
 			got := describeRemovals(simulation.Removed)
 			if !reflect.DeepEqual(got, test.removed) && (len(got) > 0 || len(test.removed) > 0) {
 				t.Errorf("removed:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(test.removed, "\n"))
@@ -185,7 +185,7 @@ func TestRoutingSimulationLocatesOrderAndFallbacks(t *testing.T) {
 		t.Fatal(err)
 	}
 	input := RequestInput{Policy: config, AvailableCredentials: map[string][]int{"azure": {0}}}
-	simulation := SimulateRouting(input, RouteChat, "gpt-5.6-sol", "", "")
+	simulation := SimulateRouting(input, RouteChat, "gpt-5.6-sol", "", "", nil, nil)
 	if simulation.Err != nil || simulation.Tried != 2 || simulation.Fallbacks != 1 ||
 		simulation.Order == nil || *simulation.Order != (policy.Origin{Rule: "newest"}) ||
 		simulation.FallbacksOrigin == nil || *simulation.FallbacksOrigin != (policy.Origin{}) {
@@ -199,7 +199,7 @@ func TestRoutingSimulationLocatesOrderAndFallbacks(t *testing.T) {
 	if !reflect.DeepEqual(attempts, want[:2]) {
 		t.Fatalf("request attempts %v", attempts)
 	}
-	if simulation := SimulateRouting(RequestInput{Policy: policyConfig(3), AvailableCredentials: input.AvailableCredentials}, RouteChat, "gpt-5.6-sol", "", ""); simulation.Order != nil || simulation.FallbacksOrigin != nil {
+	if simulation := SimulateRouting(RequestInput{Policy: policyConfig(3), AvailableCredentials: input.AvailableCredentials}, RouteChat, "gpt-5.6-sol", "", "", nil, nil); simulation.Order != nil || simulation.FallbacksOrigin != nil {
 		t.Fatalf("default settings have origins: %+v", simulation)
 	}
 }
@@ -215,7 +215,7 @@ func TestRoutingSimulationGivesEachPairTheRetriesOfItsPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[schemas.ModelProvider]int{"azure": 0, "openai": 2}
-	simulation := SimulateRouting(RequestInput{Policy: config, AvailableCredentials: map[string][]int{"azure": {0}, "openai": {0}}}, RouteChat, "gpt-5.6-sol", "", "")
+	simulation := SimulateRouting(RequestInput{Policy: config, AvailableCredentials: map[string][]int{"azure": {0}, "openai": {0}}}, RouteChat, "gpt-5.6-sol", "", "", nil, nil)
 	seen := map[schemas.ModelProvider]bool{}
 	for _, pair := range simulation.Pairs {
 		seen[pair.Provider] = true
@@ -257,7 +257,7 @@ func TestRoutingSimulationBoundsItsRemovals(t *testing.T) {
 		indexes[index] = index
 	}
 	credentials := map[string][]int{"anthropic": indexes, "azure": indexes, "chutes": indexes, "openai": indexes}
-	simulation := SimulateRouting(RequestInput{Policy: config, AvailableCredentials: credentials}, RouteChat, "", "", "")
+	simulation := SimulateRouting(RequestInput{Policy: config, AvailableCredentials: credentials}, RouteChat, "", "", "", nil, nil)
 	if len(simulation.Removed) != maxRemovedCandidates || simulation.Truncated == 0 || PublicError(simulation.Err).Code != "model_unavailable" {
 		t.Fatalf("removed %d, truncated %d, error %v", len(simulation.Removed), simulation.Truncated, simulation.Err)
 	}

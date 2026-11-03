@@ -73,6 +73,9 @@ type Deployment struct {
 	ReasoningMaxTokens  *ReasoningMaxTokens
 	ReasoningSupported  bool
 	DataHandling        DataHandling
+	// HostedTools are the tools that the route runs for the deployment. Each can only make
+	// DataHandling worse, for requests that let the model call it.
+	HostedTools map[HostedTool]HostedToolOffer
 	// Locations are the places of the catalog that the deployment belongs to, which say what
 	// lies within each data handling location.
 	Locations        *location.Places
@@ -178,12 +181,15 @@ type compiledDeployment struct {
 }
 
 type compiledDeploymentRoute struct {
-	Capabilities     Capabilities `json:"capabilities"`
-	ChainHash        string       `json:"chainHash"`
-	DataHandling     DataHandling `json:"dataHandling"`
-	InputModalities  []string     `json:"inputModalities"`
-	Pricing          Pricing      `json:"pricing"`
-	ReasoningEfforts []string     `json:"reasoningEfforts"`
+	Capabilities Capabilities `json:"capabilities"`
+	ChainHash    string       `json:"chainHash"`
+	DataHandling DataHandling `json:"dataHandling"`
+	// HostedTools are the tools that the route runs for this deployment, whose call meters are
+	// already in Pricing.
+	HostedTools      map[HostedTool]HostedToolOffer `json:"hostedTools"`
+	InputModalities  []string                       `json:"inputModalities"`
+	Pricing          Pricing                        `json:"pricing"`
+	ReasoningEfforts []string                       `json:"reasoningEfforts"`
 }
 
 type Capabilities struct {
@@ -243,13 +249,13 @@ type compiledProvider struct {
 }
 
 type compiledRoute struct {
-	// Readers show these. A route's capabilities, data handling, modalities and prices are
-	// defaults that each deployment's route already holds.
+	// Readers show these. A route's capabilities, data handling, modalities and hosted tools
+	// are defaults and offers that each deployment's route already holds.
 	Capabilities    shown `json:"capabilities"`
 	DataHandling    shown `json:"dataHandling"`
 	Endpoint        shown `json:"endpoint"`
+	HostedTools     shown `json:"hostedTools"`
 	InputModalities shown `json:"inputModalities"`
-	Pricing         shown `json:"pricing"`
 
 	ID              string          `json:"-"`
 	DeploymentIDs   []string        `json:"-"`

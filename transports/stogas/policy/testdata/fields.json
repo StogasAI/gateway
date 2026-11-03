@@ -69,6 +69,7 @@
 	"provider.id": "string",
 	"provider.name": "string",
 	"request.bodyBytes": "integer",
+	"request.hostedTools": "string_list",
 	"request.interface": "string",
 	"request.model": "string",
 	"request.time": "timestamp",

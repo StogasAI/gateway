@@ -545,8 +545,12 @@ func TestCloudClaudeAdapterRefusesWhatTheCloudLacks(t *testing.T) {
 	}{
 		{"aws-claude-fable-5-1", "/v1/responses", `"input":"hi","task_budget":{"type":"tokens","total":20000},`, "task_budget is not supported for Claude in Amazon Bedrock"},
 		{"aws-claude-fable-5-1-anthropic-hosted", "/v1/responses", `"input":"hi","task_budget":{"type":"tokens","total":20000},`, ""},
-		{"google-cloud-claude-fable-5-1", "/v1/responses", `"input":"hi","tools":[{"type":"web_search"}],`, "Hosted tools are not supported when AWS or Google runs Claude"},
-		{"aws-claude-fable-5-1", "/v1/responses", `"input":"hi","tools":[{"type":"web_fetch"}],`, "Hosted tools are not supported when AWS or Google runs Claude"},
+		// Only Anthropic's hosting runs hosted tools, so a credential that reaches only the
+		// cloud's own hosting gets the tool named.
+		{"google-cloud-claude-fable-5-1", "/v1/responses", `"input":"hi","tools":[{"type":"web_search"}],`, "No deployment that your credentials reach runs web_search. Remove the tool or check each credential's Region, hostings and Azure deployments."},
+		{"aws-claude-fable-5-1", "/v1/responses", `"input":"hi","tools":[{"type":"web_fetch"}],`, "No deployment that your credentials reach runs web_fetch."},
+		{"aws-claude-fable-5-1-anthropic-hosted", "/v1/responses", `"input":"hi","tools":[{"type":"web_fetch"}],`, ""},
+		{"google-cloud-claude-fable-5-1-anthropic-hosted", "/v1/responses", `"input":"hi","tools":[{"type":"web_search"}],`, ""},
 		{"aws-claude-fable-5-1", "/v1/responses", `"input":[{"role":"user","content":[{"type":"input_file","file_id":"file_123"}]}],`, "file IDs are not supported when AWS or Google runs Claude"},
 		{"aws-claude-fable-5-1-anthropic-hosted", "/v1/responses", `"input":[{"role":"user","content":[{"type":"input_file","file_id":"file_123"}]}],`, "Provider file IDs require BYOK"},
 		{"aws-claude-fable-5-1-us", "/v1/responses", `"input":[{"role":"user","content":[{"type":"input_image","image_url":"https://example.com/a.png"}]}],`, "URL sources are not supported when AWS or Google runs Claude; send the content inline"},

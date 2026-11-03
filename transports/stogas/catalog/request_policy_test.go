@@ -612,7 +612,7 @@ func TestMissingRootsSkipOnlyPairsWhosePolicySkips(t *testing.T) {
 				t.Fatalf("prepared %v, want %v", prepared, test.prepared)
 			}
 			input.CheckCandidate = nil
-			simulation := SimulateRouting(input, RouteChat, "openai-gpt-5.6-sol", "", "")
+			simulation := SimulateRouting(input, RouteChat, "openai-gpt-5.6-sol", "", "", nil, nil)
 			var removed []int
 			for _, entry := range simulation.Removed {
 				if entry.Reason == RemovedEncryptionKey {

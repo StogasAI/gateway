@@ -1,15 +1,14 @@
 package stogas
 
 import (
-	"encoding/json"
-
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
 
 // CloudClaudeAdapter serves Claude on AWS and Google Cloud. Every hosting takes
 // the Messages API, so Anthropic's validation, holds and refusal billing apply;
 // what Bedrock and Agent Platform (Vertex AI) lack is refused here instead of
-// upstream.
+// upstream. The catalog lists hosted tools only for the hosting that runs them,
+// so Anthropic's tool checks refuse them where the cloud runs Claude.
 type CloudClaudeAdapter struct {
 	AnthropicAdapter
 }
@@ -54,18 +53,4 @@ func (a CloudClaudeAdapter) SanitizeRequest(state *State) error {
 	}
 	ensureAnthropicResponsesHostedToolCap(state)
 	return nil
-}
-
-// ValidateRawResponsesToolType refuses web search and web fetch where the cloud
-// runs Claude. Bedrock has neither and Agent Platform has no web fetch. Agent
-// Platform's web search is off unless an organization policy allows it, sends
-// queries outside Google's commitments, and has no verified price.
-func (a CloudClaudeAdapter) ValidateRawResponsesToolType(state *State, tool map[string]json.RawMessage) error {
-	if cloudRunsClaude(state) {
-		rawType := rawString(tool["type"])
-		if anthropicResponsesWebSearchToolType(rawType) || anthropicResponsesWebFetchToolType(rawType) {
-			return invalidRequest("Hosted tools are not supported when AWS or Google runs Claude")
-		}
-	}
-	return a.AnthropicAdapter.ValidateRawResponsesToolType(state, tool)
 }

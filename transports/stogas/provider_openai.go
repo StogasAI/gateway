@@ -409,7 +409,7 @@ func ensureOpenAIResponsesHostedToolCap(state *State) {
 	if _, supplied := responsesExplicitMaxToolCalls(state); supplied {
 		return
 	}
-	toolTypes := effectiveResponsesToolTypes(resolution.RawBody(), resolution.ToolTypes())
+	toolTypes := catalog.EffectiveResponsesToolTypes(resolution.RawBody(), resolution.ToolTypes())
 	if usesWebSearchKind(toolTypes, "web_search") || usesWebSearchKind(toolTypes, "web_search_preview") ||
 		len(enabledMCPServers(resolution.RawBody(), resolution.RawTools())) > 0 {
 		resolution.EnsureResponsesMaxToolCalls(defaultResponsesHostedToolCap)
@@ -463,6 +463,9 @@ func (OpenAIAdapter) CalculateUpstreamCost(state *State) error {
 
 func (OpenAIAdapter) ValidateRawResponsesToolType(state *State, tool map[string]json.RawMessage) error {
 	rawType := rawString(tool["type"])
+	if err := hostedToolOffered(state, rawType); err != nil {
+		return err
+	}
 	if rawType == "mcp" {
 		if !responsesMCPSupported(state) {
 			return invalidRequest("Remote MCP tools are supported only for OpenAI deployments")
@@ -904,7 +907,7 @@ func responsesSearchKind(ctx openAIAdapterContext) string {
 	if ctx.Route != openAIAdapterRouteResponses {
 		return ""
 	}
-	toolTypes := effectiveResponsesToolTypes(ctx.RawBody, ctx.ToolTypes)
+	toolTypes := catalog.EffectiveResponsesToolTypes(ctx.RawBody, ctx.ToolTypes)
 	usesWebSearch := usesWebSearchKind(toolTypes, "web_search")
 	usesPreview := usesWebSearchKind(toolTypes, "web_search_preview")
 	switch {
@@ -923,7 +926,7 @@ func responsesSearchHoldKind(ctx openAIAdapterContext) string {
 	if ctx.Route != openAIAdapterRouteResponses {
 		return ""
 	}
-	toolTypes := effectiveResponsesToolTypes(ctx.RawBody, ctx.ToolTypes)
+	toolTypes := catalog.EffectiveResponsesToolTypes(ctx.RawBody, ctx.ToolTypes)
 	selected := ""
 	var highest *money.USD
 	for _, kind := range []string{"web_search", "web_search_preview"} {

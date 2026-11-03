@@ -145,3 +145,44 @@ func TestForm(t *testing.T) {
 		}
 	}
 }
+
+func TestJoinHoldsBothLocations(t *testing.T) {
+	places := testPlaces(t)
+	for _, tc := range []struct{ a, b, want string }{
+		{"DE", "DE", "DE"},
+		{"DE", "CY", "eu"},
+		{"CY", "DE", "eu"},
+		{"DE", "NO", "europe"},
+		{"DE", "US", "world"},
+		{"US-CA", "US", "US"},
+		{"CY", "asia", "asia"},
+		{"none", "DE", "DE"},
+		{"DE", "none", "DE"},
+		{"none", "none", "none"},
+		{"unknown", "DE", "unknown"},
+		{"none", "unknown", "unknown"},
+		{"world", "DE", "world"},
+		{"FR", "DE", "unknown"},
+	} {
+		if got := places.Join(tc.a, tc.b); got != tc.want {
+			t.Errorf("Join(%q, %q) = %q, want %q", tc.a, tc.b, got, tc.want)
+		}
+	}
+	// Two places that each contain both, with neither holding the other, join to what holds both.
+	split, err := Read(map[string][]string{
+		"world": {}, "north": {"world"}, "west": {"world"}, "AA": {"north", "west"}, "BB": {"north", "west"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := split.Join("AA", "BB"); got != "world" {
+		t.Errorf("Join(AA, BB) = %q, want world", got)
+	}
+	var none *Places
+	if got := none.Join("DE", "DE"); got != "DE" {
+		t.Errorf("nil Join(DE, DE) = %q", got)
+	}
+	if got := none.Join("DE", "US"); got != "unknown" {
+		t.Errorf("nil Join(DE, US) = %q", got)
+	}
+}

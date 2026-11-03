@@ -23,7 +23,7 @@ import (
 
 const (
 	catalogSchema     = "stogas.catalog.v10"
-	catalogPartSchema = "stogas.catalog.part.v9"
+	catalogPartSchema = "stogas.catalog.part.v10"
 	// Evidence approves a release by the digest of its root, and the root names each part by
 	// digest and size. The build refuses a larger root, part or catalog, so the gateway refuses
 	// one before it downloads it.
@@ -862,6 +862,9 @@ func validateCompiledDeployment(graph compiledGraph, selectors selectorRegistry,
 		if err := validateDeploymentPricing(owner, providerID, deployment.ModelID, route); err != nil {
 			return err
 		}
+		if err := validateHostedTools(owner, UsesClaudeWire(schemas.ModelProvider(providerID), deployment.ModelID), route.HostedTools, route.Pricing); err != nil {
+			return err
+		}
 		if err := validateReasoningEfforts(owner, route.ReasoningEfforts); err != nil {
 			return err
 		}
@@ -1017,8 +1020,8 @@ func validateCanonicalRouteDeployments(graph compiledGraph) error {
 }
 
 // validateLocations checks that a graph names only the catalog's places: each headquarters is a
-// country among them, and each deployment's data handling names one of them or unknown, or none
-// for storage.
+// country among them, and each deployment's data handling, and each of its hosted tools', names
+// one of them or unknown, or none for the deployment's storage.
 func validateLocations(graph compiledGraph, places *location.Places) error {
 	for id, author := range graph.Authors {
 		if country := author.HeadquarteredCountry; country != "" && (!location.Country(country) || !places.Place(country)) {
@@ -1034,6 +1037,15 @@ func validateLocations(graph compiledGraph, places *location.Places) error {
 		for routeID, route := range deployment.Routes {
 			if !places.Valid(route.DataHandling.ProcessingLocation, false) || !places.Valid(route.DataHandling.StorageLocation, true) {
 				return fmt.Errorf("deployment %s route %s names a location that the catalog does not list", deploymentID, routeID)
+			}
+			// A tool's own locations join the deployment's, so none, which joins to nothing, is
+			// left out rather than written.
+			for tool, offer := range route.HostedTools {
+				effect := offer.DataHandling
+				if effect.ProcessingLocation != "" && !places.Valid(effect.ProcessingLocation, false) ||
+					effect.StorageLocation != "" && !places.Valid(effect.StorageLocation, false) {
+					return fmt.Errorf("deployment %s route %s has %s data handling in a location that the catalog does not list", deploymentID, routeID, tool)
+				}
 			}
 		}
 	}
