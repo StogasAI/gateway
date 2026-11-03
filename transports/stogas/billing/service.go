@@ -138,6 +138,9 @@ type UpstreamTarget struct {
 	ModelVersion        string   `json:"modelVersion"`
 	ProcessingLocations []string `json:"processingLocations"`
 	StorageLocations    []string `json:"storageLocations"`
+	// VersionUnreported marks a request whose reply will not name the model version that served
+	// it, so only a target whose version Azure keeps may serve it.
+	VersionUnreported bool `json:"versionUnreported"`
 }
 
 type AzureBinding struct {
@@ -153,6 +156,11 @@ type AzureBinding struct {
 	ProcessingLocation string `json:"processingLocation"`
 	StorageLocation    string `json:"storageLocation"`
 	TokenScope         string `json:"tokenScope"`
+	// ModelDeprecationAt is when Azure retires the model version, nil when Azure named no date.
+	ModelDeprecationAt *time.Time `json:"modelDeprecationAt"`
+	// AutoUpgrade says when Azure may move the deployment to another version: none,
+	// at_retirement, or new_default when another version becomes the default.
+	AutoUpgrade string `json:"autoUpgrade"`
 }
 
 type azureBoundBinding struct {
@@ -216,6 +224,7 @@ type Service struct {
 	sanctionedNetworksQuery    string
 	claimAzureCheckQuery       string
 	recordAzureCheckQuery      string
+	stopAzureTargetQuery       string
 	// Each hold records the boot that owns it, so Control can release the
 	// holds of a boot that stopped.
 	nodeID                  string
@@ -271,6 +280,7 @@ func NewService(
 		sanctionedNetworksQuery: db.functionQuery("gateway_sanctioned_networks", "first_address, last_address", ""),
 		claimAzureCheckQuery:    db.functionQuery("gateway_claim_azure_check", "claimed, verified_at, started_at, unavailable", "$1::uuid, make_interval(secs => $2::double precision)"),
 		recordAzureCheckQuery:   db.functionQuery("gateway_record_azure_check", "result, unavailable", "$1::uuid, $2::timestamptz, $3::jsonb"),
+		stopAzureTargetQuery:    db.functionQuery("gateway_stop_azure_target", "stopped", "$1::uuid, $2::uuid, $3::text"),
 		inferenceTokenPublicKey: publicKey,
 		nodeID:                  nodeID,
 		apiKeyPepper:            apiKeyPepper,
@@ -289,6 +299,7 @@ func NewService(
 		service.sanctionedNetworksQuery,
 		service.claimAzureCheckQuery,
 		service.recordAzureCheckQuery,
+		service.stopAzureTargetQuery,
 	); err != nil {
 		db.Close()
 		return nil, err

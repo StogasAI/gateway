@@ -103,7 +103,7 @@ func resolveCloudRequest(t *testing.T, path, deploymentID, extra string) (*State
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Body: []byte(body), Method: "POST", Path: path,
 		AvailableCredentials: map[string][]int{provider: {0}},
-		DeploymentEligible: func(_ schemas.ModelProvider, _ int, deployment catalog.Deployment) bool {
+		DeploymentEligible: func(_ schemas.ModelProvider, _ int, _ catalog.Route, deployment catalog.Deployment) bool {
 			return deployment.ID == deploymentID
 		},
 	})
@@ -524,14 +524,14 @@ func TestCloudCredentialEligibilityUsesThePublicTarget(t *testing.T) {
 		"google-cloud": {{Credential: &billing.CachedCredential{Target: &billing.CloudTarget{Hosting: []string{"google"}}}}},
 	}}
 	eligible := CredentialDeploymentFilter(snapshot, now)
-	if !eligible(catalog.ProviderAWS, 0, cloudDeployment(t, "aws-claude-fable-5-1")) ||
-		eligible(catalog.ProviderAWS, 0, cloudDeployment(t, "aws-claude-fable-5-1-us")) ||
-		eligible(catalog.ProviderAWS, 0, cloudDeployment(t, "aws-claude-fable-5-1-anthropic-hosted")) ||
-		eligible(catalog.ProviderAWS, 1, cloudDeployment(t, "aws-claude-fable-5-1")) {
+	if !eligible(catalog.ProviderAWS, 0, catalog.RouteChat, cloudDeployment(t, "aws-claude-fable-5-1")) ||
+		eligible(catalog.ProviderAWS, 0, catalog.RouteChat, cloudDeployment(t, "aws-claude-fable-5-1-us")) ||
+		eligible(catalog.ProviderAWS, 0, catalog.RouteChat, cloudDeployment(t, "aws-claude-fable-5-1-anthropic-hosted")) ||
+		eligible(catalog.ProviderAWS, 1, catalog.RouteChat, cloudDeployment(t, "aws-claude-fable-5-1")) {
 		t.Fatal("AWS eligibility ignored the public target")
 	}
-	if !eligible(catalog.ProviderGoogleCloud, 0, cloudDeployment(t, "google-cloud-claude-fable-5-1-eu")) ||
-		eligible(catalog.ProviderGoogleCloud, 0, cloudDeployment(t, "google-cloud-claude-fable-5-1-anthropic-hosted")) {
+	if !eligible(catalog.ProviderGoogleCloud, 0, catalog.RouteChat, cloudDeployment(t, "google-cloud-claude-fable-5-1-eu")) ||
+		eligible(catalog.ProviderGoogleCloud, 0, catalog.RouteChat, cloudDeployment(t, "google-cloud-claude-fable-5-1-anthropic-hosted")) {
 		t.Fatal("Google Cloud eligibility ignored the public target")
 	}
 }

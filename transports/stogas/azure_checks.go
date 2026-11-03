@@ -28,6 +28,10 @@ const (
 	azureCheckFresh = 10 * time.Minute
 	// A request whose targets went unconfirmed this long waits for a check.
 	azureCheckStale = 30 * time.Minute
+	// A reply that names no model version cannot show that Azure moved its target, so a request
+	// that gets one needs a younger confirmation.
+	azureCheckUnreportedFresh = time.Minute
+	azureCheckUnreportedStale = 10 * time.Minute
 	// Requests keep their targets while checks fail until the last confirmation is this old.
 	azureCheckGrace = 2 * time.Hour
 	// How long a request waits for a check, and lets another gateway finish the check it claimed.
@@ -58,6 +62,7 @@ var (
 type azureCheckStore interface {
 	ClaimAzureCheck(ctx context.Context, byokID string, staleAfter time.Duration) (billing.AzureClaim, error)
 	RecordAzureCheck(ctx context.Context, byokID string, startedAt time.Time, deployments []billing.AzureDeployment) (billing.AzureCheckResult, error)
+	StopAzureTarget(ctx context.Context, byokID, bindingID, servedModel string) (bool, error)
 }
 
 type azureTargetChecker interface {
@@ -65,13 +70,24 @@ type azureTargetChecker interface {
 }
 
 // azureCheckTarget is the Azure target that a request holds. VerifiedAt is the credential's last
-// confirmation when the hold ran, zero when there was none.
+// confirmation when the hold ran, zero when there was none. Unreported marks a request whose reply
+// will not name the model version that served it.
 type azureCheckTarget struct {
 	ByokID     string
 	BindingID  string
 	AccountID  string
 	VerifiedAt time.Time
+	Unreported bool
 	Credential azureauth.Credential
+}
+
+// windows returns how old the target's confirmation may be before a check starts in the
+// background and before the request waits for one, and the key that paces those checks here.
+func (t azureCheckTarget) windows() (fresh, stale time.Duration, key string) {
+	if t.Unreported {
+		return azureCheckUnreportedFresh, azureCheckUnreportedStale, t.ByokID + "/unreported"
+	}
+	return azureCheckFresh, azureCheckStale, t.ByokID
 }
 
 // azureCheckOutcome reports a check: whether the targets were confirmed, and the selected targets
@@ -127,22 +143,23 @@ func (c *AzureChecks) Confirm(ctx context.Context, target azureCheckTarget) erro
 	if !azureAccountIDPattern.MatchString(target.AccountID) || target.ByokID == "" || target.BindingID == "" {
 		return billing.ErrByok
 	}
+	fresh, stale, key := target.windows()
 	age := c.age(target.VerifiedAt)
-	if age < azureCheckFresh {
+	if age < fresh {
 		return nil
 	}
-	if age < azureCheckStale {
+	if age < stale {
 		c.refresh(target)
 		return nil
 	}
 	// After a check here failed, requests wait for no other until its retry.
-	if c.failing(target.ByokID) {
+	if c.failing(key) {
 		if age < azureCheckGrace {
 			return nil
 		}
 		return billing.ErrByok
 	}
-	results := c.flights.DoChan(target.ByokID, func() (any, error) {
+	results := c.flights.DoChan(key, func() (any, error) {
 		return c.confirm(target), nil
 	})
 	// The check goes on for later requests when this one stops waiting.
@@ -181,15 +198,16 @@ func (c *AzureChecks) age(verifiedAt time.Time) time.Duration {
 func (c *AzureChecks) confirm(target azureCheckTarget) azureCheckOutcome {
 	ctx, cancel := context.WithTimeout(c.ctx, azureCheckTimeout)
 	defer cancel()
+	_, stale, key := target.windows()
 	deadline := c.now().Add(azureCheckWait)
 	for {
-		claim, err := c.store.ClaimAzureCheck(ctx, target.ByokID, azureCheckStale)
+		claim, err := c.store.ClaimAzureCheck(ctx, target.ByokID, stale)
 		if err != nil {
-			c.fail(target.ByokID)
+			c.fail(key)
 			return azureCheckOutcome{}
 		}
 		// The database's own clock times the confirmation.
-		if confirmedWithin(claim, azureCheckStale) {
+		if confirmedWithin(claim, stale) {
 			return azureCheckOutcome{confirmed: true, unavailable: claim.Unavailable}
 		}
 		if claim.Claimed {
@@ -197,7 +215,7 @@ func (c *AzureChecks) confirm(target azureCheckTarget) azureCheckOutcome {
 		}
 		if !c.now().Before(deadline) {
 			if confirmedWithin(claim, azureCheckGrace) {
-				c.fail(target.ByokID)
+				c.fail(key)
 				return azureCheckOutcome{unavailable: claim.Unavailable}
 			}
 			return c.check(ctx, target, claim)
@@ -207,7 +225,7 @@ func (c *AzureChecks) confirm(target azureCheckTarget) azureCheckOutcome {
 		case <-timer.C:
 		case <-ctx.Done():
 			timer.Stop()
-			c.fail(target.ByokID)
+			c.fail(key)
 			return azureCheckOutcome{unavailable: claim.Unavailable}
 		}
 	}
@@ -220,29 +238,63 @@ func confirmedWithin(claim billing.AzureClaim, age time.Duration) bool {
 
 // refresh checks in the background, unless this gateway checked or tried recently.
 func (c *AzureChecks) refresh(target azureCheckTarget) {
-	if !c.due(target.ByokID) {
+	fresh, _, key := target.windows()
+	c.background(target, key, fresh)
+}
+
+// Recheck checks a target's account in the background after a reply showed that its deployment
+// is gone or retired, so the fleet stops the target now rather than at the next due check. A
+// check that any gateway made in the last few seconds answers it.
+func (c *AzureChecks) Recheck(target azureCheckTarget) {
+	c.background(target, target.ByokID+"/recheck", azureCheckWait)
+}
+
+// background checks target unless a confirmation is younger than fresh or this gateway tried
+// for key recently.
+func (c *AzureChecks) background(target azureCheckTarget, key string, fresh time.Duration) {
+	if !c.due(key) {
 		return
 	}
-	go c.flights.Do(target.ByokID, func() (any, error) {
+	go c.flights.Do(key, func() (any, error) {
 		ctx, cancel := context.WithTimeout(c.ctx, azureCheckTimeout)
 		defer cancel()
-		claim, err := c.store.ClaimAzureCheck(ctx, target.ByokID, azureCheckFresh)
+		claim, err := c.store.ClaimAzureCheck(ctx, target.ByokID, fresh)
 		if err != nil {
-			c.fail(target.ByokID)
+			c.fail(key)
 			return azureCheckOutcome{}, nil
 		}
 		if claim.Claimed {
 			return c.check(ctx, target, claim), nil
 		}
 		// Another gateway checked recently or holds the claim.
-		confirmed := confirmedWithin(claim, azureCheckFresh)
+		confirmed := confirmedWithin(claim, fresh)
 		wait := azureCheckWait
 		if confirmed {
-			wait = max(wait, azureCheckFresh-claim.StartedAt.Sub(claim.VerifiedAt))
+			wait = max(wait, fresh-claim.StartedAt.Sub(claim.VerifiedAt))
 		}
-		c.pause(target.ByokID, wait)
+		c.pause(key, wait)
 		return azureCheckOutcome{confirmed: confirmed, unavailable: claim.Unavailable}, nil
 	})
+}
+
+// Stop stops a target in the background after its reply named served, another model version,
+// before the request moves on to its next pair.
+func (c *AzureChecks) Stop(target azureCheckTarget, served string) {
+	go func() {
+		ctx, cancel := context.WithTimeout(c.ctx, azureCheckTimeout)
+		defer cancel()
+		reason := "stopped"
+		if stopped, err := c.store.StopAzureTarget(ctx, target.ByokID, target.BindingID, served); err != nil {
+			reason = "record_failed"
+		} else if !stopped {
+			reason = "already_stopped"
+		}
+		writeOperationalLog(operationalLogEvent{
+			Event:      "azure_target_served_other_version",
+			ReasonCode: reason,
+			Severity:   "warning",
+		})
+	}()
 }
 
 // due reports whether a background check may start now, and if so holds off the next one for
@@ -297,23 +349,24 @@ func (c *AzureChecks) mark(byokID string, mark azureCheckMark) {
 // check reads the account's deployments and records them. The claim's start comes from the
 // database before the read, so a check that started earlier never overwrites a newer one.
 func (c *AzureChecks) check(ctx context.Context, target azureCheckTarget, claim billing.AzureClaim) azureCheckOutcome {
+	fresh, _, key := target.windows()
 	select {
 	case c.slots <- struct{}{}:
 		defer func() { <-c.slots }()
 	case <-ctx.Done():
-		c.fail(target.ByokID)
+		c.fail(key)
 		return azureCheckOutcome{unavailable: claim.Unavailable}
 	}
 	deployments, reason, err := c.deployments(ctx, target)
 	if err == nil {
 		var result billing.AzureCheckResult
 		if result, err = c.store.RecordAzureCheck(ctx, target.ByokID, claim.StartedAt, deployments); err == nil {
-			c.pause(target.ByokID, azureCheckFresh)
+			c.pause(key, fresh)
 			return azureCheckOutcome{confirmed: true, unavailable: result.Unavailable}
 		}
 		reason = "record_failed"
 	}
-	c.fail(target.ByokID)
+	c.fail(key)
 	writeOperationalLog(operationalLogEvent{
 		Event:      "azure_target_check_failed",
 		ReasonCode: reason,
@@ -438,12 +491,13 @@ func armDeployment(value json.RawMessage, prefix string, account string) (billin
 		return billing.AzureDeployment{}, false
 	}
 	return billing.AzureDeployment{
-		ID:           prefix + strings.ToLower(leaf),
-		ModelFormat:  jsonText(value, "properties", "model", "format"),
-		ModelName:    jsonText(value, "properties", "model", "name"),
-		ModelVersion: jsonText(value, "properties", "model", "version"),
-		SkuName:      jsonText(value, "sku", "name"),
-		State:        jsonText(value, "properties", "provisioningState"),
+		ID:             prefix + strings.ToLower(leaf),
+		ModelFormat:    jsonText(value, "properties", "model", "format"),
+		ModelName:      jsonText(value, "properties", "model", "name"),
+		ModelVersion:   jsonText(value, "properties", "model", "version"),
+		SkuName:        jsonText(value, "sku", "name"),
+		State:          jsonText(value, "properties", "provisioningState"),
+		VersionUpgrade: jsonText(value, "properties", "versionUpgradeOption"),
 	}, true
 }
 

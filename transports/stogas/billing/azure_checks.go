@@ -13,14 +13,16 @@ const azureCheckQueryTimeout = 5 * time.Second
 
 // AzureDeployment is one deployment that an Azure account lists, as gateways and Control's
 // discovery both report it: its lowercase resource ID and, trimmed, the model format, name and
-// version and the SKU that it serves and its provisioning state, empty when Azure left one out.
+// version and the SKU that it serves, its provisioning state and its version upgrade option,
+// empty when Azure left one out.
 type AzureDeployment struct {
-	ID           string `json:"id"`
-	ModelFormat  string `json:"modelFormat"`
-	ModelName    string `json:"modelName"`
-	ModelVersion string `json:"modelVersion"`
-	SkuName      string `json:"skuName"`
-	State        string `json:"state"`
+	ID             string `json:"id"`
+	ModelFormat    string `json:"modelFormat"`
+	ModelName      string `json:"modelName"`
+	ModelVersion   string `json:"modelVersion"`
+	SkuName        string `json:"skuName"`
+	State          string `json:"state"`
+	VersionUpgrade string `json:"versionUpgrade"`
 }
 
 // AzureClaim is a gateway's attempt to claim the next check of an Azure credential's targets.
@@ -96,4 +98,20 @@ func (s *Service) RecordAzureCheck(ctx context.Context, byokID string, startedAt
 		return AzureCheckResult{}, fmt.Errorf("%w: record Azure check: %v", ErrGatewayUnavailable, err)
 	}
 	return result, nil
+}
+
+// StopAzureTarget stops a target whose reply named servedModel, another model version than the
+// target's, and asks Control for a discovery. It reports whether the target stopped; one that
+// already stopped stays as it is.
+func (s *Service) StopAzureTarget(ctx context.Context, byokID, bindingID, servedModel string) (bool, error) {
+	if s == nil || s.db == nil {
+		return false, ErrGatewayUnavailable
+	}
+	queryCtx, cancel := context.WithTimeout(ctx, azureCheckQueryTimeout)
+	defer cancel()
+	var stopped bool
+	if err := s.db.pool.QueryRow(queryCtx, s.stopAzureTargetQuery, byokID, bindingID, servedModel).Scan(&stopped); err != nil {
+		return false, fmt.Errorf("%w: stop Azure target: %v", ErrGatewayUnavailable, err)
+	}
+	return stopped, nil
 }

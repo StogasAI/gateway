@@ -28,11 +28,15 @@ type fakeAzureCheckStore struct {
 	started  []time.Time
 	result   billing.AzureCheckResult
 	claimErr error
+	// staleAfter lists how old each claim let the last confirmation be.
+	staleAfter []time.Duration
+	// stopped lists the served models of the targets that replies stopped.
+	stopped []string
 	// onClaim runs on each claim, such as to move the test clock.
 	onClaim func()
 }
 
-func (s *fakeAzureCheckStore) ClaimAzureCheck(_ context.Context, byokID string, _ time.Duration) (billing.AzureClaim, error) {
+func (s *fakeAzureCheckStore) ClaimAzureCheck(_ context.Context, byokID string, staleAfter time.Duration) (billing.AzureClaim, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if byokID != "byok-1" {
@@ -41,6 +45,7 @@ func (s *fakeAzureCheckStore) ClaimAzureCheck(_ context.Context, byokID string, 
 	if s.claimErr != nil {
 		return billing.AzureClaim{}, s.claimErr
 	}
+	s.staleAfter = append(s.staleAfter, staleAfter)
 	claim := s.claims[min(s.claimed, len(s.claims)-1)]
 	s.claimed++
 	if s.onClaim != nil {
@@ -55,6 +60,16 @@ func (s *fakeAzureCheckStore) RecordAzureCheck(_ context.Context, _ string, star
 	s.recorded = append(s.recorded, deployments)
 	s.started = append(s.started, startedAt)
 	return s.result, nil
+}
+
+func (s *fakeAzureCheckStore) StopAzureTarget(_ context.Context, byokID, bindingID, servedModel string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if byokID != "byok-1" || bindingID != "binding-1" {
+		return false, fmt.Errorf("unexpected target %s %s", byokID, bindingID)
+	}
+	s.stopped = append(s.stopped, servedModel)
+	return len(s.stopped) == 1, nil
 }
 
 func (s *fakeAzureCheckStore) counts() (int, int) {
@@ -98,7 +113,10 @@ func (r armRedirect) RoundTrip(request *http.Request) (*http.Response, error) {
 }
 
 func armDeploymentJSON(name, version, sku, state string) map[string]any {
-	properties := map[string]any{"model": map[string]any{"format": "OpenAI", "name": "gpt-5.6-sol", "version": version}}
+	properties := map[string]any{
+		"model":                map[string]any{"format": "OpenAI", "name": "gpt-5.6-sol", "version": version},
+		"versionUpgradeOption": "OnceNewDefaultVersionAvailable",
+	}
 	if state != "" {
 		properties["provisioningState"] = state
 	}
@@ -186,12 +204,13 @@ func TestAzureChecksRefreshAgingConfirmationsInBackgroundOnce(t *testing.T) {
 		t.Fatalf("aging confirmations started several checks: claims=%d requests=%d", claimed, requests.Load())
 	}
 	want := billing.AzureDeployment{
-		ID:           testAzureAccount + "/deployments/customer-sol",
-		ModelFormat:  "OpenAI",
-		ModelName:    "gpt-5.6-sol",
-		ModelVersion: "2026-07-09",
-		SkuName:      "GlobalStandard",
-		State:        "Succeeded",
+		ID:             testAzureAccount + "/deployments/customer-sol",
+		ModelFormat:    "OpenAI",
+		ModelName:      "gpt-5.6-sol",
+		ModelVersion:   "2026-07-09",
+		SkuName:        "GlobalStandard",
+		State:          "Succeeded",
+		VersionUpgrade: "OnceNewDefaultVersionAvailable",
 	}
 	if got := store.recorded[0]; len(got) != 1 || got[0] != want {
 		t.Fatalf("recorded deployments = %#v", got)
@@ -199,6 +218,82 @@ func TestAzureChecksRefreshAgingConfirmationsInBackgroundOnce(t *testing.T) {
 	// The check counts as this gateway's confirmation until it is due again.
 	if checks.due("byok-1") {
 		t.Fatal("a recorded check left the credential due")
+	}
+}
+
+// waitFor polls until done reports true, or fails the test after five seconds.
+func waitFor(t *testing.T, what string, done func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !done() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting: %s", what)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestAzureChecksGiveUnreportedRepliesYoungerConfirmations(t *testing.T) {
+	started := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
+	store := &fakeAzureCheckStore{claims: []billing.AzureClaim{{Claimed: true, StartedAt: started}}}
+	checks, _, clock := newTestAzureChecks(t, store, map[string]any{"value": []any{}})
+	// Two minutes is young for a reply that names its version.
+	if err := checks.Confirm(context.Background(), testCheckTarget(clock.Ago(2*time.Minute))); err != nil {
+		t.Fatal(err)
+	}
+	if claimed, _ := store.counts(); claimed != 0 {
+		t.Fatalf("a young confirmation started a check: claims=%d", claimed)
+	}
+	// A reply that names none needs a check, in the background, that asks for a younger one.
+	target := testCheckTarget(clock.Ago(2 * time.Minute))
+	target.Unreported = true
+	if err := checks.Confirm(context.Background(), target); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the background check", func() bool { _, recorded := store.counts(); return recorded == 1 })
+	if store.staleAfter[0] != azureCheckUnreportedFresh {
+		t.Fatalf("the background claim let confirmations be %v old", store.staleAfter[0])
+	}
+
+	// Past ten minutes such a request waits for the check, which the other requests' pacing does
+	// not hold back.
+	waiting := &fakeAzureCheckStore{claims: []billing.AzureClaim{{Claimed: true, StartedAt: started}}}
+	checks, requests, clock := newTestAzureChecks(t, waiting, map[string]any{"value": []any{}})
+	checks.pause("byok-1", azureCheckFresh)
+	target = testCheckTarget(clock.Ago(11 * time.Minute))
+	target.Unreported = true
+	if err := checks.Confirm(context.Background(), target); err != nil {
+		t.Fatal(err)
+	}
+	if _, recorded := waiting.counts(); recorded != 1 || requests.Load() != 1 || waiting.staleAfter[0] != azureCheckUnreportedStale {
+		t.Fatalf("the request did not wait for a check: records=%d requests=%d claims=%v", recorded, requests.Load(), waiting.staleAfter)
+	}
+}
+
+func TestAzureChecksRecheckAGoneTargetOnceAtATime(t *testing.T) {
+	store := &fakeAzureCheckStore{claims: []billing.AzureClaim{{Claimed: true, StartedAt: time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)}}}
+	checks, requests, clock := newTestAzureChecks(t, store, map[string]any{"value": []any{}})
+	target := testCheckTarget(clock.Ago(time.Minute))
+	for range 3 {
+		checks.Recheck(target)
+	}
+	waitFor(t, "the recheck", func() bool { _, recorded := store.counts(); return recorded == 1 })
+	if claimed, _ := store.counts(); claimed != 1 || requests.Load() != 1 || store.staleAfter[0] != azureCheckWait {
+		t.Fatalf("rechecks: claims=%d requests=%d stale after %v", claimed, requests.Load(), store.staleAfter)
+	}
+}
+
+func TestAzureChecksStopATargetThatServedAnotherVersion(t *testing.T) {
+	store := &fakeAzureCheckStore{}
+	checks, requests, _ := newTestAzureChecks(t, store, map[string]any{"value": []any{}})
+	checks.Stop(testCheckTarget(time.Time{}), "gpt-5.6-sol-2026-10-28")
+	waitFor(t, "the stop", func() bool {
+		store.mu.Lock()
+		defer store.mu.Unlock()
+		return len(store.stopped) == 1
+	})
+	if store.stopped[0] != "gpt-5.6-sol-2026-10-28" || requests.Load() != 0 {
+		t.Fatalf("stopped %v after %d Azure requests", store.stopped, requests.Load())
 	}
 }
 
@@ -511,7 +606,7 @@ func TestAzureChecksReadDeploymentsLikeDiscovery(t *testing.T) {
 		t.Fatalf("deployments() = %v (%s)", err, reason)
 	}
 	want := []billing.AzureDeployment{
-		{ID: testAzureAccount + "/deployments/customer-sol", ModelFormat: "OpenAI", ModelName: "gpt-5.6-sol", ModelVersion: "2026-07-09", SkuName: "GlobalStandard"},
+		{ID: testAzureAccount + "/deployments/customer-sol", ModelFormat: "OpenAI", ModelName: "gpt-5.6-sol", ModelVersion: "2026-07-09", SkuName: "GlobalStandard", VersionUpgrade: "OnceNewDefaultVersionAvailable"},
 		{ID: testAzureAccount + "/deployments/odd.name_1", ModelFormat: "OpenAI", State: "Creating"},
 	}
 	if requests.Load() != 3 || len(deployments) != len(want) || deployments[0] != want[0] || deployments[1] != want[1] {

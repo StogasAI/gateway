@@ -118,7 +118,7 @@ func TestRoutingFallbacksFollowCandidateOrderWithinTheirSlots(t *testing.T) {
 			var attempts []schemas.ModelProvider
 			resolved, err := ResolveRequest(RequestInput{
 				Body: policyChatBody(test.extra), Method: "POST", Path: "/v1/chat/completions", Policy: test.config,
-				DeploymentEligible: func(_ schemas.ModelProvider, _ int, deployment Deployment) bool {
+				DeploymentEligible: func(_ schemas.ModelProvider, _ int, _ Route, deployment Deployment) bool {
 					return deployment.ID == "openai-gpt-5.6-sol" || deployment.ID == "azure-gpt-5.6-sol"
 				},
 				CheckCandidate: func(provider schemas.ModelProvider, _ int, _ Deployment) error {

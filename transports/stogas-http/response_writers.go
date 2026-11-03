@@ -139,6 +139,9 @@ func publicStableGatewayError(bifrostErr *schemas.BifrostError) (int, string, st
 	}
 	code := bifrostErrorCode(bifrostErr)
 	switch code {
+	case stogasbilling.ErrByokTargetChanged.Code:
+		public := stogas.PublicBillingErrorFor(stogasbilling.ErrByokTargetChanged)
+		return public.StatusCode, public.Type, public.Code, public.Message, true
 	case "request_timeout":
 		return http.StatusGatewayTimeout, schemas.RequestTimedOut, code,
 			"The response timed out. Generation may continue and be billed.", true
