@@ -320,7 +320,15 @@ func validResponsesStreamType(value schemas.ResponsesStreamResponseType) bool {
 		schemas.ResponsesStreamResponseTypeOutputTextAnnotationAdded,
 		schemas.ResponsesStreamResponseTypeOutputTextAnnotationDone,
 		schemas.ResponsesStreamResponseTypeCustomToolCallInputDelta,
-		schemas.ResponsesStreamResponseTypeCustomToolCallInputDone:
+		schemas.ResponsesStreamResponseTypeCustomToolCallInputDone,
+		schemas.ResponsesStreamResponseTypeMCPListToolsInProgress,
+		schemas.ResponsesStreamResponseTypeMCPListToolsCompleted,
+		schemas.ResponsesStreamResponseTypeMCPListToolsFailed,
+		schemas.ResponsesStreamResponseTypeMCPCallInProgress,
+		schemas.ResponsesStreamResponseTypeMCPCallArgumentsDelta,
+		schemas.ResponsesStreamResponseTypeMCPCallArgumentsDone,
+		schemas.ResponsesStreamResponseTypeMCPCallCompleted,
+		schemas.ResponsesStreamResponseTypeMCPCallFailed:
 		return true
 	default:
 		return false

@@ -267,6 +267,7 @@ func parseResponsesTools(state *State, raw json.RawMessage) ([]schemas.Responses
 	}
 	seenNames := make(map[string]bool, len(rawTools))
 	seenHostedTypes := make(map[schemas.ResponsesToolType]bool, len(rawTools))
+	seenServers := make(map[string]bool)
 	for index, rawTool := range rawTools {
 		if err := validateRawResponsesToolType(state, rawTool); err != nil {
 			return nil, err
@@ -286,6 +287,12 @@ func parseResponsesTools(state *State, raw json.RawMessage) ([]schemas.Responses
 				return nil, invalidRequest(fmt.Sprintf("tools[%d].type duplicates another hosted tool", index))
 			}
 			seenHostedTypes[toolType] = true
+		case schemas.ResponsesToolTypeMCP:
+			// A response names each MCP server by its label, so labels must differ.
+			if seenServers[name] {
+				return nil, invalidRequest(fmt.Sprintf("tools[%d].server_label duplicates another MCP server", index))
+			}
+			seenServers[name] = true
 		}
 	}
 	var tools []schemas.ResponsesTool
@@ -296,6 +303,7 @@ func parseResponsesTools(state *State, raw json.RawMessage) ([]schemas.Responses
 		switch tool.Type {
 		case schemas.ResponsesToolTypeFunction, schemas.ResponsesToolTypeCustom:
 		case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview, schemas.ResponsesToolTypeWebFetch:
+		case schemas.ResponsesToolTypeMCP:
 		default:
 			return nil, invalidRequest("Only function, custom, web_fetch, and priced hosted web search tools are supported")
 		}
@@ -336,6 +344,9 @@ func validateRawResponsesToolShape(state *State, tool map[string]json.RawMessage
 		return toolType, "", validateResponsesWebSearchTool(state, tool, path, toolType)
 	case schemas.ResponsesToolTypeWebFetch:
 		return toolType, "", validateResponsesWebFetchTool(state, tool, path)
+	case schemas.ResponsesToolTypeMCP:
+		server, err := validateResponsesMCPTool(tool, path)
+		return toolType, server.label, err
 	default:
 		return toolType, "", nil
 	}
@@ -685,7 +696,8 @@ func validateRawResponsesToolType(state *State, tool map[string]json.RawMessage)
 func responsesHasHostedTool(tools []schemas.ResponsesTool) bool {
 	for _, tool := range tools {
 		switch tool.Type {
-		case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview, schemas.ResponsesToolTypeWebFetch:
+		case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview, schemas.ResponsesToolTypeWebFetch,
+			schemas.ResponsesToolTypeMCP:
 			return true
 		}
 	}
@@ -719,14 +731,16 @@ func responsesHostedToolChoiceAllowsCalls(raw map[string]json.RawMessage) bool {
 		}
 		for _, tool := range allowed {
 			switch canonicalResponsesToolType(rawString(tool["type"])) {
-			case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview, schemas.ResponsesToolTypeWebFetch:
+			case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview, schemas.ResponsesToolTypeWebFetch,
+				schemas.ResponsesToolTypeMCP:
 				return true
 			}
 		}
 		return false
 	}
 	switch canonicalResponsesToolType(rawString(choice["type"])) {
-	case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview, schemas.ResponsesToolTypeWebFetch:
+	case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview, schemas.ResponsesToolTypeWebFetch,
+		schemas.ResponsesToolTypeMCP:
 		return true
 	default:
 		return false
@@ -868,9 +882,38 @@ func validateResponsesToolChoice(state *State, raw json.RawMessage, tools []sche
 			return invalidRequest("tool_choice selects an undeclared hosted tool version")
 		}
 		return nil
+	case schemas.ResponsesToolTypeMCP:
+		return validateResponsesMCPToolSelector(choice, "tool_choice", tools)
 	default:
 		return invalidRequest("tool_choice must select a supported tool")
 	}
+}
+
+// validateResponsesMCPToolSelector checks a tool_choice entry that selects a declared MCP
+// server, and optionally one of its tools by name.
+func validateResponsesMCPToolSelector(selector map[string]json.RawMessage, path string, tools []schemas.ResponsesTool) error {
+	if err := rejectUnsupportedResponsesToolKeys(selector, path, "type", "server_label", "name"); err != nil {
+		return err
+	}
+	label, _ := rawStringValue(selector["server_label"])
+	if !responsesMCPServerDeclared(tools, label) {
+		return invalidRequest(path + " selects an undeclared MCP server")
+	}
+	if raw := selector["name"]; rawJSONValueSet(raw) {
+		if name, ok := rawStringValue(raw); !ok || strings.TrimSpace(name) == "" {
+			return invalidRequest(path + ".name must name a tool")
+		}
+	}
+	return nil
+}
+
+func responsesMCPServerDeclared(tools []schemas.ResponsesTool, label string) bool {
+	for _, tool := range tools {
+		if tool.Type == schemas.ResponsesToolTypeMCP && tool.ResponsesToolMCP != nil && tool.ResponsesToolMCP.ServerLabel == label && label != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func validateResponsesAllowedToolChoice(state *State, raw json.RawMessage, tools []schemas.ResponsesTool) error {
@@ -911,6 +954,15 @@ func validateResponsesAllowedToolChoice(state *State, raw json.RawMessage, tools
 				return invalidRequest("tool_choice selects an undeclared hosted tool version")
 			}
 			identity := string(toolType)
+			if seen[identity] {
+				return invalidRequest(path + " duplicates another allowed tool")
+			}
+			seen[identity] = true
+		case schemas.ResponsesToolTypeMCP:
+			if err := validateResponsesMCPToolSelector(allowed, path, tools); err != nil {
+				return err
+			}
+			identity := string(toolType) + ":" + rawString(allowed["server_label"]) + ":" + rawString(allowed["name"])
 			if seen[identity] {
 				return invalidRequest(path + " duplicates another allowed tool")
 			}
@@ -956,6 +1008,10 @@ func validateResponsesToolSelectorType(state *State, rawType string) (schemas.Re
 		}
 	case schemas.ResponsesToolTypeWebSearchPreview:
 		if state != nil && state.Resolution != nil && state.Resolution.Provider == schemas.OpenAI && openAIWebSearchToolType(rawType) {
+			return toolType, nil
+		}
+	case schemas.ResponsesToolTypeMCP:
+		if rawType == "mcp" && responsesMCPSupported(state) {
 			return toolType, nil
 		}
 	}
@@ -1075,6 +1131,8 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 		if validation.pendingCalls > 0 {
 			switch itemType {
 			case "function_call", "function_call_output", "custom_tool_call", "custom_tool_call_output":
+			// MCP items are the provider's own steps, which a response can interleave with client calls.
+			case "mcp_list_tools", "mcp_call", "mcp_approval_request", "mcp_approval_response":
 			default:
 				return invalidRequest(path + " must resolve the preceding client tool calls before adding another input item")
 			}
@@ -1113,6 +1171,13 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 			}
 		case "reasoning":
 			if err := validateResponsesReasoningInput(state, item, path); err != nil {
+				return err
+			}
+		case "mcp_list_tools", "mcp_call", "mcp_approval_request", "mcp_approval_response":
+			if !responsesMCPSupported(state) {
+				return invalidRequest(itemType + " input items are supported only for OpenAI deployments")
+			}
+			if err := validateResponsesMCPInput(item, path, itemType); err != nil {
 				return err
 			}
 		case "input_file":

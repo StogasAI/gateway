@@ -56,6 +56,8 @@ type openAIAdapterContext struct {
 	ToolTypes            []string
 	RawTools             []map[string]json.RawMessage
 	ActualWebSearchCalls int
+	// InputTokenLimit is the input that the base hold covers.
+	InputTokenLimit int
 }
 
 var (
@@ -408,7 +410,8 @@ func ensureOpenAIResponsesHostedToolCap(state *State) {
 		return
 	}
 	toolTypes := effectiveResponsesToolTypes(resolution.RawBody(), resolution.ToolTypes())
-	if usesWebSearchKind(toolTypes, "web_search") || usesWebSearchKind(toolTypes, "web_search_preview") {
+	if usesWebSearchKind(toolTypes, "web_search") || usesWebSearchKind(toolTypes, "web_search_preview") ||
+		len(enabledMCPServers(resolution.RawBody(), resolution.RawTools())) > 0 {
 		resolution.EnsureResponsesMaxToolCalls(defaultResponsesHostedToolCap)
 	}
 }
@@ -461,7 +464,10 @@ func (OpenAIAdapter) CalculateUpstreamCost(state *State) error {
 func (OpenAIAdapter) ValidateRawResponsesToolType(state *State, tool map[string]json.RawMessage) error {
 	rawType := rawString(tool["type"])
 	if rawType == "mcp" {
-		return invalidRequest("Remote MCP tools are not supported because provider execution cannot be bounded or approved per request")
+		if !responsesMCPSupported(state) {
+			return invalidRequest("Remote MCP tools are supported only for OpenAI deployments")
+		}
+		return nil
 	}
 	if openAIResponsesToolTypeSupported(rawType) {
 		if openAIWebSearchToolType(rawType) {
@@ -503,6 +509,10 @@ func openAIAdapterContextForDeployment(state *State, deployment catalog.Deployme
 	}
 	resolution := state.Resolution
 	pricing := clonePricing(deployment.Pricing)
+	inputTokenLimit := resolution.InputTokenLimit()
+	if deployment.ContextWindowTokens > 0 && inputTokenLimit > deployment.ContextWindowTokens {
+		inputTokenLimit = deployment.ContextWindowTokens
+	}
 	return openAIAdapterContext{
 		Route: openAIAdapterRoute(resolution.Route),
 		Deployment: openAIAdapterDeployment{
@@ -519,6 +529,7 @@ func openAIAdapterContextForDeployment(state *State, deployment catalog.Deployme
 		ToolTypes:            resolution.ToolTypes(),
 		RawTools:             resolution.RawTools(),
 		ActualWebSearchCalls: actualWebSearchCalls(state),
+		InputTokenLimit:      inputTokenLimit,
 	}
 }
 
@@ -564,7 +575,7 @@ func validateOpenAIGuardrails(req openAIAdapterContext) error {
 
 func openAIResponsesToolTypeSupported(rawType string) bool {
 	switch strings.TrimSpace(rawType) {
-	case "function", "custom":
+	case "function", "custom", "mcp":
 		return true
 	default:
 		return openAIWebSearchToolType(rawType)
@@ -577,8 +588,6 @@ func openAIUnsupportedResponsesToolMessage(rawType string) string {
 	switch {
 	case rawType == "":
 		return "tools must declare a type"
-	case normalized == "mcp":
-		return "Remote MCP tools are not supported because provider execution cannot be bounded or approved per request"
 	case strings.HasPrefix(normalized, "file_search"):
 		return "file_search is not supported because hosted retrieval and file storage have separate pricing and provider state"
 	case normalized == "code_interpreter" || strings.HasPrefix(normalized, "code_execution"):
@@ -594,7 +603,7 @@ func openAIUnsupportedResponsesToolMessage(rawType string) string {
 	case normalized == "tool_search" || normalized == "namespace" || normalized == "memory":
 		return rawType + " is not supported because it needs tool loading or provider-held state that we do not offer"
 	default:
-		return "Only function, custom, and priced hosted web search tools are supported"
+		return "Only function, custom, remote MCP, and priced hosted web search tools are supported"
 	}
 }
 
@@ -623,6 +632,7 @@ func openAIHoldMeters(req openAIAdapterContext) []billing.MeterEstimate {
 	meters := []billing.MeterEstimate{}
 	if req.Route == openAIAdapterRouteResponses {
 		meters = append(meters, openAIResponsesHostedToolHoldMeters(req)...)
+		meters = append(meters, openAIResponsesMCPHoldMeters(req)...)
 	}
 	if req.Route == openAIAdapterRouteChat {
 		meters = append(meters, openAIChatSearchModelHoldMeters(req)...)
@@ -813,7 +823,8 @@ func validateTool(route openAIAdapterRoute, tool map[string]json.RawMessage) err
 		case schemas.ResponsesToolTypeFunction,
 			schemas.ResponsesToolTypeCustom,
 			schemas.ResponsesToolTypeWebSearch,
-			schemas.ResponsesToolTypeWebSearchPreview:
+			schemas.ResponsesToolTypeWebSearchPreview,
+			schemas.ResponsesToolTypeMCP:
 			return nil
 		default:
 			return errOpenAIUnsupportedTool
