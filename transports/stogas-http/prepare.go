@@ -165,14 +165,18 @@ func (s *Server) startRun(ctx *requestContext, startedAt time.Time, preparation 
 		})
 		return nil
 	}
-	// The receipt commits to the received bytes, which the run releases with
-	// its plan.
+	// The receipt commits to the received request, which the run releases
+	// with its plan.
 	if wantsMetadata(run.request) {
 		if _, err := ctx.receiptRequestDigest(); err != nil {
 			run.finishPreprocessing()
 			run.cancel()
 			run.releasePlan()
-			s.writeProofError(ctx)
+			if refusal, ok := receiptContentError(err); ok {
+				s.writeCatalogError(ctx, refusal)
+			} else {
+				s.writeProofError(ctx)
+			}
 			return nil
 		}
 	}

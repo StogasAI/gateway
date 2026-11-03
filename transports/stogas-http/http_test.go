@@ -7,8 +7,6 @@ import (
 	"crypto/ed25519"
 	"crypto/mldsa"
 	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"github.com/maximhq/bifrost/transports/stogas/money"
@@ -19,8 +17,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	ref "github.com/StogasAI/stogas/go/reference"
-	"github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer"
+	verifier "github.com/StogasAI/stogas/go"
 	"github.com/google/uuid"
 	providerutils "github.com/maximhq/bifrost/core/providers/utils"
 	"github.com/maximhq/bifrost/core/schemas"
@@ -28,6 +25,7 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proof"
+	"github.com/maximhq/bifrost/transports/stogas/confidential/proof/prooftest"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proofhttp"
 	confidentialruntime "github.com/maximhq/bifrost/transports/stogas/confidential/runtime"
 	"net/http"
@@ -786,17 +784,18 @@ func TestWriteInferenceJSONAddsContentReceipt(t *testing.T) {
 	}
 	state.FinalEvent.Usage.UpstreamCostUSD, state.FinalEvent.Usage.BilledCostUSD = "0.002", "0.00004"
 	state.FinalEvent.Usage.CacheReadSavingsUSD, state.FinalEvent.Usage.CacheWriteOverheadUSD = schemas.Ptr("0.0006"), schemas.Ptr("0")
-	requestDigest := sha256.Sum256(ctx.body)
+	request := bytes.Clone(ctx.body)
 	if _, err := ctx.receiptRequestDigest(); err != nil {
 		t.Fatal(err)
 	}
 	ctx.body = nil
 	server.writeInferenceJSON(ctx, bifrostCtx, state, http.StatusOK, map[string]any{"ok": true})
+	sent := testResponse(ctx).Body.Bytes()
 	var response struct {
 		OK     bool         `json:"ok"`
 		Stogas proof.Object `json:"stogas"`
 	}
-	if err := json.Unmarshal(testResponse(ctx).Body.Bytes(), &response); err != nil {
+	if err := json.Unmarshal(sent, &response); err != nil {
 		t.Fatal(err)
 	}
 	if !response.OK || response.Stogas.CreatedAt != state.FinalEvent.CreatedAt {
@@ -809,14 +808,17 @@ func TestWriteInferenceJSONAddsContentReceipt(t *testing.T) {
 		response.Stogas.CacheWriteOverheadUSD == nil || *response.Stogas.CacheWriteOverheadUSD != "0" {
 		t.Fatal("response metadata differs from final request history")
 	}
-	if !verifyReceipt(publicKey, response.Stogas, boot, requestDigest, sha256.Sum256([]byte(`{"ok":true}`))) {
+	if !prooftest.VerifyReceipt(publicKey, response.Stogas, boot, request, sent) {
 		t.Fatal("receipt does not bind exact request and response")
 	}
-	if verifyReceipt(publicKey, response.Stogas, boot, sha256.Sum256([]byte(`{}`)), sha256.Sum256([]byte(`{"ok":true}`))) {
+	if prooftest.VerifyReceipt(publicKey, response.Stogas, boot, []byte(`{}`), sent) {
 		t.Fatal("receipt accepted another request")
 	}
+	if prooftest.VerifyReceipt(publicKey, response.Stogas, boot, request, []byte(`{"ok":false}`)) {
+		t.Fatal("receipt accepted another response")
+	}
 	response.Stogas.Meters["total_input_tokens"] = billing.EventMeter{Quantity: "1301"}
-	if verifyReceipt(publicKey, response.Stogas, boot, requestDigest, sha256.Sum256([]byte(`{"ok":true}`))) {
+	if prooftest.VerifyReceipt(publicKey, response.Stogas, boot, request, sent) {
 		t.Fatal("receipt accepted a changed informational meter")
 	}
 }
@@ -942,29 +944,6 @@ func testProofService(t *testing.T) (*proofhttp.Service, []byte, [32]byte) {
 	}
 	public := append(key.PublicKey().Bytes(), ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)...)
 	return service, public, sha256.Sum256(document)
-}
-
-// verifyReceipt independently checks the Rust signer's message, digests and metadata.
-func verifyReceipt(public []byte, object proof.Object, boot, request, response [32]byte) bool {
-	receipt := object.Receipt
-	encoded, err := json.Marshal(object)
-	var bag map[string]json.RawMessage
-	if err != nil || json.Unmarshal(encoded, &bag) != nil {
-		return false
-	}
-	delete(bag, "receipt")
-	if encoded, err = json.Marshal(bag); err != nil {
-		return false
-	}
-	canonical, err := jsoncanonicalizer.Transform(encoded)
-	signature, signatureErr := base64.RawURLEncoding.DecodeString(receipt.Signature)
-	if err != nil || signatureErr != nil || receipt.Schema != "stogas.receipt.v1" || receipt.BootSHA256 != hex.EncodeToString(boot[:]) ||
-		receipt.RequestSHA256 != hex.EncodeToString(request[:]) || receipt.ResponseSHA256 != hex.EncodeToString(response[:]) {
-		return false
-	}
-	digest := sha256.Sum256(canonical)
-	message := bytes.Join([][]byte{[]byte("stogas.receipt.v1\x00"), request[:], response[:], digest[:]}, nil)
-	return ref.VerifySignature(public, message, signature) == nil
 }
 
 func TestRequireInferenceEnvelopeChecksAPIKeyBeforeBodyValidation(t *testing.T) {
@@ -1600,8 +1579,8 @@ func TestAPIKeyTokenRejectsEmptyWhitespaceAndNonASCIICredentials(t *testing.T) {
 
 func TestReceiptHeaderRejectsRepeatedValues(t *testing.T) {
 	ctx := newTestRequest(t)
-	ctx.request.Header.Add(stogasHeaderMetadata, "v1")
-	ctx.request.Header.Add(stogasHeaderMetadata, "v1")
+	ctx.request.Header.Add(stogasHeaderMetadata, "v2")
+	ctx.request.Header.Add(stogasHeaderMetadata, "v2")
 	if _, err := metadataHeader(ctx); err == nil {
 		t.Fatal("repeated receipt header was accepted")
 	}
@@ -1768,7 +1747,7 @@ func TestPublicResponsePayloadRemovesExtraFields(t *testing.T) {
 	}
 }
 
-func TestReceiptHeaderAcceptsOnlyV1(t *testing.T) {
+func TestReceiptHeaderAcceptsOnlyV2(t *testing.T) {
 	for _, test := range []struct {
 		name  string
 		value string
@@ -1776,9 +1755,10 @@ func TestReceiptHeaderAcceptsOnlyV1(t *testing.T) {
 		valid bool
 	}{
 		{name: "absent", valid: true},
-		{name: "v1", value: "v1", want: true, valid: true},
-		{name: "whitespace", value: " v1 ", want: true, valid: true},
-		{name: "case", value: "V1"},
+		{name: "v2", value: "v2", want: true, valid: true},
+		{name: "whitespace", value: " v2 ", want: true, valid: true},
+		{name: "case", value: "V2"},
+		{name: "retired", value: "v1"},
 		{name: "boolean", value: "true"},
 		{name: "field list", value: "provider,latency"},
 		{name: "number", value: "1"},
@@ -1793,6 +1773,32 @@ func TestReceiptHeaderAcceptsOnlyV1(t *testing.T) {
 				t.Fatalf("metadataHeader() = (%v, %v), want (%v, valid=%v)", got, err, test.want, test.valid)
 			}
 		})
+	}
+}
+
+func TestReceiptRequestDigestRefusesNumbersAReceiptCannotHold(t *testing.T) {
+	for _, test := range []struct {
+		body, message string
+	}{
+		{body: `{"seed":9007199254740992}`, message: "Your request has an integer beyond -9007199254740991 to 9007199254740991"},
+		{body: `{"seed":-9007199254740992}`, message: "Your request has an integer beyond -9007199254740991 to 9007199254740991"},
+		{body: `{"metadata":{"x":1e400}}`, message: "Your request has a number beyond -1.7976931348623157e308 to 1.7976931348623157e308"},
+	} {
+		ctx := newTestRequest(t)
+		testRequestBody(ctx, test.body)
+		_, err := ctx.receiptRequestDigest()
+		refusal, ok := receiptContentError(err)
+		if !ok || refusal.StatusCode != http.StatusBadRequest || refusal.Type != catalog.ErrorTypeInvalidRequest || !strings.HasPrefix(refusal.Message, test.message) {
+			t.Fatalf("%s: refusal = %#v, %v (from %v)", test.body, refusal, ok, err)
+		}
+	}
+	ctx := newTestRequest(t)
+	testRequestBody(ctx, `{"seed":9007199254740991,"low":-9007199254740991,"x":1.7976931348623157e308,"y":9007199254740993.5}`)
+	if _, err := ctx.receiptRequestDigest(); err != nil {
+		t.Fatalf("a receipt refused numbers that it holds: %v", err)
+	}
+	if _, ok := receiptContentError(errors.New("signer unavailable")); ok {
+		t.Fatal("a failure that is not the request's was reported as the request's")
 	}
 }
 
@@ -2560,7 +2566,7 @@ func TestWriteSSEStreamEmitsFinalConfidentialProof(t *testing.T) {
 	}()
 
 	body := readResponseBodyStream(t, streamBodyReader)
-	chunkJSON := requireSSEDataFrames(t, body, "chatcmpl_stream_proof")
+	requireSSEDataFrames(t, body, "chatcmpl_stream_proof")
 	proofPrefix := ": " + proofhttp.SSECommentPrefix
 	proofIndex := strings.Index(body, proofPrefix)
 	doneIndex := strings.Index(body, "data: [DONE]\n\n")
@@ -2577,14 +2583,34 @@ func TestWriteSSEStreamEmitsFinalConfidentialProof(t *testing.T) {
 	if err := json.Unmarshal(proofJSON, &proofObject); err != nil {
 		t.Fatalf("failed to parse proof comment: %v", err)
 	}
-	proofFrames := make([][]byte, 0, len(chunkJSON)+1)
-	for _, chunk := range chunkJSON {
-		proofFrames = append(proofFrames, frameSSEEvent("", []byte(chunk)))
-	}
-	proofFrames = append(proofFrames, frameSSEDone())
-	if !verifyReceipt(publicKey, proofObject, boot, sha256.Sum256(ctx.body), sha256.Sum256(bytes.Join(proofFrames, nil))) {
+	// Go's zero created and empty system_fingerprint set nothing, and null fields are left out.
+	completion := []byte(`{"id":"chatcmpl_stream_proof","object":"chat.completion","model":"gpt-5.5-2026-04-23","service_tier":"standard",` +
+		`"choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}]}`)
+	if !prooftest.VerifyReceipt(publicKey, proofObject, boot, ctx.body, completion) ||
+		!prooftest.VerifyDigests(publicKey, proofObject, boot, prooftest.Digest(ctx.body, "encryption_keys"), streamDigest(t, body)) {
 		t.Fatalf("streaming proof did not verify: signature=%q body=%q", proofObject.Receipt.Signature, body)
 	}
+}
+
+// streamDigest reads a stream as it was sent, event by event as a client does, into the
+// digest of the response that its receipt signs.
+func streamDigest(t *testing.T, body string) *[64]byte {
+	t.Helper()
+	content := verifier.NewStreamContent()
+	defer content.Close()
+	for event := range strings.SplitAfterSeq(body, "\n\n") {
+		if event == "" {
+			continue
+		}
+		if err := content.Push([]byte(event)); err != nil {
+			t.Fatalf("client could not read event %q: %v", event, err)
+		}
+	}
+	digest, err := content.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return (*[64]byte)(&digest)
 }
 
 func TestWriteSSEStreamEmitsReceiptBeforeResponsesTerminalEvent(t *testing.T) {
@@ -2643,9 +2669,17 @@ func TestWriteSSEStreamEmitsReceiptBeforeResponsesTerminalEvent(t *testing.T) {
 	if err := json.Unmarshal([]byte(strings.TrimSpace(body[proofIndex+len(proofPrefix):proofIndex+proofEnd])), &proofObject); err != nil {
 		t.Fatal(err)
 	}
-	unsignedBody := body[:proofIndex] + body[proofIndex+proofEnd+2:]
-	if !verifyReceipt(publicKey, proofObject, boot, sha256.Sum256(ctx.body), sha256.Sum256([]byte(unsignedBody))) {
-		t.Fatal("Responses receipt did not cover the complete stream including its terminal event")
+	var terminal struct {
+		Response json.RawMessage `json:"response"`
+	}
+	data, _, _ := strings.Cut(strings.TrimPrefix(body[terminalIndex:], "event: response.completed\ndata: "), "\n")
+	if err := json.Unmarshal([]byte(data), &terminal); err != nil {
+		t.Fatal(err)
+	}
+	request := prooftest.Digest(ctx.body, "encryption_keys")
+	if !prooftest.VerifyDigests(publicKey, proofObject, boot, request, prooftest.Digest(terminal.Response)) ||
+		!prooftest.VerifyDigests(publicKey, proofObject, boot, request, streamDigest(t, body)) {
+		t.Fatal("Responses receipt did not cover the response of the terminal event")
 	}
 }
 

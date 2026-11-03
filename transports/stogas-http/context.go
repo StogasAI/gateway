@@ -142,10 +142,10 @@ func metadataHeader(ctx *requestContext) (bool, error) {
 		return false, nil
 	}
 	switch raw {
-	case "v1":
+	case "v2":
 		return true, nil
 	default:
-		return false, fmt.Errorf("%s must be v1", stogasHeaderMetadata)
+		return false, fmt.Errorf("%s must be v2", stogasHeaderMetadata)
 	}
 }
 

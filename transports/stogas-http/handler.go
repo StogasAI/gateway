@@ -13,7 +13,7 @@ type requestContext struct {
 	request               *http.Request
 	writer                http.ResponseWriter
 	body                  []byte
-	requestDigest         *[32]byte
+	requestDigest         *[64]byte
 	memory                *requestMemoryLease
 	response              *publicResponse
 	credential            *apiCredential

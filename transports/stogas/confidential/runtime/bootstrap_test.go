@@ -253,7 +253,7 @@ func TestBootRuntimeRetainsIdentityAcrossPolicyRejectionAndPendingRegistration(t
 			if runtime.Secrets.Ready() || runtime.Readiness().Ready {
 				t.Fatal("closed runtime retained serving state")
 			}
-			if _, err := keys.SignReceipt(digest, digest, digest, []byte(`{}`)); err == nil {
+			if _, err := keys.SignReceipt(digest, verifier.ContentDigest{}, verifier.ContentDigest{}, []byte(`{}`)); err == nil {
 				t.Fatal("receipt signer retained after close")
 			}
 		})
