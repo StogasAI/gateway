@@ -17,7 +17,9 @@ type apiCredential struct {
 	Dashboard      *billing.DashboardCredential
 	// Check is the grant that a credential check carries instead of an API key.
 	Check *billing.ByokCheckGrant
-	Raw   string
+	// PolicyCheck is the grant that a policy check may carry instead of an API key.
+	PolicyCheck *billing.PolicyCheckGrant
+	Raw         string
 }
 
 var (
@@ -137,6 +139,17 @@ func (s *Server) requireAPIKey(ctx *requestContext) (apiCredential, bool) {
 		}
 		clearInferenceCredentials(ctx)
 		return apiCredential{Check: grant}, true
+	}
+	// A member may check policy text with a grant instead of an API key, such as a plugin's
+	// settings before they encrypt them. No other request takes one.
+	if ctx.request.URL.Path == policyValidationPath && billing.IsPolicyCheckGrant(token) {
+		grant, err := s.runtime.ParsePolicyCheckGrant(token)
+		if err != nil {
+			s.writeBillingError(ctx, err)
+			return apiCredential{}, false
+		}
+		clearInferenceCredentials(ctx)
+		return apiCredential{PolicyCheck: grant}, true
 	}
 	if ctx.encrypted && billing.IsDashboardCredential(token) {
 		dashboard, dashboardErr := s.runtime.ParseDashboardCredential(token)

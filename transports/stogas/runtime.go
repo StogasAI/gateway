@@ -175,6 +175,13 @@ func (r *Runtime) ParseByokCheckGrant(raw string) (*billing.ByokCheckGrant, erro
 	return r.billing.ParseByokCheckGrant(raw)
 }
 
+func (r *Runtime) ParsePolicyCheckGrant(raw string) (*billing.PolicyCheckGrant, error) {
+	if r == nil || r.billing == nil {
+		return nil, billing.ErrPolicyCheckGrant
+	}
+	return r.billing.ParsePolicyCheckGrant(raw)
+}
+
 func (r *Runtime) Billing() *billing.Service {
 	if r == nil {
 		return nil
