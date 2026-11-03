@@ -110,9 +110,11 @@ func NormalizeStogasErrorCode(code string, status int) string {
 		"request_body_timeout", "request_timeout", "request_too_large", "response_encoding_failed",
 		"stogas_response_proof_failed", "route_not_found", "schedule_denied", "service_tier_unavailable",
 		"unsupported_media_type", "unsupported_request", "unsupported_service_tier", "unsupported_tool",
-		// The Chutes transport proved these failed before it sent anything.
+		// A provider call that never reached the provider can fail with these: the Chutes transport
+		// proves so itself, and the provider account errors keep the code that the reply shows.
 		"upstream_access_denied", "upstream_authentication_failed", "upstream_capacity_unavailable",
-		"upstream_configuration_error", "upstream_protocol_error", "upstream_rate_limit_error", "upstream_verification_failed":
+		"upstream_configuration_error", "upstream_protocol_error", "upstream_quota_exceeded",
+		"upstream_rate_limit_error", "upstream_verification_failed":
 		return code
 	}
 
