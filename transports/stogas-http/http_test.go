@@ -1747,9 +1747,6 @@ func TestInferenceHeadersValidateAcceptValues(t *testing.T) {
 }
 
 func TestPublicResponsePayloadRemovesExtraFields(t *testing.T) {
-	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
-	defer cancel()
-
 	response := &schemas.BifrostChatResponse{
 		ID:      "chatcmpl_test",
 		Object:  "chat.completion",
@@ -1762,7 +1759,7 @@ func TestPublicResponsePayloadRemovesExtraFields(t *testing.T) {
 		},
 	}
 
-	object := publicPayloadObject(t, publicResponsePayload(bifrostCtx, response, response.ExtraFields))
+	object := publicPayloadObject(t, publicResponsePayload(response, ""))
 	if _, exists := object["extra_fields"]; exists {
 		t.Fatal("default public payload should not include Bifrost extra_fields")
 	}
@@ -1800,14 +1797,7 @@ func TestReceiptHeaderAcceptsOnlyV1(t *testing.T) {
 }
 
 func TestPublicResponsePayloadNeverEmbedsUnsignedStogasFields(t *testing.T) {
-	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
-	defer cancel()
-
-	payload := publicResponsePayload(
-		bifrostCtx,
-		map[string]any{"id": "response_1"},
-		schemas.BifrostResponseExtraFields{RawRequest: map[string]any{"api_key": "secret"}},
-	)
+	payload := publicResponsePayload(map[string]any{"id": "response_1"}, "gpt-5.6-sol")
 	object := publicPayloadObject(t, payload)
 	if object["id"] != "response_1" {
 		t.Fatalf("normalized response changed: %#v", object)
@@ -2222,7 +2212,9 @@ func TestWriteSSEStreamEmitsOpenAIFramesFromBodyStream(t *testing.T) {
 	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
 	stream := make(chan *schemas.BifrostStreamChunk)
 
-	streamBodyReader := startTestStream(server, ctx, bifrostCtx, &stogas.State{Pair: stogas.Pair{Resolution: testResolution()}}, stream, cancel, nil)
+	resolution := testResolution()
+	resolution.Deployment.ModelID = "gpt-4o-mini"
+	streamBodyReader := startTestStream(server, ctx, bifrostCtx, &stogas.State{Pair: stogas.Pair{Resolution: resolution}}, stream, cancel, nil)
 	defer streamBodyReader.Close()
 
 	if !(streamBodyReader != nil) {
@@ -2237,7 +2229,7 @@ func TestWriteSSEStreamEmitsOpenAIFramesFromBodyStream(t *testing.T) {
 			BifrostChatResponse: &schemas.BifrostChatResponse{
 				ID:      "chatcmpl_stream_test",
 				Object:  "chat.completion.chunk",
-				Model:   "gpt-4o-mini",
+				Model:   "gpt-4o-mini-2024-07-18",
 				Choices: []schemas.BifrostResponseChoice{},
 			},
 		}
@@ -2248,6 +2240,9 @@ func TestWriteSSEStreamEmitsOpenAIFramesFromBodyStream(t *testing.T) {
 	payload := requireSSEDataPayload(t, body, "chatcmpl_stream_test")
 	if payload["object"] != "chat.completion.chunk" {
 		t.Fatalf("expected streamed chat chunk object, got %v in %q", payload["object"], body)
+	}
+	if payload["model"] != "gpt-4o-mini" {
+		t.Fatalf("chunk model = %v, want the catalog model that served", payload["model"])
 	}
 	if !strings.Contains(body, "data: [DONE]\n\n") {
 		t.Fatalf("expected OpenAI done marker, got %q", body)
