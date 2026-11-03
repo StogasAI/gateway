@@ -151,6 +151,59 @@ func TestAzureOnlyCredentialSelectsItsConfiguredDeploymentWithoutSecretAccess(t 
 	}
 }
 
+func TestAzureTargetThatChangedNamesTheCauseWhenNothingElseServes(t *testing.T) {
+	upstream := azureTestResolution().Deployment.Upstream
+	changed := billing.AzureTarget{
+		ModelFormat: upstream.ModelFormat, Model: upstream.Model, ModelVersion: upstream.ModelVersion,
+		Hosting: upstream.Hosting, DeploymentType: upstream.DeploymentType,
+	}
+	otherVersion := changed
+	otherVersion.ModelVersion = "2026-10-28"
+	credential := func(binding *billing.AzureBinding, changed ...billing.AzureTarget) billing.CredentialSelection {
+		value := &billing.CachedCredential{ChangedTargets: changed}
+		if binding != nil {
+			value.Bindings = []billing.AzureCredentialBinding{{AzureBinding: *binding}}
+		}
+		return billing.CredentialSelection{Mode: "stored", Credential: value}
+	}
+	serving := azureTestBinding()
+	for _, test := range []struct {
+		name        string
+		credentials []billing.CredentialSelection
+		want        error
+	}{
+		{"moved", []billing.CredentialSelection{credential(nil, changed)}, catalog.ErrByokTargetChanged},
+		// The credential that used to serve names the cause, whichever comes first.
+		{"moved after one without a target", []billing.CredentialSelection{credential(nil), credential(nil, changed)}, catalog.ErrByokTargetChanged},
+		{"no target", []billing.CredentialSelection{credential(nil)}, catalog.ErrByokTargetUnavailable},
+		{"another version moved", []billing.CredentialSelection{credential(nil, otherVersion)}, catalog.ErrByokTargetUnavailable},
+		{"another credential serves", []billing.CredentialSelection{credential(nil, changed), credential(&serving)}, nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			snapshot := &billing.KeyConfigSnapshot{Credentials: map[string][]billing.CredentialSelection{"azure": test.credentials}}
+			indexes := make([]int, len(test.credentials))
+			for index := range indexes {
+				indexes[index] = index
+			}
+			for _, path := range []string{"/v1/chat/completions", "/v1/responses"} {
+				body := `{"model":"azure-gpt-5.6-sol","messages":[{"role":"user","content":"hello"}]}`
+				if path == "/v1/responses" {
+					body = `{"model":"azure-gpt-5.6-sol","input":"hello"}`
+				}
+				_, err := catalog.ResolveRequest(catalog.RequestInput{
+					Body: []byte(body), Method: "POST", Path: path,
+					AvailableCredentials: map[string][]int{"azure": indexes},
+					DeploymentEligible:   CredentialDeploymentFilter(snapshot, time.Now()),
+					DeploymentChanged:    CredentialTargetChanged(snapshot),
+				})
+				if test.want == nil && err != nil || test.want != nil && !errors.Is(err, test.want) {
+					t.Fatalf("%s: error = %v, want %v", path, err, test.want)
+				}
+			}
+		})
+	}
+}
+
 func TestAzureRepliesNameVersionWhereAzureReportsIt(t *testing.T) {
 	for _, test := range []struct {
 		route  catalog.Route

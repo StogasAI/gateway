@@ -83,6 +83,23 @@ func CredentialDeploymentFilter(snapshot *billing.KeyConfigSnapshot, now time.Ti
 	}
 }
 
+// CredentialTargetChanged reports whether an Azure credential's chosen deployment for a catalog
+// deployment now serves another model, version or SKU. A request that only such targets could
+// serve then gets byok_target_changed, which tells the owner to choose the new target.
+func CredentialTargetChanged(snapshot *billing.KeyConfigSnapshot) func(schemas.ModelProvider, int, catalog.Deployment) bool {
+	selections := snapshot.Credentials["azure"]
+	return func(provider schemas.ModelProvider, index int, deployment catalog.Deployment) bool {
+		if provider != schemas.Azure || index < 0 || index >= len(selections) || selections[index].Credential == nil {
+			return false
+		}
+		upstream := deployment.Upstream
+		return selections[index].Credential.AzureTargetChanged(billing.UpstreamTarget{
+			ModelFormat: upstream.ModelFormat, Model: upstream.Model, ModelVersion: upstream.ModelVersion,
+			Hosting: upstream.Hosting, DeploymentType: upstream.DeploymentType,
+		})
+	}
+}
+
 // ValidatePreparedCredential checks the selected secret before input work. An
 // AWS or Google Cloud secret must serve its registered target and the deployment.
 func ValidatePreparedCredential(credential *billing.PreparedCredential, provider schemas.ModelProvider, deployment catalog.Deployment) error {
