@@ -537,6 +537,7 @@ func validateChatMessagesTextOnly(state *State, raw json.RawMessage) error {
 		pending:    make(map[string]bool),
 	}
 	seenConversation := false
+	var turn inputTurn
 	for index, messageRaw := range rawMessages {
 		message, err := rawjson.Object(messageRaw)
 		if err != nil {
@@ -579,10 +580,12 @@ func validateChatMessagesTextOnly(state *State, raw json.RawMessage) error {
 				return err
 			}
 			validation.meaningful = validation.meaningful || meaningful
+			turn.message()
 		case schemas.ChatMessageRoleAssistant:
 			if err := validateChatAssistantInput(state, message, path, &validation); err != nil {
 				return err
 			}
+			turn.output()
 			if responsesUsesAnthropicWire(state) && index == len(rawMessages)-1 {
 				if err := rejectTrailingAssistantWhitespace(message["content"], path+".content"); err != nil {
 					return err
@@ -592,6 +595,7 @@ func validateChatMessagesTextOnly(state *State, raw json.RawMessage) error {
 			if err := validateChatToolResultInput(state, message, path, &validation); err != nil {
 				return err
 			}
+			turn.result(rawString(message["tool_call_id"]))
 		default:
 			return invalidRequest(path + ".role is not supported")
 		}
@@ -604,6 +608,9 @@ func validateChatMessagesTextOnly(state *State, raw json.RawMessage) error {
 	}
 	if !validation.meaningful {
 		return invalidRequest("messages must contain non-empty text or a tool result")
+	}
+	if state != nil {
+		state.answeredCallIDs = turn.answered
 	}
 	return nil
 }

@@ -1113,6 +1113,7 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 		calls:   make(map[string]string),
 		outputs: make(map[string]bool),
 	}
+	var turn inputTurn
 	for index, itemRaw := range items {
 		item, err := rawjson.Object(itemRaw)
 		if err != nil {
@@ -1142,6 +1143,11 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 			if err := validateResponsesMessageInput(state, item, path, &validation); err != nil {
 				return err
 			}
+			if role == "assistant" {
+				turn.output()
+			} else {
+				turn.message()
+			}
 			if responsesUsesAnthropicWire(state) && index == len(items)-1 && role == "assistant" {
 				if err := rejectTrailingAssistantWhitespace(item["content"], path+".content"); err != nil {
 					return err
@@ -1151,10 +1157,12 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 			if err := validateResponsesToolCallInput(state, item, path, "function", &validation); err != nil {
 				return err
 			}
+			turn.call()
 		case "function_call_output":
 			if err := validateResponsesToolCallOutputInput(item, path, "function", &validation); err != nil {
 				return err
 			}
+			turn.result(rawString(item["call_id"]))
 		case "custom_tool_call":
 			if !responsesCustomCallInputSupported(state) {
 				return invalidRequest("custom_tool_call input items are supported only for OpenAI-format deployments")
@@ -1162,6 +1170,7 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 			if err := validateResponsesToolCallInput(state, item, path, "custom", &validation); err != nil {
 				return err
 			}
+			turn.call()
 		case "custom_tool_call_output":
 			if !responsesCustomCallInputSupported(state) {
 				return invalidRequest("custom_tool_call_output input items are supported only for OpenAI-format deployments")
@@ -1169,16 +1178,23 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 			if err := validateResponsesToolCallOutputInput(item, path, "custom", &validation); err != nil {
 				return err
 			}
+			turn.result(rawString(item["call_id"]))
 		case "reasoning":
 			if err := validateResponsesReasoningInput(state, item, path); err != nil {
 				return err
 			}
+			turn.output()
 		case "mcp_list_tools", "mcp_call", "mcp_approval_request", "mcp_approval_response":
 			if !responsesMCPSupported(state) {
 				return invalidRequest(itemType + " input items are supported only for OpenAI deployments")
 			}
 			if err := validateResponsesMCPInput(item, path, itemType); err != nil {
 				return err
+			}
+			if itemType == "mcp_approval_response" {
+				turn.result(rawString(item["approval_request_id"]))
+			} else {
+				turn.call()
 			}
 		case "input_file":
 			return invalidRequest("file inputs are not supported")
@@ -1208,6 +1224,9 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 	}
 	if !validation.meaningful {
 		return invalidRequest("input must contain non-empty text or a client tool result")
+	}
+	if state != nil {
+		state.answeredCallIDs = turn.answered
 	}
 	return nil
 }

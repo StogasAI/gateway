@@ -72,6 +72,9 @@ func validateProviderResponsesOutput(state *State, response *schemas.BifrostResp
 			return ErrProviderResponseMalformed
 		}
 		seenIDs[observed.id] = struct{}{}
+		if state != nil && !state.responsesStreamSeen {
+			state.observeResponsesToolCall(observed, time.Time{})
+		}
 		if terminal && state != nil && state.responsesStreamSeen {
 			streamItem, ok := state.responsesItems[index]
 			if !ok || !streamItem.done || !sameProviderResponsesItem(streamItem, observed) ||
@@ -471,6 +474,7 @@ func validateProviderResponsesOutputItemEvent(state *State, response *schemas.Bi
 			return ErrProviderResponseMalformed
 		}
 		state.responsesItems[index] = item
+		state.observeResponsesToolCall(item, time.Now())
 		return nil
 	}
 	if !exists || prior.done || response.Item.Status != nil && *response.Item.Status == "in_progress" ||
@@ -489,6 +493,7 @@ func validateProviderResponsesOutputItemEvent(state *State, response *schemas.Bi
 	}
 	prior.completedPayload = fingerprint
 	state.responsesItems[index] = prior
+	state.finishResponsesToolCall(prior, time.Now())
 	return nil
 }
 

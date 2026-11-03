@@ -632,6 +632,12 @@ func TestLargestRequestLogFitsTheLimit(t *testing.T) {
 		rate := strings.Repeat("r", 64)
 		event.Usage.Meters[fmt.Sprintf("%064d", i)] = EventMeter{Quantity: "18446744073709551615", RateKey: &rate, RateUSD: &usd, USD: &usd}
 	}
+	for i := range MaxLoggedToolCalls {
+		event.Performance.ToolCalls = append(event.Performance.ToolCalls, ToolCall{
+			Type: "mcp_approval_request", StartMS: &count, LatencyMS: &count, CallIDHash: ToolCallIDHash(fmt.Sprint(i)),
+		})
+		event.Performance.AnsweredCalls = append(event.Performance.AnsweredCalls, ToolCallIDHash(fmt.Sprint(i)))
+	}
 	row, err := encodeRequestRow(&event)
 	if err != nil {
 		t.Fatal(err)

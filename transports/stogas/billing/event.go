@@ -46,6 +46,9 @@ type EventInput struct {
 	Metadata              map[string]string
 	Transport             string
 	StartedAt             time.Time
+	ToolCalls             []ToolCallInput
+	// AnsweredCallIDs are the IDs that the input's results name after the latest model turn.
+	AnsweredCallIDs []string
 }
 
 type ProviderAttemptInput struct {
@@ -162,6 +165,8 @@ func NewRequestEvent(input EventInput) (RequestEvent, error) {
 			RateLimitWaitMS: min(uint32Duration(input.RateLimitWait), totalTimeMS),
 			FirstOutputMS:   requestFirstOutput(input, startedAt, providerStartMS, providerMS),
 			TTFTMS:          ttftMS,
+			ToolCalls:       requestToolCalls(input.ToolCalls, startedAt, totalTimeMS),
+			AnsweredCalls:   requestAnsweredCalls(input.AnsweredCallIDs),
 		},
 		Usage: RequestUsage{
 			UpstreamCostUSD:       upstreamCostUSD.String(),
