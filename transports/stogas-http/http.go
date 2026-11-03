@@ -288,11 +288,11 @@ func (s *Server) inference(ctx *requestContext) {
 		failure = requestTimeoutError()
 	}
 	if failure != nil {
-		captureUnaryResult(result.ctx, run.state, result.response, outcome)
+		captureUnaryResult(run.state, result.response, outcome)
 		s.writeProviderError(ctx, result.ctx, failure)
 		return
 	}
-	s.writeInferenceJSON(ctx, result.ctx, run.state, http.StatusOK, unaryResponsePayload(result.ctx, result.response))
+	s.writeInferenceJSON(ctx, result.ctx, run.state, http.StatusOK, unaryResponsePayload(result.response, servedModel(run.state)))
 }
 
 func (s *Server) openProviderStream(ctx *schemas.BifrostContext, request *schemas.BifrostRequest) (chan *schemas.BifrostStreamChunk, *schemas.BifrostError) {
@@ -397,13 +397,13 @@ func ingestProviderResult(memory *requestMemoryLease, request *schemas.BifrostCo
 	return nil, state.ResponseError()
 }
 
-func unaryResponsePayload(ctx *schemas.BifrostContext, response *schemas.BifrostResponse) any {
+func unaryResponsePayload(response *schemas.BifrostResponse, model string) any {
 	if response.ChatResponse != nil {
-		return publicResponsePayload(ctx, response.ChatResponse, response.ChatResponse.ExtraFields)
+		return publicResponsePayload(response.ChatResponse, model)
 	}
 	value := response.ResponsesResponse.WithDefaults()
 	value.Store, value.Background = schemas.Ptr(false), schemas.Ptr(false)
-	return publicResponsePayload(ctx, value, value.ExtraFields)
+	return publicResponsePayload(value, model)
 }
 
 // finishDetachedUnary owns a unary call after its caller stopped waiting. It
@@ -424,7 +424,7 @@ func (s *Server) finishDetachedUnary(run *providerRun, memory *requestMemoryLeas
 		run.commit()
 		outcome = result.ctx
 		failure, _ := ingestProviderResult(memory, run.request, run.state, result.response, nil)
-		captureUnaryResult(result.ctx, run.state, result.response, failure)
+		captureUnaryResult(run.state, result.response, failure)
 		return
 	}
 	failure, attempt := run.end()
@@ -433,7 +433,7 @@ func (s *Server) finishDetachedUnary(run *providerRun, memory *requestMemoryLeas
 	}
 	outcome = attempt
 	failure, _ = ingestProviderResult(memory, run.request, run.state, nil, failure)
-	captureUnaryResult(attempt, run.state, nil, failure)
+	captureUnaryResult(run.state, nil, failure)
 }
 
 // startSSEStream delivers the run's stream. A pending call is still starting;
@@ -747,13 +747,9 @@ func (s *Server) startSSEStream(ctx *requestContext, run *providerRun, started p
 			switch {
 			case chunk.BifrostChatResponse != nil:
 				eventName = ""
-				chatResponse := chunk.BifrostChatResponse
-
-				extra := chatResponse.ExtraFields
-				payload = publicResponsePayload(request, chatResponse, extra)
+				payload = publicResponsePayload(chunk.BifrostChatResponse, servedModel(state))
 			case chunk.BifrostResponsesStreamResponse != nil:
 				eventName = string(chunk.BifrostResponsesStreamResponse.Type)
-				extra := chunk.BifrostResponsesStreamResponse.ExtraFields
 				normalized := chunk.BifrostResponsesStreamResponse.WithDefaults()
 				if normalized == nil {
 					if terminal {
@@ -766,7 +762,7 @@ func (s *Server) startSSEStream(ctx *requestContext, run *providerRun, started p
 					normalized.Response.Store = schemas.Ptr(false)
 					normalized.Response.Background = schemas.Ptr(false)
 				}
-				payload = publicResponsePayload(request, normalized, extra)
+				payload = publicResponsePayload(normalized, servedModel(state))
 			default:
 				continue
 			}
@@ -792,7 +788,7 @@ func (s *Server) startSSEStream(ctx *requestContext, run *providerRun, started p
 				}
 				filtered := *chat
 				filtered.Usage = nil
-				encoded, err = marshalPayload(publicResponsePayload(request, &filtered, filtered.ExtraFields))
+				encoded, err = marshalPayload(publicResponsePayload(&filtered, servedModel(state)))
 				if err != nil {
 					failure := responseEncodingFailure()
 					state.MarkProviderCompleted()
