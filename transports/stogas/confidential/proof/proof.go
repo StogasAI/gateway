@@ -132,18 +132,6 @@ func validIdentifier(value string, maxLength int) bool {
 	return true
 }
 
-func isDecimal(value string) bool {
-	if value == "" || (len(value) > 1 && value[0] == '0') {
-		return false
-	}
-	for _, character := range []byte(value) {
-		if character < '0' || character > '9' {
-			return false
-		}
-	}
-	return true
-}
-
 func validCreatedAt(value string) bool {
 	parsed, err := time.Parse(createdAtLayout, value)
 	return err == nil && parsed.Format(createdAtLayout) == value

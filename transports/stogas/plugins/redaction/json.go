@@ -116,10 +116,6 @@ func (r *Redactor) RedactRequestFields(raw map[string]json.RawMessage, surface S
 	return nil
 }
 
-func (r *Redactor) redactJSON(source []byte) ([]byte, bool, error) {
-	return r.redactJSONContext(source, jsonContextGeneral)
-}
-
 func (r *Redactor) redactJSONContext(source []byte, context jsonValueContext) ([]byte, bool, error) {
 	baseItems, baseTextBytes := r.items, r.inputTextBytes
 	var replacements []jsonReplacement

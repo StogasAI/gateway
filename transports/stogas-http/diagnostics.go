@@ -105,10 +105,6 @@ type requestDiagnostics struct {
 	Preprocessing requestWorkDiagnostics      `json:"preprocessing"`
 }
 
-func (s *Server) privateDiagnostics() privateNodeDiagnostics {
-	return s.privateDiagnosticsSnapshot(true)
-}
-
 func (s *Server) privateDiagnosticsSnapshot(details bool) privateNodeDiagnostics {
 	result := privateNodeDiagnostics{GeneratedAt: time.Now().UTC(), DetailsUnavailable: !details}
 	if details {

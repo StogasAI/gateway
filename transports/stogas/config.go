@@ -402,18 +402,6 @@ func (c ConfidentialConfig) WithRuntimeDefaults() ConfidentialConfig {
 	return c
 }
 
-func splitCSV(value string) []string {
-	parts := strings.Split(value, ",")
-	out := make([]string, 0, len(parts))
-	for _, part := range parts {
-		trimmed := strings.ToLower(strings.TrimSpace(part))
-		if trimmed != "" {
-			out = append(out, trimmed)
-		}
-	}
-	return out
-}
-
 func validateHashHex(name string, value string) error {
 	if len(value) != 64 {
 		return fmt.Errorf("%s must be 32-byte lowercase hex", name)

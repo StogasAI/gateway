@@ -235,7 +235,7 @@ func TestTransientMemoryPressureShedsWorkWithoutFailingReadiness(t *testing.T) {
 	if testResponse(request).Code != http.StatusServiceUnavailable || !strings.Contains(testResponse(request).Body.String(), "gateway_capacity_exceeded") {
 		t.Fatal("memory admission did not shed new work")
 	}
-	if !server.privateDiagnostics().Requests.Memory.Saturated {
+	if !server.privateDiagnosticsSnapshot(true).Requests.Memory.Saturated {
 		t.Fatal("memory pressure was not observable")
 	}
 }
@@ -273,7 +273,7 @@ func TestReadinessClosesOnlyWhenDatabaseWaitsFillMemory(t *testing.T) {
 	if ready() {
 		t.Fatal("requests waiting for the database fill memory, and the gateway stayed ready")
 	}
-	if got := server.privateDiagnostics().Requests.Memory.DatabaseWaitReservedBytes; got != requests*minimumRequestWeightBytes {
+	if got := server.privateDiagnosticsSnapshot(true).Requests.Memory.DatabaseWaitReservedBytes; got != requests*minimumRequestWeightBytes {
 		t.Fatalf("diagnostics report %d bytes waiting for the database", got)
 	}
 	waits[0]()

@@ -42,7 +42,7 @@ func TestAdmissionDiagnosticsBoundRejectedTrafficAndExcludeAdmittedErrors(t *tes
 		testRequestURI(ctx, request[1])
 		s.writeError(ctx, 401, nil)
 	}
-	got := s.privateDiagnostics().Requests.Admission
+	got := s.privateDiagnosticsSnapshot(true).Requests.Admission
 	want := requestAdmissionDiagnostics{Admitted: 8, Authentication: 1000, Billing: 1, Permission: 1, RateLimit: 1, InvalidRequest: 2, Unavailable: 1, Internal: 2}
 	if got != want {
 		t.Fatalf("admission diagnostics = %#v, want %#v", got, want)

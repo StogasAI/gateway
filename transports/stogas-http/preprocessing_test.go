@@ -62,7 +62,7 @@ func TestPreprocessingAcceptsBurstAndFinishesFailedResolution(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	}
-	if server.privateDiagnostics().Requests.Preprocessing.Active != 0 {
+	if server.privateDiagnosticsSnapshot(true).Requests.Preprocessing.Active != 0 {
 		t.Fatal("failed resolution leaked activity")
 	}
 }
@@ -149,7 +149,7 @@ func TestJSONDecodeDiagnosticsIncludeRejectedRequests(t *testing.T) {
 		if server.startRun(ctx, time.Now(), nil) != nil {
 			t.Fatal("request unexpectedly prepared without a runtime")
 		}
-		stats := server.privateDiagnostics().Requests
+		stats := server.privateDiagnosticsSnapshot(true).Requests
 		if stats.JSONDecode.Active != 0 || stats.JSONDecode.Completed != 1 || stats.JSONDecode.InputBytes != uint64(len(body)) || stats.Preprocessing.Completed != 0 {
 			t.Fatalf("decoding was lost or included later work: %+v", stats)
 		}
