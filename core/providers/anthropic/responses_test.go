@@ -404,41 +404,43 @@ func TestToAnthropicResponsesRequest_StructuredOutput_Fable51_NoForcedToolChoice
 	}
 }
 
-// TestToAnthropicResponsesRequest_StructuredOutput_NativeOutputConfig_Anthropic is the
-// negative-case control: Anthropic itself supports output_config.format natively, so no
-// synthetic tool should be added. This is the branch that Azure incorrectly took before
-// being added to toolConversionProviders.
-func TestToAnthropicResponsesRequest_StructuredOutput_NativeOutputConfig_Anthropic(t *testing.T) {
-	req := &schemas.BifrostResponsesRequest{
-		Provider: schemas.Anthropic,
-		Model:    "claude-opus-4-6",
-		Input: []schemas.ResponsesMessage{
-			{
-				Role: schemas.Ptr(schemas.ResponsesInputMessageRoleUser),
-				Content: &schemas.ResponsesMessageContent{
-					ContentStr: schemas.Ptr("Hello"),
+// TestToAnthropicResponsesRequest_StructuredOutput_NativeOutputConfig is the negative-case
+// control: Anthropic and Microsoft Foundry support output_config.format natively, so no
+// synthetic tool should be added.
+func TestToAnthropicResponsesRequest_StructuredOutput_NativeOutputConfig(t *testing.T) {
+	for _, provider := range nativeStructuredOutputProviders {
+		t.Run(string(provider), func(t *testing.T) {
+			req := &schemas.BifrostResponsesRequest{
+				Provider: provider,
+				Model:    "claude-opus-4-6",
+				Input: []schemas.ResponsesMessage{
+					{
+						Role: schemas.Ptr(schemas.ResponsesInputMessageRoleUser),
+						Content: &schemas.ResponsesMessageContent{
+							ContentStr: schemas.Ptr("Hello"),
+						},
+					},
 				},
-			},
-		},
-		Params: &schemas.ResponsesParameters{
-			Text: makeResponsesTextFormat("my_schema"),
-		},
-	}
+				Params: &schemas.ResponsesParameters{
+					Text: makeResponsesTextFormat("my_schema"),
+				},
+			}
 
-	ctx := schemas.NewBifrostContext(nil, time.Time{})
-	result, err := ToAnthropicResponsesRequest(ctx, req)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+			ctx := schemas.NewBifrostContext(nil, time.Time{})
+			result, err := ToAnthropicResponsesRequest(ctx, req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 
-	if result.OutputConfig == nil || result.OutputConfig.Format == nil {
-		t.Fatal("expected OutputConfig.Format to be set natively for Anthropic")
-	}
-
-	for _, tool := range result.Tools {
-		if tool.Name == "bf_so_my_schema" {
-			t.Errorf("did not expect a synthetic tool for Anthropic, got %q", tool.Name)
-		}
+			if result.OutputConfig == nil || result.OutputConfig.Format == nil {
+				t.Fatalf("expected OutputConfig.Format to be set natively for %s", provider)
+			}
+			for _, tool := range result.Tools {
+				if tool.Name == "bf_so_my_schema" {
+					t.Errorf("did not expect a synthetic tool for %s, got %q", provider, tool.Name)
+				}
+			}
+		})
 	}
 }
 

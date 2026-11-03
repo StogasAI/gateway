@@ -24,24 +24,28 @@ func orderingChatRequest(t *testing.T, provider schemas.ModelProvider) *schemas.
 	}
 }
 
-// TestResponseFormatOrderNativeStructuredOutputs covers the Anthropic-native
-// path, where response_format becomes output_config.format.
+// TestResponseFormatOrderNativeStructuredOutputs covers the native path of
+// Anthropic and Microsoft Foundry, where response_format becomes output_config.format.
 func TestResponseFormatOrderNativeStructuredOutputs(t *testing.T) {
-	ctx := schemas.NewBifrostContext(nil, schemas.NoDeadline)
-	out, err := ToAnthropicChatRequest(ctx, orderingChatRequest(t, schemas.Anthropic))
-	require.NoError(t, err)
-	require.NotNil(t, out.OutputConfig)
+	for _, provider := range []schemas.ModelProvider{schemas.Anthropic, schemas.Azure} {
+		t.Run(string(provider), func(t *testing.T) {
+			ctx := schemas.NewBifrostContext(nil, schemas.NoDeadline)
+			out, err := ToAnthropicChatRequest(ctx, orderingChatRequest(t, provider))
+			require.NoError(t, err)
+			require.NotNil(t, out.OutputConfig)
 
-	raw, err := providerUtils.MarshalSorted(out)
-	require.NoError(t, err)
-	schemaorder.AssertPropertyOrder(t, string(raw))
-	schemaorder.AssertSchemaKeyOrder(t, string(raw), "schema")
+			raw, err := providerUtils.MarshalSorted(out)
+			require.NoError(t, err)
+			schemaorder.AssertPropertyOrder(t, string(raw))
+			schemaorder.AssertSchemaKeyOrder(t, string(raw), "schema")
+		})
+	}
 }
 
-// TestResponseFormatOrderToolFallback covers Vertex/Bedrock Mantle/Azure, where
+// TestResponseFormatOrderToolFallback covers Vertex and Bedrock Mantle, where
 // the schema is rewritten into a forced tool's input_schema.
 func TestResponseFormatOrderToolFallback(t *testing.T) {
-	for _, provider := range []schemas.ModelProvider{schemas.Vertex, schemas.BedrockMantle, schemas.Azure} {
+	for _, provider := range []schemas.ModelProvider{schemas.Vertex, schemas.BedrockMantle} {
 		t.Run(string(provider), func(t *testing.T) {
 			ctx := schemas.NewBifrostContext(nil, schemas.NoDeadline)
 			out, err := ToAnthropicChatRequest(ctx, orderingChatRequest(t, provider))

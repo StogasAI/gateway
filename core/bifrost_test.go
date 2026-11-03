@@ -3897,7 +3897,7 @@ func TestClearAnthropicPassthroughForNonNativeProvider(t *testing.T) {
 // caller's model string, so an alias or routing rule hides it and the raw body used to reach the
 // Mantle Messages API with output_config.format intact — 400 "Extra inputs are not permitted".
 // Only the raw request body is dropped: the raw response flags stay on, and the response path
-// keys off the synthetic bf_so_* tool name instead. Vertex and Azure take the same route.
+// keys off the synthetic bf_so_* tool name instead. Vertex takes the same route.
 func TestClearAnthropicPassthroughForUnsupportedStructuredOutput(t *testing.T) {
 	const outputConfigBody = `{"model":"claude-sonnet-5","output_config":{"format":{"type":"json_schema","schema":{"type":"object","properties":{"title":{"type":"string"}}}}}}`
 	// Legacy beta shape: top-level output_format instead of output_config.format.
@@ -3921,8 +3921,8 @@ func TestClearAnthropicPassthroughForUnsupportedStructuredOutput(t *testing.T) {
 		{"bedrock mantle with output_config.format clears", "anthropic", schemas.BedrockMantle, true, responsesRequest(outputConfigBody), true},
 		{"bedrock mantle with legacy output_format clears", "anthropic", schemas.BedrockMantle, true, responsesRequest(outputFormatBody), true},
 		{"vertex with output_config.format clears", "anthropic", schemas.Vertex, true, responsesRequest(outputConfigBody), true},
-		{"azure with output_config.format clears", "anthropic", schemas.Azure, true, responsesRequest(outputConfigBody), true},
-		// Anthropic and Bedrock Converse serve the schema natively; nothing to rewrite.
+		// Anthropic, Microsoft Foundry and Bedrock Converse serve the schema natively; nothing to rewrite.
+		{"azure with output_config.format preserved", "anthropic", schemas.Azure, true, responsesRequest(outputConfigBody), false},
 		{"anthropic with output_config.format preserved", "anthropic", schemas.Anthropic, true, responsesRequest(outputConfigBody), false},
 		{"bedrock with output_config.format preserved", "anthropic", schemas.Bedrock, true, responsesRequest(outputConfigBody), false},
 		{"bedrock mantle without a format preserved", "anthropic", schemas.BedrockMantle, true, responsesRequest(noFormatBody), false},
