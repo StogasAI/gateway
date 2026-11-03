@@ -372,9 +372,18 @@ func assemble(rootData []byte, files []PartFile, parts map[string][]byte, at tim
 			retired[id] = *summary.RetirementDate
 		}
 	}
+	retiredRoutes := make(map[string]bool)
 	for id, summary := range summaries.Routes {
 		if retiredAt(summary.RetirementDate, at) {
 			delete(graph.Routes, id)
+			retiredRoutes[id] = true
+		}
+	}
+	// The build dates a deployment by its last route, so one that another route serves goes on
+	// through that route. It drops the routes that retired, as do its dated changes.
+	for _, deployments := range append([]map[string]*compiledDeployment{graph.Deployments}, changedDeployments(changes)...) {
+		for _, deployment := range deployments {
+			maps.DeleteFunc(deployment.Routes, func(id string, _ compiledDeploymentRoute) bool { return retiredRoutes[id] })
 		}
 	}
 	for id, summary := range summaries.Models {
@@ -443,6 +452,15 @@ func merged[T any](state, part map[string]T) map[string]T {
 	}
 	maps.Copy(state, part)
 	return state
+}
+
+// changedDeployments lists the deployments that each dated change holds.
+func changedDeployments(changes []compiledGraph) []map[string]*compiledDeployment {
+	deployments := make([]map[string]*compiledDeployment, len(changes))
+	for position, changed := range changes {
+		deployments[position] = changed.Deployments
+	}
+	return deployments
 }
 
 // inGraph keeps the changes to the records that the graph holds.

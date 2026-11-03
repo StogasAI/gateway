@@ -11,6 +11,7 @@ import (
 	"maps"
 	"os"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -235,6 +236,51 @@ func TestReleaseLeavesRecordsOutOnceTheyRetire(t *testing.T) {
 	}
 	if _, ok := snap.parts[dated.SHA256]; ok || len(snap.parts) != len(held) {
 		t.Fatal("the release holds a part that it did not come with")
+	}
+}
+
+// A deployment that two routes serve goes on through the one that stays once the other retires,
+// as the catalog build dates it, and the release still loads.
+func TestDeploymentOutlivesOneOfItsRoutes(t *testing.T) {
+	release := testCatalogRelease(t)
+	const retiring, staying = "openai-chat-completions", "openai-responses"
+	deploymentID := ""
+	for id, raw := range release.root["summaries"].(map[string]any)["deployments"].(map[string]any) {
+		routes, _ := release.record("deployments", id)["routes"].(map[string]any)
+		if raw.(map[string]any)["retirementDate"] == nil && routes[retiring] != nil && routes[staying] != nil {
+			deploymentID = id
+			break
+		}
+	}
+	if deploymentID == "" {
+		t.Fatalf("no live deployment is served by both %s and %s", retiring, staying)
+	}
+	// The build dates the route, and each deployment that only the route serves.
+	date := "2127-06-01"
+	release.summary("routes", retiring)["retirementDate"] = date
+	release.record("routes", retiring)["retirementDate"] = date
+	for id, raw := range release.root["summaries"].(map[string]any)["deployments"].(map[string]any) {
+		routes, _ := release.record("deployments", id)["routes"].(map[string]any)
+		if _, only := routes[retiring]; only && len(routes) == 1 && raw.(map[string]any)["retirementDate"] == nil {
+			raw.(map[string]any)["retirementDate"] = date
+			release.record("deployments", id)["retirementDate"] = date
+		}
+	}
+	root, parts := release.files(t)
+	after := time.Date(2127, time.June, 2, 12, 0, 0, 0, time.UTC)
+	snap, err := snapshotFromFiles(root, parts, Identity{}, after)
+	if err != nil {
+		t.Fatalf("the release did not load once one route of %s retired: %v", deploymentID, err)
+	}
+	if _, ok := snap.graph.Routes[retiring]; ok {
+		t.Fatalf("retired route %s is still in the graph", retiring)
+	}
+	route, ok := snap.graph.Routes[staying]
+	if !ok || !slices.Contains(route.DeploymentIDs, deploymentID) {
+		t.Fatalf("%s no longer serves %s", staying, deploymentID)
+	}
+	if _, ok := snap.deploymentFromCompiledAt(deploymentID, route, after); !ok {
+		t.Fatalf("%s does not serve through %s", deploymentID, staying)
 	}
 }
 
