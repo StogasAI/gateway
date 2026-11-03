@@ -158,6 +158,78 @@ func TestConditionalEncryptedPluginRequiresOnlyItsActiveRoot(t *testing.T) {
 	}
 }
 
+// A requirement replaces a default's plugin of the same kind, so a request
+// needs no root for an encrypted default plugin that another policy requires
+// in its place, while the default's other plugins still need theirs.
+func TestSuppressedEncryptedDefaultPluginNeedsNoRoot(t *testing.T) {
+	const org = "test-organization"
+	roots := map[string][]byte{"exports": make([]byte, 32), "redactions": make([]byte, 32)}
+	encoded := map[string]string{}
+	for name, root := range roots {
+		for i := range root {
+			root[i] = byte(3*i + len(name))
+		}
+		encoded[name] = base64.RawURLEncoding.EncodeToString(root)
+	}
+	keys, err := customerkey.ParseKeys(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(keys.Clear)
+	export := sealTestEnvelope(t, roots["exports"], keys["exports"].ID(), org, "plugins/export", `{"destinations":[{"url":"https://collector.example/v1/traces"}]}`)
+	redaction := sealTestEnvelope(t, roots["redactions"], keys["redactions"].ID(), org, "plugins/redaction", `{"literals":[{"values":["CUSTOMER_PRIVATE_VALUE"]}]}`)
+	organization, _ := json.Marshal(map[string]any{
+		"encryption": map[string]any{"keys": map[string]string{"exports": keys["exports"].ID(), "redactions": keys["redactions"].ID()}},
+		"delegation": map[string]any{"keys": []string{"plugins.redaction"}},
+		"rules": map[string]any{"defaults": map[string]any{"mode": "default", "plugins": map[string]any{
+			"export":    map[string]any{"encrypted": json.RawMessage(export)},
+			"redaction": map[string]any{"encrypted": json.RawMessage(redaction)},
+		}}},
+	})
+	for _, test := range []struct {
+		name     string
+		key      string
+		required []string
+	}{
+		{"defaults apply", `{}`, []string{keys["exports"].ID(), keys["redactions"].ID()}},
+		{"a required redaction replaces the default one", `{"plugins":{"redaction":{"email_address":true}}}`, []string{keys["exports"].ID()}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cache := &keyConfigCache{}
+			defer cache.close()
+			raw := []json.RawMessage{organization, json.RawMessage(`null`), json.RawMessage(test.key)}
+			refs, err := cache.acquireSources(raw, org, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sources := []policy.ScopedSource{{Scope: policy.OrganizationScope, Value: refs[0].value}, {Scope: policy.KeyScope, Value: refs[2].value}}
+			config, err := policy.ComposeSources(sources)
+			if err != nil {
+				t.Fatal(err)
+			}
+			snapshot := cache.put("api", &KeyConfigSnapshot{PolicySnapshot: PolicySnapshot{Config: config, Digest: policy.ChainDigest(sources), sourceRefs: refs}, Claims: &APIKeyClaims{OrganizationID: org}, CredentialsGeneration: 1}, time.Now())
+			cache.releaseSources(refs)
+			active, err := snapshot.Config.Activate(conditionalPolicyValues{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := snapshot.RequiredRoots("openai", -1, active); !reflect.DeepEqual(got, test.required) {
+				t.Fatalf("required roots %v, want %v", got, test.required)
+			}
+			// Without the default redaction's root, only the export's is needed.
+			if _, err := snapshot.ActivePlugins(active, customerkey.Keys{"exports": keys["exports"]}); (len(test.required) == 1) != (err == nil) {
+				t.Fatalf("export root alone: %v", err)
+			}
+			if _, err := snapshot.ActivePlugins(active, nil); !errors.Is(err, customerkey.ErrKey) {
+				t.Fatalf("the export's root was not required: %v", err)
+			}
+			if _, err := snapshot.ActivePlugins(active, keys); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestOptionalValidationDistinguishesUncheckedFromInvalid(t *testing.T) {
 	raw, org, key := encryptedPolicyFixture(t)
 	s := &Service{}
