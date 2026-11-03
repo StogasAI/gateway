@@ -42,7 +42,6 @@ type CloudTarget struct {
 // snapshot. Routing reads it without reparsing every target on each request.
 type AzureCredentialBinding struct {
 	AzureBinding
-	ModelDeprecationAt *time.Time `json:"modelDeprecationAt"`
 }
 
 // Geography, expiry and endpoint safety are checked against each candidate.

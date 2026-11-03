@@ -62,7 +62,7 @@ func TestCredentialEligibilityPrecedesPoliciesAndDefaultOrder(t *testing.T) {
 				resolved, err := ResolveRequest(RequestInput{
 					Body: []byte(`{` + model + content + test.extra + `}`), Method: "POST", Path: path,
 					Policy: config, AvailableCredentials: test.providers,
-					DeploymentEligible: func(provider schemas.ModelProvider, _ int, deployment Deployment) bool {
+					DeploymentEligible: func(provider schemas.ModelProvider, _ int, _ Route, deployment Deployment) bool {
 						return test.azureTarget == "" || provider != schemas.Azure || deployment.ID == test.azureTarget
 					},
 					CredentialPolicy: func(provider schemas.ModelProvider, _ int) (RequestPolicy, error) {
@@ -218,7 +218,7 @@ func TestConditionalRulesExcludeOnlyTheirCandidates(t *testing.T) {
 			input := RequestInput{
 				Body: policyChatBody(`,"provider":{"order":[` + preferred + `]}`), Method: "POST", Path: "/v1/chat/completions",
 				Policy: compose(test.rules), AvailableCredentials: map[string][]int{"azure": {0}, "openai": {0}},
-				DeploymentEligible: func(_ schemas.ModelProvider, _ int, deployment Deployment) bool {
+				DeploymentEligible: func(_ schemas.ModelProvider, _ int, _ Route, deployment Deployment) bool {
 					if test.serves != "" {
 						return deployment.ID == test.serves
 					}
@@ -279,7 +279,7 @@ func TestOnlyTheSelectedCredentialTransformsInput(t *testing.T) {
 				body, _ := json.Marshal(raw)
 				loads := 0
 				resolved, err := ResolveRequest(RequestInput{Body: body, Method: "POST", Path: path, Policy: policyConfig(2),
-					DeploymentEligible: func(_ schemas.ModelProvider, _ int, deployment Deployment) bool {
+					DeploymentEligible: func(_ schemas.ModelProvider, _ int, _ Route, deployment Deployment) bool {
 						return deployment.ID == "openai-gpt-5.6-sol" || deployment.ID == "azure-gpt-5.6-sol"
 					},
 					CheckCandidate: func(provider schemas.ModelProvider, _ int, _ Deployment) error {
@@ -550,7 +550,7 @@ func TestCredentialOrderCannotChooseBetweenDeployments(t *testing.T) {
 		AvailableCredentials: map[string][]int{"azure": {1, 0}},
 		// Credential 1 runs only the US Data Zone, so it cannot move that
 		// deployment ahead of the cheaper Global one that credential 0 runs.
-		DeploymentEligible: func(_ schemas.ModelProvider, index int, deployment Deployment) bool {
+		DeploymentEligible: func(_ schemas.ModelProvider, index int, _ Route, deployment Deployment) bool {
 			return deployment.ID == []string{"azure-gpt-5.6-sol", "azure-gpt-5.6-sol-us"}[index]
 		},
 		CheckCandidate: func(_ schemas.ModelProvider, index int, deployment Deployment) error {

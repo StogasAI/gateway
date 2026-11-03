@@ -153,6 +153,7 @@ func billingUpstreamTarget(resolution *catalog.ResolvedRequest) *gatewaybilling.
 		ModelFormat:         upstream.ModelFormat,
 		ModelVersion:        upstream.ModelVersion,
 		ProcessingLocations: places.Inside(dataHandling.ProcessingLocation),
+		VersionUnreported:   !azureRepliesNameVersion(resolution.Route, resolution.Deployment),
 	}
 	// A catalog no-storage guarantee makes the account's placement inapplicable.
 	if dataHandling.StorageLocation != "none" {
@@ -217,7 +218,7 @@ func applyUpstreamCredentials(
 		case schemas.Azure:
 			var err error
 			var deploymentName string
-			directKey, deploymentName, err = azureDirectKey(authorization, state.Resolution)
+			directKey, deploymentName, err = azureDirectKey(authorization, state.Resolution, time.Now())
 			if err != nil {
 				return err
 			}
@@ -234,6 +235,7 @@ func applyUpstreamCredentials(
 					BindingID:  authorization.AzureBinding.ID,
 					AccountID:  authorization.AzureAccountID,
 					VerifiedAt: authorization.AzureVerifiedAt,
+					Unreported: !azureRepliesNameVersion(state.Resolution.Route, state.Resolution.Deployment),
 					Credential: azureauth.Credential{
 						TenantID: azure.TenantID.GetValue(),
 						ClientID: azure.ClientID.GetValue(),

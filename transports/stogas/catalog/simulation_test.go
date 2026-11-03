@@ -137,7 +137,7 @@ func TestRoutingSimulationNamesWhatRemovedEachCandidate(t *testing.T) {
 				input.CredentialPolicy = func(_ schemas.ModelProvider, index int) (RequestPolicy, error) { return test.credential(index) }
 			}
 			if test.eligible != nil {
-				input.DeploymentEligible = func(_ schemas.ModelProvider, index int, deployment Deployment) bool {
+				input.DeploymentEligible = func(_ schemas.ModelProvider, index int, _ Route, deployment Deployment) bool {
 					return test.eligible(index, deployment.ID)
 				}
 			}

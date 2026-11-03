@@ -13,6 +13,7 @@ import (
 
 	"github.com/maximhq/bifrost/core/schemas"
 	stogas "github.com/maximhq/bifrost/transports/stogas"
+	"github.com/maximhq/bifrost/transports/stogas/billing"
 )
 
 // testRun binds one pair whose provider request is ready.
@@ -77,11 +78,77 @@ func TestFailureActionFor(t *testing.T) {
 		{name: "provider refuses a retry of a credential", failure: failure(http.StatusUnauthorized, ""), headers: map[string]string{"x-should-retry": "false"}, want: nextPair},
 		{name: "provider asks to retry billed usage", failure: billed, headers: map[string]string{"x-should-retry": "true"}, want: stopRun},
 		{name: "provider asks to retry our failure", failure: ours, headers: map[string]string{"x-should-retry": "true"}, want: stopRun},
+		{name: "another model version served", failure: servedModelChangedError(), want: nextPair},
+		{name: "provider asks to retry another model version", failure: servedModelChangedError(), headers: map[string]string{"x-should-retry": "true"}, want: nextPair},
 	} {
 		if got := failureActionFor(test.failure, retryAfterContext(test.headers), test.memory); got != test.want {
 			t.Errorf("%s: action = %d, want %d", test.name, got, test.want)
 		}
 	}
+}
+
+func TestAzureReplyThatNamesAnotherVersionFailsItsCall(t *testing.T) {
+	binding := billing.AzureBinding{ID: "binding-1", ModelName: "gpt-5.6-sol", ModelVersion: "2026-07-09"}
+	authorization := &billing.Authorization{AzureBinding: &binding, UpstreamByok: "byok-1"}
+	// Without a runtime the server stops and rechecks nothing, which the stogas tests cover.
+	server := &Server{}
+	discarded := 0
+	discard := func() { discarded++ }
+	for _, headers := range []map[string]string{
+		{"X-Ms-Served-Model": "gpt-5.6-sol-2026-07-09"},
+		{"x-ms-served-model": "GPT-5.6-sol-2026-07-09"},
+		// A reply that names no version, or none at all, is no evidence.
+		{"x-ms-served-model": "gpt-5.6-sol"},
+		nil,
+	} {
+		if failure := server.checkAzureReply(retryAfterContext(headers), authorization, nil, discard); failure != nil || discarded != 0 {
+			t.Fatalf("headers %v: failure = %v, discarded %d", headers, failure, discarded)
+		}
+	}
+	changed := retryAfterContext(map[string]string{"x-ms-served-model": "gpt-5.6-sol-2026-10-28"})
+	failure := server.checkAzureReply(changed, authorization, nil, discard)
+	if failure == nil || discarded != 1 || failureActionFor(failure, changed, nil) != nextPair {
+		t.Fatalf("a reply from another version: failure = %v, discarded %d", failure, discarded)
+	}
+	status, payload := publicBifrostError(failure)
+	body := payload["error"].(map[string]any)
+	if status != http.StatusBadRequest || body["code"] != billing.ErrByokTargetChanged.Code || body["message"] != billing.ErrByokTargetChanged.Message {
+		t.Fatalf("caller error = %d %v", status, body)
+	}
+	if billing.NormalizeUpstreamStatus(failure) != "model_unavailable" {
+		t.Fatalf("logged upstream status = %s", billing.NormalizeUpstreamStatus(failure))
+	}
+	// A provider failure stays the call's failure.
+	gone := &schemas.BifrostError{StatusCode: schemas.Ptr(http.StatusNotFound), Error: &schemas.ErrorField{Message: "DeploymentNotFound"}}
+	if server.checkAzureReply(changed, authorization, gone, discard) != gone || discarded != 1 {
+		t.Fatal("a provider failure was replaced")
+	}
+}
+
+func TestDiscardedStreamStopsItsProvider(t *testing.T) {
+	attempt, cancel := schemas.NewBifrostContextWithCancel(t.Context())
+	defer cancel()
+	stream := make(chan *schemas.BifrostStreamChunk)
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		defer close(stream)
+		for {
+			select {
+			case stream <- &schemas.BifrostStreamChunk{}:
+			case <-attempt.Done():
+				return
+			}
+		}
+	}()
+	discardProviderResponse(attempt, stream)
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the discarded stream's provider kept running")
+	}
+	// A unary reply needs nothing.
+	discardProviderResponse(attempt, &schemas.BifrostResponse{})
 }
 
 func retryAfterContext(headers map[string]string) *schemas.BifrostContext {

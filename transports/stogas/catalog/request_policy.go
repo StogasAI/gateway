@@ -121,7 +121,7 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 				break
 			}
 			ranks[credentialCandidate{selection.provider, index}] = rank
-			if input.DeploymentEligible != nil && !input.DeploymentEligible(selection.provider, index, selection.deployment) {
+			if input.DeploymentEligible != nil && !input.DeploymentEligible(selection.provider, index, route, selection.deployment) {
 				targetRemoved = true
 				trace.removePair(selection, index, nil, RemovedCandidate{Reason: RemovedCredentialTarget})
 				continue

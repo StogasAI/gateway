@@ -97,8 +97,9 @@ type RequestInput struct {
 	// AvailableCredentials lists eligible assignment indexes in preference order.
 	// Nil leaves provider eligibility to the caller; an empty map denies all.
 	AvailableCredentials map[string][]int
-	// DeploymentEligible applies cached credential target metadata without secrets.
-	DeploymentEligible   func(schemas.ModelProvider, int, Deployment) bool
+	// DeploymentEligible applies cached credential target metadata without secrets. It gets the
+	// request's route, since a provider's replies can report more on one route than another.
+	DeploymentEligible   func(schemas.ModelProvider, int, Route, Deployment) bool
 	CompileRequestPolicy func([]byte) (*policy.Request, error)
 	// CheckCandidate prepares local credential prerequisites after metadata
 	// routing. An explicit fallback allowance permits another candidate only for

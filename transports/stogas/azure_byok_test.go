@@ -3,6 +3,7 @@ package stogas
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -63,6 +64,7 @@ func azureTestResolution() *catalog.ResolvedRequest {
 			},
 		},
 		Provider: schemas.Azure,
+		Route:    catalog.RouteChat,
 	}
 }
 
@@ -92,12 +94,13 @@ func TestAzureCredentialEligibilityUsesOnlyLiveCompatibleBindings(t *testing.T) 
 				value := now.Add(-time.Second)
 				expires = &value
 			}
-			snapshot := &billing.KeyConfigSnapshot{Credentials: map[string][]billing.CredentialSelection{"azure": {{Credential: &billing.CachedCredential{Bindings: []billing.AzureCredentialBinding{{AzureBinding: binding, ModelDeprecationAt: expires}}}}}}}
+			binding.ModelDeprecationAt = expires
+			snapshot := &billing.KeyConfigSnapshot{Credentials: map[string][]billing.CredentialSelection{"azure": {{Credential: &billing.CachedCredential{Bindings: []billing.AzureCredentialBinding{{AzureBinding: binding}}}}}}}
 			eligible := CredentialDeploymentFilter(snapshot, now)
-			if got := eligible(schemas.Azure, 0, azureTestResolution().Deployment); got != (test.want == nil) {
+			if got := eligible(schemas.Azure, 0, catalog.RouteChat, azureTestResolution().Deployment); got != (test.want == nil) {
 				t.Fatalf("eligible=%v want=%v", got, test.want == nil)
 			}
-			if !eligible(schemas.OpenAI, 0, catalog.Deployment{}) {
+			if !eligible(schemas.OpenAI, 0, catalog.RouteChat, catalog.Deployment{}) {
 				t.Fatal("Azure target metadata affected another provider")
 			}
 		})
@@ -107,9 +110,10 @@ func TestAzureCredentialEligibilityUsesOnlyLiveCompatibleBindings(t *testing.T) 
 func TestAzureCredentialEligibilityRetainsMultipleTargetsAndRequestVariants(t *testing.T) {
 	now := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	bindings := []billing.AzureCredentialBinding{
-		{AzureBinding: azureTestBinding(), ModelDeprecationAt: &now},
+		{AzureBinding: azureTestBinding()},
 		{AzureBinding: azureTestBinding()},
 	}
+	bindings[0].ModelDeprecationAt = &now
 	bindings[1].DeploymentName = "another-target"
 	snapshot := &billing.KeyConfigSnapshot{Credentials: map[string][]billing.CredentialSelection{
 		"azure": {{Credential: &billing.CachedCredential{Bindings: bindings}}},
@@ -118,11 +122,11 @@ func TestAzureCredentialEligibilityRetainsMultipleTargetsAndRequestVariants(t *t
 	deployment := azureTestResolution().Deployment
 	deployment.Upstream.ServiceTier = catalog.TierFast
 	deployment.Upstream.ReasoningMode = "pro"
-	if !eligible(schemas.Azure, 0, deployment) {
+	if !eligible(schemas.Azure, 0, catalog.RouteChat, deployment) {
 		t.Fatal("an expired target hid a live target supporting the same request variants")
 	}
 	deployment.DataHandling.ProcessingLocation = "eu"
-	if eligible(schemas.Azure, 0, deployment) {
+	if eligible(schemas.Azure, 0, catalog.RouteChat, deployment) {
 		t.Fatal("matching model identity bypassed the requested processing boundary")
 	}
 }
@@ -144,6 +148,125 @@ func TestAzureOnlyCredentialSelectsItsConfiguredDeploymentWithoutSecretAccess(t 
 		if err != nil || resolved == nil || resolved.Deployment.ID != "azure-gpt-5.6-sol" {
 			t.Fatalf("result=%v error=%v", resolved, err)
 		}
+	}
+}
+
+func TestAzureRepliesNameVersionWhereAzureReportsIt(t *testing.T) {
+	for _, test := range []struct {
+		route  catalog.Route
+		format string
+		want   bool
+	}{
+		{catalog.RouteResponses, "OpenAI", true},
+		{catalog.RouteResponses, "DeepSeek", true},
+		{catalog.RouteChat, "OpenAI", true},
+		{catalog.RouteChat, "DeepSeek", false},
+		{catalog.RouteChat, "OpenAI-OSS", false},
+		{catalog.RouteChat, "Anthropic", false},
+		{catalog.RouteResponses, "Anthropic", false},
+	} {
+		deployment := catalog.Deployment{Upstream: catalog.Upstream{ModelFormat: test.format}}
+		if got := azureRepliesNameVersion(test.route, deployment); got != test.want {
+			t.Errorf("%s %s: names version = %v, want %v", test.route, test.format, got, test.want)
+		}
+	}
+}
+
+func TestAzureKeepsVersionUntilItsRetirementDateBeginsAnywhere(t *testing.T) {
+	retires := time.Date(2026, 12, 1, 9, 0, 0, 0, time.UTC)
+	begins := time.Date(2026, 11, 30, 10, 0, 0, 0, time.UTC)
+	if got := azureRetirementBegins(retires); !got.Equal(begins) {
+		t.Fatalf("retirement begins %s, want %s", got, begins)
+	}
+	for _, test := range []struct {
+		upgrade string
+		retires *time.Time
+		at      time.Time
+		want    bool
+	}{
+		{"none", nil, begins, true},
+		{"at_retirement", nil, begins, true},
+		{"at_retirement", &retires, begins.Add(-time.Second), true},
+		{"at_retirement", &retires, begins, false},
+		// Azure force-upgrades a preview version whatever the option says.
+		{"none", &retires, begins, false},
+		{"new_default", nil, begins.Add(-48 * time.Hour), false},
+		{"", nil, begins, false},
+	} {
+		binding := azureTestBinding()
+		binding.AutoUpgrade, binding.ModelDeprecationAt = test.upgrade, test.retires
+		if got := azureKeepsVersion(binding, test.at); got != test.want {
+			t.Errorf("%q retiring %v at %s: keeps = %v, want %v", test.upgrade, test.retires, test.at, got, test.want)
+		}
+	}
+}
+
+func TestAzureUnreportedRepliesUseOnlyTargetsWhoseVersionAzureKeeps(t *testing.T) {
+	now := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	binding := azureTestBinding()
+	binding.ModelFormat, binding.ModelName, binding.ModelVersion = "DeepSeek", "DeepSeek-V4-Flash", "2026-04-23"
+	binding.Endpoint = "https://stogas-ai.services.ai.azure.com"
+	binding.AutoUpgrade = "new_default"
+	deployment := azureTestResolution().Deployment
+	deployment.Upstream.ModelFormat, deployment.Upstream.Model, deployment.Upstream.ModelVersion = "DeepSeek", "DeepSeek-V4-Flash", "2026-04-23"
+	snapshot := func(binding billing.AzureBinding) *billing.KeyConfigSnapshot {
+		return &billing.KeyConfigSnapshot{Credentials: map[string][]billing.CredentialSelection{
+			"azure": {{Credential: &billing.CachedCredential{Bindings: []billing.AzureCredentialBinding{{AzureBinding: binding}}}}},
+		}}
+	}
+	if CredentialDeploymentFilter(snapshot(binding), now)(schemas.Azure, 0, catalog.RouteChat, deployment) {
+		t.Fatal("Chat Completions used a DeepSeek target that Azure moves to each new default version")
+	}
+	resolution := azureTestResolution()
+	resolution.Deployment = deployment
+	authorization := &billing.Authorization{AzureBinding: &binding, UpstreamByok: "00000000-0000-8000-8000-000000000001", UpstreamByokSecret: azureTestCredential(t)}
+	if _, _, err := azureDirectKey(authorization, resolution, now); !errors.Is(err, billing.ErrByokTarget) {
+		t.Fatalf("direct key for a movable target = %v", err)
+	}
+	if target := billingUpstreamTarget(resolution); target == nil || !target.VersionUnreported {
+		t.Fatalf("the hold was not told that the reply names no version: %#v", target)
+	}
+	binding.AutoUpgrade = "at_retirement"
+	if !CredentialDeploymentFilter(snapshot(binding), now)(schemas.Azure, 0, catalog.RouteChat, deployment) {
+		t.Fatal("a target that keeps its version until retirement was refused")
+	}
+	if _, _, err := azureDirectKey(authorization, resolution, now); err != nil {
+		t.Fatal(err)
+	}
+	// Replies that name their version catch a move themselves.
+	openAI := azureTestBinding()
+	openAI.AutoUpgrade = "new_default"
+	if !CredentialDeploymentFilter(snapshot(openAI), now)(schemas.Azure, 0, catalog.RouteChat, azureTestResolution().Deployment) {
+		t.Fatal("an OpenAI target was refused for Chat Completions, whose replies name the version")
+	}
+	if target := billingUpstreamTarget(azureTestResolution()); target == nil || target.VersionUnreported {
+		t.Fatalf("an OpenAI Chat Completions hold = %#v", target)
+	}
+}
+
+func TestAzureServedModelChangedReadsTheReplysModel(t *testing.T) {
+	binding := azureTestBinding()
+	authorization := &billing.Authorization{AzureBinding: &binding}
+	for _, test := range []struct {
+		served, want string
+		changed      bool
+	}{
+		{"gpt-5.6-sol-2026-07-09", "", false},
+		{"GPT-5.6-SOL-2026-07-09", "", false},
+		{" gpt-5.6-sol ", "", false},
+		{"", "", false},
+		{"gpt-5.6-sol-2026-10-28", "gpt-5.6-sol-2026-10-28", true},
+		{"gpt-5.7-sol-2026-10-28", "gpt-5.7-sol-2026-10-28", true},
+		{".odd model/1", "xodd_model_1", true},
+		{strings.Repeat("a", 300), strings.Repeat("a", 255), true},
+	} {
+		served, changed := AzureServedModelChanged(authorization, test.served)
+		if served != test.want || changed != test.changed {
+			t.Errorf("%q: served %q changed %v", test.served, served, changed)
+		}
+	}
+	if _, changed := AzureServedModelChanged(&billing.Authorization{}, "gpt-5.6-sol-2026-10-28"); changed {
+		t.Fatal("a request without an Azure target was judged")
 	}
 }
 
@@ -178,7 +301,7 @@ func TestAzureDirectKeyUsesOnlyTheAuthorizedExactBinding(t *testing.T) {
 		UpstreamByok:       "00000000-0000-8000-8000-000000000001",
 		UpstreamByokSecret: azureTestCredential(t),
 	}
-	key, deploymentName, err := azureDirectKey(authorization, azureTestResolution())
+	key, deploymentName, err := azureDirectKey(authorization, azureTestResolution(), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +321,7 @@ func TestAzureDirectKeyUsesOnlyTheAuthorizedExactBinding(t *testing.T) {
 	} {
 		resolution := azureTestResolution()
 		resolution.Deployment.Upstream = upstream
-		if _, selected, variantErr := azureDirectKey(authorization, resolution); variantErr != nil || selected != "customer-sol" {
+		if _, selected, variantErr := azureDirectKey(authorization, resolution, time.Now()); variantErr != nil || selected != "customer-sol" {
 			t.Fatalf("request control variant selected %q, err=%v", selected, variantErr)
 		}
 	}
@@ -251,7 +374,7 @@ func TestAzureDirectKeyRejectsTargetOrEndpointSubstitution(t *testing.T) {
 				AzureBinding:       &binding,
 				UpstreamByok:       "00000000-0000-8000-8000-000000000001",
 				UpstreamByokSecret: azureTestCredential(t),
-			}, &resolution)
+			}, &resolution, time.Now())
 			if err == nil {
 				t.Fatal("expected exact Azure binding rejection")
 			}
@@ -271,7 +394,7 @@ func TestAzureDirectKeyAcceptsNarrowerDiscoveredLocations(t *testing.T) {
 		AzureBinding:       &binding,
 		UpstreamByok:       "00000000-0000-8000-8000-000000000001",
 		UpstreamByokSecret: azureTestCredential(t),
-	}, resolution)
+	}, resolution, time.Now())
 	if err != nil || deploymentName != binding.DeploymentName {
 		t.Fatalf("narrower Azure binding was rejected: deployment=%q err=%v", deploymentName, err)
 	}
@@ -334,7 +457,7 @@ func TestAzureDirectKeySupportsInstantProjectBinding(t *testing.T) {
 		AzureBinding:       &binding,
 		UpstreamByok:       "00000000-0000-8000-8000-000000000001",
 		UpstreamByokSecret: azureTestCredential(t),
-	}, resolution)
+	}, resolution, time.Now())
 	if err != nil || wireModel != binding.DeploymentName || key.AzureKeyConfig == nil ||
 		key.AzureKeyConfig.Endpoint.GetValue() != binding.Endpoint {
 		t.Fatalf("instant binding = %#v, model=%q, err=%v", key, wireModel, err)
@@ -345,7 +468,7 @@ func TestAzureDirectKeySupportsInstantProjectBinding(t *testing.T) {
 		AzureBinding:       &binding,
 		UpstreamByok:       "00000000-0000-8000-8000-000000000001",
 		UpstreamByokSecret: azureTestCredential(t),
-	}, resolution); err == nil {
+	}, resolution, time.Now()); err == nil {
 		t.Fatal("instant binding accepted a non-project endpoint")
 	}
 }
