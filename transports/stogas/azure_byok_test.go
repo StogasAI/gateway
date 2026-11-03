@@ -225,6 +225,47 @@ func TestAzureRepliesNameVersionWhereAzureReportsIt(t *testing.T) {
 	}
 }
 
+// The dashboard decides by a target's model format whether gateways need Azure to keep its
+// version (contracts' azureTargetServes and PostgreSQL's azure_target_serves), so every interface
+// of every Azure deployment in the catalog must agree with its format.
+func TestAzureFormatDecidesWhetherRepliesNameVersion(t *testing.T) {
+	var routes map[string]struct {
+		Interfaces []string `json:"interfaces"`
+		ProviderID string   `json:"providerId"`
+	}
+	if err := json.Unmarshal(activeCatalogRecords(t, "routes"), &routes); err != nil {
+		t.Fatalf("decode public routes: %v", err)
+	}
+	var deployments map[string]struct {
+		Routes   map[string]json.RawMessage `json:"routes"`
+		Upstream catalog.Upstream           `json:"upstream"`
+	}
+	if err := json.Unmarshal(activeCatalogRecords(t, "deployments"), &deployments); err != nil {
+		t.Fatalf("decode public deployments: %v", err)
+	}
+	checked := 0
+	for id, deployment := range deployments {
+		for routeID := range deployment.Routes {
+			route := routes[routeID]
+			if route.ProviderID != string(schemas.Azure) {
+				continue
+			}
+			want := deployment.Upstream.ModelFormat == "OpenAI"
+			for _, name := range route.Interfaces {
+				served := catalog.Deployment{Upstream: deployment.Upstream}
+				if got := azureRepliesNameVersion(catalog.Route(strings.ReplaceAll(name, "_", "-")), served); got != want {
+					t.Errorf("%s through %s %s: replies name version = %v, but its format %q says %v",
+						id, routeID, name, got, deployment.Upstream.ModelFormat, want)
+				}
+				checked++
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("the catalog has no Azure deployments")
+	}
+}
+
 func TestAzureKeepsVersionUntilItsRetirementDateBeginsAnywhere(t *testing.T) {
 	retires := time.Date(2026, 12, 1, 9, 0, 0, 0, time.UTC)
 	begins := time.Date(2026, 11, 30, 10, 0, 0, 0, time.UTC)
