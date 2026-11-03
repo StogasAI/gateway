@@ -117,12 +117,6 @@ func (v variant) upstreamMode() string {
 	return ""
 }
 
-// matches reports whether a deployment that the request names exactly runs at the variant.
-func (v variant) matches(upstream compiledUpstream) bool {
-	return (v.tier == "" || upstream.ServiceTier == v.tier) &&
-		(v.mode == "" || upstream.ReasoningMode == v.upstreamMode())
-}
-
 // unavailable is the error for a request whose variant leaves no deployment. usable says whether
 // the key can use the model at a variant. The error names a field only when the request sent it
 // and another value of that field would serve. The mode applies before the tier, so a model that

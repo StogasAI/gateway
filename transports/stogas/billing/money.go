@@ -28,13 +28,6 @@ func createHoldParamsHash(providerKey string, productKey string, upstreamTargetJ
 	return hex.EncodeToString(hasher.Sum(nil))
 }
 
-func cloneOrZero(value *money.USD) *money.USD {
-	if value == nil {
-		return new(money.USD)
-	}
-	return new(money.USD).Set(value)
-}
-
 // ParseNonnegativeInteger accepts only the canonical base-10 form used by
 // billing and pricing records.
 func ParseNonnegativeInteger(value string) (*big.Int, error) {

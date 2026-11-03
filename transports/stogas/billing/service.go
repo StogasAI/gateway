@@ -35,8 +35,6 @@ const (
 	ManagedUpstreamByok    = "stogas"
 )
 
-var ErrAuthorizationAbsent = errors.New("Authorization not found")
-
 const authorizeHoldArguments = `
   $1::text,
   $2::text,

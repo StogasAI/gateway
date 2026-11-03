@@ -339,16 +339,6 @@ func optionalMCPInputStrings(item map[string]json.RawMessage, path string, keys 
 	return nil
 }
 
-func isResponsesMCPItemType(itemType string) bool {
-	switch schemas.ResponsesMessageType(itemType) {
-	case schemas.ResponsesMessageTypeMCPListTools, schemas.ResponsesMessageTypeMCPCall,
-		schemas.ResponsesMessageTypeMCPApprovalRequest, schemas.ResponsesMessageTypeMCPApprovalResponses:
-		return true
-	default:
-		return false
-	}
-}
-
 // validateProviderResponsesMCPItem checks an MCP output item: a listing, a call or an
 // approval request from a server that the request declared and tool_choice allows.
 func validateProviderResponsesMCPItem(state *State, item *schemas.ResponsesMessage, observed *providerResponsesItem) error {

@@ -345,10 +345,6 @@ func (s *Server) secureShutdownRequested() <-chan struct{} {
 	return s.secure.ShutdownRequested()
 }
 
-func guestDrainTimeout() time.Duration {
-	return billing.GatewayRequestLifetime
-}
-
 func (s *Server) wrapListener(listener net.Listener) net.Listener {
 	if !s.serveConfidentialTLS() {
 		return listener

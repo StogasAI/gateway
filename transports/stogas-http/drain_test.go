@@ -66,16 +66,13 @@ func TestServerDrainWaitsForActiveRequest(t *testing.T) {
 }
 
 func TestGuestShutdownBudgetPreservesRequestLifetimeAndHardCap(t *testing.T) {
-	if got := guestDrainTimeout(); got != billing.GatewayRequestLifetime {
-		t.Fatalf("guest drain timeout = %s, want %s", got, billing.GatewayRequestLifetime)
-	}
 	if downstreamWriteIdleTimeout != time.Minute {
 		t.Fatalf("downstream write idle timeout = %s, want 1m", downstreamWriteIdleTimeout)
 	}
 	if serverShutdownTimeout != 5*time.Minute {
 		t.Fatalf("server shutdown timeout = %s, want 5m", serverShutdownTimeout)
 	}
-	if got := guestDrainTimeout() + serverShutdownTimeout; got != guestShutdownHardCap || got > 65*time.Minute {
+	if got := billing.GatewayRequestLifetime + serverShutdownTimeout; got != guestShutdownHardCap || got > 65*time.Minute {
 		t.Fatalf("guest shutdown budget = %s, want %s", got, guestShutdownHardCap)
 	}
 }

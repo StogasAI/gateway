@@ -11,6 +11,11 @@ import (
 	"unicode/utf8"
 )
 
+// redactJSON redacts a JSON value whose strings are general text.
+func (r *Redactor) redactJSON(source []byte) ([]byte, bool, error) {
+	return r.redactJSONContext(source, jsonContextGeneral)
+}
+
 func TestStructuredPIIRedaction(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
