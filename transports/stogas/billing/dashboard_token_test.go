@@ -196,7 +196,8 @@ func newInferenceTokenTestKey(t *testing.T) inferenceTokenTestKey {
 	return inferenceTokenTestKey{mldsa: mldsaKey, ed25519: ed25519Key, public: public}
 }
 
-func signDashboardToken(t *testing.T, privateKey inferenceTokenTestKey, claims dashboardTokenClaims) string {
+// signDashboardToken signs claims as Control signs every token it gives the gateway.
+func signDashboardToken(t *testing.T, privateKey inferenceTokenTestKey, claims any) string {
 	t.Helper()
 	header := dashboardTokenHeader{Algorithm: inferenceTokenAlgorithm, Type: "JWT"}
 	headerJSON, err := json.Marshal(header)

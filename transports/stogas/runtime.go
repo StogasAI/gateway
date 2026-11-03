@@ -28,6 +28,7 @@ type Runtime struct {
 	azureTokens  *azureauth.Cache
 	azureChecks  *AzureChecks
 	googleTokens *googleauth.Cache
+	byokChecks   *byokChecker
 	cancel       context.CancelFunc
 }
 
@@ -41,6 +42,10 @@ func NewRuntime(ctx context.Context, config Config, nodeID string) (*Runtime, er
 		return nil, err
 	}
 
+	byokChecks, err := newByokChecker(config)
+	if err != nil {
+		return nil, err
+	}
 	runtimeCtx, cancel := context.WithCancel(ctx)
 	chutesTransport, err := newChutesE2EETransport(config)
 	if err != nil {
@@ -77,13 +82,16 @@ func NewRuntime(ctx context.Context, config Config, nodeID string) (*Runtime, er
 	}
 
 	azureTokens := azureauth.New(runtimeCtx)
+	googleTokens := googleauth.New(runtimeCtx, confidentialProduction(config))
+	byokChecks.google = googleTokens
 	return &Runtime{
 		client:       client,
 		billing:      billingService,
 		chutesE2EE:   chutesTransport,
 		azureTokens:  azureTokens,
 		azureChecks:  NewAzureChecks(runtimeCtx, billingService, azureTokens),
-		googleTokens: googleauth.New(runtimeCtx, confidentialProduction(config)),
+		googleTokens: googleTokens,
+		byokChecks:   byokChecks,
 		cancel:       cancel,
 	}, nil
 }
@@ -157,6 +165,13 @@ func (r *Runtime) ParseDashboardCredential(raw string) (*billing.DashboardCreden
 		return nil, billing.ErrInvalidAPIKey
 	}
 	return r.billing.ParseDashboardCredential(raw)
+}
+
+func (r *Runtime) ParseByokCheckGrant(raw string) (*billing.ByokCheckGrant, error) {
+	if r == nil || r.billing == nil {
+		return nil, billing.ErrByokCheckGrant
+	}
+	return r.billing.ParseByokCheckGrant(raw)
 }
 
 func (r *Runtime) Billing() *billing.Service {

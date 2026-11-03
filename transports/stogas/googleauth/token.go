@@ -44,15 +44,28 @@ type Credential struct {
 
 type Diagnostics = accesstoken.Diagnostics
 
-type Cache struct{ tokens *accesstoken.Cache }
+type Cache struct {
+	tokens *accesstoken.Cache
+	client *http.Client
+}
 
 // New starts the token cache. requirePostQuantumTLS accepts only TLS 1.3 with
 // X25519MLKEM768 to the token endpoint.
 func New(ctx context.Context, requirePostQuantumTLS bool) *Cache {
 	client, transport := accesstoken.NewClient(requirePostQuantumTLS)
-	return &Cache{accesstoken.New(ctx, func(ctx context.Context, parts []string) (accesstoken.Token, error) {
+	return &Cache{tokens: accesstoken.New(ctx, func(ctx context.Context, parts []string) (accesstoken.Token, error) {
 		return exchange(ctx, client, tokenURL, Credential{ClientEmail: parts[0], PrivateKeyID: parts[1], PrivateKey: parts[2]}, time.Now())
-	}, transport)}
+	}, transport), client: client}
+}
+
+// SignIn exchanges a newly signed assertion for a token and discards it, which shows whether
+// Google accepts the key now. The cache neither answers nor keeps it.
+func (c *Cache) SignIn(ctx context.Context, credential Credential) error {
+	if c == nil {
+		return ErrUnavailable
+	}
+	_, err := exchange(ctx, c.client, tokenURL, credential, time.Now())
+	return err
 }
 
 func (c *Cache) Token(ctx context.Context, credential Credential) (string, error) {
