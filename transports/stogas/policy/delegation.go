@@ -29,7 +29,8 @@ const (
 	permissionTotalTimeout
 	permissionOutputIdleTimeout
 	permissionOrder
-	allPermissions     = permissionOrder | (permissionOrder - 1)
+	permissionMissingKeys
+	allPermissions     = permissionMissingKeys | (permissionMissingKeys - 1)
 	requestPermissions = allPermissions &^ (permissionLimits | permissionDelegation | permissionEncryption)
 )
 
@@ -42,11 +43,12 @@ var permissionSections = map[string]Permission{
 	"plugins.export":             permissionExport,
 	"plugins.textExtraction":     permissionTextExtraction,
 	"plugins.redaction":          permissionPlugins, "plugins.encrypted": permissionEncryptedPlugins,
-	"routing":        permissionFilter | permissionSort | permissionNodes | permissionRetries | permissionFallbacks | permissionOrder,
+	"routing":        permissionFilter | permissionSort | permissionNodes | permissionRetries | permissionFallbacks | permissionOrder | permissionMissingKeys,
 	"routing.filter": permissionFilter, "routing.sort": permissionSort,
 	"routing.allowedCatalogNodes": permissionNodes, "routing.retries": permissionRetries,
 	"routing.fallbacks": permissionFallbacks, "routing.order": permissionOrder,
-	"delegation": permissionDelegation, "encryption": permissionEncryption,
+	"routing.missingEncryptionKeys": permissionMissingKeys,
+	"delegation":                    permissionDelegation, "encryption": permissionEncryption,
 }
 
 var policyEntityID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)

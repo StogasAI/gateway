@@ -200,6 +200,7 @@ type sourceBody struct {
 		Order     []string             `json:"order"`
 		Retries   *int                 `json:"retries"`
 		Fallbacks *int                 `json:"fallbacks"`
+		Missing   *string              `json:"missingEncryptionKeys"`
 	} `json:"routing"`
 }
 
@@ -435,6 +436,12 @@ func (d *SourceDocument) compile(plugins map[[32]byte]*Plugins, compiler *celCom
 		}
 		if doc.Routing.Fallbacks != nil {
 			config.Routing.Fallbacks = *doc.Routing.Fallbacks
+		}
+		if doc.Routing.Missing != nil {
+			if value := *doc.Routing.Missing; value != MissingKeysFail && value != MissingKeysSkip {
+				return nil, configError("routing.missingEncryptionKeys must be fail or skip")
+			}
+			config.Routing.MissingEncryptionKeys = *doc.Routing.Missing
 		}
 	}
 
@@ -783,6 +790,18 @@ func (c *Config) FallbacksOrigin() (Origin, bool) {
 	return Origin{}, false
 }
 
+// MissingKeysOrigin locates the policy that decides what a candidate does
+// when the request did not send an encryption key that it needs.
+func (c *Config) MissingKeysOrigin() (Origin, bool) {
+	for i, entry := range c.sources {
+		if c.allowedSettings(entry.Value)&entry.Value.settings&permissionMissingKeys != 0 &&
+			entry.Value.Config.Routing.MissingEncryptionKeys == c.Routing.MissingEncryptionKeys {
+			return c.origin(i), true
+		}
+	}
+	return Origin{}, false
+}
+
 // OrderOrigin locates the policy, and for a default ordering its rule, that
 // sets the composed routing order and sort.
 func (c *Config) OrderOrigin() (Origin, bool) {
@@ -868,6 +887,9 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 	var requiredScope, preferredScope Scope
 	// The smallest value among the policies that set one applies.
 	var retries, fallbacks *int
+	// A candidate whose encryption key the request did not send fails the
+	// request unless a policy skips it and none fails it.
+	missingKeys := ""
 	seenPlugins := map[*Plugins]bool{}
 	seenWindows := map[string]bool{}
 	for _, entry := range sources {
@@ -965,6 +987,9 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 		if set&permissionFallbacks != 0 && (fallbacks == nil || *fallbacks > config.Routing.Fallbacks) {
 			fallbacks = &config.Routing.Fallbacks
 		}
+		if set&permissionMissingKeys != 0 && missingKeys != MissingKeysFail {
+			missingKeys = config.Routing.MissingEncryptionKeys
+		}
 		if q := config.Routing.Query; q != nil && allowed&permissionFilter != 0 {
 			filters = append(filters, q.Filters...)
 		}
@@ -982,6 +1007,7 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 	if fallbacks != nil {
 		out.Routing.Fallbacks = *fallbacks
 	}
+	out.Routing.MissingEncryptionKeys = missingKeys
 	if requested != nil && requested != required && !requested.same(required) {
 		return nil, configError("the saved policies require a different routing order; omit routing.order and routing.sort from the request policy")
 	}

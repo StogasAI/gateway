@@ -93,9 +93,26 @@ func (e *MissingError) Unwrap() error { return ErrKey }
 // Missing returns a *MissingError naming each root in ids that keys lacks, by
 // its registered label, or nil when none is missing.
 func (keys Keys) Missing(registered map[string]string, ids ...string) error {
+	return missing(registered, keys.Matches, ids)
+}
+
+// MissingLabels is Missing for a simulated request that sends the keys
+// registered under labels.
+func MissingLabels(registered map[string]string, labels []string, ids ...string) error {
+	return missing(registered, func(id string) bool {
+		for _, label := range labels {
+			if registered[label] == id {
+				return true
+			}
+		}
+		return false
+	}, ids)
+}
+
+func missing(registered map[string]string, sent func(string) bool, ids []string) error {
 	var labels []string
 	for _, id := range ids {
-		if id == "" || keys.Matches(id) {
+		if id == "" || sent(id) {
 			continue
 		}
 		label := id

@@ -12,6 +12,7 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"github.com/maximhq/bifrost/transports/stogas/customerkey"
 	"github.com/maximhq/bifrost/transports/stogas/policy"
 )
 
@@ -41,6 +42,7 @@ type simulationRemoval struct {
 	Expression string                `json:"expression,omitempty"`
 	Unknown    bool                  `json:"unknown,omitempty"`
 	Code       string                `json:"code,omitempty"`
+	Labels     []string              `json:"labels,omitempty"`
 }
 
 type simulationCredential struct {
@@ -52,12 +54,14 @@ type simulationCredential struct {
 type simulationError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
-	// Origin locates the deny period of a schedule_denied error.
+	// Origin locates the deny period of a schedule_denied error, or the
+	// policy that fails a request without an encryption key it needs.
 	Origin *simulationOrigin `json:"origin,omitempty"`
 }
 
 // policySimulation answers what a request that names only a model, a service
-// tier and a reasoning mode would try, and what removed every other candidate.
+// tier, a reasoning mode and the labels of the encryption keys it sends would
+// try, and what removed every other candidate.
 type policySimulation struct {
 	Draft           string                            `json:"draft,omitempty"`
 	Pairs           []simulationPair                  `json:"pairs"`
@@ -104,6 +108,9 @@ func (s *Server) simulatePolicy(ctx *requestContext) {
 		ServiceTier   string
 		ReasoningMode string
 		Policy        *billing.PolicyValidationSource
+		// EncryptionKeys lists the labels of the keys that the simulated
+		// request sends. Without it, the request sends every registered key.
+		EncryptionKeys *[]string
 	}
 	valid := ctx.request.URL.RawQuery == ""
 	for name, raw := range fields {
@@ -119,6 +126,8 @@ func (s *Server) simulatePolicy(ctx *requestContext) {
 			target = &input.ReasoningMode
 		case "policy":
 			target = &input.Policy
+		case "encryptionKeys":
+			target = &input.EncryptionKeys
 		default:
 			valid = false
 			continue
@@ -130,7 +139,7 @@ func (s *Server) simulatePolicy(ctx *requestContext) {
 	route, known := catalog.RouteForInterface(input.Interface)
 	if !valid || !known ||
 		input.Policy != nil && (!input.Policy.Scope.Valid() || input.Policy.ID == "" || len(input.Policy.ID) > 64 || len(input.Policy.Config) == 0) {
-		s.writeError(ctx, http.StatusBadRequest, map[string]any{"error": map[string]any{"code": "invalid_request", "message": "Provide interface as chat_completions or responses, optional model, serviceTier and reasoningMode strings, and an optional policy with scope, id and config", "type": "invalid_request_error"}})
+		s.writeError(ctx, http.StatusBadRequest, map[string]any{"error": map[string]any{"code": "invalid_request", "message": "Provide interface as chat_completions or responses, optional model, serviceTier and reasoningMode strings, optional encryptionKeys as a list of registered labels, and an optional policy with scope, id and config", "type": "invalid_request_error"}})
 		return
 	}
 	if s.runtime == nil || s.runtime.Billing() == nil {
@@ -158,6 +167,26 @@ func (s *Server) simulatePolicy(ctx *requestContext) {
 		return
 	}
 	ctx.claims = config.Claims
+	if input.EncryptionKeys != nil {
+		seen := make(map[string]bool, len(*input.EncryptionKeys))
+		for _, label := range *input.EncryptionKeys {
+			if seen[label] {
+				s.writeError(ctx, http.StatusBadRequest, map[string]any{"error": map[string]any{"code": "invalid_request", "message": "List each encryption key label once", "type": "invalid_request_error"}})
+				return
+			}
+			seen[label] = true
+		}
+		// A request that sends a key under a label that the organization
+		// policy does not register fails, so the simulated one does too.
+		for label := range seen {
+			if _, registered := config.Config.EncryptionKeys[label]; !registered {
+				public := stogas.PublicBillingErrorFor(customerkey.ErrKey)
+				result.Error = &simulationError{Code: public.Code, Message: public.Message}
+				s.writeJSON(ctx, http.StatusOK, result)
+				return
+			}
+		}
+	}
 	for provider, selections := range config.Credentials {
 		list := make([]simulationCredential, len(selections))
 		for i, selection := range selections {
@@ -202,6 +231,20 @@ func (s *Server) simulatePolicy(ctx *requestContext) {
 			chains[simulationCandidate{provider, index}] = selected.Versions
 			return catalog.RequestPolicy{Config: selected.Config}, nil
 		},
+		CheckRoots: func(pairs []catalog.PlannedPair) error {
+			if input.EncryptionKeys == nil {
+				return nil
+			}
+			var ids []string
+			for _, pair := range pairs {
+				ids = append(ids, config.RequiredRoots(string(pair.Provider), pair.Credential, pair.Policy)...)
+			}
+			if err := customerkey.MissingLabels(config.Config.EncryptionKeys, *input.EncryptionKeys, ids...); err != nil {
+				public := stogas.PublicBillingErrorFor(err)
+				return errors.Join(err, catalog.APIError{Code: public.Code, StatusCode: public.StatusCode, Type: public.Type, Message: public.Message})
+			}
+			return nil
+		},
 	}, route, input.Model, input.ServiceTier, input.ReasoningMode)
 	for _, removed := range simulation.Removed {
 		versions := config.Versions
@@ -209,7 +252,7 @@ func (s *Server) simulatePolicy(ctx *requestContext) {
 			versions = chains[simulationCandidate{removed.Provider, *removed.Credential}]
 		}
 		entry := simulationRemoval{Reason: removed.Reason, Provider: removed.Provider, Deployment: removed.Deployment, Model: removed.Model,
-			Credential: removed.Credential, Expression: removed.Expression, Unknown: removed.Unknown, Code: removed.Code}
+			Credential: removed.Credential, Expression: removed.Expression, Unknown: removed.Unknown, Code: removed.Code, Labels: removed.Labels}
 		var hidden bool
 		if entry.Origin, hidden = originFor(removed.Origin, versions, input.Policy); hidden {
 			entry.Expression = ""
@@ -223,6 +266,9 @@ func (s *Server) simulatePolicy(ctx *requestContext) {
 	if simulation.Err != nil {
 		public := catalog.PublicError(simulation.Err)
 		result.Error = &simulationError{Code: public.Code, Message: public.Message}
+		if missing := (*catalog.MissingKeysError)(nil); errors.As(simulation.Err, &missing) {
+			result.Error.Origin, _ = originFor(&missing.Origin, chains[simulationCandidate{missing.Pair.Provider, missing.Pair.Credential}], input.Policy)
+		}
 		s.writeJSON(ctx, http.StatusOK, result)
 		return
 	}

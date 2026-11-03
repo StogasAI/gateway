@@ -96,6 +96,33 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 	// pair passes this check, a policy may be what removed the rest, so the
 	// request keeps the general error and the simulator names each cause.
 	targetRemoved, targetPassed := false, false
+	// A pair whose policy skips missing encryption keys leaves before it
+	// takes a place among the deployment's pairs. Its candidate stays pending
+	// for later credentials that share its policy.
+	var skipped []PlannedPair
+	pending := make(map[*ResolvedRequest]*resolvedPolicyValues)
+	skips := func(selection routingSelection, index int, config *policy.Config) bool {
+		if input.CheckRoots == nil || config == nil || !config.Routing.SkipsMissingKeys() {
+			return false
+		}
+		pair := PlannedPair{Provider: selection.provider, Credential: index, Policy: config}
+		err := input.CheckRoots([]PlannedPair{pair})
+		if err == nil {
+			return false
+		}
+		skipped = append(skipped, pair)
+		if trace != nil {
+			entry := RemovedCandidate{Reason: RemovedEncryptionKey}
+			if missing := (*customerkey.MissingError)(nil); errors.As(err, &missing) {
+				entry.Labels = missing.Labels
+			}
+			if origin, ok := config.MissingKeysOrigin(); ok {
+				entry.Origin = &origin
+			}
+			trace.removePair(selection, index, nil, entry)
+		}
+		return true
+	}
 	for _, selection := range variants.selections {
 		template := ResolvedRequest{
 			Route: route, RequestedModel: model, Provider: selection.provider, Deployment: selection.deployment,
@@ -148,6 +175,13 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 				switch {
 				case existing == nil:
 					trace.removeGrouped(selection, index, original)
+				case skips(selection, index, existing.policy):
+				case pending[existing] != nil:
+					existing.CredentialIndex = index
+					candidates.add(existing, pending[existing])
+					delete(pending, existing)
+					credentials[existing] = []int{index}
+					retained++
 				case len(credentials[existing]) < maxPairs:
 					credentials[existing] = append(credentials[existing], index)
 				default:
@@ -210,11 +244,20 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 			}
 			candidate := template
 			candidate.CredentialIndex, candidate.policy = index, value.Config
-			candidates.add(&candidate, values)
 			groups[original] = &candidate
+			if skips(selection, index, value.Config) {
+				pending[&candidate] = values
+				continue
+			}
+			candidates.add(&candidate, values)
 			credentials[&candidate] = []int{index}
 			retained++
 		}
+	}
+	// Sending the keys would let a skipped pair serve, so the request names
+	// them when nothing else remains.
+	if len(candidates.filtered) == 0 && len(skipped) > 0 {
+		return nil, input.CheckRoots(skipped)
 	}
 	if len(candidates.filtered) == 0 && firstErr != nil {
 		return nil, firstErr
@@ -249,8 +292,9 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 			break
 		}
 	}
-	// A missing root fails the request whichever tried pair needs it, before
-	// any provider call, so the outcome does not depend on earlier failures.
+	// Unless its policy skips it, a pair that needs a root the request did
+	// not send fails the request whichever tried pair it is, before any
+	// provider call, so the outcome does not depend on earlier failures.
 	if input.CheckRoots != nil {
 		tried := plan.choices[:min(len(plan.choices), plan.slots)]
 		pairs := make([]PlannedPair, len(tried))
@@ -258,11 +302,31 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 			pairs[i] = PlannedPair{Provider: choice.candidate.Provider, Credential: choice.index, Policy: choice.candidate.policy}
 		}
 		if err := input.CheckRoots(pairs); err != nil {
+			// A simulation names the policy that keeps the first such pair.
+			for _, pair := range pairs {
+				if trace == nil || pair.Policy == nil || input.CheckRoots([]PlannedPair{pair}) == nil {
+					continue
+				}
+				if origin, ok := pair.Policy.MissingKeysOrigin(); ok {
+					return nil, &MissingKeysError{error: err, Pair: pair, Origin: origin}
+				}
+				break
+			}
 			return nil, err
 		}
 	}
 	return plan, nil
 }
+
+// MissingKeysError locates, for a simulation, the policy that fails a request
+// for a pair whose encryption key the request did not send.
+type MissingKeysError struct {
+	error
+	Pair   PlannedPair
+	Origin policy.Origin
+}
+
+func (e *MissingKeysError) Unwrap() error { return e.error }
 
 // take resolves the next pair, recording failure as the previous pair's local
 // error. A pair that fails its credential check or body preparation uses its
