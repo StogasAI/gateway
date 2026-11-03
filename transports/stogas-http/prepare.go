@@ -77,6 +77,7 @@ func (s *Server) startRun(ctx *requestContext, startedAt time.Time, preparation 
 		Policy:               keyConfig.Config,
 		AvailableCredentials: keyConfig.AvailableCredentials(),
 		DeploymentEligible:   stogas.CredentialDeploymentFilter(keyConfig, startedAt),
+		DeploymentChanged:    stogas.CredentialTargetChanged(keyConfig),
 		LoadRedactionPolicy:  keyConfig.RedactionPolicy,
 		ReserveBody: func(bytes int) error {
 			if !lease.resize(max(bodyCapacity, bytes)) {

@@ -30,6 +30,7 @@ var (
 	ErrInvalidJSON              = APIError{Code: "invalid_json", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Invalid JSON body"}
 	ErrModelAmbiguous           = APIError{Code: "model_ambiguous", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Several models match; specify a model, or add a routing order or sort"}
 	ErrByokTargetUnavailable    = APIError{Code: "byok_target_unavailable", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "No assigned BYOK credential provides a deployment of this model. Check each credential's Region, hostings and Azure deployments."}
+	ErrByokTargetChanged        = APIError{Code: "byok_target_changed", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "The assigned Azure deployment now serves another model, version or SKU. Choose its new target in the dashboard."}
 	ErrModelUnavailable         = APIError{Code: "model_unavailable", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "No deployment is available for this request. Check the model, provider credentials and routing policies."}
 	ErrProviderUnavailable      = APIError{Code: "provider_unavailable", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Provider is not available"}
 	ErrScheduleDenied           = APIError{Code: "schedule_denied", StatusCode: http.StatusForbidden, Type: "permission_denied", Message: "Request is not allowed at this time"}
@@ -99,7 +100,10 @@ type RequestInput struct {
 	AvailableCredentials map[string][]int
 	// DeploymentEligible applies cached credential target metadata without secrets. It gets the
 	// request's route, since a provider's replies can report more on one route than another.
-	DeploymentEligible   func(schemas.ModelProvider, int, Route, Deployment) bool
+	DeploymentEligible func(schemas.ModelProvider, int, Route, Deployment) bool
+	// DeploymentChanged reports a credential whose target for the deployment no longer serves the
+	// cataloged model, version or SKU, so the request names that cause when nothing else serves.
+	DeploymentChanged    func(schemas.ModelProvider, int, Deployment) bool
 	CompileRequestPolicy func([]byte) (*policy.Request, error)
 	// CheckCandidate prepares local credential prerequisites after metadata
 	// routing. An explicit fallback allowance permits another candidate only for
