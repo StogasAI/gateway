@@ -6,6 +6,8 @@ package azureauth
 import (
 	"context"
 	"errors"
+	"net/http"
+	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
@@ -27,34 +29,56 @@ type Credential struct {
 
 type Diagnostics = accesstoken.Diagnostics
 
-type Cache struct{ tokens *accesstoken.Cache }
+type Cache struct {
+	tokens *accesstoken.Cache
+	client *http.Client
+}
 
 func New(ctx context.Context) *Cache {
 	client, transport := accesstoken.NewClient(false)
-	return &Cache{accesstoken.New(ctx, func(ctx context.Context, parts []string) (accesstoken.Token, error) {
-		tenantID, clientID, secret, scope := parts[0], parts[1], parts[2], parts[3]
-		auth, err := azidentity.NewClientSecretCredential(tenantID, clientID, secret, &azidentity.ClientSecretCredentialOptions{
-			ClientOptions: azcore.ClientOptions{
-				Transport: accesstoken.BoundedTransport{Client: client},
-				Retry:     policy.RetryOptions{MaxRetries: -1},
-			},
-		})
-		if err != nil {
-			return accesstoken.Token{}, ErrCredential
-		}
-		token, err := auth.GetToken(ctx, policy.TokenRequestOptions{Scopes: []string{scope}})
-		if err != nil {
-			var rejected *azidentity.AuthenticationFailedError
-			if errors.As(err, &rejected) && rejected.RawResponse != nil {
-				switch rejected.RawResponse.StatusCode {
-				case 400, 401, 403:
-					return accesstoken.Token{}, ErrCredential
-				}
+	return &Cache{tokens: accesstoken.New(ctx, func(ctx context.Context, parts []string) (accesstoken.Token, error) {
+		return signIn(ctx, client, Credential{TenantID: parts[0], ClientID: parts[1], Secret: parts[2], Scope: parts[3]})
+	}, transport), client: client}
+}
+
+func signIn(ctx context.Context, client *http.Client, credential Credential) (accesstoken.Token, error) {
+	auth, err := azidentity.NewClientSecretCredential(credential.TenantID, credential.ClientID, credential.Secret, &azidentity.ClientSecretCredentialOptions{
+		ClientOptions: azcore.ClientOptions{
+			Transport: accesstoken.BoundedTransport{Client: client},
+			Retry:     policy.RetryOptions{MaxRetries: -1},
+		},
+	})
+	if err != nil {
+		return accesstoken.Token{}, ErrCredential
+	}
+	token, err := auth.GetToken(ctx, policy.TokenRequestOptions{Scopes: []string{credential.Scope}})
+	if err != nil {
+		var rejected *azidentity.AuthenticationFailedError
+		if errors.As(err, &rejected) && rejected.RawResponse != nil {
+			switch rejected.RawResponse.StatusCode {
+			case 400, 401, 403:
+				return accesstoken.Token{}, ErrCredential
 			}
-			return accesstoken.Token{}, ErrUnavailable
 		}
-		return accesstoken.Token{Value: token.Token, ExpiresAt: token.ExpiresOn}, nil
-	}, transport)}
+		return accesstoken.Token{}, ErrUnavailable
+	}
+	return accesstoken.Token{Value: token.Token, ExpiresAt: token.ExpiresOn}, nil
+}
+
+// SignIn signs in anew and returns the token, which shows whether Entra accepts the application's
+// secret now. The cache neither answers nor keeps it.
+func (c *Cache) SignIn(ctx context.Context, credential Credential) (string, error) {
+	if c == nil {
+		return "", ErrUnavailable
+	}
+	token, err := signIn(ctx, c.client, credential)
+	if err != nil {
+		return "", err
+	}
+	if !accesstoken.Usable(token, time.Now()) {
+		return "", ErrUnavailable
+	}
+	return token.Value, nil
 }
 
 func (c *Cache) Token(ctx context.Context, credential Credential) (string, error) {

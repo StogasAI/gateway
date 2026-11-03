@@ -49,6 +49,12 @@ type Token struct {
 // token.
 type Loader func(ctx context.Context, credential []string) (Token, error)
 
+// Usable reports whether a token that a sign-in returned at now may be used:
+// present, bounded, and valid for more than a minute.
+func Usable(token Token, now time.Time) bool {
+	return token.Value != "" && len(token.Value) <= maximumTokenBytes && now.Add(expiryMargin).Before(token.ExpiresAt)
+}
+
 type Diagnostics struct {
 	Entries      int    `json:"entries"`
 	Capacity     int    `json:"capacity"`
@@ -207,7 +213,7 @@ func (c *Cache) fetchToken(key fingerprint, credential []string, flight *tokenLo
 	defer cancel()
 	token, err := c.load(ctx, credential)
 	now := time.Now()
-	if err == nil && (token.Value == "" || len(token.Value) > maximumTokenBytes || !now.Add(expiryMargin).Before(token.ExpiresAt)) {
+	if err == nil && !Usable(token, now) {
 		err = ErrUnavailable
 	}
 	c.mu.Lock()

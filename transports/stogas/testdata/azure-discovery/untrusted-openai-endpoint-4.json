@@ -1,0 +1,9 @@
+{
+	"name": "untrusted-openai-endpoint-4",
+	"description": "An Azure OpenAI account without a custom subdomain trusts only its generated host, not https://resource.openai.azure.com:444",
+	"accountId": "/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/stogas-east",
+	"responses": [
+		{"path":"/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/stogas-east","query":"api-version=2025-06-01","status":200,"body":{"id":"/subscriptions/00000000-0000-4000-8000-000000000003/resourceGroups/stogas/providers/Microsoft.CognitiveServices/accounts/stogas-east","kind":"OpenAI","location":"eastus","name":"stogas-east","properties":{"endpoints":{"OpenAI Language Model Instance API":"https://resource.openai.azure.com:444"}}}}
+	],
+	"outcome": {"error":{"message":"This account has no custom subdomain, which Entra sign-in needs. Add one to use the account.","status":400}}
+}

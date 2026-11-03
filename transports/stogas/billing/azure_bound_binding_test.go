@@ -21,6 +21,22 @@ func TestParseAzureBoundBindingNamesTheTargetAndItsAccount(t *testing.T) {
 	if bound, err := parseAzureBoundBinding(`{"schema":"stogas.azure-binding.v1","accountId":"` + account + `","verifiedAt":null,"binding":` + binding + `}`); err != nil || bound.VerifiedAt != nil {
 		t.Fatalf("unconfirmed binding = %#v, %v", bound, err)
 	}
+	// A customer-encrypted credential's hold says when its next discovery is due; a stored one's
+	// says nothing, since Control discovers those.
+	var encrypted Authorization
+	raw := `{"schema":"stogas.azure-binding.v1","accountId":"` + account + `","verifiedAt":null,"discoverAt":"2026-11-03T12:00:00.5+00:00","binding":` + binding + `}`
+	if !encrypted.bindAzure(&raw) || !encrypted.AzureDiscoverAt.Equal(time.Date(2026, 11, 3, 12, 0, 0, 5e8, time.UTC)) ||
+		encrypted.AzureAccountID != account || encrypted.AzureBinding == nil || !encrypted.AzureVerifiedAt.IsZero() {
+		t.Fatalf("encrypted binding = %#v", encrypted)
+	}
+	var stored Authorization
+	raw = `{"schema":"stogas.azure-binding.v1","accountId":"` + account + `","verifiedAt":"2026-11-02T12:00:00Z","discoverAt":null,"binding":` + binding + `}`
+	if !stored.bindAzure(&raw) || !stored.AzureDiscoverAt.IsZero() || stored.AzureVerifiedAt.IsZero() {
+		t.Fatalf("stored binding = %#v", stored)
+	}
+	if stored := (Authorization{}); stored.bindAzure(nil) || stored.AzureBinding != nil {
+		t.Fatal("bound a missing binding")
+	}
 	for name, raw := range map[string]string{
 		"no account":    `{"schema":"stogas.azure-binding.v1","verifiedAt":null,"binding":` + binding + `}`,
 		"no target ID":  `{"schema":"stogas.azure-binding.v1","accountId":"` + account + `","verifiedAt":null,"binding":` + strings.Replace(binding, `"id":"019a0000-0000-7000-8000-000000000001",`, "", 1) + `}`,

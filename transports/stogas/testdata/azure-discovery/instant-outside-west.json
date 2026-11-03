@@ -1,0 +1,19 @@
+{
+	"name": "instant-outside-west",
+	"description": "An account outside West US 3 has no Instant targets and reads no projects",
+	"accountId": "/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/stogas-north",
+	"responses": [
+		{"path":"/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/stogas-north","query":"api-version=2025-06-01","status":200,"body":{"id":"/subscriptions/00000000-0000-4000-8000-000000000003/resourceGroups/stogas/providers/Microsoft.CognitiveServices/accounts/stogas-north","kind":"AIServices","location":"eastus","name":"stogas-north","properties":{"customSubDomainName":"stogas-north","endpoints":{"AI Foundry API":"https://stogas-north.services.ai.azure.com/"}}}},
+		{"path":"/subscriptions/00000000-0000-4000-8000-000000000003/locations","query":"api-version=2022-12-01","status":200,"body":{"value":[{"metadata":{"geography":"United States","geographyGroup":"US"},"name":"eastus"},{"metadata":{"geography":"United States","geographyGroup":"US"},"name":"westus3"},{"metadata":{"geography":"Switzerland","geographyGroup":"Europe"},"name":"switzerlandnorth"}]}},
+		{"path":"/subscriptions/00000000-0000-4000-8000-000000000003/providers/microsoft.cognitiveservices/locations/eastus/models","query":"api-version=2025-06-01","status":200,"body":{"value":[{"model":{"format":"OpenAI","name":"gpt-5.6-sol","version":"2026-07-09","capabilities":{"instant":"true"}}}]}},
+		{"path":"/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/stogas-north/deployments","query":"api-version=2025-06-01","status":200,"body":{"value":[]}}
+	],
+	"outcome": {
+		"result": {
+			"name": "stogas-north",
+			"checkError": null,
+			"bindings": [],
+			"deployments": []
+		}
+	}
+}

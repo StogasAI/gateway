@@ -1,0 +1,9 @@
+{
+	"name": "untrusted-foundry-endpoint-8",
+	"description": "A Foundry account listing https://nested.resource.services.ai.azure.com on its subdomain has no usable endpoint",
+	"accountId": "/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/stogas-east",
+	"responses": [
+		{"path":"/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/stogas-east","query":"api-version=2025-06-01","status":200,"body":{"id":"/subscriptions/00000000-0000-4000-8000-000000000003/resourceGroups/stogas/providers/Microsoft.CognitiveServices/accounts/stogas-east","kind":"AIServices","location":"eastus","name":"stogas-east","properties":{"customSubDomainName":"resource","endpoints":{"AI Foundry API":"https://nested.resource.services.ai.azure.com"}}}}
+	],
+	"outcome": {"error":{"message":"Azure lists no endpoint on this account’s custom subdomain, so requests cannot sign in.","status":400}}
+}

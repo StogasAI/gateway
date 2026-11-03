@@ -118,9 +118,15 @@ type Authorization struct {
 	AzureBinding            *AzureBinding
 	// AzureAccountID is the account whose deployments the gateway checks, and AzureVerifiedAt
 	// the last confirmation of the credential's targets, zero when there was none.
-	AzureAccountID     string
-	AzureVerifiedAt    time.Time
-	UpstreamTargetJSON string
+	AzureAccountID  string
+	AzureVerifiedAt time.Time
+	// AzureDiscoverAt is when a gateway should next discover a customer-encrypted credential's
+	// targets, which only gateways can open; zero for a stored credential, which Control
+	// discovers. UpstreamByokEnvelope is that credential's envelope, so a discovery records only
+	// while the credential holds the application that it used.
+	AzureDiscoverAt      time.Time
+	UpstreamByokEnvelope string
+	UpstreamTargetJSON   string
 	// PostgreSQL spreads an organization's requests over time at its platform
 	// request rate: a request admitted beyond it calls no provider before
 	// StartAt. A move keeps it.
@@ -166,8 +172,26 @@ type AzureBinding struct {
 type azureBoundBinding struct {
 	AccountID  string       `json:"accountId"`
 	Binding    AzureBinding `json:"binding"`
+	DiscoverAt *time.Time   `json:"discoverAt"`
 	Schema     string       `json:"schema"`
 	VerifiedAt *time.Time   `json:"verifiedAt"`
+}
+
+// bindAzure takes the Azure target that the hold bound, and reports whether there was a valid one.
+func (a *Authorization) bindAzure(raw *string) bool {
+	bound, err := parseAzureBoundBinding(derefString(raw))
+	if err != nil {
+		return false
+	}
+	a.AzureBinding = &bound.Binding
+	a.AzureAccountID = bound.AccountID
+	if bound.VerifiedAt != nil {
+		a.AzureVerifiedAt = *bound.VerifiedAt
+	}
+	if bound.DiscoverAt != nil {
+		a.AzureDiscoverAt = *bound.DiscoverAt
+	}
+	return true
 }
 
 func parseAzureBoundBinding(raw string) (azureBoundBinding, error) {
@@ -227,6 +251,8 @@ type Service struct {
 	claimAzureCheckQuery       string
 	recordAzureCheckQuery      string
 	stopAzureTargetQuery       string
+	claimAzureDiscoveryQuery   string
+	recordAzureDiscoveryQuery  string
 	byokCheckTargetQuery       string
 	recordByokCheckQuery       string
 	// Each hold records the boot that owns it, so Control can release the
@@ -273,27 +299,29 @@ func NewService(
 	}
 
 	service := &Service{
-		db:                      db,
-		authorizeHoldQuery:      db.functionQuery("authorize_gateway_hold", authorizeHoldColumns, authorizeHoldArguments),
-		authorizeHoldsQuery:     db.functionQuery("authorize_gateway_holds", "ordinal, "+authorizeHoldColumns, "$1::jsonb, $2::uuid[]"),
-		closeRequestQuery:       db.functionQuery("close_gateway_request", "*", closeRequestArguments),
-		keyConfigQuery:          db.functionQuery("gateway_api_key_config", keyConfigColumns, keyConfigArguments),
-		toolQueries:             make(chan struct{}, poolConns/3),
-		settleQuery:             db.functionQuery("settle_gateway_request_logs", "request_id, result", "$1::json, $2::json"),
-		keepFailedLogQuery:      db.functionQuery("keep_failed_gateway_request_log", "*", "$1::uuid, $2::json"),
-		storeLogBatchQuery:      db.functionQuery("store_gateway_log_batch", "*", "$1::json"),
-		sanctionedSourceQuery:   db.functionQuery("gateway_sanctioned_networks_source", "*", ""),
-		sanctionedNetworksQuery: db.functionQuery("gateway_sanctioned_networks", "first_address, last_address", ""),
-		claimAzureCheckQuery:    db.functionQuery("gateway_claim_azure_check", "claimed, verified_at, started_at, unavailable", "$1::uuid, make_interval(secs => $2::double precision)"),
-		recordAzureCheckQuery:   db.functionQuery("gateway_record_azure_check", "result, unavailable", "$1::uuid, $2::timestamptz, $3::jsonb"),
-		stopAzureTargetQuery:    db.functionQuery("gateway_stop_azure_target", "stopped", "$1::uuid, $2::uuid, $3::text"),
-		byokCheckTargetQuery:    db.functionQuery("gateway_byok_check_target", "result, provider, encrypted_secret, encryption_key_id, target, encryption_keys, checked_at", "$1::text, $2::text, $3::uuid"),
-		recordByokCheckQuery:    db.functionQuery("gateway_record_byok_check", "result, checked_at", "$1::text, $2::text, $3::uuid, $4::text, $5::timestamptz, $6::text"),
-		inferenceTokenPublicKey: publicKey,
-		nodeID:                  nodeID,
-		apiKeyPepper:            apiKeyPepper,
-		apiKeyPepperFingerprint: apiKeyPepperFingerprint(apiKeyPepper),
-		byok:                    byok,
+		db:                        db,
+		authorizeHoldQuery:        db.functionQuery("authorize_gateway_hold", authorizeHoldColumns, authorizeHoldArguments),
+		authorizeHoldsQuery:       db.functionQuery("authorize_gateway_holds", "ordinal, "+authorizeHoldColumns, "$1::jsonb, $2::uuid[]"),
+		closeRequestQuery:         db.functionQuery("close_gateway_request", "*", closeRequestArguments),
+		keyConfigQuery:            db.functionQuery("gateway_api_key_config", keyConfigColumns, keyConfigArguments),
+		toolQueries:               make(chan struct{}, poolConns/3),
+		settleQuery:               db.functionQuery("settle_gateway_request_logs", "request_id, result", "$1::json, $2::json"),
+		keepFailedLogQuery:        db.functionQuery("keep_failed_gateway_request_log", "*", "$1::uuid, $2::json"),
+		storeLogBatchQuery:        db.functionQuery("store_gateway_log_batch", "*", "$1::json"),
+		sanctionedSourceQuery:     db.functionQuery("gateway_sanctioned_networks_source", "*", ""),
+		sanctionedNetworksQuery:   db.functionQuery("gateway_sanctioned_networks", "first_address, last_address", ""),
+		claimAzureCheckQuery:      db.functionQuery("gateway_claim_azure_check", "claimed, verified_at, started_at, unavailable", "$1::uuid, make_interval(secs => $2::double precision)"),
+		recordAzureCheckQuery:     db.functionQuery("gateway_record_azure_check", "result, unavailable", "$1::uuid, $2::timestamptz, $3::jsonb"),
+		stopAzureTargetQuery:      db.functionQuery("gateway_stop_azure_target", "stopped", "$1::uuid, $2::uuid, $3::text"),
+		claimAzureDiscoveryQuery:  db.functionQuery("gateway_claim_azure_discovery", "claimed, started_at", "$1::uuid"),
+		recordAzureDiscoveryQuery: db.functionQuery("gateway_record_azure_discovery", "result, unavailable", "$1::uuid, $2::timestamptz, $3::text, $4::text, $5::jsonb, $6::jsonb"),
+		byokCheckTargetQuery:      db.functionQuery("gateway_byok_check_target", "result, provider, encrypted_secret, encryption_key_id, target, azure_account_id, encryption_keys, checked_at, started_at", "$1::text, $2::text, $3::uuid"),
+		recordByokCheckQuery:      db.functionQuery("gateway_record_byok_check", "result, checked_at, azure_targets", "$1::text, $2::text, $3::uuid, $4::text, $5::timestamptz, $6::text, $7::timestamptz, $8::jsonb, $9::jsonb"),
+		inferenceTokenPublicKey:   publicKey,
+		nodeID:                    nodeID,
+		apiKeyPepper:              apiKeyPepper,
+		apiKeyPepperFingerprint:   apiKeyPepperFingerprint(apiKeyPepper),
+		byok:                      byok,
 	}
 	if err := db.checkQueries(
 		ctx,
@@ -309,6 +337,8 @@ func NewService(
 		service.claimAzureCheckQuery,
 		service.recordAzureCheckQuery,
 		service.stopAzureTargetQuery,
+		service.claimAzureDiscoveryQuery,
+		service.recordAzureDiscoveryQuery,
 		service.byokCheckTargetQuery,
 		service.recordByokCheckQuery,
 	); err != nil {
@@ -677,14 +707,8 @@ func (s *Service) authorizeResolvedRequest(ctx context.Context, apiKeyHash strin
 				return authorization, ErrByok
 			}
 			if providerKey == "azure" {
-				bound, parseErr := parseAzureBoundBinding(derefString(row.UpstreamByokBinding))
-				if parseErr != nil {
+				if !authorization.bindAzure(row.UpstreamByokBinding) {
 					return authorization, ErrByok
-				}
-				authorization.AzureBinding = &bound.Binding
-				authorization.AzureAccountID = bound.AccountID
-				if bound.VerifiedAt != nil {
-					authorization.AzureVerifiedAt = *bound.VerifiedAt
 				}
 			} else if row.UpstreamByokBinding != nil {
 				return authorization, ErrByok
@@ -692,7 +716,15 @@ func (s *Service) authorizeResolvedRequest(ctx context.Context, apiKeyHash strin
 			authorization.UpstreamByokSecret = prepared.Secret
 		} else if selection.Mode == "encrypted" {
 			credential := selection.Credential
-			if credential == nil || credential.ID != upstreamByok || row.UpstreamByokBinding != nil || !encryptionKeys.Matches(credential.EncryptionKeyID) {
+			if credential == nil || credential.ID != upstreamByok || !encryptionKeys.Matches(credential.EncryptionKeyID) {
+				return authorization, customerkey.ErrKey
+			}
+			if providerKey == "azure" {
+				if !authorization.bindAzure(row.UpstreamByokBinding) || authorization.AzureDiscoverAt.IsZero() {
+					return authorization, ErrByok
+				}
+				authorization.UpstreamByokEnvelope = credential.EncryptedSecret
+			} else if row.UpstreamByokBinding != nil {
 				return authorization, customerkey.ErrKey
 			}
 			authorization.UpstreamByokSecret = prepared.Secret

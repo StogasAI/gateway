@@ -1,0 +1,14 @@
+{
+	"name": "foreign-deployment",
+	"description": "A deployment of another account fails the discovery before it binds to an endpoint",
+	"accountId": "/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/foundry",
+	"responses": [
+		{"path":"/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/foundry","query":"api-version=2025-06-01","status":200,"body":{"id":"/subscriptions/00000000-0000-4000-8000-000000000003/resourceGroups/stogas/providers/Microsoft.CognitiveServices/accounts/foundry","kind":"AIServices","location":"westus3","name":"foundry","properties":{"customSubDomainName":"foundry","endpoints":{"AI Foundry API":"https://foundry.services.ai.azure.com/"}}}},
+		{"path":"/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/foundry","query":"api-version=2026-01-15-preview","status":200,"body":{"id":"/subscriptions/00000000-0000-4000-8000-000000000003/resourceGroups/stogas/providers/Microsoft.CognitiveServices/accounts/foundry","properties":{}}},
+		{"path":"/subscriptions/00000000-0000-4000-8000-000000000003/locations","query":"api-version=2022-12-01","status":200,"body":{"value":[{"metadata":{"geography":"United States","geographyGroup":"US"},"name":"eastus"},{"metadata":{"geography":"United States","geographyGroup":"US"},"name":"westus3"},{"metadata":{"geography":"Switzerland","geographyGroup":"Europe"},"name":"switzerlandnorth"}]}},
+		{"path":"/subscriptions/00000000-0000-4000-8000-000000000003/providers/microsoft.cognitiveservices/locations/westus3/models","query":"api-version=2025-06-01","status":200,"body":{"value":[]}},
+		{"path":"/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/foundry/deployments","query":"api-version=2025-06-01","status":200,"body":{"value":[{"id":"/subscriptions/00000000-0000-4000-8000-000000000003/resourceGroups/stogas/providers/Microsoft.CognitiveServices/accounts/other/deployments/target","name":"target"}]}},
+		{"path":"/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/foundry/projects","query":"api-version=2025-06-01","status":200,"body":{"value":[]}}
+	],
+	"outcome": {"error":{"message":"Azure returned a resource outside its account","status":503}}
+}

@@ -84,6 +84,7 @@ func NewRuntime(ctx context.Context, config Config, nodeID string) (*Runtime, er
 	azureTokens := azureauth.New(runtimeCtx)
 	googleTokens := googleauth.New(runtimeCtx, confidentialProduction(config))
 	byokChecks.google = googleTokens
+	byokChecks.azure = azureTokens
 	return &Runtime{
 		client:       client,
 		billing:      billingService,

@@ -103,15 +103,34 @@ func (s *Service) ParseByokCheckGrant(raw string) (*ByokCheckGrant, error) {
 
 // ByokCheckTarget is a customer-encrypted credential that a member asked a gateway to check, as
 // the database showed it. The result is recorded only if no other check finished after checkedAt.
+// A discovery of an Azure credential's targets reads the account AzureAccountID from StartedAt,
+// the database's time.
 type ByokCheckTarget struct {
 	Grant           ByokCheckGrant
 	Provider        string
 	EncryptedSecret string
 	EncryptionKeyID string
 	Target          *CloudTarget
+	AzureAccountID  string
 	// Registered maps the organization's key labels to the keys that they name.
 	Registered map[string]string
+	StartedAt  time.Time
 	checkedAt  pgtype.Timestamptz
+}
+
+// ByokCheckRecord is a recorded check: when it was recorded and, for an Azure credential, its
+// target counts as the dashboard shows them.
+type ByokCheckRecord struct {
+	CheckedAt    time.Time
+	AzureTargets *AzureTargetCounts
+}
+
+// AzureTargetCounts counts an Azure credential's model matches: those with a selected target, the
+// selected ones that cannot serve, and those with a usable target but none selected.
+type AzureTargetCounts struct {
+	Selected    int `json:"selected"`
+	Unavailable int `json:"unavailable"`
+	Unselected  int `json:"unselected"`
 }
 
 // ByokCheckTarget reads the credential that grant names, after the database finds again that its
@@ -123,11 +142,12 @@ func (s *Service) ByokCheckTarget(ctx context.Context, grant *ByokCheckGrant) (*
 	queryCtx, cancel := context.WithTimeout(ctx, byokCheckQueryTimeout)
 	defer cancel()
 	var result string
-	var provider, encryptedSecret, encryptionKeyID pgtype.Text
+	var provider, encryptedSecret, encryptionKeyID, azureAccountID pgtype.Text
 	var cloudTarget, keys []byte
+	var startedAt pgtype.Timestamptz
 	checked := &ByokCheckTarget{Grant: *grant}
 	if err := s.db.pool.QueryRow(queryCtx, s.byokCheckTargetQuery, grant.ActorUserID, grant.OrganizationID, grant.ByokID).
-		Scan(&result, &provider, &encryptedSecret, &encryptionKeyID, &cloudTarget, &keys, &checked.checkedAt); err != nil {
+		Scan(&result, &provider, &encryptedSecret, &encryptionKeyID, &cloudTarget, &azureAccountID, &keys, &checked.checkedAt, &startedAt); err != nil {
 		return nil, fmt.Errorf("%w: read credential check: %v", ErrGatewayUnavailable, err)
 	}
 	switch result {
@@ -143,10 +163,12 @@ func (s *Service) ByokCheckTarget(ctx context.Context, grant *ByokCheckGrant) (*
 	default:
 		return nil, fmt.Errorf("%w: read credential check: %s", ErrGatewayUnavailable, result)
 	}
-	if !provider.Valid || !encryptedSecret.Valid || !encryptionKeyID.Valid || json.Unmarshal(keys, &checked.Registered) != nil {
+	if !provider.Valid || !encryptedSecret.Valid || !encryptionKeyID.Valid || !startedAt.Valid ||
+		(provider.String == "azure") != azureAccountID.Valid || json.Unmarshal(keys, &checked.Registered) != nil {
 		return nil, fmt.Errorf("%w: read credential check: incomplete credential", ErrGatewayUnavailable)
 	}
 	checked.Provider, checked.EncryptedSecret, checked.EncryptionKeyID = provider.String, encryptedSecret.String, encryptionKeyID.String
+	checked.AzureAccountID, checked.StartedAt = azureAccountID.String, startedAt.Time
 	if len(cloudTarget) > 0 && string(cloudTarget) != "null" {
 		checked.Target = new(CloudTarget)
 		if err := json.Unmarshal(cloudTarget, checked.Target); err != nil {
@@ -186,37 +208,50 @@ func (t *ByokCheckTarget) Open(keys customerkey.Keys) (string, error) {
 }
 
 // RecordByokCheck records the check: failure is empty when the provider accepted the credential, and
-// otherwise the message that the dashboard shows. It returns when the check was recorded.
-func (s *Service) RecordByokCheck(ctx context.Context, target *ByokCheckTarget, failure string) (time.Time, error) {
+// otherwise the message that the dashboard shows. discovery is what a check of an Azure credential
+// found in its account, nil when it read no deployments.
+func (s *Service) RecordByokCheck(ctx context.Context, target *ByokCheckTarget, failure string, discovery *AzureDiscoveryResult) (*ByokCheckRecord, error) {
 	if s == nil || s.db == nil || target == nil {
-		return time.Time{}, ErrGatewayUnavailable
+		return nil, ErrGatewayUnavailable
 	}
 	var message pgtype.Text
 	if failure != "" {
 		message = pgtype.Text{String: failure, Valid: true}
 	}
+	bindings, deployments, err := discovery.parameters()
+	if err != nil {
+		return nil, err
+	}
 	queryCtx, cancel := context.WithTimeout(ctx, byokCheckQueryTimeout)
 	defer cancel()
 	var result string
 	var checkedAt pgtype.Timestamptz
+	var targets []byte
 	grant := target.Grant
 	if err := s.db.pool.QueryRow(queryCtx, s.recordByokCheckQuery, grant.ActorUserID, grant.OrganizationID, grant.ByokID,
-		target.EncryptedSecret, target.checkedAt, message).Scan(&result, &checkedAt); err != nil {
-		return time.Time{}, fmt.Errorf("%w: record credential check: %v", ErrGatewayUnavailable, err)
+		target.EncryptedSecret, target.checkedAt, message, target.StartedAt, bindings, deployments).Scan(&result, &checkedAt, &targets); err != nil {
+		return nil, fmt.Errorf("%w: record credential check: %v", ErrGatewayUnavailable, err)
 	}
 	switch result {
 	case "ok":
 		if !checkedAt.Valid {
-			return time.Time{}, fmt.Errorf("%w: record credential check: no time", ErrGatewayUnavailable)
+			return nil, fmt.Errorf("%w: record credential check: no time", ErrGatewayUnavailable)
 		}
-		return checkedAt.Time, nil
+		record := &ByokCheckRecord{CheckedAt: checkedAt.Time}
+		if len(targets) > 0 && string(targets) != "null" {
+			record.AzureTargets = new(AzureTargetCounts)
+			if err := json.Unmarshal(targets, record.AzureTargets); err != nil {
+				return nil, fmt.Errorf("%w: record credential check: %v", ErrGatewayUnavailable, err)
+			}
+		}
+		return record, nil
 	case "not_found":
-		return time.Time{}, ErrByokCheckNotFound
+		return nil, ErrByokCheckNotFound
 	case "forbidden":
-		return time.Time{}, ErrByokCheckForbidden
+		return nil, ErrByokCheckForbidden
 	case "changed":
-		return time.Time{}, ErrByokCheckChanged
+		return nil, ErrByokCheckChanged
 	default:
-		return time.Time{}, fmt.Errorf("%w: record credential check: %s", ErrGatewayUnavailable, result)
+		return nil, fmt.Errorf("%w: record credential check: %s", ErrGatewayUnavailable, result)
 	}
 }

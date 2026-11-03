@@ -1,0 +1,23 @@
+{
+	"name": "instant-shadowed-updating",
+	"description": "A named deployment that is updating still shadows Instant access to its model",
+	"accountId": "/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/foundry",
+	"responses": [
+		{"path":"/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/foundry","query":"api-version=2025-06-01","status":200,"body":{"id":"/subscriptions/00000000-0000-4000-8000-000000000003/resourceGroups/stogas/providers/Microsoft.CognitiveServices/accounts/foundry","kind":"AIServices","location":"westus3","name":"foundry","properties":{"customSubDomainName":"foundry","endpoints":{"AI Foundry API":"https://foundry.services.ai.azure.com/"}}}},
+		{"path":"/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/foundry","query":"api-version=2026-01-15-preview","status":200,"body":{"id":"/subscriptions/00000000-0000-4000-8000-000000000003/resourceGroups/stogas/providers/Microsoft.CognitiveServices/accounts/foundry","properties":{}}},
+		{"path":"/subscriptions/00000000-0000-4000-8000-000000000003/locations","query":"api-version=2022-12-01","status":200,"body":{"value":[{"metadata":{"geography":"United States","geographyGroup":"US"},"name":"eastus"},{"metadata":{"geography":"United States","geographyGroup":"US"},"name":"westus3"},{"metadata":{"geography":"Switzerland","geographyGroup":"Europe"},"name":"switzerlandnorth"}]}},
+		{"path":"/subscriptions/00000000-0000-4000-8000-000000000003/providers/microsoft.cognitiveservices/locations/westus3/models","query":"api-version=2025-06-01","status":200,"body":{"value":[{"model":{"format":"OpenAI","name":"gpt-5.6-sol","version":"2026-07-09","capabilities":{"instant":true}}}]}},
+		{"path":"/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/foundry/deployments","query":"api-version=2025-06-01","status":200,"body":{"value":[{"id":"/subscriptions/00000000-0000-4000-8000-000000000003/resourceGroups/stogas/providers/Microsoft.CognitiveServices/accounts/foundry/deployments/gpt-5.6-sol-2026-07-09","name":"gpt-5.6-sol-2026-07-09","properties":{"model":{"format":"OpenAI","name":"gpt-5.6-sol","version":"2026-07-09"},"provisioningState":"Updating"},"sku":{"name":"GlobalStandard"}}]}},
+		{"path":"/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/foundry/projects","query":"api-version=2025-06-01","status":200,"body":{"value":[{"id":"/subscriptions/00000000-0000-4000-8000-000000000003/resourceGroups/stogas/providers/Microsoft.CognitiveServices/accounts/foundry/projects/project","location":"westus3","name":"foundry/project","properties":{"provisioningState":"Succeeded"}}]}}
+	],
+	"outcome": {
+		"result": {
+			"name": "foundry",
+			"checkError": null,
+			"bindings": [],
+			"deployments": [
+				{"id":"/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/foundry/deployments/gpt-5.6-sol-2026-07-09","modelFormat":"OpenAI","modelName":"gpt-5.6-sol","modelVersion":"2026-07-09","skuName":"GlobalStandard","state":"Updating","versionUpgrade":""}
+			]
+		}
+	}
+}

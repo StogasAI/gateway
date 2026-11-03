@@ -1,0 +1,12 @@
+{
+	"name": "continuation-outside-arm",
+	"description": "A continuation outside management.azure.com fails the discovery before any request leaves ARM",
+	"accountId": "/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/stogas-east",
+	"responses": [
+		{"path":"/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/stogas-east","query":"api-version=2025-06-01","status":200,"body":{"id":"/subscriptions/00000000-0000-4000-8000-000000000003/resourceGroups/stogas/providers/Microsoft.CognitiveServices/accounts/stogas-east","kind":"AIServices","location":"eastus","name":"stogas-east","properties":{"customSubDomainName":"stogas-east","endpoints":{"OpenAI Language Model Instance API":"https://stogas-east.openai.azure.com/"}}}},
+		{"path":"/subscriptions/00000000-0000-4000-8000-000000000003/locations","query":"api-version=2022-12-01","status":200,"body":{"nextLink":"https://attacker.example/steal","value":[]}},
+		{"path":"/subscriptions/00000000-0000-4000-8000-000000000003/providers/microsoft.cognitiveservices/locations/eastus/models","query":"api-version=2025-06-01","status":200,"body":{"value":[{"model":{"format":"OpenAI","name":"gpt-5.6-sol","version":"2026-07-09"}}]}},
+		{"path":"/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/stogas-east/deployments","query":"api-version=2025-06-01","status":200,"body":{"value":[{"id":"/subscriptions/00000000-0000-4000-8000-000000000003/resourceGroups/stogas/providers/Microsoft.CognitiveServices/accounts/stogas-east/deployments/customer-sol","name":"customer-sol","properties":{"model":{"format":"OpenAI","name":"gpt-5.6-sol","version":"2026-07-09"},"provisioningState":"Succeeded"},"sku":{"name":"GlobalStandard"}}]}}
+	],
+	"outcome": {"error":{"message":"Azure returned an invalid continuation URL","status":503}}
+}

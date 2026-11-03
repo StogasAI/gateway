@@ -1,0 +1,27 @@
+{
+	"name": "continuation-pages",
+	"description": "Listings continue across pages on ARM, with a null continuation ending one",
+	"accountId": "/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/stogas-east",
+	"responses": [
+		{"path":"/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/stogas-east","query":"api-version=2025-06-01","status":200,"body":{"id":"/subscriptions/00000000-0000-4000-8000-000000000003/resourceGroups/stogas/providers/Microsoft.CognitiveServices/accounts/stogas-east","kind":"AIServices","location":"eastus","name":"stogas-east","properties":{"customSubDomainName":"stogas-east","endpoints":{"OpenAI Language Model Instance API":"https://stogas-east.openai.azure.com/"}}}},
+		{"path":"/subscriptions/00000000-0000-4000-8000-000000000003/locations","query":"api-version=2022-12-01","status":200,"body":{"value":[{"metadata":{"geography":"United States","geographyGroup":"US"},"name":"eastus"},{"metadata":{"geography":"United States","geographyGroup":"US"},"name":"westus3"},{"metadata":{"geography":"Switzerland","geographyGroup":"Europe"},"name":"switzerlandnorth"}]}},
+		{"path":"/subscriptions/00000000-0000-4000-8000-000000000003/providers/microsoft.cognitiveservices/locations/eastus/models","query":"api-version=2025-06-01","status":200,"body":{"value":[{"model":{"format":"OpenAI","name":"gpt-5.6-sol","version":"2026-07-09"}}]}},
+		{"path":"/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/stogas-east/deployments","query":"api-version=2025-06-01","status":200,"body":{"nextLink":"https://management.azure.com/subscriptions/00000000-0000-4000-8000-000000000003/resourceGroups/stogas/providers/Microsoft.CognitiveServices/accounts/stogas-east/deployments?api-version=2025-06-01&$skiptoken=2","value":[{"id":"/subscriptions/00000000-0000-4000-8000-000000000003/resourceGroups/stogas/providers/Microsoft.CognitiveServices/accounts/stogas-east/deployments/customer-sol","name":"customer-sol","properties":{"model":{"format":"OpenAI","name":"gpt-5.6-sol","version":"2026-07-09"},"provisioningState":"Succeeded"},"sku":{"name":"GlobalStandard"}}]}},
+		{"path":"/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/stogas-east/providers/microsoft.authorization/permissions","query":"api-version=2022-04-01","status":200,"body":{"value":[{"actions":["*/read"],"dataActions":[],"notActions":[],"notDataActions":[]},{"actions":["Microsoft.CognitiveServices/*"],"dataActions":["Microsoft.CognitiveServices/*"],"notActions":[],"notDataActions":[]}]}},
+		{"path":"/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/stogas-east/deployments","query":"api-version=2025-06-01&$skiptoken=2","status":200,"body":{"nextLink":null,"value":[{"id":"/subscriptions/00000000-0000-4000-8000-000000000003/resourceGroups/stogas/providers/Microsoft.CognitiveServices/accounts/stogas-east/deployments/customer-terra","name":"customer-terra","properties":{"model":{"format":"OpenAI","name":"gpt-5.6-terra","version":"2026-07-09"},"provisioningState":"Succeeded"},"sku":{"name":"GlobalStandard"}}]}}
+	],
+	"outcome": {
+		"result": {
+			"name": "stogas-east",
+			"checkError": null,
+			"bindings": [
+				{"versionUpgrade":"","deploymentName":"customer-sol","deploymentResourceId":"/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/stogas-east/deployments/customer-sol","deploymentType":"global_standard","processingLocation":"world","storageLocation":"US","endpoint":"https://stogas-east.openai.azure.com","hosting":"azure","modelFormat":"OpenAI","modelDeprecationAt":null,"modelHostedOn":null,"modelName":"gpt-5.6-sol","modelPublisher":null,"modelVersion":"2026-07-09","skuName":"GlobalStandard","tokenScope":"https://ai.azure.com/.default"},
+				{"versionUpgrade":"","deploymentName":"customer-terra","deploymentResourceId":"/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/stogas-east/deployments/customer-terra","deploymentType":"global_standard","processingLocation":"world","storageLocation":"US","endpoint":"https://stogas-east.openai.azure.com","hosting":"azure","modelFormat":"OpenAI","modelDeprecationAt":null,"modelHostedOn":null,"modelName":"gpt-5.6-terra","modelPublisher":null,"modelVersion":"2026-07-09","skuName":"GlobalStandard","tokenScope":"https://ai.azure.com/.default"}
+			],
+			"deployments": [
+				{"id":"/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/stogas-east/deployments/customer-sol","modelFormat":"OpenAI","modelName":"gpt-5.6-sol","modelVersion":"2026-07-09","skuName":"GlobalStandard","state":"Succeeded","versionUpgrade":""},
+				{"id":"/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/stogas-east/deployments/customer-terra","modelFormat":"OpenAI","modelName":"gpt-5.6-terra","modelVersion":"2026-07-09","skuName":"GlobalStandard","state":"Succeeded","versionUpgrade":""}
+			]
+		}
+	}
+}

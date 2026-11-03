@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/maximhq/bifrost/transports/stogas/azureauth"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/customerkey"
 	"github.com/maximhq/bifrost/transports/stogas/googleauth"
@@ -301,16 +302,23 @@ type fakeByokCheckStore struct {
 	target   *billing.ByokCheckTarget
 	readErr  error
 	recorded []string
-	record   error
+	// discoveries lists what each recorded check discovered, nil when it read no deployments.
+	discoveries []*billing.AzureDiscoveryResult
+	targets     *billing.AzureTargetCounts
+	record      error
 }
 
 func (s *fakeByokCheckStore) ByokCheckTarget(context.Context, *billing.ByokCheckGrant) (*billing.ByokCheckTarget, error) {
 	return s.target, s.readErr
 }
 
-func (s *fakeByokCheckStore) RecordByokCheck(_ context.Context, _ *billing.ByokCheckTarget, failure string) (time.Time, error) {
+func (s *fakeByokCheckStore) RecordByokCheck(_ context.Context, _ *billing.ByokCheckTarget, failure string, discovery *billing.AzureDiscoveryResult) (*billing.ByokCheckRecord, error) {
 	s.recorded = append(s.recorded, failure)
-	return time.Date(2026, time.November, 3, 12, 0, 1, 0, time.UTC), s.record
+	s.discoveries = append(s.discoveries, discovery)
+	if s.record != nil {
+		return nil, s.record
+	}
+	return &billing.ByokCheckRecord{CheckedAt: time.Date(2026, time.November, 3, 12, 0, 1, 0, time.UTC), AzureTargets: s.targets}, nil
 }
 
 func TestCheckByokRecordsWhatTheProviderAnswered(t *testing.T) {
@@ -393,4 +401,107 @@ func sealTestByokSecret(t *testing.T, root []byte, keyID, organizationID, purpos
 		t.Fatal(err)
 	}
 	return string(encoded)
+}
+
+type fakeAzureSignIn struct {
+	err   error
+	calls []azureauth.Credential
+}
+
+func (s *fakeAzureSignIn) SignIn(_ context.Context, credential azureauth.Credential) (string, error) {
+	s.calls = append(s.calls, credential)
+	if s.err != nil {
+		return "", s.err
+	}
+	return "arm-token", nil
+}
+
+// An Azure credential's check signs in anew and discovers the account's targets as Control does,
+// so the dashboard counts them as it counts a stored credential's.
+func TestCheckByokDiscoversAnAzureAccount(t *testing.T) {
+	status := http.StatusOK
+	server, _ := byokCheckTestServer(t, &status)
+	ctx := context.Background()
+	root := make([]byte, 32)
+	keys, err := customerkey.ParseKeys(map[string]string{"prod": base64.RawURLEncoding.EncodeToString(root)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	organizationID := "0196f0f4-0000-7000-8000-000000000001"
+	app := `{"clientId":"00000000-0000-4000-8000-000000000002","clientSecret":"azure-client-secret","schema":"stogas.azure-byok.v6","tenantId":"00000000-0000-4000-8000-000000000001"}`
+	startedAt := time.Date(2026, time.November, 3, 12, 0, 0, 0, time.UTC)
+	target := func(accountID, plaintext string) *billing.ByokCheckTarget {
+		return &billing.ByokCheckTarget{
+			Grant:    billing.ByokCheckGrant{OrganizationID: organizationID},
+			Provider: "azure", EncryptionKeyID: keys["prod"].ID(),
+			EncryptedSecret: sealTestByokSecret(t, root, keys["prod"].ID(), organizationID, "byok/azure", plaintext),
+			Registered:      map[string]string{"prod": keys["prod"].ID()},
+			AzureAccountID:  accountID,
+			StartedAt:       startedAt,
+		}
+	}
+	check := func(name string, plaintext string, signIn *fakeAzureSignIn) (*fakeByokCheckStore, *ByokCheckResult, azureDiscoveryCase, *azureDiscoveryARM) {
+		t.Helper()
+		entry := azureDiscoveryCaseNamed(t, name)
+		arm, client := serveAzureDiscoveryCase(t, entry)
+		checker := newTestByokChecker(server, nil, startedAt)
+		checker.arm = client
+		if signIn != nil {
+			checker.azure = signIn
+		}
+		store := &fakeByokCheckStore{target: target(entry.AccountID, plaintext), targets: &billing.AzureTargetCounts{Selected: 4, Unselected: 1}}
+		result, err := checkByok(ctx, store, checker, &billing.ByokCheckGrant{}, keys)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(store.recorded) != 1 || result.AzureTargets == nil || *result.AzureTargets != *store.targets {
+			t.Fatalf("%s: recorded %q, result %+v", name, store.recorded, result)
+		}
+		return store, result, entry, arm
+	}
+
+	signIn := &fakeAzureSignIn{}
+	store, result, entry, _ := check("named-deployments", app, signIn)
+	if store.recorded[0] != "" || result.CheckError != nil {
+		t.Fatalf("a discovered account recorded %q", store.recorded[0])
+	}
+	if len(signIn.calls) != 1 || signIn.calls[0] != (azureauth.Credential{
+		TenantID: "00000000-0000-4000-8000-000000000001", ClientID: "00000000-0000-4000-8000-000000000002",
+		Secret: "azure-client-secret", Scope: armScope,
+	}) {
+		t.Fatalf("sign-ins = %+v", signIn.calls)
+	}
+	discovery := store.discoveries[0]
+	var bindings []azureDiscoveredBinding
+	if discovery == nil || json.Unmarshal(discovery.Bindings, &bindings) != nil {
+		t.Fatalf("discovery = %+v", discovery)
+	}
+	assertSameJSON(t, "bindings", bindings, entry.Outcome.Result.Bindings)
+	assertSameJSON(t, "deployments", discovery.Deployments, entry.Outcome.Result.Deployments)
+
+	// A missing data role keeps the targets and records why requests fail.
+	store, result, _, _ = check("no-data-role", app, &fakeAzureSignIn{})
+	if store.recorded[0] != azureRoleMissing || store.discoveries[0] == nil || result.CheckError == nil || *result.CheckError != azureRoleMissing {
+		t.Fatalf("no data role: recorded %q", store.recorded[0])
+	}
+
+	// Failures record their message and keep the targets of the last discovery.
+	for _, test := range []struct {
+		name, plaintext string
+		signIn          *fakeAzureSignIn
+		want            string
+	}{
+		{"account-denied", app, &fakeAzureSignIn{}, azureAccountDenied},
+		{"named-deployments", app, &fakeAzureSignIn{err: azureauth.ErrCredential}, azureAppRejected},
+		{"named-deployments", app, &fakeAzureSignIn{err: azureauth.ErrUnavailable}, azureAppUnavailable},
+		{"named-deployments", app, nil, azureAppUnavailable},
+		{"named-deployments", `{"clientId":"x"}`, &fakeAzureSignIn{}, "The decrypted secret is not a valid Azure application. Encrypt it again with stogas encrypt --purpose byok/azure."},
+	} {
+		store, _, _, arm := check(test.name, test.plaintext, test.signIn)
+		answered, unexpected := arm.counts()
+		if store.recorded[0] != test.want || store.discoveries[0] != nil || len(unexpected) > 0 ||
+			(test.want != azureAccountDenied && answered != 0) {
+			t.Fatalf("%s: recorded %q with %+v after %d Azure reads", test.want, store.recorded[0], store.discoveries[0], answered)
+		}
+	}
 }
