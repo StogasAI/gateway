@@ -2,7 +2,7 @@ package billing
 
 import (
 	"context"
-	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/json/jsontext"
@@ -43,26 +43,26 @@ type PolicyVersions []PolicyVersion
 // plain version, because Postgres compares that list with the one it rebuilds.
 type LoggedPolicyVersion struct {
 	PolicyVersion
-	SHA256 string `json:"sha256"`
+	SHA512 string `json:"sha512"`
 }
 
 type LoggedPolicyVersions []LoggedPolicyVersion
 
-// SHA256 names the list in RFC 8785 form. A receipt signs this one hash rather
+// SHA512 names the list in RFC 8785 form. A receipt signs this one hash rather
 // than up to 36 entries, and anyone can recompute it from the request log.
-func (v LoggedPolicyVersions) SHA256() string {
+func (v LoggedPolicyVersions) SHA512() string {
 	// Strings and integers always marshal, so canonicalizing cannot fail.
 	raw, _ := json.Marshal(v)
 	canonical := jsontext.Value(raw)
 	_ = canonical.Canonicalize()
-	sum := sha256.Sum256(canonical)
+	sum := sha512.Sum512(canonical)
 	return hex.EncodeToString(sum[:])
 }
 
 func loggedVersions(versions PolicyVersions, sources []*sharedPolicySource) *LoggedPolicyVersions {
 	logged := make(LoggedPolicyVersions, len(versions))
 	for i, version := range versions {
-		logged[i] = LoggedPolicyVersion{PolicyVersion: version, SHA256: sources[i].value.Digest}
+		logged[i] = LoggedPolicyVersion{PolicyVersion: version, SHA512: sources[i].value.Digest}
 	}
 	return &logged
 }

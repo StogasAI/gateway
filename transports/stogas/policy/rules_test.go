@@ -2,7 +2,7 @@ package policy
 
 import (
 	"bytes"
-	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -98,7 +98,7 @@ func TestRuleFragmentsPreserveCanonicalIdentityAndStrictFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The identity excludes the document file's trailing newline.
-	digest := sha256.Sum256(expected)
+	digest := sha512.Sum512(expected)
 	expected = append(expected, '\n')
 	parent, err := ParseSourceDocument([]byte(`{"rules":{"selected":` + settings + `}}`))
 	if err != nil {

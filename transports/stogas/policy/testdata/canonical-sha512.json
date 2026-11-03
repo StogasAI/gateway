@@ -4,37 +4,37 @@
       "name": "An empty policy, which Postgres stores as null",
       "json": "{}",
       "canonical": "{}",
-      "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      "sha512": "27c74670adb75075fad058d5ceaf7b20c4e7786c83bae8a32f626f9782af34c9a33c2046ef60fd2a7878d378e29fec851806bbd9a67878f3a9f1cda4830763fd"
     },
     {
       "name": "Postgres text order and spacing",
       "json": "{\"routing\": {\"filter\": \"true\"}, \"input\": {\"asciiOnly\": true}}",
       "canonical": "{\"input\":{\"asciiOnly\":true},\"routing\":{\"filter\":\"true\"}}",
-      "sha256": "d73e774ea486ee0defb5c8321e164704650b578be7fb8b94dfe0ef8eaf9babb9"
+      "sha512": "415afea05a785888f99d63105d1570780c9c52144606fc4f9a64675a70dfec8f08f09ad48630c94d0452dee899aa1a86aba2d52bbf43bce9bc5259f04700edb2"
     },
     {
       "name": "UTF-16 key order puts a surrogate pair before U+E000",
       "json": "{\"limits\":{\"custom\":{\"\\ue000\":1,\"\\ud83d\\ude00\":2,\"z\":3,\"\u00e9\":4}}}",
       "canonical": "{\"limits\":{\"custom\":{\"z\":3,\"\u00e9\":4,\"\ud83d\ude00\":2,\"\ue000\":1}}}",
-      "sha256": "502acde08d4576dd982eed791fd46e50548507620118892ddc3e9ccc6c950edb"
+      "sha512": "d6c74057d7ec72cc0ecabd91146617607cf328974ee3811c753496d95eb03249917767960a76110fb29ee08ce08e36edd7d29784c0c7429de580d7f383140b33"
     },
     {
       "name": "ECMAScript number forms",
       "json": "{\"limits\":{\"custom\":{\"big\":1e21,\"decimal\":1000000000000000000000,\"tiny\":5e-324,\"negativeZero\":-0,\"one\":1.0,\"hundred\":1E+2,\"fraction\":0.1,\"precise\":9007199254740993}}}",
       "canonical": "{\"limits\":{\"custom\":{\"big\":1e+21,\"decimal\":1e+21,\"fraction\":0.1,\"hundred\":100,\"negativeZero\":0,\"one\":1,\"precise\":9007199254740992,\"tiny\":5e-324}}}",
-      "sha256": "b1942a38b29d8ba68913db1374577ead36be187f6ae5496455429c402edb0792"
+      "sha512": "bc33b6c90edb20347bd83c2336b5b995279772177996b8a9cc67deefe1a7d3fafb8554a3197c4fe6035b58d005137d9b9c6d33d0232a07429453c32375a0d596"
     },
     {
       "name": "String escapes, separators and non-ASCII text",
       "json": "{\"limits\":{\"custom\":{\"text\":\"\\u0001\\u001f\\b\\t\\n\\f\\r\\\"\\\\\\/<>&\\u007f\\u2028\\u2029\\u00e9\\ud83d\\ude00\"}}}",
       "canonical": "{\"limits\":{\"custom\":{\"text\":\"\\u0001\\u001f\\b\\t\\n\\f\\r\\\"\\\\/<>&\u007f\u2028\u2029\u00e9\ud83d\ude00\"}}}",
-      "sha256": "5508841e91fbb9db204cd965f76bf98c025a84a62a084072a9ac0d8ebf106db6"
+      "sha512": "6467a03d0e46939eaa5d546be6a646cff99756245850c2cfb0d67f2b323818e4405d30997eb867f0a018be6e8d0b9c67ed8628b3b6efab87d662ac6c29efbcbb"
     },
     {
       "name": "Encrypted plugins hash as stored, without decryption",
       "json": "{\"routing\":{\"filter\":\"true\"},\"plugins\":{\"encrypted\":{\"version\":1,\"keyId\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"salt\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"nonce\":\"AAAAAAAAAAAAAAAA\",\"blob\":\"AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA\"}}}",
       "canonical": "{\"plugins\":{\"encrypted\":{\"blob\":\"AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA\",\"keyId\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"nonce\":\"AAAAAAAAAAAAAAAA\",\"salt\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"version\":1}},\"routing\":{\"filter\":\"true\"}}",
-      "sha256": "c55e8480489fe167f8adab710af16ec2650ee93ac2a1272aef96094f37e943a0"
+      "sha512": "565e1cdaa86ebda6c7514db5dbd5620ac0bbcb8113027354c6528708b4bbfc78d4c785052f72885b6234934e911b38118e3e60e654a0d065b4f4f6bb16f25bef"
     }
   ],
   "invalid": [

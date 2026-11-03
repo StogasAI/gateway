@@ -72,7 +72,7 @@ func VerifyDigests(public []byte, object proof.Object, boot [32]byte, request, r
 	if err != nil || signatureErr != nil {
 		return false
 	}
-	digest := sha256.Sum256(canonical)
+	digest := sha512.Sum512(canonical)
 	message := bytes.Join([][]byte{[]byte("stogas.receipt.v2\x00"), requestCommitment, responseCommitment, digest[:]}, nil)
 	return reference.VerifySignature(public, message, signature) == nil
 }
