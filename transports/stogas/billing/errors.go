@@ -51,8 +51,8 @@ var policyResultErrors = func() map[string]*RequestError {
 			code, message string
 			status        int
 		}{
-			{"disabled", "policy is disabled", 403},
-			{"expired", "policy is expired", 403},
+			{"disabled", "is disabled", 403},
+			{"expired", "is expired", 403},
 			{"spend_limit", "spend limit exceeded", 402},
 			{"rate_limited", "request rate limit exceeded", 429},
 			{"token_limit", "token limit exceeded", 429},

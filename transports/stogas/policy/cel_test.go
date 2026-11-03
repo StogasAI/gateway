@@ -25,6 +25,7 @@ func TestCELConditionsUseTypedCatalogFactsAndExactPrices(t *testing.T) {
 		`blended_price(1, 1) > decimal("1.5")`,
 		`request.time.getHours("UTC") == 12`,
 		`request.time.getHours("-05:30") == 6 && request.time.getDayOfWeek("Asia/Tokyo") == 3`,
+		`request.time >= timestamp("2026-09-30T12:00:00Z") && request.time < timestamp("2026-10-01T00:00:00+09:00")`,
 		`!has(deployment.retirementDate)`,
 		`has(deployment.pricing.input_tokens) && !has(deployment.reasoningMaxTokens)`,
 	} {
