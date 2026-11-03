@@ -140,6 +140,40 @@ func TestExecuteRequestWithRetries_StripsEncryptedContentAndRetries(t *testing.T
 	}
 }
 
+// TestExecuteRequestWithRetries_SingleAttemptNeverStrips pins the gateway's setting: with
+// SingleAttempt, core makes one call and returns the refusal unchanged, because the caller
+// owns every retry and never sends a body other than the one it prepared.
+func TestExecuteRequestWithRetries_SingleAttemptNeverStrips(t *testing.T) {
+	config := createTestConfig(0, time.Millisecond, time.Millisecond)
+	config.NetworkConfig.SingleAttempt = true
+	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	ctx.SetValue(schemas.BifrostContextKeyTracer, &schemas.NoOpTracer{})
+	logger := NewDefaultLogger(schemas.LogLevelError)
+
+	const ciphertext = "gAAAAABqc9R3ciphertext.eyJlbmRwb2ludF9zbHVnIjoieCJ9"
+	req := newEncryptedReasoningRequest(ciphertext)
+
+	callCount := 0
+	handler := func(_ schemas.Key) (string, *schemas.BifrostError) {
+		callCount++
+		return "", encryptedContentError()
+	}
+
+	_, err := executeRequestWithRetries(ctx, config, handler, nil,
+		schemas.ResponsesRequest, schemas.OpenAI, "gpt-5.6-sol", req, logger)
+
+	if err == nil || err.StatusCode == nil || *err.StatusCode != 400 {
+		t.Fatalf("expected the provider's 400, got %+v", err)
+	}
+	if callCount != 1 {
+		t.Fatalf("expected exactly 1 attempt, got %d", callCount)
+	}
+	reasoning := req.ResponsesRequest.Input[1].ResponsesReasoning
+	if reasoning == nil || reasoning.EncryptedContent == nil || *reasoning.EncryptedContent != ciphertext {
+		t.Fatalf("expected the request's encrypted content to stay unchanged, got %+v", reasoning)
+	}
+}
+
 // TestExecuteRequestWithRetries_HealsOnEveryProviderRejection runs the whole fail-soft
 // loop once per provider that can refuse a replayed payload, with the refusal that
 // provider actually returns.

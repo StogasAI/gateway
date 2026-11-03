@@ -7901,7 +7901,7 @@ func executeRequestWithRetries[T any](
 		// returns false when there is nothing to strip, so the extra attempt is spent
 		// only on requests that carry a token. Runs once per request.
 		lastWasEncryptedContentStrip = false
-		if !shouldRetry && !strippedEncryptedContent && shouldStripReasoningAfterClientError(bifrostError) &&
+		if !config.NetworkConfig.SingleAttempt && !shouldRetry && !strippedEncryptedContent && shouldStripReasoningAfterClientError(bifrostError) &&
 			stripUnverifiableReasoning(ctx, req) {
 			strippedEncryptedContent = true
 			lastWasEncryptedContentStrip = true
@@ -7939,8 +7939,10 @@ func executeRequestWithRetries[T any](
 				if !deadKeyIDs[currentKey.ID] {
 					deadKeyIDs[currentKey.ID] = true
 					deadKeyClasses[currentKey.ID] = class
-					extraAttempts++
-					permanentGrants++
+					if !config.NetworkConfig.SingleAttempt {
+						extraAttempts++
+						permanentGrants++
+					}
 				}
 				if class == schemas.FailureClassModelAccess || class == schemas.FailureClassModelGone || class == schemas.FailureClassRegionBlocked {
 					lastModelOrRegionError = bifrostError
