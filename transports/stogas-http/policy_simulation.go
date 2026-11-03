@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/maximhq/bifrost/core/schemas"
@@ -43,6 +44,7 @@ type simulationRemoval struct {
 	Unknown    bool                  `json:"unknown,omitempty"`
 	Code       string                `json:"code,omitempty"`
 	Labels     []string              `json:"labels,omitempty"`
+	Tools      []string              `json:"tools,omitempty"`
 }
 
 type simulationCredential struct {
@@ -60,8 +62,9 @@ type simulationError struct {
 }
 
 // policySimulation answers what a request that names only a model, a service
-// tier, a reasoning mode and the labels of the encryption keys it sends would
-// try, and what removed every other candidate.
+// tier, a reasoning mode, the types of its tools and its tool_choice, and the
+// labels of the encryption keys it sends would try, and what removed every
+// other candidate.
 type policySimulation struct {
 	Draft           string                            `json:"draft,omitempty"`
 	Pairs           []simulationPair                  `json:"pairs"`
@@ -79,6 +82,37 @@ type policySimulation struct {
 type simulationCandidate struct {
 	provider schemas.ModelProvider
 	index    int
+}
+
+// maxSimulatedTools bounds the tools of a simulated request, which lists types alone.
+const maxSimulatedTools = 128
+
+// simulatedTools reports whether a simulation's tools are types alone: at most 128 types, and a
+// tool_choice that is a mode, or an object with its type and, for allowed_tools, the type of each
+// tool that it allows.
+func simulatedTools(tools []string, choice json.RawMessage) bool {
+	toolType := func(value string) bool { return value != "" && len(value) <= 64 }
+	if len(tools) > maxSimulatedTools || slices.ContainsFunc(tools, func(tool string) bool { return !toolType(tool) }) {
+		return false
+	}
+	if choice == nil {
+		return true
+	}
+	var mode string
+	if json.Unmarshal(choice, &mode) == nil {
+		return toolType(mode)
+	}
+	var object struct {
+		Type  string
+		Tools []struct{ Type string }
+	}
+	decoder := json.NewDecoder(bytes.NewReader(choice))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&object) != nil || !toolType(object.Type) || len(object.Tools) > maxSimulatedTools ||
+		object.Tools != nil && object.Type != "allowed_tools" {
+		return false
+	}
+	return !slices.ContainsFunc(object.Tools, func(tool struct{ Type string }) bool { return !toolType(tool.Type) })
 }
 
 // simulatePolicy runs routing for a key that a dashboard user can see, with a
@@ -107,7 +141,11 @@ func (s *Server) simulatePolicy(ctx *requestContext) {
 		Model         string
 		ServiceTier   string
 		ReasoningMode string
-		Policy        *billing.PolicyValidationSource
+		// Tools lists the type of each tool that a Responses request lists, and
+		// ToolChoice is its tool_choice with only the types that routing reads.
+		Tools      []string
+		ToolChoice json.RawMessage
+		Policy     *billing.PolicyValidationSource
 		// EncryptionKeys lists the labels of the keys that the simulated
 		// request sends. Without it, the request sends every registered key.
 		EncryptionKeys *[]string
@@ -124,6 +162,10 @@ func (s *Server) simulatePolicy(ctx *requestContext) {
 			target = &input.ServiceTier
 		case "reasoningMode":
 			target = &input.ReasoningMode
+		case "tools":
+			target = &input.Tools
+		case "toolChoice":
+			target = &input.ToolChoice
 		case "policy":
 			target = &input.Policy
 		case "encryptionKeys":
@@ -137,9 +179,12 @@ func (s *Server) simulatePolicy(ctx *requestContext) {
 		valid = valid && decoder.Decode(target) == nil
 	}
 	route, known := catalog.RouteForInterface(input.Interface)
+	if input.Tools != nil || input.ToolChoice != nil {
+		valid = valid && route == catalog.RouteResponses && simulatedTools(input.Tools, input.ToolChoice)
+	}
 	if !valid || !known ||
 		input.Policy != nil && (!input.Policy.Scope.Valid() || input.Policy.ID == "" || len(input.Policy.ID) > 64 || len(input.Policy.Config) == 0) {
-		s.writeError(ctx, http.StatusBadRequest, map[string]any{"error": map[string]any{"code": "invalid_request", "message": "Provide interface as chat_completions or responses, optional model, serviceTier and reasoningMode strings, optional encryptionKeys as a list of registered labels, and an optional policy with scope, id and config", "type": "invalid_request_error"}})
+		s.writeError(ctx, http.StatusBadRequest, map[string]any{"error": map[string]any{"code": "invalid_request", "message": "Provide interface as chat_completions or responses, optional model, serviceTier and reasoningMode strings, for responses optional tools listing up to 128 tool types and an optional toolChoice as a mode or an object with only its types, optional encryptionKeys as a list of registered labels, and an optional policy with scope, id and config", "type": "invalid_request_error"}})
 		return
 	}
 	if s.runtime == nil || s.runtime.Billing() == nil {
@@ -246,14 +291,15 @@ func (s *Server) simulatePolicy(ctx *requestContext) {
 			}
 			return nil
 		},
-	}, route, input.Model, input.ServiceTier, input.ReasoningMode)
+	}, route, input.Model, input.ServiceTier, input.ReasoningMode, input.Tools, input.ToolChoice)
 	for _, removed := range simulation.Removed {
 		versions := config.Versions
 		if removed.Credential != nil {
 			versions = chains[simulationCandidate{removed.Provider, *removed.Credential}]
 		}
 		entry := simulationRemoval{Reason: removed.Reason, Provider: removed.Provider, Deployment: removed.Deployment, Model: removed.Model,
-			Credential: removed.Credential, Expression: removed.Expression, Unknown: removed.Unknown, Code: removed.Code, Labels: removed.Labels}
+			Credential: removed.Credential, Expression: removed.Expression, Unknown: removed.Unknown, Code: removed.Code, Labels: removed.Labels,
+			Tools: removed.Tools}
 		var hidden bool
 		if entry.Origin, hidden = originFor(removed.Origin, versions, input.Policy); hidden {
 			entry.Expression = ""

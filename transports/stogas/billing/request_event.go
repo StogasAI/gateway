@@ -140,6 +140,9 @@ type RequestSettings struct {
 	ParallelToolCalls  *bool    `json:"parallel_tool_calls,omitempty"`
 	MaxToolCalls       *int     `json:"max_tool_calls,omitempty"`
 	Truncation         string   `json:"truncation,omitempty"`
+	// HostedTools are the hosted tools that the request let the model call, whose data
+	// handling joined the deployment's.
+	HostedTools []string `json:"hosted_tools,omitempty"`
 }
 
 // A request's metadata follows OpenAI's: up to 16 pairs, with keys up to 64

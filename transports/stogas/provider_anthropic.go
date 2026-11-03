@@ -572,7 +572,7 @@ func validateAnthropicResponsesHostedToolCaps(state *State, raw map[string]json.
 	if err != nil {
 		return err
 	}
-	effectiveTypes := effectiveResponsesToolTypes(raw, state.Resolution.ToolTypes())
+	effectiveTypes := catalog.EffectiveResponsesToolTypes(raw, state.Resolution.ToolTypes())
 	hostedToolCount := 0
 	for _, rawTool := range state.Resolution.RawTools() {
 		rawType := rawString(rawTool["type"])
@@ -747,6 +747,9 @@ func (AnthropicAdapter) ValidateRawResponsesToolType(state *State, tool map[stri
 		return invalidRequest("Custom tools are not supported for Anthropic-format deployments because free-form input formats are not preserved by the provider translation")
 	}
 	if anthropicResponsesToolTypeSupported(rawType) {
+		if err := hostedToolOffered(state, rawType); err != nil {
+			return err
+		}
 		if anthropicResponsesWebSearchToolType(rawType) {
 			if state != nil && state.Resolution != nil && !responsesHostedToolChoiceAllowsCalls(state.Resolution.RawBody()) {
 				return nil
@@ -776,7 +779,7 @@ func ensureAnthropicResponsesHostedToolCap(state *State) {
 	if !supplied {
 		cap = defaultResponsesHostedToolCap
 	}
-	toolTypes := effectiveResponsesToolTypes(state.Resolution.RawBody(), state.Resolution.ToolTypes())
+	toolTypes := catalog.EffectiveResponsesToolTypes(state.Resolution.RawBody(), state.Resolution.ToolTypes())
 	if usesToolType(toolTypes, string(schemas.ResponsesToolTypeWebSearch)) {
 		state.Resolution.EnsureResponsesToolMaxUses(cap, supplied, schemas.ResponsesToolTypeWebSearch)
 	}
@@ -800,7 +803,7 @@ func anthropicAdapterContextForDeployment(state *State, deployment catalog.Deplo
 		InputTokenLimit:       state.Resolution.InputTokenLimit(),
 		OutputTokenLimit:      state.Resolution.OutputTokenLimit(),
 		ToolChoiceAllowsCalls: responsesHostedToolChoiceAllowsCalls(state.Resolution.RawBody()),
-		ToolTypes:             effectiveResponsesToolTypes(state.Resolution.RawBody(), state.Resolution.ToolTypes()),
+		ToolTypes:             catalog.EffectiveResponsesToolTypes(state.Resolution.RawBody(), state.Resolution.ToolTypes()),
 		RawBody:               state.Resolution.RawBody(),
 		RawTools:              state.Resolution.RawTools(),
 		ActualWebSearchCalls:  actualWebSearchCalls(state),

@@ -40,6 +40,9 @@ const (
 	RemovedEncryptionKey = "encryption_key"
 	// A group request uses only its most recently released models.
 	RemovedOlderModel = "older_model"
+	// The deployment's route does not run every hosted tool that the request lists. Tools names
+	// the missing ones.
+	RemovedHostedTool = "hosted_tool"
 )
 
 // RemovedCandidate is a provider, a deployment, or a deployment and credential
@@ -58,6 +61,7 @@ type RemovedCandidate struct {
 	Unknown    bool
 	Code       string
 	Labels     []string
+	Tools      []string
 }
 
 // SimulatedPair is one deployment and credential in routing order.
@@ -71,8 +75,8 @@ type SimulatedPair struct {
 }
 
 // RoutingSimulation shows how routing treats a request that names only a
-// model, a service tier and a reasoning mode. A request tries the first Tried
-// pairs in order.
+// model, a service tier, a reasoning mode and its tools. A request tries the
+// first Tried pairs in order.
 // Order and FallbacksOrigin locate settings in the first pair's policy.
 type RoutingSimulation struct {
 	Pairs           []SimulatedPair
@@ -88,8 +92,11 @@ type RoutingSimulation struct {
 }
 
 // SimulateRouting runs request routing up to its pair plan. It prepares no
-// credential, opens no encrypted content and calls no provider.
-func SimulateRouting(input RequestInput, route Route, model, tier, mode string) *RoutingSimulation {
+// credential, opens no encrypted content and calls no provider. Tools are the
+// types of a Responses request's tools, and toolChoice its tool_choice, which
+// routing reads for the hosted tools that the request lists and lets the model
+// call.
+func SimulateRouting(input RequestInput, route Route, model, tier, mode string, tools []string, toolChoice json.RawMessage) *RoutingSimulation {
 	trace := &routingTrace{}
 	input.now, input.policyBudget, input.trace = time.Now().UTC(), policy.NewCELBudget(), trace
 	activationMu.RLock()
@@ -103,6 +110,19 @@ func SimulateRouting(input RequestInput, route Route, model, tier, mode string) 
 	}
 	if mode != "" {
 		fields["reasoning"], _ = json.Marshal(map[string]string{"mode": mode})
+	}
+	if len(tools) > 0 || len(toolChoice) > 0 {
+		declared := make([]map[string]string, len(tools))
+		for i, tool := range tools {
+			declared[i] = map[string]string{"type": tool}
+		}
+		body := map[string]json.RawMessage{"tool_choice": toolChoice}
+		body["tools"], _ = json.Marshal(declared)
+		if len(toolChoice) == 0 {
+			delete(body, "tool_choice")
+		}
+		use := requestHostedTools(route, body)
+		input.hostedTools = &use
 	}
 	plan, err := planRoutes(input, route, fields)
 	result := &RoutingSimulation{Removed: trace.removed, Truncated: trace.truncated, Ambiguous: trace.ambiguous, Err: err}

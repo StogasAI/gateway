@@ -202,10 +202,22 @@ routes:
       - text/xml
   dataHandling:
     endToEndEncrypted: false
-  pricing:
-    openai_responses_web_search_calls:
-      per_1k_calls: '10'
-    openai_responses_web_search_preview_calls:
-      per_1k_calls: '10'
-    openai_responses_web_search_preview_non_reasoning_calls:
-      per_1k_calls: '25'
+  # Data handling reviewed 2026-11-03: https://developers.openai.com/api/docs/guides/your-data. Web search
+  # keeps OpenAI's data residency. A remote MCP server is a third party that the request names, and the
+  # data sent to it follows that party's policies.
+  hostedTools:
+    - tool: web_search
+      pricing:
+        openai_responses_web_search_calls:
+          per_1k_calls: '10'
+        openai_responses_web_search_preview_calls:
+          per_1k_calls: '10'
+        openai_responses_web_search_preview_non_reasoning_calls:
+          per_1k_calls: '25'
+      dataHandling: {}
+    - tool: mcp
+      dataHandling:
+        processingLocation: unknown
+        storageLocation: unknown
+        retentionDays: null
+        zeroDataRetention: false

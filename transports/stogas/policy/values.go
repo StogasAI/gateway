@@ -113,6 +113,7 @@ var fieldDomains = map[string]fieldDomain{
 	"provider.aliases":                  catalogSlug,
 	"provider.credentialModes":          oneOf("managed", "byok"),
 	"provider.headquarteredCountry":     country,
+	"request.hostedTools":               oneOf("web_search", "web_fetch", "mcp"),
 	"request.interface":                 interfaces,
 }
 

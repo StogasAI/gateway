@@ -18,3 +18,22 @@ routes:
     mediaTypes: [application/pdf, text/plain]
   dataHandling:
     endToEndEncrypted: false
+  # Only Claude on Google Cloud (Anthropic managed) runs web search and web fetch, at Anthropic's prices.
+  # Data handling reviewed 2026-11-03: https://platform.claude.com/docs/en/manage-claude/api-and-data-retention
+  # and https://platform.claude.com/docs/en/manage-claude/data-residency. inference_geo covers model inference
+  # only, so a search or a fetch can run anywhere. Website publishers can keep the URLs that web fetch requests.
+  hostedTools:
+    - tool: web_search
+      hostings: [anthropic]
+      pricing:
+        anthropic_web_search_calls:
+          per_1k_calls: '10'
+      dataHandling:
+        processingLocation: unknown
+    - tool: web_fetch
+      hostings: [anthropic]
+      dataHandling:
+        processingLocation: unknown
+        storageLocation: unknown
+        retentionDays: null
+        zeroDataRetention: false

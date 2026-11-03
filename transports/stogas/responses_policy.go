@@ -332,7 +332,7 @@ func validateResponsesToolPolicy(
 
 func validateRawResponsesToolShape(state *State, tool map[string]json.RawMessage, index int) (schemas.ResponsesToolType, string, error) {
 	path := fmt.Sprintf("tools[%d]", index)
-	toolType := canonicalResponsesToolType(rawString(tool["type"]))
+	toolType := catalog.CanonicalResponsesToolType(rawString(tool["type"]))
 	switch toolType {
 	case schemas.ResponsesToolTypeFunction:
 		name, err := validateResponsesFunctionTool(tool, path)
@@ -693,6 +693,21 @@ func validateRawResponsesToolType(state *State, tool map[string]json.RawMessage)
 	return state.Adapter.ValidateRawResponsesToolType(state, tool)
 }
 
+// hostedToolOffered refuses a hosted tool that the deployment's route does not run for it, whose
+// price and data handling the catalog therefore does not state. Routing already skips such
+// deployments, so this guards the adapters.
+func hostedToolOffered(state *State, rawType string) error {
+	tool, hosted := catalog.HostedToolForType(rawType)
+	if !hosted || state == nil || state.Resolution == nil {
+		return nil
+	}
+	deployment := state.Resolution.Deployment
+	if _, ok := deployment.HostedTools[tool]; ok {
+		return nil
+	}
+	return invalidRequest(string(tool) + " is not available on deployment " + deployment.ID + ". Remove the tool or choose another deployment.")
+}
+
 func responsesHasHostedTool(tools []schemas.ResponsesTool) bool {
 	for _, tool := range tools {
 		switch tool.Type {
@@ -730,7 +745,7 @@ func responsesHostedToolChoiceAllowsCalls(raw map[string]json.RawMessage) bool {
 			return true
 		}
 		for _, tool := range allowed {
-			switch canonicalResponsesToolType(rawString(tool["type"])) {
+			switch catalog.CanonicalResponsesToolType(rawString(tool["type"])) {
 			case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview, schemas.ResponsesToolTypeWebFetch,
 				schemas.ResponsesToolTypeMCP:
 				return true
@@ -738,82 +753,13 @@ func responsesHostedToolChoiceAllowsCalls(raw map[string]json.RawMessage) bool {
 		}
 		return false
 	}
-	switch canonicalResponsesToolType(rawString(choice["type"])) {
+	switch catalog.CanonicalResponsesToolType(rawString(choice["type"])) {
 	case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview, schemas.ResponsesToolTypeWebFetch,
 		schemas.ResponsesToolTypeMCP:
 		return true
 	default:
 		return false
 	}
-}
-
-func effectiveResponsesToolTypes(rawBody map[string]json.RawMessage, declared []string) []string {
-	if rawBody == nil {
-		return declared
-	}
-	choiceRaw, ok := rawBody["tool_choice"]
-	if !ok || len(choiceRaw) == 0 || string(choiceRaw) == "null" {
-		return declared
-	}
-	trimmed := strings.TrimSpace(string(choiceRaw))
-	if trimmed == "" {
-		return declared
-	}
-	if trimmed[0] == '"' {
-		switch rawString(choiceRaw) {
-		case "none":
-			return nil
-		case "auto", "required":
-			return declared
-		default:
-			return declared
-		}
-	}
-	choice, ok := rawObject(choiceRaw)
-	if !ok {
-		return declared
-	}
-	if rawString(choice["type"]) == "allowed_tools" {
-		rawAllowed, ok := choice["tools"]
-		if !ok {
-			return declared
-		}
-		var allowed []map[string]json.RawMessage
-		if err := sonic.Unmarshal(rawAllowed, &allowed); err != nil {
-			return declared
-		}
-		return matchingDeclaredResponsesToolTypes(declared, allowedResponsesToolTypes(allowed))
-	}
-	return matchingDeclaredResponsesToolTypes(declared, []schemas.ResponsesToolType{canonicalResponsesToolType(rawString(choice["type"]))})
-}
-
-func allowedResponsesToolTypes(tools []map[string]json.RawMessage) []schemas.ResponsesToolType {
-	out := make([]schemas.ResponsesToolType, 0, len(tools))
-	for _, tool := range tools {
-		out = append(out, canonicalResponsesToolType(rawString(tool["type"])))
-	}
-	return out
-}
-
-func matchingDeclaredResponsesToolTypes(declared []string, allowed []schemas.ResponsesToolType) []string {
-	if len(allowed) == 0 {
-		return nil
-	}
-	matches := []string{}
-	seen := map[schemas.ResponsesToolType]bool{}
-	for _, allowedType := range allowed {
-		if allowedType == "" || seen[allowedType] {
-			continue
-		}
-		seen[allowedType] = true
-		for _, declaredType := range declared {
-			if canonicalResponsesToolType(declaredType) == allowedType {
-				matches = append(matches, string(allowedType))
-				break
-			}
-		}
-	}
-	return matches
 }
 
 func validateResponsesToolChoice(state *State, raw json.RawMessage, tools []schemas.ResponsesTool) error {
@@ -989,7 +935,7 @@ func responsesRawHostedToolExists(state *State, rawType string) bool {
 
 func validateResponsesToolSelectorType(state *State, rawType string) (schemas.ResponsesToolType, error) {
 	rawType = strings.TrimSpace(rawType)
-	toolType := canonicalResponsesToolType(rawType)
+	toolType := catalog.CanonicalResponsesToolType(rawType)
 	if responsesUsesAnthropicWire(state) && rawType != "function" {
 		return toolType, invalidRequest("Anthropic-format deployments support only string tool_choice modes or named function selectors")
 	}
@@ -1016,28 +962,6 @@ func validateResponsesToolSelectorType(state *State, rawType string) (schemas.Re
 		}
 	}
 	return toolType, invalidRequest("tool_choice must select a supported tool")
-}
-
-func canonicalResponsesToolType(rawType string) schemas.ResponsesToolType {
-	toolType := schemas.ResponsesToolType(strings.TrimSpace(rawType))
-	switch {
-	case toolType == schemas.ResponsesToolTypeWebSearchPreview:
-		return toolType
-	case strings.HasPrefix(string(toolType), "web_search_preview"):
-		return schemas.ResponsesToolTypeWebSearchPreview
-	case toolType == schemas.ResponsesToolTypeWebSearch:
-		return toolType
-	case strings.HasPrefix(string(toolType), "web_search"):
-		return schemas.ResponsesToolTypeWebSearch
-	case strings.HasPrefix(string(toolType), "web_fetch"):
-		return schemas.ResponsesToolTypeWebFetch
-	case strings.HasPrefix(string(toolType), "code_execution"):
-		return schemas.ResponsesToolTypeCodeInterpreter
-	case strings.HasPrefix(string(toolType), "computer") && toolType != schemas.ResponsesToolTypeComputerUsePreview:
-		return schemas.ResponsesToolTypeComputerUsePreview
-	default:
-		return toolType
-	}
 }
 
 func responsesToolTypeExists(tools []schemas.ResponsesTool, toolType schemas.ResponsesToolType) bool {

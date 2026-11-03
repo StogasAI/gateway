@@ -52,9 +52,10 @@ type policyDataHandling struct {
 }
 
 type policyRequestData struct {
-	BodyBytes int    `json:"bodyBytes"`
-	Interface string `json:"interface"`
-	Model     string `json:"model"`
+	BodyBytes   int      `json:"bodyBytes"`
+	HostedTools []string `json:"hostedTools"`
+	Interface   string   `json:"interface"`
+	Model       string   `json:"model"`
 }
 
 type resolvedPolicyValues struct {
@@ -683,6 +684,13 @@ func newResolvedPolicyValues(candidate *ResolvedRequest) (*resolvedPolicyValues,
 		return nil, false
 	}
 	deployment := candidate.Deployment
+	// A hosted tool that the request lets the model call can send its content further, so the
+	// policy reads the deployment's data handling joined with the tools'.
+	dataHandling := candidate.EffectiveDataHandling()
+	hostedTools := make([]string, len(candidate.hostedTools))
+	for i, tool := range candidate.hostedTools {
+		hostedTools[i] = string(tool)
+	}
 	return &resolvedPolicyValues{now: candidate.policyTime, budget: candidate.policyBudget, pricing: deployment.Pricing, root: map[string]policyNode{
 		"author": {id: ids.author, fields: author},
 		"deployment": {
@@ -692,9 +700,9 @@ func newResolvedPolicyValues(candidate *ResolvedRequest) (*resolvedPolicyValues,
 				ContextWindowTokens: deployment.ContextWindowTokens,
 				MaxInputTokens:      deployment.MaxInputTokens,
 				DataHandling: policyDataHandling{
-					DataHandling:     deployment.DataHandling,
-					ProcessingWithin: deployment.Locations.Containing(deployment.DataHandling.ProcessingLocation),
-					StorageWithin:    deployment.Locations.Containing(deployment.DataHandling.StorageLocation),
+					DataHandling:     dataHandling,
+					ProcessingWithin: deployment.Locations.Containing(dataHandling.ProcessingLocation),
+					StorageWithin:    deployment.Locations.Containing(dataHandling.StorageLocation),
 				},
 				InputModalities:    deployment.InputModalities,
 				MaxOutputTokens:    deployment.MaxOutputTokens,
@@ -713,9 +721,10 @@ func newResolvedPolicyValues(candidate *ResolvedRequest) (*resolvedPolicyValues,
 		"model":    {id: ids.model, fields: model},
 		"provider": {id: ids.provider, fields: provider},
 		"request": {fields: policyRequestData{
-			BodyBytes: candidate.policyBodyBytes,
-			Interface: candidate.Route.Interface(),
-			Model:     candidate.RequestedModel,
+			BodyBytes:   candidate.policyBodyBytes,
+			HostedTools: hostedTools,
+			Interface:   candidate.Route.Interface(),
+			Model:       candidate.RequestedModel,
 		}},
 		"route": {id: ids.route, fields: route},
 	}}, true

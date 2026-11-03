@@ -101,7 +101,11 @@ func TestAnthropicResponsesToolAdmission(t *testing.T) {
 		Pair: Pair{
 			Resolution: &catalog.ResolvedRequest{
 				Deployment: catalog.Deployment{
+					ID:      "anthropic-test",
 					Pricing: testPricing(),
+					HostedTools: map[catalog.HostedTool]catalog.HostedToolOffer{
+						catalog.HostedToolWebSearch: {}, catalog.HostedToolWebFetch: {},
+					},
 				},
 			},
 		},
@@ -136,6 +140,14 @@ func TestAnthropicResponsesToolAdmission(t *testing.T) {
 	state.Resolution.Deployment.Pricing = unpriced
 	if err := adapter.ValidateRawResponsesToolType(state, mustObject(t, `{"type":"web_search"}`)); err == nil {
 		t.Fatal("expected web search on a route without a search price to reject")
+	}
+	// Routing keeps only deployments that run a listed tool, and the adapter refuses one that
+	// reaches it anyway.
+	state.Resolution.Deployment.Pricing = testPricing()
+	delete(state.Resolution.Deployment.HostedTools, catalog.HostedToolWebFetch)
+	err := adapter.ValidateRawResponsesToolType(state, mustObject(t, `{"type":"web_fetch_20260309","name":"web_fetch"}`))
+	if err == nil || err.Error() != "web_fetch is not available on deployment anthropic-test. Remove the tool or choose another deployment." {
+		t.Fatalf("web fetch on a deployment that does not run it: %v", err)
 	}
 }
 

@@ -82,6 +82,9 @@ func PrepareProviderRequest(ctx *schemas.BifrostContext, state *State, request *
 			body, bifrostErr = setOpenAIAccessPrograms(body, resolution.RawBody()["access_programs"])
 		}
 		settings = billing.ResponsesRequestSettings(responses.Params)
+		for _, tool := range resolution.HostedTools() {
+			settings.HostedTools = append(settings.HostedTools, string(tool))
+		}
 	default:
 		return catalog.ErrUnsupportedRequest
 	}

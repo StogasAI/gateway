@@ -1900,8 +1900,8 @@ func readProviderTools(resolution *catalog.ResolvedRequest) *providerToolSet {
 		selected = selectedProviderTools(chat, object)
 	}
 	if !chat {
-		for _, rawType := range effectiveResponsesToolTypes(resolution.RawBody(), resolution.ToolTypes()) {
-			tools.types[canonicalResponsesToolType(rawType)] = true
+		for _, rawType := range catalog.EffectiveResponsesToolTypes(resolution.RawBody(), resolution.ToolTypes()) {
+			tools.types[catalog.CanonicalResponsesToolType(rawType)] = true
 		}
 	}
 	for _, tool := range resolution.RawTools() {
@@ -1913,7 +1913,7 @@ func readProviderTools(resolution *catalog.ResolvedRequest) *providerToolSet {
 			}
 			name = providerToolName{schemas.ResponsesToolTypeFunction, rawString(function["name"])}
 		} else {
-			name = providerToolName{canonicalResponsesToolType(rawString(tool["type"])), rawString(tool["name"])}
+			name = providerToolName{catalog.CanonicalResponsesToolType(rawString(tool["type"])), rawString(tool["name"])}
 			switch name.kind {
 			case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview, schemas.ResponsesToolTypeWebFetch:
 				if tools.types[name.kind] {
@@ -1953,7 +1953,7 @@ func selectedProviderTools(chat bool, object map[string]json.RawMessage) map[pro
 		}
 		return selected
 	}
-	kind := canonicalResponsesToolType(rawString(object["type"]))
+	kind := catalog.CanonicalResponsesToolType(rawString(object["type"]))
 	if kind == schemas.ResponsesToolTypeMCP {
 		return map[providerToolName]bool{selectedProviderToolName(object): true}
 	}
@@ -1965,7 +1965,7 @@ func selectedProviderTools(chat bool, object map[string]json.RawMessage) map[pro
 
 // selectedProviderToolName names a tool that tool_choice selects. An MCP server goes by its label.
 func selectedProviderToolName(selector map[string]json.RawMessage) providerToolName {
-	kind := canonicalResponsesToolType(rawString(selector["type"]))
+	kind := catalog.CanonicalResponsesToolType(rawString(selector["type"]))
 	if kind == schemas.ResponsesToolTypeMCP {
 		return providerToolName{kind, rawString(selector["server_label"])}
 	}

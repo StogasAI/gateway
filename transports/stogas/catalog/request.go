@@ -86,7 +86,10 @@ type RequestInput struct {
 	now          time.Time
 	policyBudget *policy.CELBudget
 	trace        *routingTrace
-	Body         []byte
+	// hostedTools, set by a simulation, are the hosted tools that its request lists and lets the
+	// model call. A simulated request has no body to read them from.
+	hostedTools *hostedToolUse
+	Body        []byte
 	// Fields, when supplied, must come from DecodeRequestBody for this Body.
 	Fields              map[string]json.RawMessage
 	Method              string
@@ -152,6 +155,8 @@ type ResolvedRequest struct {
 
 	// The catalog model that Model named before SetWireModel bound a customer's deployment.
 	reportedModel string
+	// hostedTools are the hosted tools that the request lets the model call.
+	hostedTools []HostedTool
 
 	chat               *openaiprovider.OpenAIChatRequest
 	inputTokenLimit    int
@@ -167,6 +172,20 @@ type ResolvedRequest struct {
 	retries            int
 	policyTimeouts     *policy.Timeouts
 	plan               *requestPlan
+}
+
+// HostedTools lists, in canonical order, the hosted tools that the request lets the model call.
+func (r *ResolvedRequest) HostedTools() []HostedTool {
+	if r == nil {
+		return nil
+	}
+	return r.hostedTools
+}
+
+// EffectiveDataHandling is the deployment's data handling joined with that of each hosted tool
+// that the request lets the model call.
+func (r *ResolvedRequest) EffectiveDataHandling() DataHandling {
+	return r.Deployment.EffectiveDataHandling(r.hostedTools)
 }
 
 // ActivePolicyRules carries only matched counter names into the financial hold.
@@ -829,14 +848,22 @@ func planRoutes(input RequestInput, route Route, rawData map[string]json.RawMess
 	if err != nil {
 		return nil, err
 	}
-	selections, err = filterRequestParameters(selections, rawData, route, tokenFields...)
+	selections, ruledOut, err := filterRequestParameters(selections, rawData, route, tokenFields...)
+	if err != nil {
+		return nil, err
+	}
+	hostedTools := requestHostedTools(route, rawData)
+	if input.hostedTools != nil {
+		hostedTools = *input.hostedTools
+	}
+	selections, withoutTools, err := filterHostedTools(selections, hostedTools.listed, input.trace)
 	if err != nil {
 		return nil, err
 	}
 	variants := &requestVariants{
 		base: RequestPolicy{Config: input.Policy, RedactionPolicy: input.RedactionPolicy, LoadRedactionPolicy: input.LoadRedactionPolicy},
 		load: input.CredentialPolicy, requestPolicy: requestPolicy, fields: rawData, route: route, selections: selections, reserveBody: input.ReserveBody, inputBytes: len(input.Body),
-		attachments: requestAttachments(rawData, route, selections),
+		attachments: requestAttachments(rawData, route, selections), hostedTools: hostedTools.enabled, ruledOut: append(ruledOut, withoutTools...),
 	}
 	return planRequest(input, route, base.Model, providerPreference, variants)
 }
@@ -887,6 +914,7 @@ func resolveChatRequests(input RequestInput, route Route) (*ResolvedRequest, err
 			return nil, err
 		}
 		resolution.chat = &request
+		resolution.hostedTools = variants.hostedTools
 		resolution.retainVariant(variant, candidatePolicy.Config, input)
 		return resolution, nil
 	}
@@ -968,6 +996,7 @@ func resolveResponsesRequests(input RequestInput, route Route) (*ResolvedRequest
 			request.ResponsesParameters.Reasoning.Mode = &mode
 		}
 		resolution.responses = &request
+		resolution.hostedTools = variants.hostedTools
 		resolution.retainVariant(variant, candidatePolicy.Config, input)
 		return resolution, nil
 	}
@@ -988,15 +1017,23 @@ func piiRedactionError(err error) error {
 	return err
 }
 
+// ruledOut is a deployment that the request's own content rules out, with the error that says
+// why. When the credentials reach only such deployments, that error is the request's, since
+// the request needs changing rather than the credentials.
+type ruledOut struct {
+	selection routingSelection
+	err       error
+}
+
 // Apply catalog-known parameter constraints before credential checks, redaction,
 // typed message decoding or tokenization.
-func filterRequestParameters(selections []routingSelection, raw map[string]json.RawMessage, route Route, fields ...string) ([]routingSelection, error) {
+func filterRequestParameters(selections []routingSelection, raw map[string]json.RawMessage, route Route, fields ...string) ([]routingSelection, []ruledOut, error) {
 	var requested *int
 	for _, field := range fields {
 		if value, ok := raw[field]; ok {
 			count, valid := rawInteger(value)
 			if !valid {
-				return nil, ErrInvalidJSON
+				return nil, nil, ErrInvalidJSON
 			}
 			requested = &count
 			break
@@ -1004,48 +1041,44 @@ func filterRequestParameters(selections []routingSelection, raw map[string]json.
 	}
 	validateReasoning, err := requestReasoningValidation(raw, route)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	kept := selections[:0]
-	var firstErr error
+	var removed []ruledOut
 	for _, selection := range selections {
 		outputLimit, err := effectiveOutputTokenLimit(requested, selection.deployment.MaxOutputTokens)
 		if err == nil && validateReasoning != nil {
 			err = validateReasoning(selection.deployment, outputLimit)
 		}
 		if err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
+			removed = append(removed, ruledOut{selection, err})
 			continue
 		}
 		kept = append(kept, selection)
 	}
 	if len(kept) == 0 {
-		return nil, firstErr
+		return nil, nil, removed[0].err
 	}
 	// Small numeric/reasoning controls can remove every candidate without
 	// traversing messages or schemas for broad feature selectors.
 	selections = kept
 	required, err := requestCapabilities(raw, route, sharedRequestCapabilities(selections))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	kept = selections[:0]
-	firstErr = nil
+	limited := len(removed)
 	for _, selection := range selections {
 		if err := validateRequestCapabilities(required, selection.deployment.Capabilities); err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
+			removed = append(removed, ruledOut{selection, err})
 			continue
 		}
 		kept = append(kept, selection)
 	}
 	if len(kept) == 0 {
-		return nil, firstErr
+		return nil, nil, removed[limited].err
 	}
-	return kept, nil
+	return kept, removed, nil
 }
 
 func resolveOpenAIRequest(

@@ -1,4 +1,4 @@
-# Claude Platform on AWS rates usage, web search included, at Anthropic's standard prices.
+# Claude Platform on AWS rates usage at Anthropic's standard prices.
 # Reviewed 2026-10-31: https://platform.claude.com/docs/en/about-claude/pricing#claude-platform-on-aws-pricing
 deployments:
   modelId: claude-fable-5-1
@@ -12,8 +12,6 @@ deployments:
       storageLocation: unknown
       retentionDays: 30
   pricing:
-    anthropic_web_search_calls:
-      per_1k_calls: '10'
     input_tokens:
       per_mill_tokens: '10'
     cached_input_tokens:
