@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -27,12 +28,17 @@ type Inspection struct {
 // InspectionNote names another policy that affects the edited one. "kept"
 // lists sections that the policy no longer lets the edited one set; they still
 // apply. "order" means that policy's ordering applies instead of the edited
-// one's.
+// one's. "replaced" lists the edited policy's default settings that the
+// policy's required settings replace, on every request, or with Rules only on
+// the requests that those rules match.
 type InspectionNote struct {
 	Kind     string   `json:"kind"`
 	Scope    Scope    `json:"scope"`
 	ID       string   `json:"id,omitempty"`
 	Sections []string `json:"sections,omitempty"`
+	Rules    []string `json:"rules,omitempty"`
+	// RuleCount counts the rules when there are more than Rules lists.
+	RuleCount int `json:"ruleCount,omitempty"`
 }
 
 type InspectionSource struct {
@@ -249,10 +255,17 @@ func (v *Inspector) Finish() (*Inspection, error) {
 	}
 	var limits, opaque, rules []map[string]any
 	opaqueRuleBytes := 0
+	required := requirements(sources)
+	replacements := replacedDefaults(documents, sources, required)
+	notes = append(notes, replacedNotes(entries, documents, sources, required, edit)...)
+	replaced := map[int][]replacement{}
 	for i, entry := range entries {
 		document := documents[i]
 		for _, rule := range sources[i].Value.Rules {
 			item := map[string]any{"policy": inspectionReference(entry), "name": rule.Name, "config": document.rules[rule.Name].fields}
+			if list := replacements[ruleKey{i, rule.Name}]; len(list) > 0 {
+				replaced[len(rules)] = list
+			}
 			rules = append(rules, item)
 			if rule.Encrypted != nil && !v.omitCiphertext {
 				opaqueRuleBytes += rule.Encrypted.envelopeBytes
@@ -287,6 +300,9 @@ func (v *Inspector) Finish() (*Inspection, error) {
 	if len(rules) > 0 {
 		effective["rules"] = rules
 	}
+	if setBy := inspectionSetBy(entries, sources, compiled); len(setBy) > 0 {
+		effective["setBy"] = setBy
+	}
 	plugins, err := inspectionPlugins(compiled.PluginSources)
 	if err != nil {
 		return nil, err
@@ -305,6 +321,25 @@ func (v *Inspector) Finish() (*Inspection, error) {
 	// are not compiled instructions and cannot be charged to this limit.
 	if len(opaque) > 0 {
 		effective["uncheckedPlugins"] = opaque
+	}
+	// Which defaults a requirement replaces explains the composition rather
+	// than adding to it, so it is not charged to the limit either. Each entry
+	// names a requirement and leaves its condition to the rule's own item.
+	for index, list := range replaced {
+		values := make([]map[string]any, len(list))
+		for i, r := range list {
+			values[i] = map[string]any{"setting": r.setting, "policy": inspectionReference(entries[r.source])}
+			if r.rule != "" {
+				values[i]["rule"] = r.rule
+			}
+			if r.when != "" {
+				values[i]["conditional"] = true
+			}
+			if r.others > 0 {
+				values[i]["others"] = r.others
+			}
+		}
+		rules[index]["replaced"] = values
 	}
 	return &Inspection{Compiled: compiled, CompilerVersion: CompilerVersion, Digest: ChainDigest(sources), Effective: effective, Notes: notes}, nil
 }
@@ -389,6 +424,282 @@ func sortedAllowedNodes(value *AllowedCatalogNodes) *AllowedCatalogNodes {
 		}
 	}
 	return &copy
+}
+
+// inspectionSetBy names the policies that set each combined setting outside
+// rules. Where the smallest value or the stricter choice wins, that is the
+// first policy that sets the winning value; where every policy's value
+// combines, each policy that sets one. Ordering names its policy in
+// routing.orderFrom.
+func inspectionSetBy(entries []InspectionSource, sources []ScopedSource, compiled *Config) []map[string]any {
+	var out []map[string]any
+	add := func(setting string, mask Permission, all bool, same func(*Config) bool) {
+		for i, entry := range sources {
+			if entry.Value.settings&mask != 0 && same(entry.Value.Config) {
+				out = append(out, map[string]any{"setting": setting, "policy": inspectionReference(entries[i])})
+				if !all {
+					return
+				}
+			}
+		}
+	}
+	equal := func(value *int, other *int) bool { return value != nil && other != nil && *value == *other }
+	always := func(*Config) bool { return true }
+	if compiled.Access != nil && len(compiled.Access.Deny) > 0 {
+		add("access", permissionAccess, true, func(c *Config) bool { return c.Access != nil && len(c.Access.Deny) > 0 })
+	}
+	if compiled.Input != nil {
+		add("input", permissionInput, false, func(c *Config) bool { return c.Input != nil && c.Input.ASCIIOnly })
+	}
+	if len(compiled.PluginSources) > 0 {
+		add("plugins", pluginPermissions, true, always)
+	}
+	if compiled.Routing.AllowedCatalogNodes != nil {
+		add("routing.allowedCatalogNodes", permissionNodes, true, func(c *Config) bool { return c.Routing.AllowedCatalogNodes != nil })
+	}
+	add("routing.fallbacks", permissionFallbacks, false, func(c *Config) bool { return c.Routing.Fallbacks == compiled.Routing.Fallbacks })
+	if query := compiled.Routing.Query; query != nil && len(query.Filters) > 0 {
+		add("routing.filter", permissionFilter, true, func(c *Config) bool { return c.Routing.Query != nil && len(c.Routing.Query.Filters) > 0 })
+	}
+	add("routing.missingEncryptionKeys", permissionMissingKeys, false, func(c *Config) bool {
+		return c.Routing.MissingEncryptionKeys == compiled.Routing.MissingEncryptionKeys
+	})
+	add("routing.retries", permissionRetries, false, func(c *Config) bool { return c.Routing.Retries == compiled.Routing.Retries })
+	if t := compiled.Timeouts; t != nil {
+		add("timeouts.outputIdleSeconds", permissionOutputIdleTimeout, false, func(c *Config) bool {
+			return c.Timeouts != nil && equal(c.Timeouts.OutputIdleSeconds, t.OutputIdleSeconds)
+		})
+		add("timeouts.totalSeconds", permissionTotalTimeout, false, func(c *Config) bool {
+			return c.Timeouts != nil && equal(c.Timeouts.TotalSeconds, t.TotalSeconds)
+		})
+	}
+	return out
+}
+
+type ruleKey struct {
+	source int
+	rule   string
+}
+
+// requirement is a required setting: a policy's own settings, which apply to
+// every request, or a required rule's, which apply to the requests that its
+// condition matches, or to every request without one.
+type requirement struct {
+	source int
+	rule   string
+	when   string
+	kinds  Permission
+}
+
+// replacement names the requirement that replaces a default setting, and how
+// many other requirements of the same reach replace it too. One that applies
+// to every request comes first.
+type replacement struct {
+	setting string
+	source  int
+	rule    string
+	when    string
+	others  int
+}
+
+// maxNoteRules bounds the rule names that one note lists.
+const maxNoteRules = 10
+
+func requirements(sources []ScopedSource) []requirement {
+	var required []requirement
+	for i, entry := range sources {
+		if entry.Value.settings != 0 {
+			required = append(required, requirement{source: i, kinds: entry.Value.settings})
+		}
+		for _, rule := range entry.Value.Rules {
+			if rule.Default || rule.Value.settings == 0 {
+				continue
+			}
+			r := requirement{source: i, rule: rule.Name, kinds: rule.Value.settings}
+			if rule.When != nil {
+				r.when = rule.When.Source
+			}
+			required = append(required, r)
+		}
+	}
+	return required
+}
+
+// replacedDefaults finds, for each default rule, its settings that a required
+// setting of the same kind replaces, as request activation decides it: every
+// policy's own settings and every required rule apply on the requests they
+// match, and a default yields each kind that they set. One ordering applies
+// to a request: a required one, the organization's first, and otherwise the
+// closest default, which replaces the other default orderings. Each replaced
+// setting names one requirement, so the result grows with the defaults alone.
+func replacedDefaults(documents []*SourceDocument, sources []ScopedSource, required []requirement) map[ruleKey][]replacement {
+	order, orderRank, orderRule := -1, 0, ""
+	for i, entry := range sources {
+		if rank, ok := orderingRanks[entry.Scope]; ok && entry.Value.settings&orderingPermissions != 0 && (order < 0 || rank < orderRank) {
+			order, orderRank = i, rank
+		}
+	}
+	for i, entry := range sources {
+		if rank, ok := orderingRanks[entry.Scope]; ok && entry.Value.defaultOrdering != nil && (order < 0 || orderRule != "" && rank > orderRank) {
+			order, orderRank, orderRule = i, rank, entry.Value.defaultOrdering.rule
+		}
+	}
+	type reach struct {
+		always, sometimes   requirement
+		alwaysN, sometimesN int
+	}
+	reaches := map[Permission]*reach{}
+	out := map[ruleKey][]replacement{}
+	for i, entry := range sources {
+		for _, rule := range entry.Value.Rules {
+			if !rule.Default {
+				continue
+			}
+			key := ruleKey{i, rule.Name}
+			for _, setting := range ruleSettings(documents[i].rules[rule.Name].fields) {
+				kind := settingsMask(permissionSections[setting])
+				if kind&orderingPermissions != 0 {
+					if order >= 0 && (order != i || orderRule != rule.Name) {
+						out[key] = append(out[key], replacement{setting: setting, source: order, rule: orderRule})
+					}
+					continue
+				}
+				found := reaches[kind]
+				if found == nil {
+					found = &reach{}
+					for _, r := range required {
+						switch {
+						case kind&r.kinds == 0:
+						case r.when == "":
+							if found.alwaysN == 0 {
+								found.always = r
+							}
+							found.alwaysN++
+						default:
+							if found.sometimesN == 0 {
+								found.sometimes = r
+							}
+							found.sometimesN++
+						}
+					}
+					reaches[kind] = found
+				}
+				if found.alwaysN > 0 {
+					out[key] = append(out[key], replacement{setting: setting, source: found.always.source, rule: found.always.rule, others: found.alwaysN - 1})
+				} else if found.sometimesN > 0 {
+					r := found.sometimes
+					out[key] = append(out[key], replacement{setting: setting, source: r.source, rule: r.rule, when: r.when, others: found.sometimesN - 1})
+				}
+			}
+		}
+	}
+	return out
+}
+
+// ruleSettings names a rule's settings as its fields hold them, sorted. A
+// plugin setting stands for every plugin setting, because one kind holds them.
+func ruleSettings(fields map[string]json.RawMessage) []string {
+	var settings []string
+	for name, raw := range fields {
+		switch name {
+		case "access", "input", "plugins":
+			settings = append(settings, name)
+		case "routing", "timeouts":
+			var options map[string]json.RawMessage
+			if json.Unmarshal(raw, &options) == nil {
+				for option := range options {
+					settings = append(settings, name+"."+option)
+				}
+			}
+		}
+	}
+	sort.Strings(settings)
+	return settings
+}
+
+// replacedNotes tells the edited policy which other policies' required
+// settings replace its defaults: on every request, or with rules on the
+// requests that they match. A setting replaced on every request is not
+// repeated for the rules that replace it on some, ordering has its own note,
+// and the edited policy shows its own requirements.
+func replacedNotes(entries []InspectionSource, documents []*SourceDocument, sources []ScopedSource, required []requirement, edit *InspectionEdit) []InspectionNote {
+	edited := map[int]bool{}
+	kinds := map[Permission][]string{}
+	for i, entry := range entries {
+		if !edit.covers(entry) {
+			continue
+		}
+		edited[i] = true
+		for _, rule := range sources[i].Value.Rules {
+			if !rule.Default {
+				continue
+			}
+			for _, setting := range ruleSettings(documents[i].rules[rule.Name].fields) {
+				kind := settingsMask(permissionSections[setting])
+				if kind&orderingPermissions == 0 && !slices.Contains(kinds[kind], setting) {
+					kinds[kind] = append(kinds[kind], setting)
+				}
+			}
+		}
+	}
+	always := map[int]map[string]bool{}
+	sometimes := map[int]map[string]bool{}
+	rules := map[int]map[string]bool{}
+	add := func(sets map[int]map[string]bool, source int, value string) {
+		if sets[source] == nil {
+			sets[source] = map[string]bool{}
+		}
+		sets[source][value] = true
+	}
+	replacedAlways := map[string]bool{}
+	for _, r := range required {
+		for kind, settings := range kinds {
+			if kind&r.kinds == 0 || r.when != "" {
+				continue
+			}
+			for _, setting := range settings {
+				replacedAlways[setting] = true
+				if !edited[r.source] {
+					add(always, r.source, setting)
+				}
+			}
+		}
+	}
+	for _, r := range required {
+		for kind, settings := range kinds {
+			if kind&r.kinds == 0 || r.when == "" || edited[r.source] {
+				continue
+			}
+			for _, setting := range settings {
+				if !replacedAlways[setting] {
+					add(sometimes, r.source, setting)
+					add(rules, r.source, r.rule)
+				}
+			}
+		}
+	}
+	keys := func(set map[string]bool) []string {
+		values := make([]string, 0, len(set))
+		for value := range set {
+			values = append(values, value)
+		}
+		sort.Strings(values)
+		return values
+	}
+	var notes []InspectionNote
+	for i, entry := range entries {
+		if settings := always[i]; settings != nil {
+			notes = append(notes, InspectionNote{Kind: "replaced", Scope: entry.Scope, ID: entry.ID, Sections: keys(settings)})
+		}
+		if settings := sometimes[i]; settings != nil {
+			note := InspectionNote{Kind: "replaced", Scope: entry.Scope, ID: entry.ID, Sections: keys(settings), Rules: keys(rules[i])}
+			if len(note.Rules) > maxNoteRules {
+				note.RuleCount, note.Rules = len(note.Rules), note.Rules[:maxNoteRules]
+			}
+			notes = append(notes, note)
+		}
+	}
+	return notes
 }
 
 func (e *InspectionEdit) covers(entry InspectionSource) bool {

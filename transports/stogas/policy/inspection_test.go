@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -425,4 +427,364 @@ func TestInspectionShowsWhichPolicyOrdersRequests(t *testing.T) {
 			t.Fatalf("%s + %s: from %v, notes %+v", test.org, test.key, routing["orderFrom"], inspection.Notes)
 		}
 	}
+}
+
+func TestInspectionShowsWhichRequirementsReplaceDefaults(t *testing.T) {
+	org := `{"plugins":{"textExtraction":false},"timeouts":{"totalSeconds":900},"rules":{"openai":{"when":"provider.id == 'openai'","timeouts":{"outputIdleSeconds":60}}}}`
+	key := `{"routing":{"retries":1},"rules":{"prefs":{"mode":"default","plugins":{"redaction":{"credit_card_number":true}},"timeouts":{"totalSeconds":60,"outputIdleSeconds":30},"routing":{"retries":2,"sort":[{"by":"provider.id"}]}}}}`
+	inspection, err := InspectSources([]InspectionSource{
+		{Scope: OrganizationScope, Config: json.RawMessage(org)},
+		{Scope: KeyScope, ID: "key", Config: json.RawMessage(key)},
+	}, &InspectionEdit{Scope: KeyScope, ID: "key", Previous: json.RawMessage(key)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	organization := map[string]any{"scope": OrganizationScope}
+	own := map[string]any{"scope": KeyScope, "id": "key"}
+	// Any required plugin setting replaces every default plugin setting, a
+	// condition limits the replacement to the requests it matches, and the
+	// key's own requirement replaces its own default. Nothing requires an
+	// ordering, so the default sort applies.
+	want := []map[string]any{
+		{"setting": "plugins", "policy": organization},
+		{"setting": "routing.retries", "policy": own},
+		{"setting": "timeouts.outputIdleSeconds", "policy": organization, "rule": "openai", "conditional": true},
+		{"setting": "timeouts.totalSeconds", "policy": organization},
+	}
+	rules, _ := inspection.Effective["rules"].([]map[string]any)
+	if len(rules) != 2 || rules[0]["replaced"] != nil || !reflect.DeepEqual(rules[1]["replaced"], want) {
+		t.Fatalf("replaced defaults: %+v", rules)
+	}
+	// The key hears about the organization's requirements, not its own.
+	notes := []InspectionNote{
+		{Kind: "replaced", Scope: OrganizationScope, Sections: []string{"plugins", "timeouts.totalSeconds"}},
+		{Kind: "replaced", Scope: OrganizationScope, Sections: []string{"timeouts.outputIdleSeconds"}, Rules: []string{"openai"}},
+	}
+	if !reflect.DeepEqual(inspection.Notes, notes) {
+		t.Fatalf("notes: %+v", inspection.Notes)
+	}
+
+	// A setting that one policy requires on every request is not repeated for
+	// a rule that requires it on some.
+	org = `{"timeouts":{"outputIdleSeconds":120},"rules":{"openai":{"when":"provider.id == 'openai'","timeouts":{"outputIdleSeconds":60}}}}`
+	inspection, err = InspectSources([]InspectionSource{
+		{Scope: OrganizationScope, Config: json.RawMessage(org)},
+		{Scope: KeyScope, ID: "key", Config: json.RawMessage(key)},
+	}, &InspectionEdit{Scope: KeyScope, ID: "key", Previous: json.RawMessage(key)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	notes = []InspectionNote{{Kind: "replaced", Scope: OrganizationScope, Sections: []string{"timeouts.outputIdleSeconds"}}}
+	if !reflect.DeepEqual(inspection.Notes, notes) {
+		t.Fatalf("notes: %+v", inspection.Notes)
+	}
+
+	// One ordering applies: a required one replaces every default one, and
+	// otherwise the closest default replaces the others. The order note
+	// already tells the edited policy.
+	preferred := `{"rules":{"d":{"mode":"default","routing":{"order":["openai"],"sort":[{"by":"provider.id"}]}}}}`
+	for _, test := range []struct {
+		org      string
+		replaced [2]any
+	}{
+		{`{"routing":{"sort":[{"by":"model.id"}]}}`, [2]any{nil, []map[string]any{
+			{"setting": "routing.order", "policy": organization}, {"setting": "routing.sort", "policy": organization},
+		}}},
+		{preferred, [2]any{[]map[string]any{
+			{"setting": "routing.order", "policy": own, "rule": "d"}, {"setting": "routing.sort", "policy": own, "rule": "d"},
+		}, nil}},
+	} {
+		inspection, err = InspectSources([]InspectionSource{
+			{Scope: OrganizationScope, Config: json.RawMessage(test.org)},
+			{Scope: KeyScope, ID: "key", Config: json.RawMessage(preferred)},
+		}, &InspectionEdit{Scope: KeyScope, ID: "key", Previous: json.RawMessage(preferred)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rules, _ = inspection.Effective["rules"].([]map[string]any)
+		key := rules[len(rules)-1]
+		var org any
+		if len(rules) == 2 {
+			org = rules[0]["replaced"]
+		}
+		if (org == nil) != (test.replaced[0] == nil) || org != nil && !reflect.DeepEqual(org, test.replaced[0]) ||
+			(key["replaced"] == nil) != (test.replaced[1] == nil) || key["replaced"] != nil && !reflect.DeepEqual(key["replaced"], test.replaced[1]) {
+			t.Fatalf("%s: replaced %+v", test.org, rules)
+		}
+		for _, note := range inspection.Notes {
+			if note.Kind == "replaced" {
+				t.Fatalf("%s: ordering note %+v", test.org, note)
+			}
+		}
+	}
+}
+
+func TestInspectionBoundsReplacedDefaults(t *testing.T) {
+	// Each replaced setting names one requirement and counts the others, so
+	// many rules cannot multiply the preview.
+	var org, key strings.Builder
+	org.WriteString(`{"rules":{`)
+	key.WriteString(`{"timeouts":{"totalSeconds":600},"rules":{`)
+	for i := range 300 {
+		if i > 0 {
+			org.WriteString(",")
+			key.WriteString(",")
+		}
+		fmt.Fprintf(&org, `"r%03d":{"when":"model.id == 'm%d'","timeouts":{"outputIdleSeconds":60}}`, i, i)
+		fmt.Fprintf(&key, `"d%03d":{"mode":"default","timeouts":{"outputIdleSeconds":30,"totalSeconds":900}}`, i)
+	}
+	org.WriteString(`},"plugins":{"textExtraction":false}}`)
+	key.WriteString(`}}`)
+	folder := `{"rules":{"strict":{"plugins":{"textExtraction":false}}}}`
+	inspection, err := InspectSources([]InspectionSource{
+		{Scope: OrganizationScope, Config: json.RawMessage(org.String())},
+		{Scope: FolderScope, ID: "folder", Config: json.RawMessage(folder)},
+		{Scope: KeyScope, ID: "key", Config: json.RawMessage(key.String())},
+	}, &InspectionEdit{Scope: KeyScope, ID: "key", Previous: json.RawMessage(key.String())})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules, _ := inspection.Effective["rules"].([]map[string]any)
+	if len(rules) != 601 {
+		t.Fatalf("rules: %d", len(rules))
+	}
+	want := []map[string]any{
+		{"setting": "timeouts.outputIdleSeconds", "policy": map[string]any{"scope": OrganizationScope}, "rule": "r000", "conditional": true, "others": 299},
+		{"setting": "timeouts.totalSeconds", "policy": map[string]any{"scope": KeyScope, "id": "key"}},
+	}
+	for _, rule := range rules {
+		if rule["policy"].(map[string]any)["scope"] == KeyScope && !reflect.DeepEqual(rule["replaced"], want) {
+			t.Fatalf("%s: %+v", rule["name"], rule["replaced"])
+		}
+	}
+	// The key's own requirement replaces its default total wait, so only the
+	// organization's rules are named, at most ten of them.
+	note := inspection.Notes
+	if len(note) != 1 || note[0].RuleCount != 300 || len(note[0].Rules) != maxNoteRules || note[0].Rules[0] != "r000" ||
+		!reflect.DeepEqual(note[0].Sections, []string{"timeouts.outputIdleSeconds"}) {
+		t.Fatalf("notes: %+v", note)
+	}
+
+	// A required rule without a condition replaces a default on every
+	// request, and the first requirement is named with how many others agree.
+	key = strings.Builder{}
+	key.WriteString(`{"rules":{"d":{"mode":"default","plugins":{"textExtraction":true}}}}`)
+	inspection, err = InspectSources([]InspectionSource{
+		{Scope: OrganizationScope, Config: json.RawMessage(`{"plugins":{"textExtraction":false}}`)},
+		{Scope: FolderScope, ID: "folder", Config: json.RawMessage(folder)},
+		{Scope: KeyScope, ID: "key", Config: json.RawMessage(key.String())},
+	}, &InspectionEdit{Scope: KeyScope, ID: "key", Previous: json.RawMessage(key.String())})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules, _ = inspection.Effective["rules"].([]map[string]any)
+	want = []map[string]any{{"setting": "plugins", "policy": map[string]any{"scope": OrganizationScope}, "others": 1}}
+	if !reflect.DeepEqual(rules[len(rules)-1]["replaced"], want) {
+		t.Fatalf("replaced: %+v", rules[len(rules)-1]["replaced"])
+	}
+	notes := []InspectionNote{
+		{Kind: "replaced", Scope: OrganizationScope, Sections: []string{"plugins"}},
+		{Kind: "replaced", Scope: FolderScope, ID: "folder", Sections: []string{"plugins"}},
+	}
+	if !reflect.DeepEqual(inspection.Notes, notes) {
+		t.Fatalf("notes: %+v", inspection.Notes)
+	}
+}
+
+func TestInspectionNamesWhoSetsEachSetting(t *testing.T) {
+	org := `{"routing":{"retries":1,"filter":"provider.id != 'x'","fallbacks":2},"timeouts":{"totalSeconds":900},"input":{"asciiOnly":true}}`
+	key := `{"routing":{"retries":2,"filter":"model.id != 'y'","fallbacks":1},"timeouts":{"totalSeconds":60,"outputIdleSeconds":30}}`
+	inspection, err := InspectSources([]InspectionSource{
+		{Scope: OrganizationScope, Config: json.RawMessage(org)},
+		{Scope: KeyScope, ID: "key", Config: json.RawMessage(key)},
+	}, &InspectionEdit{Scope: KeyScope, ID: "key", Previous: json.RawMessage(key)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	organization := map[string]any{"scope": OrganizationScope}
+	own := map[string]any{"scope": KeyScope, "id": "key"}
+	// The smallest value names the policy that sets it, and filters combine
+	// from both.
+	want := []map[string]any{
+		{"setting": "input", "policy": organization},
+		{"setting": "routing.fallbacks", "policy": own},
+		{"setting": "routing.filter", "policy": organization},
+		{"setting": "routing.filter", "policy": own},
+		{"setting": "routing.retries", "policy": organization},
+		{"setting": "timeouts.outputIdleSeconds", "policy": own},
+		{"setting": "timeouts.totalSeconds", "policy": own},
+	}
+	if !reflect.DeepEqual(inspection.Effective["setBy"], want) {
+		t.Fatalf("setBy: %+v", inspection.Effective["setBy"])
+	}
+}
+
+// The combined view's replaced defaults agree with request activation: a
+// setting marked replaced on every request is replaced whatever the request,
+// one marked conditional only when its rule matches, and an unmarked one
+// never. One ordering applies, and every other default ordering is marked.
+func TestReplacedDefaultsAgreeWithActivation(t *testing.T) {
+	type setting struct{ section, field, value string }
+	pool := []setting{
+		{"input", "asciiOnly", "true"},
+		{"timeouts", "totalSeconds", "600"},
+		{"timeouts", "outputIdleSeconds", "60"},
+		{"routing", "retries", "1"},
+		{"routing", "filter", `"provider.id != 'x'"`},
+		{"routing", "allowedCatalogNodes", `{"providers":["openai"]}`},
+		{"plugins", "textExtraction", "false"},
+		{"plugins", "redaction", `{"email_address":true}`},
+	}
+	const when = "request.interface == 'chat_completions'"
+	scopes := []Scope{OrganizationScope, FolderScope, GrantScope, KeyScope}
+	rng := rand.New(rand.NewPCG(7, 11))
+	// How often each case was checked, so the generator keeps reaching them.
+	seen := map[string]int{}
+	settings := func(count int) map[string]map[string]json.RawMessage {
+		out := map[string]map[string]json.RawMessage{}
+		for range count {
+			s := pool[rng.IntN(len(pool))]
+			if out[s.section] == nil {
+				out[s.section] = map[string]json.RawMessage{}
+			}
+			out[s.section][s.field] = json.RawMessage(s.value)
+		}
+		return out
+	}
+	object := func(parts map[string]map[string]json.RawMessage) map[string]any {
+		out := map[string]any{}
+		for section, fields := range parts {
+			if section == "input" {
+				out[section] = map[string]any{"asciiOnly": true}
+				continue
+			}
+			out[section] = fields
+		}
+		return out
+	}
+	for trial := range 400 {
+		var entries []InspectionSource
+		var sources []ScopedSource
+		for _, scope := range scopes {
+			config := object(settings(rng.IntN(3)))
+			ordered := false
+			if rng.IntN(4) == 0 {
+				routing, _ := config["routing"].(map[string]json.RawMessage)
+				if routing == nil {
+					routing = map[string]json.RawMessage{}
+				}
+				routing["sort"] = json.RawMessage(`[{"by":"provider.id"}]`)
+				config["routing"], ordered = routing, true
+			}
+			rules := map[string]any{}
+			for index := range rng.IntN(4) {
+				rule := object(settings(1 + rng.IntN(2)))
+				switch rng.IntN(3) {
+				case 0:
+					rule["mode"] = "default"
+					if !ordered && rng.IntN(3) == 0 {
+						routing, _ := rule["routing"].(map[string]json.RawMessage)
+						if routing == nil {
+							routing = map[string]json.RawMessage{}
+						}
+						routing["sort"] = json.RawMessage(`[{"by":"model.id"}]`)
+						rule["routing"], ordered = routing, true
+					} else if rng.IntN(2) == 0 {
+						rule["when"] = when
+					}
+				case 1:
+					rule["when"] = when
+				}
+				rules[fmt.Sprintf("r%d", index)] = rule
+			}
+			if len(rules) > 0 {
+				config["rules"] = rules
+			}
+			raw, _ := json.Marshal(config)
+			source, err := CompileSource(raw)
+			if err != nil {
+				t.Fatalf("trial %d %s: %v: %s", trial, scope, err, raw)
+			}
+			id := ""
+			if scope != OrganizationScope {
+				id = string(scope)
+			}
+			entries = append(entries, InspectionSource{Scope: scope, ID: id, Config: raw})
+			sources = append(sources, ScopedSource{Scope: scope, Value: source})
+		}
+		inspection, err := InspectSources(entries, nil)
+		if err != nil {
+			t.Fatalf("trial %d: %v", trial, err)
+		}
+		combined, err := ComposeSources(sources)
+		if err != nil {
+			t.Fatal(err)
+		}
+		active := map[bool]*Config{}
+		for _, matched := range []bool{true, false} {
+			iface := "responses"
+			if matched {
+				iface = "chat_completions"
+			}
+			active[matched], err = combined.Activate(ruleValues{"request.interface": {Type: "string", String: iface}})
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		rules, _ := inspection.Effective["rules"].([]map[string]any)
+		for _, item := range rules {
+			reference := item["policy"].(map[string]any)
+			source := slices.Index(scopes, reference["scope"].(Scope))
+			name := item["name"].(string)
+			fields := map[string]json.RawMessage{}
+			raw, _ := json.Marshal(item["config"])
+			_ = json.Unmarshal(raw, &fields)
+			var mode string
+			_ = json.Unmarshal(fields["mode"], &mode)
+			marked := map[string]map[string]any{}
+			list, _ := item["replaced"].([]map[string]any)
+			for _, entry := range list {
+				marked[entry["setting"].(string)] = entry
+			}
+			if mode != "default" {
+				if len(list) > 0 {
+					t.Fatalf("trial %d: required rule %s marked %+v", trial, name, list)
+				}
+				continue
+			}
+			for _, setting := range ruleSettings(fields) {
+				entry := marked[setting]
+				kind := settingsMask(permissionSections[setting])
+				for _, matched := range []bool{true, false} {
+					var replaced bool
+					if kind&orderingPermissions != 0 {
+						origin, ok := active[matched].OrderOrigin()
+						replaced = !ok || origin.Source != source || origin.Rule != name
+					} else {
+						replaced = kind&active[matched].requiredSettings != 0
+					}
+					want := entry != nil && (entry["conditional"] == nil || matched)
+					switch {
+					case kind&orderingPermissions != 0:
+						seen[fmt.Sprintf("ordering %v", want)]++
+					case entry == nil:
+						seen["kept"]++
+					case entry["conditional"] != nil:
+						seen["conditional"]++
+					default:
+						seen["always"]++
+					}
+					if replaced != want {
+						t.Fatalf("trial %d: %s rule %s %s matched=%v: replaced %v, marked %+v\n%s", trial, reference["scope"], name, setting, matched, replaced, entry, entries)
+					}
+				}
+			}
+		}
+	}
+	for _, name := range []string{"kept", "always", "conditional", "ordering true", "ordering false"} {
+		if seen[name] < 20 {
+			t.Fatalf("checked %s %d times: %v", name, seen[name], seen)
+		}
+	}
+	t.Logf("checked %v", seen)
 }
