@@ -64,6 +64,7 @@ func TestOnlyDatabaseRefusalsHoldBack(t *testing.T) {
 	for _, code := range []string{
 		"insufficient_balance", "key_rate_limited", "organization_spend_limit", "member_token_limit",
 		"key_concurrency_limit", "key_disabled", "byok_unavailable", "dashboard_key_denied",
+		"organization_restricted",
 	} {
 		s := &Service{}
 		s.RecordRefusal(claims, nil, code)

@@ -77,6 +77,7 @@ func TestPublicBillingErrorTypes(t *testing.T) {
 		{"insufficient balance", billing.ErrInsufficientBalance, 402, "billing_error", "insufficient_balance"},
 		{"spend limit", billing.ErrAPIKeySpendLimit, 402, "billing_error", "key_spend_limit"},
 		{"key disabled", billing.ErrAPIKeyDisabled, 403, "permission_denied", "key_disabled"},
+		{"organization restricted", billing.ErrOrganizationRestricted, 403, "permission_denied", "organization_restricted"},
 		{"rate limit", billing.ErrAPIKeyRateLimit, 429, "rate_limit_error", "key_rate_limited"},
 		{"gateway unavailable", billing.ErrGatewayUnavailable, 503, "gateway_error", "gateway_unavailable"},
 		{"missing encryption key", customerkey.ErrKey, 400, "invalid_request_error", "encryption_key_required"},
