@@ -4,21 +4,21 @@ import (
 	"bytes"
 	"encoding/json"
 	"runtime"
+	"strconv"
 
 	"github.com/maximhq/bifrost/transports/stogas/customerkey"
 	"github.com/maximhq/bifrost/transports/stogas/policy"
 )
 
 type sharedPolicySource struct {
-	cacheKey     string
-	raw          json.RawMessage
-	value        *policy.Source
-	pluginDigest [32]byte
-	plan         *sharedRedactionPlan
-	rulePlans    []*sharedRedactionPlan
-	bytes        int64
-	refs         int
-	owners       map[policySourceOwner]struct{}
+	cacheKey  string
+	raw       json.RawMessage
+	value     *policy.Source
+	plan      *sharedRedactionPlan
+	rulePlans []*sharedRedactionPlan
+	bytes     int64
+	refs      int
+	owners    map[policySourceOwner]struct{}
 }
 
 type policySourceOwner struct {
@@ -137,7 +137,7 @@ func (c *keyConfigCache) acquireSourceDelta(records []policySourceRecord, organi
 				c.releaseSources(result)
 				return nil, ErrGatewayUnavailable
 			}
-			if required := source.value.RequiredEncryptionKeyID; required != "" && !key.Matches(required) {
+			if !matchesEvery(key, source.value.RequiredEncryptionKeyIDs) {
 				c.releaseSources(result)
 				return nil, customerkey.ErrKey
 			}
@@ -187,7 +187,7 @@ func (c *keyConfigCache) acquireSource(raw []byte, organizationID string, key cu
 func (c *keyConfigCache) acquireSourceDocument(document *policy.SourceDocument, raw []byte, organizationID string, key customerkey.Keys, routing bool) (*sharedPolicySource, error) {
 	cacheKey := document.Digest()
 	if document.Encrypted() {
-		if !routing && !key.Matches(document.EncryptionKeyID()) {
+		if !routing && !matchesEvery(key, document.EncryptionKeyIDs()) {
 			return nil, customerkey.ErrKey
 		}
 		cacheKey = organizationID + ":" + cacheKey
@@ -195,13 +195,44 @@ func (c *keyConfigCache) acquireSourceDocument(document *policy.SourceDocument, 
 			cacheKey = "routing:" + cacheKey
 		}
 	}
+	return c.acquireCompiled(cacheKey, document, raw, key, func() (*policy.Source, error) {
+		if routing {
+			return document.RoutingSource()
+		}
+		return document.Open(organizationID, key)
+	})
+}
+
+// acquireEncryptedPlugins opens the encrypted plugins of one policy or rule
+// that a request applies, and only those.
+func (c *keyConfigCache) acquireEncryptedPlugins(encrypted policy.EncryptedPlugins, organizationID string, key customerkey.Keys) (*sharedPolicySource, error) {
+	if !matchesEvery(key, encrypted.EncryptionKeyIDs()) {
+		return nil, customerkey.ErrKey
+	}
+	cacheKey := "plugins:" + strconv.FormatUint(uint64(encrypted.Units), 10) + ":" + organizationID + ":" + encrypted.Document.Digest()
+	return c.acquireCompiled(cacheKey, encrypted.Document, nil, key, func() (*policy.Source, error) {
+		return encrypted.Document.OpenPlugins(organizationID, key, encrypted.Units)
+	})
+}
+
+// matchesEvery reports whether the request sent each root.
+func matchesEvery(key customerkey.Keys, ids []string) bool {
+	for _, id := range ids {
+		if !key.Matches(id) {
+			return false
+		}
+	}
+	return true
+}
+
+func (c *keyConfigCache) acquireCompiled(cacheKey string, document *policy.SourceDocument, raw []byte, key customerkey.Keys, build func() (*policy.Source, error)) (*sharedPolicySource, error) {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
 		return nil, ErrGatewayUnavailable
 	}
 	if source := c.sources[cacheKey]; source != nil {
-		if id := source.value.RequiredEncryptionKeyID; id != "" && !key.Matches(id) {
+		if !matchesEvery(key, source.value.RequiredEncryptionKeyIDs) {
 			c.mu.Unlock()
 			return nil, customerkey.ErrKey
 		}
@@ -214,7 +245,7 @@ func (c *keyConfigCache) acquireSourceDocument(document *policy.SourceDocument, 
 		c.mu.Lock()
 		if source := c.sources[cacheKey]; source != nil {
 			c.mu.Unlock()
-			if id := source.value.RequiredEncryptionKeyID; id != "" && !key.Matches(id) {
+			if !matchesEvery(key, source.value.RequiredEncryptionKeyIDs) {
 				return nil, customerkey.ErrKey
 			}
 			return source.value, nil
@@ -227,10 +258,7 @@ func (c *keyConfigCache) acquireSourceDocument(document *policy.SourceDocument, 
 		c.sourceBuilds++
 		c.mu.Unlock()
 		defer func() { c.mu.Lock(); c.sourceBuilds--; c.mu.Unlock() }()
-		if routing {
-			return document.RoutingSource()
-		}
-		return document.Open(organizationID, key)
+		return build()
 	})
 	if err != nil {
 		return nil, err
@@ -250,7 +278,7 @@ func (c *keyConfigCache) acquireSourceDocument(document *policy.SourceDocument, 
 		if raw == nil {
 			raw = document.CanonicalJSON()
 		}
-		source = &sharedPolicySource{cacheKey: cacheKey, raw: bytes.Clone(raw), value: &compiled, pluginDigest: redactionPlanDigest(compiled.Config)}
+		source = &sharedPolicySource{cacheKey: cacheKey, raw: bytes.Clone(raw), value: &compiled}
 		// Intern plugin sections before publishing the immutable source. A
 		// limits-only revision must not keep a second identical PII dictionary.
 		source.plan = c.internSourcePluginsLocked(compiled.Config)
@@ -322,8 +350,10 @@ func (c *keyConfigCache) composeSources(sources []policy.ScopedSource, digest st
 	return policy.ComposeSources(sources)
 }
 
+// internSourcePluginsLocked shares one matcher among the sources whose
+// redaction settings are equal, whatever else their plugins set.
 func (c *keyConfigCache) internSourcePluginsLocked(config *policy.Config) *sharedRedactionPlan {
-	if config.Plugins == nil {
+	if config.Plugins == nil || config.Plugins.Redaction == nil {
 		return nil
 	}
 	if c.plans == nil {
@@ -332,12 +362,23 @@ func (c *keyConfigCache) internSourcePluginsLocked(config *policy.Config) *share
 	digest := redactionPlanDigest(config)
 	plan := c.plans[digest]
 	if plan == nil {
-		raw, _ := json.Marshal(config.Plugins)
-		plan = &sharedRedactionPlan{owner: c, digest: digest, config: &policy.Config{Plugins: config.Plugins}, bytes: int64(len(raw))*4 + 256}
+		plugins := &policy.Plugins{Redaction: config.Plugins.Redaction}
+		raw, _ := json.Marshal(plugins)
+		plan = &sharedRedactionPlan{owner: c, digest: digest, config: &policy.Config{Plugins: plugins}, bytes: int64(len(raw))*4 + 256}
 		c.plans[digest] = plan
 		c.bytes += plan.bytes
 	}
 	plan.refs++
-	config.Plugins = plan.config.Plugins
+	// Keep one copy of a dictionary: a limits-only revision drops its own. A
+	// section of redaction alone is the plan's section, so that composition
+	// also counts equal sections of different policies once.
+	shared := plan.config.Plugins
+	if config.Plugins.Export == nil && config.Plugins.TextExtraction == nil {
+		config.Plugins = shared
+	} else if config.Plugins.Redaction != shared.Redaction {
+		plugins := *config.Plugins
+		plugins.Redaction = shared.Redaction
+		config.Plugins = &plugins
+	}
 	return plan
 }

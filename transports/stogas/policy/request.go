@@ -67,8 +67,10 @@ func ApplyRequest(parent *Config, request *Request) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	if source.RequiredEncryptionKeyID != "" && !customerkey.Registered(parent.EncryptionKeys, source.RequiredEncryptionKeyID) {
-		return nil, customerkey.ErrKey
+	for _, id := range source.RequiredEncryptionKeyIDs {
+		if !customerkey.Registered(parent.EncryptionKeys, id) {
+			return nil, customerkey.ErrKey
+		}
 	}
 	if len(parent.sources) == 0 {
 		return nil, configError("request policies require compiled saved sources")

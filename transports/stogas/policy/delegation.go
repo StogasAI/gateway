@@ -15,7 +15,7 @@ const (
 	permissionAccess Permission = 1 << iota
 	permissionInput
 	permissionLimits
-	permissionPlugins
+	permissionRedaction
 	permissionEncryptedPlugins
 	permissionFilter
 	permissionSort
@@ -39,10 +39,10 @@ var permissionSections = map[string]Permission{
 	"timeouts":                   permissionTotalTimeout | permissionOutputIdleTimeout,
 	"timeouts.totalSeconds":      permissionTotalTimeout,
 	"timeouts.outputIdleSeconds": permissionOutputIdleTimeout,
-	"plugins":                    permissionPlugins | permissionEncryptedPlugins | permissionTextExtraction | permissionExport,
+	"plugins":                    permissionRedaction | permissionEncryptedPlugins | permissionTextExtraction | permissionExport,
 	"plugins.export":             permissionExport,
 	"plugins.textExtraction":     permissionTextExtraction,
-	"plugins.redaction":          permissionPlugins, "plugins.encrypted": permissionEncryptedPlugins,
+	"plugins.redaction":          permissionRedaction, "plugins.encrypted": permissionEncryptedPlugins,
 	"routing":        permissionFilter | permissionSort | permissionNodes | permissionRetries | permissionFallbacks | permissionOrder | permissionMissingKeys,
 	"routing.filter": permissionFilter, "routing.sort": permissionSort,
 	"routing.allowedCatalogNodes": permissionNodes, "routing.retries": permissionRetries,
@@ -225,14 +225,16 @@ func (d *SourceDocument) ownSections() Permission {
 func (d *SourceDocument) eachSection(visit func(name string, value json.RawMessage, section Permission)) {
 	for name, raw := range d.fields {
 		switch {
-		case name == "plugins" && d.Encrypted():
-			// Ciphertext can hold any plugin setting, so it needs every plugin permission.
-			visit(name, raw, pluginPermissions)
 		case name == "routing" || name == "plugins" || name == "timeouts":
 			var settings map[string]json.RawMessage
 			if json.Unmarshal(raw, &settings) == nil {
 				for option, value := range settings {
-					visit(name+"."+option, value, permissionSections[name+"."+option])
+					section := permissionSections[name+"."+option]
+					// Ciphertext also needs permission to hide a plugin's settings.
+					if name == "plugins" && d.EncryptedUnits()&section != 0 {
+						section |= permissionEncryptedPlugins
+					}
+					visit(name+"."+option, value, section)
 				}
 			}
 		default:

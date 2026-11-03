@@ -14,8 +14,8 @@ func TestWebCryptoInteroperabilityAndBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	var fixture struct {
-		Root, OrganizationID, Plaintext string
-		Envelope                        Envelope
+		Root, OrganizationID, Purpose, Plaintext string
+		Envelope                                 Envelope
 	}
 	if err := json.Unmarshal(raw, &fixture); err != nil {
 		t.Fatal(err)
@@ -28,7 +28,10 @@ func TestWebCryptoInteroperabilityAndBinding(t *testing.T) {
 	if !key.Matches(fixture.Envelope.KeyID) {
 		t.Fatal("key identifier differs from Web Crypto")
 	}
-	opened, err := key.Open(fixture.Envelope, fixture.OrganizationID, "plugins", 256<<10)
+	if fixture.Purpose != "plugins/redaction" {
+		t.Fatalf("fixture purpose = %q", fixture.Purpose)
+	}
+	opened, err := key.Open(fixture.Envelope, fixture.OrganizationID, fixture.Purpose, 256<<10)
 	if err != nil || string(opened) != fixture.Plaintext {
 		t.Fatalf("Web Crypto decryption failed: %v", err)
 	}
@@ -44,21 +47,26 @@ func TestWebCryptoInteroperabilityAndBinding(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			e := fixture.Envelope
 			change(&e)
-			if _, err := key.Open(e, fixture.OrganizationID, "plugins", 256<<10); err == nil {
+			if _, err := key.Open(e, fixture.OrganizationID, fixture.Purpose, 256<<10); err == nil {
 				t.Fatal("tampered envelope opened")
 			}
 		})
 	}
-	for _, scope := range [][2]string{{"another-org", "plugins"}, {fixture.OrganizationID, "byok/openai"}, {"", "plugins"}} {
+	// Ciphertext moved to another organization, plugin or credential, or to
+	// the former whole-section purpose, does not open.
+	for _, scope := range [][2]string{
+		{"another-org", fixture.Purpose}, {"", fixture.Purpose}, {fixture.OrganizationID, "plugins/export"},
+		{fixture.OrganizationID, "plugins"}, {fixture.OrganizationID, "byok/openai"},
+	} {
 		if _, err := key.Open(fixture.Envelope, scope[0], scope[1], 256<<10); err == nil {
 			t.Fatal("scope substitution opened ciphertext")
 		}
 	}
-	if _, err := key.Open(fixture.Envelope, fixture.OrganizationID, "plugins", len(fixture.Plaintext)-1); err == nil {
+	if _, err := key.Open(fixture.Envelope, fixture.OrganizationID, fixture.Purpose, len(fixture.Plaintext)-1); err == nil {
 		t.Fatal("plaintext size bound was bypassed")
 	}
 	var absent *Key
-	if _, err := absent.Open(fixture.Envelope, fixture.OrganizationID, "plugins", 256<<10); !errors.Is(err, ErrKey) {
+	if _, err := absent.Open(fixture.Envelope, fixture.OrganizationID, fixture.Purpose, 256<<10); !errors.Is(err, ErrKey) {
 		t.Fatal("missing key was accepted")
 	}
 	key.Clear()

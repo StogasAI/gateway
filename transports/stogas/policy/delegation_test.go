@@ -3,7 +3,6 @@ package policy
 import (
 	"encoding/json"
 	"errors"
-	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -97,27 +96,17 @@ func TestDelegationFollowsResourceOwnershipAndRequestPermissionsIntersect(t *tes
 	}
 }
 
-func TestEncryptedPluginsNeedEveryPluginPermission(t *testing.T) {
-	raw, err := os.ReadFile("../customerkey/testdata/webcrypto.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var fixture struct {
-		Root, OrganizationID string
-		Envelope             customerkey.Envelope
-	}
-	if err := json.Unmarshal(raw, &fixture); err != nil {
-		t.Fatal(err)
-	}
-	key, err := customerkey.Parse(fixture.Root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer key.Clear()
-	plugins := map[string]any{"encrypted": fixture.Envelope}
-	for _, permission := range [][]string{{"plugins.redaction", "plugins.encrypted"}, {"plugins"}} {
-		// The ciphertext can hold an export that the parent did not allow.
-		allowed := len(permission) == 1
+// An encrypted plugin needs permission for that plugin and for encryption,
+// which hides its settings from the parent. Its purpose keeps the ciphertext
+// to that plugin, so no other plugin's permission is needed.
+func TestEncryptedPluginNeedsItsSectionAndEncryption(t *testing.T) {
+	fixture, key := loadWebcryptoFixture(t)
+	plugins := map[string]any{"redaction": map[string]any{"encrypted": fixture.Envelope}}
+	for permission, allowed := range map[string]bool{
+		"plugins": true, "plugins.redaction plugins.encrypted": true,
+		"plugins.redaction": false, "plugins.export plugins.encrypted": false, "plugins.encrypted": false,
+	} {
+		permission := strings.Fields(permission)
 		parent, _ := json.Marshal(map[string]any{
 			"encryption": map[string]any{"keys": map[string]string{"test": fixture.Envelope.KeyID}},
 			"delegation": map[string]any{"keys": permission, "request": permission},

@@ -156,17 +156,25 @@ func (v *Inspector) Add(entry InspectionSource) error {
 			}
 		}
 		if v.omitCiphertext {
-			if document.Encrypted() {
-				document.encrypted.Blob = ""
+			for i := range document.encrypted {
+				document.encrypted[i].envelope.Blob = ""
 			}
 		}
 		for _, rule := range document.rules {
 			rule.source.canonical, rule.source.fields = nil, nil
 			if rule.source.Encrypted() {
-				// The preview owns the original envelope, unless the host retains it.
-				rule.source.encrypted.Blob = ""
+				// The preview owns the original envelopes, unless the host retains them.
+				for i := range rule.source.encrypted {
+					rule.source.encrypted[i].envelope.Blob = ""
+				}
 				if v.omitCiphertext {
-					rule.fields["plugins"] = json.RawMessage(`{"encrypted":{}}`)
+					var plugins map[string]json.RawMessage
+					if json.Unmarshal(rule.fields["plugins"], &plugins) == nil {
+						for _, plugin := range rule.source.encrypted {
+							plugins[plugin.name] = json.RawMessage(`{"encrypted":{}}`)
+						}
+						rule.fields["plugins"] = canonicalObject(plugins)
+					}
 				}
 			}
 		}
@@ -279,11 +287,11 @@ func (v *Inspector) Finish() (*Inspection, error) {
 		if settings&permissionMissingKeys != 0 {
 			routing["missingEncryptionKeys"] = compiled.Routing.MissingEncryptionKeys
 		}
-		if document.Encrypted() {
-			if !customerkey.Registered(compiled.EncryptionKeys, document.encrypted.KeyID) {
+		for _, plugin := range document.encrypted {
+			if !customerkey.Registered(compiled.EncryptionKeys, plugin.envelope.KeyID) {
 				return nil, configError("register the plugin encryption key identifier in the organization policy")
 			}
-			opaque = append(opaque, map[string]any{"policy": inspectionReference(entry), "encrypted": document.encrypted})
+			opaque = append(opaque, map[string]any{"policy": inspectionReference(entry), "plugin": plugin.name, "encrypted": plugin.envelope})
 		}
 	}
 	if len(routing) > 0 {
@@ -446,8 +454,18 @@ func inspectionSetBy(entries []InspectionSource, sources []ScopedSource, compile
 	if compiled.Input != nil {
 		add("input", permissionInput, false, func(c *Config) bool { return c.Input != nil && c.Input.ASCIIOnly })
 	}
-	if len(compiled.PluginSources) > 0 {
-		add("plugins", pluginPermissions, true, always)
+	// Each plugin names the policies whose settings for it combine. A required
+	// plugin replaces the defaults of that plugin alone.
+	for _, plugin := range []struct {
+		setting string
+		unit    Permission
+	}{{"plugins.export", permissionExport}, {"plugins.redaction", permissionRedaction}, {"plugins.textExtraction", permissionTextExtraction}} {
+		for _, part := range compiled.PluginSources {
+			if part.units()&plugin.unit != 0 {
+				add(plugin.setting, plugin.unit, true, always)
+				break
+			}
+		}
 	}
 	if compiled.Routing.AllowedCatalogNodes != nil {
 		add("routing.allowedCatalogNodes", permissionNodes, true, func(c *Config) bool { return c.Routing.AllowedCatalogNodes != nil })
@@ -577,15 +595,15 @@ func replacedDefaults(documents []*SourceDocument, sources []ScopedSource, requi
 	return out
 }
 
-// ruleSettings names a rule's settings as its fields hold them, sorted. A
-// plugin setting stands for every plugin setting, because one kind holds them.
+// ruleSettings names a rule's settings as its fields hold them, sorted. Each
+// plugin is its own setting, encrypted or not.
 func ruleSettings(fields map[string]json.RawMessage) []string {
 	var settings []string
 	for name, raw := range fields {
 		switch name {
-		case "access", "input", "plugins":
+		case "access", "input":
 			settings = append(settings, name)
-		case "routing", "timeouts":
+		case "plugins", "routing", "timeouts":
 			var options map[string]json.RawMessage
 			if json.Unmarshal(raw, &options) == nil {
 				for option := range options {

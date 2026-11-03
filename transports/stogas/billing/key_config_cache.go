@@ -248,26 +248,19 @@ func (c *keyConfigCache) retainPolicyLocked(snapshot *PolicySnapshot) {
 			sections = []*policy.Plugins{snapshot.Config.Plugins}
 		}
 		for _, plugins := range sections {
-			config := &policy.Config{Plugins: plugins}
-			var digest [32]byte
-			found := false
-			for _, source := range snapshot.sourceRefs {
-				if source != nil && source.value.Config.Plugins == plugins {
-					digest = source.pluginDigest
-					found = true
-					break
-				}
+			// Export and text extraction compile to no matcher.
+			if plugins == nil || plugins.Redaction == nil {
+				continue
 			}
-			if !found {
-				digest = redactionPlanDigest(config)
-			}
+			config := &policy.Config{Plugins: &policy.Plugins{Redaction: plugins.Redaction}}
+			digest := redactionPlanDigest(config)
 			plan := c.plans[digest]
 			if plan == nil {
 				// Retain only plugin configuration, not an otherwise unreferenced
 				// policy's routing/access/limit trees.
 				weight := int64(256)
 				if len(snapshot.sourceRefs) == 0 {
-					raw, _ := json.Marshal(plugins)
+					raw, _ := json.Marshal(config.Plugins)
 					weight += int64(len(raw)) * 4
 				}
 				plan = &sharedRedactionPlan{owner: c, digest: digest, config: config, bytes: weight}

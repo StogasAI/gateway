@@ -3,6 +3,13 @@ import { WASI, File, OpenFile, ConsoleStdout } from '@bjorn3/browser_wasi_shim';
 const encoder = new TextEncoder();
 const decoder = new TextDecoder('utf-8', { fatal: true });
 
+// The plugins a customer key can encrypt, in the order inspection reports them.
+const encryptablePlugins = ['export', 'redaction'];
+const encryptedPlugins = (plugins) =>
+	encryptablePlugins.flatMap((name) =>
+		plugins?.[name]?.encrypted ? [{ name, envelope: plugins[name].encrypted }] : []
+	);
+
 // Initialization is explicit so hosts can create the compiler inside their
 // request context. The WASI instance has no files, environment or network.
 export function createPolicyCompiler(module) {
@@ -58,18 +65,24 @@ export function createPolicyCompiler(module) {
 						const original = originals[index];
 						if (rule.name !== original.name)
 							throw new Error('Policy inspection returned invalid rule references');
-						if (original.config.plugins?.encrypted)
-							rule.config.plugins.encrypted = { ...original.config.plugins.encrypted };
+						for (const { name, envelope } of encryptedPlugins(original.config.plugins)) {
+							const plugin = rule.config?.plugins?.[name];
+							if (!plugin || !Object.hasOwn(plugin, 'encrypted'))
+								throw new Error('Policy inspection returned invalid rule references');
+							plugin.encrypted = { ...envelope };
+						}
 					}
 				}
 				const opaque = result.effective?.uncheckedPlugins;
 				if (opaque) {
-					const envelopes = sources.flatMap((source) =>
-						source.config.plugins?.encrypted ? [source.config.plugins.encrypted] : []
-					);
+					const envelopes = sources.flatMap((source) => encryptedPlugins(source.config.plugins));
 					if (opaque.length !== envelopes.length)
 						throw new Error('Policy inspection returned invalid opaque references');
-					for (const [index, item] of opaque.entries()) item.encrypted = { ...envelopes[index] };
+					for (const [index, item] of opaque.entries()) {
+						if (item.plugin !== envelopes[index].name)
+							throw new Error('Policy inspection returned invalid opaque references');
+						item.encrypted = { ...envelopes[index].envelope };
+					}
 				}
 				return result;
 			} finally {

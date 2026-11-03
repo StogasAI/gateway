@@ -19,13 +19,13 @@ test('the JavaScript binding preserves Unicode and recovers after a rejected doc
 	assert.deepEqual(inspectPolicy({ source }), first);
 });
 
-test('opaque sections survive the memory bridge in their original order', () => {
-	const envelope = (byte) => ({
+test('opaque plugins survive the memory bridge in their original order', () => {
+	const envelope = (byte, length = 200_000) => ({
 		version: 1,
 		keyId: 'a'.repeat(64),
 		salt: Buffer.alloc(32, byte).toString('base64url'),
 		nonce: Buffer.alloc(12).toString('base64url'),
-		blob: Buffer.alloc(200_000, byte).toString('base64url')
+		blob: Buffer.alloc(length, byte).toString('base64url')
 	});
 	const sources = [
 		{
@@ -36,7 +36,11 @@ test('opaque sections survive the memory bridge in their original order', () => 
 			scope: 'role',
 			config: {
 				routing: { filter: `model.id != 'blocked-${index}'` },
-				plugins: { encrypted: envelope(byte) }
+				// Inspection reports a policy's export before its redaction.
+				plugins: {
+					redaction: { encrypted: envelope(byte) },
+					...(index === 1 && { textExtraction: true, export: { encrypted: envelope(4, 1000) } })
+				}
 			}
 		})),
 		{ scope: 'key', config: {} }
@@ -45,11 +49,17 @@ test('opaque sections survive the memory bridge in their original order', () => 
 		const result = inspectPolicy({ sources });
 		assert.ok(!result.error);
 		assert.deepEqual(
-			result.effective.uncheckedPlugins.map((item) => item.encrypted),
-			[envelope(1), envelope(2), envelope(1)]
+			result.effective.uncheckedPlugins.map((item) => [item.plugin, item.encrypted]),
+			[
+				['redaction', envelope(1)],
+				['export', envelope(4, 1000)],
+				['redaction', envelope(2)],
+				['redaction', envelope(1)]
+			]
 		);
+		assert.equal(result.effective.plugins.textExtraction, true);
 		result.effective.uncheckedPlugins[0].encrypted.blob = 'changed';
-		assert.equal(sources[1].config.plugins.encrypted.blob, envelope(1).blob);
+		assert.equal(sources[1].config.plugins.redaction.encrypted.blob, envelope(1).blob);
 	}
 });
 
@@ -90,7 +100,10 @@ test('conditional opaque rules preserve their source identity without retaining 
 			id: String(byte),
 			config: {
 				rules: {
-					z_opaque: { when: "provider.id == 'openai'", plugins: { encrypted: envelope(byte) } },
+					z_opaque: {
+						when: "provider.id == 'openai'",
+						plugins: { textExtraction: true, redaction: { encrypted: envelope(byte) } }
+					},
 					a_plain: { input: { asciiOnly: true } }
 				}
 			}
@@ -111,14 +124,14 @@ test('conditional opaque rules preserve their source identity without retaining 
 	assert.deepEqual(
 		first.effective.rules
 			.filter((rule) => rule.name === 'z_opaque')
-			.map((rule) => rule.config.plugins.encrypted),
-		[envelope(1), envelope(2)]
+			.map((rule) => rule.config.plugins),
+		[1, 2].map((byte) => ({ textExtraction: true, redaction: { encrypted: envelope(byte) } }))
 	);
-	first.effective.rules[1].config.plugins.encrypted.blob = 'changed';
-	assert.equal(sources[1].config.rules.z_opaque.plugins.encrypted.blob, envelope(1).blob);
+	first.effective.rules[1].config.plugins.redaction.encrypted.blob = 'changed';
+	assert.equal(sources[1].config.rules.z_opaque.plugins.redaction.encrypted.blob, envelope(1).blob);
 	assert.equal(inspectPolicy({ sources }).digest, first.digest);
 	const changed = structuredClone(sources);
-	changed[1].config.rules.z_opaque.plugins.encrypted.blob = envelope(3).blob;
+	changed[1].config.rules.z_opaque.plugins.redaction.encrypted.blob = envelope(3).blob;
 	assert.notEqual(inspectPolicy({ sources: changed }).digest, first.digest);
 });
 

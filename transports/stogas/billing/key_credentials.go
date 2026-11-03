@@ -271,8 +271,8 @@ func (s *KeyConfigSnapshot) RequiredRoots(provider string, index int, config *po
 	}
 	if config != nil {
 		ids = append(ids, config.RequiredEncryptionKeys...)
-		for _, document := range config.ActiveEncryptedPlugins {
-			ids = append(ids, document.EncryptionKeyID())
+		for _, encrypted := range config.ActiveEncryptedPlugins {
+			ids = append(ids, encrypted.EncryptionKeyIDs()...)
 		}
 	}
 	return ids

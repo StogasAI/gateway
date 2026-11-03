@@ -167,19 +167,9 @@ func applyRequestJSON(parent *Config, raw []byte) (*Config, error) {
 // not make the gateway decrypt them: the denial comes first, whatever root
 // the request sent.
 func TestEncryptedRequestPolicyIsDecryptedOnlyAfterPermission(t *testing.T) {
-	raw, err := os.ReadFile("../customerkey/testdata/webcrypto.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var fixture struct {
-		Root, OrganizationID string
-		Envelope             customerkey.Envelope
-	}
-	if err := json.Unmarshal(raw, &fixture); err != nil {
-		t.Fatal(err)
-	}
-	config, _ := json.Marshal(map[string]any{"plugins": map[string]any{"encrypted": fixture.Envelope}})
-	for name, permission := range map[string][]string{"denied": {"routing.filter"}, "permitted": {"plugins"}} {
+	fixture, _ := loadWebcryptoFixture(t)
+	config, _ := json.Marshal(map[string]any{"plugins": map[string]any{"redaction": map[string]any{"encrypted": fixture.Envelope}}})
+	for name, permission := range map[string][]string{"denied": {"routing.filter"}, "permitted": {"plugins.redaction", "plugins.encrypted"}} {
 		t.Run(name, func(t *testing.T) {
 			parent, _ := json.Marshal(map[string]any{
 				"encryption": map[string]any{"keys": map[string]string{"test": fixture.Envelope.KeyID}},
@@ -207,4 +197,54 @@ func TestEncryptedRequestPolicyIsDecryptedOnlyAfterPermission(t *testing.T) {
 			}
 		})
 	}
+}
+
+// An encrypted request policy's readable settings hide nothing, so their
+// errors keep their detail once the policy is opened.
+func TestEncryptedRequestPolicyReportsReadableErrors(t *testing.T) {
+	fixture, key := loadWebcryptoFixture(t)
+	parent, _ := json.Marshal(map[string]any{
+		"encryption": map[string]any{"keys": map[string]string{"test": fixture.Envelope.KeyID}},
+		"delegation": map[string]any{"request": []string{"routing.retries", "plugins.redaction", "plugins.encrypted"}},
+	})
+	base, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: ruleSource(t, string(parent))}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for retries, want := range map[int]string{1: "", 9: "routing.retries must be an integer from 0 to 3"} {
+		config, _ := json.Marshal(map[string]any{
+			"routing": map[string]any{"retries": retries},
+			"plugins": map[string]any{"redaction": map[string]any{"encrypted": fixture.Envelope}},
+		})
+		request, err := CompileRequest(config, fixture.OrganizationID, customerkey.Keys{"test": key})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = ApplyRequest(base, request)
+		if want == "" && err != nil || want != "" && (err == nil || !strings.Contains(err.Error(), want)) {
+			t.Fatalf("retries %d: ApplyRequest() = %v, want %q", retries, err, want)
+		}
+	}
+}
+
+// loadWebcryptoFixture reads the shared redaction envelope and parses the
+// root that opens it.
+func loadWebcryptoFixture(t *testing.T) (fixture struct {
+	Root, OrganizationID string
+	Envelope             customerkey.Envelope
+}, key *customerkey.Key) {
+	t.Helper()
+	raw, err := os.ReadFile("../customerkey/testdata/webcrypto.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	key, err = customerkey.Parse(fixture.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(key.Clear)
+	return fixture, key
 }

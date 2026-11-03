@@ -113,8 +113,8 @@ func TestParseByokCheckGrant(t *testing.T) {
 	})
 }
 
-// sealByokTestSecret seals plaintext as stogas encrypt does.
-func sealByokTestSecret(t *testing.T, root []byte, keyID, organizationID, purpose, plaintext string) string {
+// sealTestEnvelope seals plaintext as stogas encrypt does.
+func sealTestEnvelope(t testing.TB, root []byte, keyID, organizationID, purpose, plaintext string) string {
 	t.Helper()
 	salt, nonce := make([]byte, 32), make([]byte, 12)
 	salt[0], nonce[0] = 1, 2
@@ -168,7 +168,7 @@ func TestByokCheckTargetOpensAsRequestsDo(t *testing.T) {
 			Provider: "openai", EncryptedSecret: sealed, EncryptionKeyID: keyID, Registered: registered,
 		}
 	}
-	sealed := sealByokTestSecret(t, root, keyID, organizationID, "byok/openai", "sk-test-secret")
+	sealed := sealTestEnvelope(t, root, keyID, organizationID, "byok/openai", "sk-test-secret")
 	both := map[string]string{"prod": keyID, "old": otherID}
 
 	secret, err := target(both, sealed).Open(keys(t, map[string]string{"prod": encodedRoot}))
@@ -193,8 +193,8 @@ func TestByokCheckTargetOpensAsRequestsDo(t *testing.T) {
 	}
 	// The envelope binds the organization and the provider.
 	for name, wrong := range map[string]string{
-		"another organization": sealByokTestSecret(t, root, keyID, mustUUIDV7(t), "byok/openai", "sk-test-secret"),
-		"another provider":     sealByokTestSecret(t, root, keyID, organizationID, "byok/anthropic", "sk-test-secret"),
+		"another organization": sealTestEnvelope(t, root, keyID, mustUUIDV7(t), "byok/openai", "sk-test-secret"),
+		"another provider":     sealTestEnvelope(t, root, keyID, organizationID, "byok/anthropic", "sk-test-secret"),
 		"not an envelope":      `{"version":1}`,
 	} {
 		if _, err := target(both, wrong).Open(keys(t, map[string]string{"prod": encodedRoot})); !errors.Is(err, customerkey.ErrEnvelope) {

@@ -15,7 +15,7 @@ func TestTextExtractionRequirementsAndDefaults(t *testing.T) {
 		{"required", []string{`{"plugins":{"textExtraction":true}}`, `{"plugins":{"textExtraction":false}}`}, true},
 		{"default", []string{`{"rules":{"extract":{"mode":"default","plugins":{"textExtraction":true}}}}`}, true},
 		{"explicit neutral", []string{`{"rules":{"extract":{"mode":"default","plugins":{"textExtraction":true}}}}`, `{"plugins":{"textExtraction":false}}`}, false},
-		{"shared plugin default unit", []string{`{"rules":{"extract":{"mode":"default","plugins":{"textExtraction":true}}}}`, `{"plugins":{"redaction":{}}}`}, false},
+		{"another plugin's requirement", []string{`{"rules":{"extract":{"mode":"default","plugins":{"textExtraction":true}}}}`, `{"plugins":{"redaction":{}}}`}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sources := []ScopedSource{{Scope: OrganizationScope, Value: ruleSource(t, `{}`)}}

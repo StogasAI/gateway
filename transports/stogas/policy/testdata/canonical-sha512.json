@@ -31,10 +31,10 @@
       "sha512": "6467a03d0e46939eaa5d546be6a646cff99756245850c2cfb0d67f2b323818e4405d30997eb867f0a018be6e8d0b9c67ed8628b3b6efab87d662ac6c29efbcbb"
     },
     {
-      "name": "Encrypted plugins hash as stored, without decryption",
-      "json": "{\"routing\":{\"filter\":\"true\"},\"plugins\":{\"encrypted\":{\"version\":1,\"keyId\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"salt\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"nonce\":\"AAAAAAAAAAAAAAAA\",\"blob\":\"AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA\"}}}",
-      "canonical": "{\"plugins\":{\"encrypted\":{\"blob\":\"AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA\",\"keyId\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"nonce\":\"AAAAAAAAAAAAAAAA\",\"salt\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"version\":1}},\"routing\":{\"filter\":\"true\"}}",
-      "sha512": "565e1cdaa86ebda6c7514db5dbd5620ac0bbcb8113027354c6528708b4bbfc78d4c785052f72885b6234934e911b38118e3e60e654a0d065b4f4f6bb16f25bef"
+      "name": "An encrypted plugin hashes as stored, without decryption",
+      "json": "{\"routing\":{\"filter\":\"true\"},\"plugins\":{\"redaction\":{\"encrypted\":{\"version\":1,\"keyId\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"salt\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"nonce\":\"AAAAAAAAAAAAAAAA\",\"blob\":\"AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA\"}}}}",
+      "canonical": "{\"plugins\":{\"redaction\":{\"encrypted\":{\"blob\":\"AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA\",\"keyId\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"nonce\":\"AAAAAAAAAAAAAAAA\",\"salt\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"version\":1}}},\"routing\":{\"filter\":\"true\"}}",
+      "sha512": "20226ee9381cf29a2f3ba6bcadd71658f0ddfc938a435fd2fde7ae1d0b526da2f009fae08e540056748d0fb1419db7e726435746fdc4619973f4de8d43260ca8"
     }
   ],
   "invalid": [
