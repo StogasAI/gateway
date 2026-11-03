@@ -8,6 +8,8 @@ import (
 	"math"
 	"sync"
 	"time"
+
+	"github.com/maximhq/bifrost/transports/stogas/retry"
 )
 
 // A boot's key signs every request log row that the gateway sends to analytics, in numbered
@@ -217,7 +219,7 @@ func (s *Service) runLogBatches(ctx context.Context, period time.Duration) {
 	untilNext := func() time.Duration { return time.Until(time.Now().Truncate(period).Add(period)) }
 	tick := time.NewTimer(untilNext())
 	defer tick.Stop()
-	var retry <-chan time.Time
+	var retryAt <-chan time.Time
 	delay := retryInitialDelay
 	for {
 		select {
@@ -227,12 +229,12 @@ func (s *Service) runLogBatches(ctx context.Context, period time.Duration) {
 			b.mu.Unlock()
 			tick.Reset(untilNext())
 		case <-b.wake:
-		case <-retry:
-			retry = nil
+		case <-retryAt:
+			retryAt = nil
 		case <-ctx.Done():
 			return
 		}
-		for retry == nil {
+		for retryAt == nil {
 			b.mu.Lock()
 			if len(b.pending) == 0 {
 				b.mu.Unlock()
@@ -259,7 +261,7 @@ func (s *Service) runLogBatches(ctx context.Context, period time.Duration) {
 					b.pending = b.pending[1:]
 				}
 			} else {
-				retry = time.After(jitteredRetryDelay(delay))
+				retryAt = time.After(retry.Jitter(delay))
 				delay = min(retryMaxDelay, delay*2)
 			}
 			b.mu.Unlock()

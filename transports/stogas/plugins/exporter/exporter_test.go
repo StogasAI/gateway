@@ -550,7 +550,9 @@ func TestHostileReceiverResponsesStayBounded(t *testing.T) {
 			w.Header().Set("X-Large", strings.Repeat("x", 2*responseLimit))
 			w.WriteHeader(http.StatusOK)
 		}},
-		{name: "overflowing Retry-After", attempts: maxAttempts, respond: func(w http.ResponseWriter) {
+		// A wait longer than the delivery's lifetime ends it, as one past the lifetime does,
+		// and never wraps around to retry at once.
+		{name: "overflowing Retry-After", attempts: 1, respond: func(w http.ResponseWriter) {
 			w.Header().Set("Retry-After", "99999999999999999999")
 			w.WriteHeader(http.StatusServiceUnavailable)
 		}},
