@@ -621,3 +621,50 @@ func BenchmarkRedactDensePII(b *testing.B) {
 		}
 	}
 }
+
+func TestRemoteMCPSettingsAndIdentifiersReachTheProviderUnredacted(t *testing.T) {
+	t.Parallel()
+	githubToken := "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890"
+	settings := fmt.Sprintf(`"server_label":"alice@corp.io","server_url":"https://mcp.example.com/alice@corp.io","connector_id":"alice@corp.io",
+		"authorization":%q,"headers":{"X-Api-Key":%q},"allowed_tools":["alice@corp.io"],
+		"require_approval":{"never":{"tool_names":["alice@corp.io"]}},"allowed_callers":["direct"]`, githubToken, githubToken)
+	raw := map[string]json.RawMessage{
+		"tools": json.RawMessage(`[
+			{` + settings + `,"server_description":"Ask desk@corp.io","type":"mcp"},
+			{"type":"function","name":"lookup","description":"Contact tools@corp.io","authorization":"function@corp.io"}
+		]`),
+		"input": json.RawMessage(fmt.Sprintf(`[
+			{"type":"mcp_approval_request","id":"mcpr_1","server_label":"alice@corp.io","name":"ask","arguments":"{\"q\":\"bob@corp.io\"}"},
+			{"type":"mcp_approval_response","approval_request_id":%q,"approve":true,"reason":"carol@corp.io"}
+		]`, githubToken)),
+	}
+	redactor := newTestRedactor()
+	if err := redactor.RedactRequestFields(raw, SurfaceResponses, nil); err != nil {
+		t.Fatal(err)
+	}
+	// The description of each tool, the call's arguments and the approval's reason are prompt
+	// text. A function tool gets no exemption for a key that an MCP tool uses.
+	if redactor.Summary().ItemsRedacted != 5 {
+		t.Fatalf("items_redacted = %d, want 5\ntools=%s\ninput=%s", redactor.Summary().ItemsRedacted, raw["tools"], raw["input"])
+	}
+	tools, input := string(raw["tools"]), string(raw["input"])
+	if !strings.Contains(tools, settings) || strings.Contains(tools, "desk@corp.io") || strings.Contains(tools, "function@corp.io") {
+		t.Fatalf("unexpected tools redaction: %s", tools)
+	}
+	if strings.Count(input, "alice@corp.io") != 1 || strings.Count(input, githubToken) != 1 ||
+		strings.Contains(input, "bob@corp.io") || strings.Contains(input, "carol@corp.io") {
+		t.Fatalf("unexpected input redaction: %s", input)
+	}
+
+	// The settings are not prompt text, so they add nothing to the input that a hold estimates.
+	count := func(tool string) int {
+		counter := newTestRedactor()
+		if err := counter.RedactRequestFields(map[string]json.RawMessage{"tools": json.RawMessage(`[` + tool + `]`)}, SurfaceResponses, nil); err != nil {
+			t.Fatal(err)
+		}
+		return counter.InputTextBytes()
+	}
+	if bare, full := count(`{"type":"mcp","server_description":"Docs"}`), count(`{"type":"mcp",`+settings+`,"server_description":"Docs"}`); bare != full {
+		t.Fatalf("MCP settings counted as input text: %d bytes without them, %d with them", bare, full)
+	}
+}

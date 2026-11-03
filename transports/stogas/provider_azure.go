@@ -88,7 +88,7 @@ func (AzureAdapter) ValidateRawResponsesToolType(state *State, tool map[string]j
 	case schemas.ResponsesToolTypeFunction, schemas.ResponsesToolTypeCustom:
 		return nil
 	case schemas.ResponsesToolTypeMCP:
-		return invalidRequest("Remote MCP tools are not supported because provider execution cannot be bounded or approved per request")
+		return invalidRequest("Remote MCP tools are supported only for OpenAI deployments")
 	case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview, schemas.ResponsesToolTypeWebFetch:
 		return invalidRequest("Hosted tools are not supported because this Azure route has no cataloged tool pricing")
 	default:

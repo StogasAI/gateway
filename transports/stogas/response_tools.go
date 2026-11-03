@@ -255,7 +255,7 @@ func sanitizeProviderResponsesEcho(state *State, response *schemas.BifrostRespon
 	response.TopLogProbs = trusted.TopLogProbs
 	response.TopP = trusted.TopP
 	response.ToolChoice = trusted.ToolChoice
-	response.Tools = trusted.Tools
+	response.Tools = omitResponsesMCPCredentials(trusted.Tools)
 	response.Truncation = trusted.Truncation
 	return nil
 }
@@ -368,6 +368,42 @@ func validateProviderResponsesStreamPayload(state *State, response *schemas.Bifr
 			return ErrProviderResponseMalformed
 		}
 		return nil
+	case schemas.ResponsesStreamResponseTypeMCPListToolsInProgress,
+		schemas.ResponsesStreamResponseTypeMCPListToolsCompleted,
+		schemas.ResponsesStreamResponseTypeMCPListToolsFailed:
+		if !providerResponsesToolTypeAllowed(state, schemas.ResponsesToolTypeMCP) ||
+			!responsesStreamHasItemType(state, response, schemas.ResponsesMessageTypeMCPListTools) ||
+			responsesStreamUnexpectedPayload(response, responsePayloadItemReference) ||
+			validateProviderResponsesMCPEvent(state, response) != nil {
+			return ErrProviderResponseMalformed
+		}
+		return nil
+	case schemas.ResponsesStreamResponseTypeMCPCallInProgress,
+		schemas.ResponsesStreamResponseTypeMCPCallCompleted,
+		schemas.ResponsesStreamResponseTypeMCPCallFailed:
+		if !providerResponsesToolTypeAllowed(state, schemas.ResponsesToolTypeMCP) ||
+			!responsesStreamHasItemType(state, response, schemas.ResponsesMessageTypeMCPCall) ||
+			responsesStreamUnexpectedPayload(response, responsePayloadItemReference) ||
+			validateProviderResponsesMCPEvent(state, response) != nil {
+			return ErrProviderResponseMalformed
+		}
+		return nil
+	case schemas.ResponsesStreamResponseTypeMCPCallArgumentsDelta:
+		if !providerResponsesToolTypeAllowed(state, schemas.ResponsesToolTypeMCP) || response.Delta == nil ||
+			!responsesStreamHasItemType(state, response, schemas.ResponsesMessageTypeMCPCall) ||
+			responsesStreamUnexpectedPayload(response, responsePayloadItemReference|responsePayloadDelta|responsePayloadObfuscation) ||
+			validateProviderResponsesMCPArgumentsEvent(state, response) != nil {
+			return ErrProviderResponseMalformed
+		}
+		return nil
+	case schemas.ResponsesStreamResponseTypeMCPCallArgumentsDone:
+		if !providerResponsesToolTypeAllowed(state, schemas.ResponsesToolTypeMCP) || response.Arguments == nil ||
+			!responsesStreamHasItemType(state, response, schemas.ResponsesMessageTypeMCPCall) ||
+			responsesStreamUnexpectedPayload(response, responsePayloadItemReference|responsePayloadArguments) ||
+			validateProviderResponsesMCPArgumentsEvent(state, response) != nil {
+			return ErrProviderResponseMalformed
+		}
+		return nil
 	case schemas.ResponsesStreamResponseTypeReasoningSummaryPartAdded,
 		schemas.ResponsesStreamResponseTypeReasoningSummaryPartDone:
 		if response.Part == nil || response.SummaryIndex == nil ||
@@ -430,8 +466,7 @@ func validateProviderResponsesOutputItemEvent(state *State, response *schemas.Bi
 	prior, exists := state.responsesItems[index]
 	if response.Type == schemas.ResponsesStreamResponseTypeOutputItemAdded {
 		if exists || index != len(state.responsesItems) || providerResponsesInitialToolValue(response.Item) != "" ||
-			(response.Item.Status == nil && item.itemType != schemas.ResponsesMessageTypeReasoning ||
-				response.Item.Status != nil && *response.Item.Status != "in_progress") ||
+			!providerResponsesAddedStatusAllowed(item.itemType, response.Item.Status) ||
 			!providerResponsesInitialPayloadAllowed(response.Item, item.compactionPayload) {
 			return ErrProviderResponseMalformed
 		}
@@ -502,6 +537,20 @@ func providerResponsesToolItemValue(item *schemas.ResponsesMessage) (string, boo
 func validateProviderResponsesTerminalItem(item *schemas.ResponsesMessage) error {
 	if item == nil || item.Type == nil {
 		return ErrProviderResponseMalformed
+	}
+	switch *item.Type {
+	case schemas.ResponsesMessageTypeMCPListTools, schemas.ResponsesMessageTypeMCPApprovalRequest:
+		// OpenAI's listings and approval requests have no status of their own.
+		if item.Status != nil && !stringInSet(*item.Status, "completed", "incomplete", "failed") {
+			return ErrProviderResponseMalformed
+		}
+		return nil
+	case schemas.ResponsesMessageTypeMCPCall:
+		// A call's status is optional, and a failed call carries its error.
+		if item.Status != nil && !stringInSet(*item.Status, "completed", "incomplete", "failed") {
+			return ErrProviderResponseMalformed
+		}
+		return nil
 	}
 	// Reasoning status is optional in OpenAI's Responses wire contract.
 	if *item.Type == schemas.ResponsesMessageTypeReasoning {
@@ -588,7 +637,11 @@ func validateProviderResponsesCompletedStreamItem(streamItem providerResponsesIt
 			return ErrProviderResponseMalformed
 		}
 	}
-	if streamItem.value != nil {
+	if streamItem.itemType == schemas.ResponsesMessageTypeMCPCall {
+		if err := validateProviderResponsesCompletedMCPItem(streamItem, finalItem); err != nil {
+			return err
+		}
+	} else if streamItem.value != nil {
 		value, ok := providerResponsesToolItemValue(finalItem)
 		if !ok || !streamItem.valueDone || value != streamItem.value.String() {
 			return ErrProviderResponseMalformed
@@ -854,7 +907,8 @@ func validateProviderResponsesItem(state *State, item *schemas.ResponsesMessage)
 		parts:          make(map[int]*providerResponsesPart),
 		reasoningParts: make(map[int]*providerResponsesPart),
 	}
-	if item.Status != nil && !stringInSet(*item.Status, "in_progress", "completed", "incomplete", "failed") {
+	if item.Status != nil && !stringInSet(*item.Status, "in_progress", "completed", "incomplete", "failed") &&
+		!(*item.Type == schemas.ResponsesMessageTypeMCPCall && *item.Status == "calling") {
 		return providerResponsesItem{}, ErrProviderResponseMalformed
 	}
 	if item.Role != nil && *item.Role != schemas.ResponsesInputMessageRoleAssistant ||
@@ -922,6 +976,10 @@ func validateProviderResponsesItem(state *State, item *schemas.ResponsesMessage)
 		if err := validateAndRecordProviderResponsesToolCall(state, item, &observed, false); err != nil {
 			return providerResponsesItem{}, err
 		}
+	case schemas.ResponsesMessageTypeMCPListTools, schemas.ResponsesMessageTypeMCPCall, schemas.ResponsesMessageTypeMCPApprovalRequest:
+		if err := validateProviderResponsesMCPItem(state, item, &observed); err != nil {
+			return providerResponsesItem{}, err
+		}
 	default:
 		return providerResponsesItem{}, ErrProviderResponseMalformed
 	}
@@ -972,6 +1030,11 @@ func providerResponsesToolIdentity(item *schemas.ResponsesMessage) (string, stri
 				return "", "", marshalErr
 			}
 			actionPayload = string(encoded)
+		}
+	case schemas.ResponsesMessageTypeMCPListTools, schemas.ResponsesMessageTypeMCPCall, schemas.ResponsesMessageTypeMCPApprovalRequest:
+		// An MCP item keeps the server that it names from start to end.
+		if tool.ServerLabel != nil {
+			actionPayload = "mcp:" + *tool.ServerLabel
 		}
 	}
 	return string(callerPayload), actionPayload, nil
@@ -1324,7 +1387,7 @@ func validateAndRecordProviderResponsesToolCall(state *State, item *schemas.Resp
 		case schemas.ResponsesMessageTypeFunctionCall, schemas.ResponsesMessageTypeCustomToolCall:
 			state.responsesDeclaredCalls++
 			state.responsesClientCalls++
-		case schemas.ResponsesMessageTypeWebSearchCall, schemas.ResponsesMessageTypeWebFetchCall:
+		case schemas.ResponsesMessageTypeWebSearchCall, schemas.ResponsesMessageTypeWebFetchCall, schemas.ResponsesMessageTypeMCPCall:
 			state.responsesDeclaredCalls++
 			state.responsesHostedCalls++
 			if !responsesUsesAnthropicWire(state) && state.responsesHostedCalls > responsesHostedToolCap(state) {
@@ -1792,6 +1855,8 @@ type providerToolSet struct {
 	names map[providerToolName]bool
 	// web holds the enabled hosted web tools in request order.
 	web []providerWebTool
+	// mcp holds the labels of the MCP servers that tool_choice leaves callable.
+	mcp map[string]bool
 }
 
 type providerToolName struct {
@@ -1814,7 +1879,7 @@ func (s *State) providerTools() *providerToolSet {
 }
 
 func readProviderTools(resolution *catalog.ResolvedRequest) *providerToolSet {
-	tools := &providerToolSet{types: map[schemas.ResponsesToolType]bool{}, names: map[providerToolName]bool{}}
+	tools := &providerToolSet{types: map[schemas.ResponsesToolType]bool{}, names: map[providerToolName]bool{}, mcp: map[string]bool{}}
 	if resolution == nil {
 		return tools
 	}
@@ -1850,6 +1915,12 @@ func readProviderTools(resolution *catalog.ResolvedRequest) *providerToolSet {
 					tools.web = append(tools.web, readProviderWebTool(name.kind, tool["filters"]))
 				}
 				continue
+			case schemas.ResponsesToolTypeMCP:
+				label := providerToolName{schemas.ResponsesToolTypeMCP, rawString(tool["server_label"])}
+				if tools.types[label.kind] && (selected == nil || selected[label]) {
+					tools.mcp[label.name] = true
+				}
+				continue
 			}
 		}
 		if selected == nil || selected[name] {
@@ -1872,16 +1943,41 @@ func selectedProviderTools(chat bool, object map[string]json.RawMessage) map[pro
 		var allowed []map[string]json.RawMessage
 		if json.Unmarshal(object["tools"], &allowed) == nil {
 			for _, tool := range allowed {
-				selected[providerToolName{canonicalResponsesToolType(rawString(tool["type"])), rawString(tool["name"])}] = true
+				selected[selectedProviderToolName(tool)] = true
 			}
 		}
 		return selected
 	}
 	kind := canonicalResponsesToolType(rawString(object["type"]))
+	if kind == schemas.ResponsesToolTypeMCP {
+		return map[providerToolName]bool{selectedProviderToolName(object): true}
+	}
 	if kind != schemas.ResponsesToolTypeFunction && kind != schemas.ResponsesToolTypeCustom {
 		return nil
 	}
 	return map[providerToolName]bool{{kind, rawString(object["name"])}: true}
+}
+
+// selectedProviderToolName names a tool that tool_choice selects. An MCP server goes by its label.
+func selectedProviderToolName(selector map[string]json.RawMessage) providerToolName {
+	kind := canonicalResponsesToolType(rawString(selector["type"]))
+	if kind == schemas.ResponsesToolTypeMCP {
+		return providerToolName{kind, rawString(selector["server_label"])}
+	}
+	return providerToolName{kind, rawString(selector["name"])}
+}
+
+// providerResponsesAddedStatusAllowed checks the status of an item as it starts. Reasoning,
+// MCP listings and approval requests can start without one.
+func providerResponsesAddedStatusAllowed(itemType schemas.ResponsesMessageType, status *string) bool {
+	switch itemType {
+	case schemas.ResponsesMessageTypeReasoning, schemas.ResponsesMessageTypeMCPListTools, schemas.ResponsesMessageTypeMCPApprovalRequest:
+		return status == nil || *status == "in_progress"
+	case schemas.ResponsesMessageTypeMCPCall:
+		return status == nil || *status == "in_progress" || *status == "calling"
+	default:
+		return status != nil && *status == "in_progress"
+	}
 }
 
 func providerResponsesToolTypeAllowed(state *State, wanted schemas.ResponsesToolType) bool {

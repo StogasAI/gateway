@@ -83,30 +83,18 @@ func TestValidateToolsRejectsOpenAINativeToolsAndBadShapes(t *testing.T) {
 	}
 }
 
-func TestValidateResponsesRejectsAllRemoteMCPShapes(t *testing.T) {
-	for _, item := range []struct {
-		name string
-		body string
-	}{
-		{
-			name: "remote URL",
-			body: `{"tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","require_approval":"never"}]}`,
-		},
-		{
-			name: "connector",
-			body: `{"tools":[{"type":"mcp","server_label":"calendar","connector_id":"connector_googlecalendar","require_approval":"never"}]}`,
-		},
-		{
-			name: "malformed",
-			body: `{"tools":[{"type":"mcp"}]}`,
-		},
+// The guardrails check each tool's type. The Responses policy checks each MCP server's settings.
+func TestValidateResponsesGuardrailsAcceptRemoteMCP(t *testing.T) {
+	for _, body := range []string{
+		`{"tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","require_approval":"never"}]}`,
+		`{"tools":[{"type":"mcp","server_label":"calendar","connector_id":"connector_googlecalendar","require_approval":"never"}]}`,
 	} {
-		t.Run(item.name, func(t *testing.T) {
-			err := validateOpenAIGuardrails(toolAdapterContext(t, openAIAdapterRouteResponses, item.body))
-			if !errors.Is(err, errOpenAIUnsupportedTool) {
-				t.Fatalf("expected remote MCP rejection, got %v", err)
-			}
-		})
+		if err := validateOpenAIGuardrails(toolAdapterContext(t, openAIAdapterRouteResponses, body)); err != nil {
+			t.Fatalf("guardrails refused %s: %v", body, err)
+		}
+	}
+	if err := validateOpenAIGuardrails(toolAdapterContext(t, openAIAdapterRouteChat, `{"tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp"}]}`)); !errors.Is(err, errOpenAIUnsupportedTool) {
+		t.Fatalf("expected remote MCP on chat completions to fail closed, got %v", err)
 	}
 }
 

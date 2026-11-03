@@ -21,6 +21,13 @@ func (c *Capture) Input(body map[string]json.RawMessage, responses bool) {
 		c.Discard()
 		return
 	}
+	if raw, ok := body["tools"]; ok && responses {
+		if tools, ok := omitToolCredentials(raw); ok {
+			body["tools"] = tools
+		} else {
+			delete(body, "tools")
+		}
+	}
 	size := 2
 	for key, value := range body {
 		size += len(key)*6 + len(value) + 4
@@ -85,4 +92,45 @@ func (c *Capture) Metadata(body []byte) {
 	}
 	clear(c.metadata)
 	c.metadata = append([]byte(nil), body...)
+}
+
+// omitToolCredentials replaces the authorization and header values of each tool. A remote MCP
+// tool carries them so that the provider can reach its server, and an export must not. It
+// reports false when it cannot read the tools, and the caller then leaves them out.
+func omitToolCredentials(raw json.RawMessage) (json.RawMessage, bool) {
+	var tools []map[string]json.RawMessage
+	if json.Unmarshal(raw, &tools) != nil {
+		return nil, false
+	}
+	omitted := json.RawMessage(`"[omitted]"`)
+	changed := false
+	for _, tool := range tools {
+		if _, ok := tool["authorization"]; ok {
+			tool["authorization"] = omitted
+			changed = true
+		}
+		if value, ok := tool["headers"]; ok {
+			var headers map[string]json.RawMessage
+			if json.Unmarshal(value, &headers) != nil {
+				return nil, false
+			}
+			for name := range headers {
+				headers[name] = omitted
+			}
+			encoded, err := json.Marshal(headers)
+			if err != nil {
+				return nil, false
+			}
+			tool["headers"] = encoded
+			changed = true
+		}
+	}
+	if !changed {
+		return raw, true
+	}
+	encoded, err := json.Marshal(tools)
+	if err != nil {
+		return nil, false
+	}
+	return encoded, true
 }

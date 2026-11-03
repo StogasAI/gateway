@@ -31,6 +31,11 @@ var (
 	responsesTextFields = [...]string{"input", "instructions", "tools", "text", "context_management", "stop", "stop_sequences"}
 )
 
+// jsonSpan is the source range of one value and the text bytes that its walk counted.
+type jsonSpan struct {
+	start, end, textBytes int
+}
+
 type jsonReplacement struct {
 	start int
 	end   int
@@ -49,6 +54,8 @@ const (
 	jsonContextContent
 	jsonContextContentBlock
 	jsonContextFile
+	jsonContextResponsesTools
+	jsonContextResponsesTool
 )
 
 // RedactRequestFields changes only provider-bound text containers. Routing,
@@ -90,6 +97,8 @@ func (r *Redactor) RedactRequestFields(raw map[string]json.RawMessage, surface S
 			context = jsonContextChatMessages
 		} else if surface == SurfaceResponses && field == "input" {
 			context = jsonContextResponsesInput
+		} else if surface == SurfaceResponses && field == "tools" {
+			context = jsonContextResponsesTools
 		}
 		redacted, changed, err := r.redactJSONContext(value, context)
 		if err != nil {
@@ -193,6 +202,9 @@ func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, repla
 	reasoningEnd := -1
 	reasoningBytes := 0
 	itemType := ""
+	// An MCP tool's connection settings reach the provider as the client sent them: its
+	// credentials and server address are not prompt text, and a redacted token would fail.
+	var mcpSettings []jsonSpan
 	position = skipJSONSpace(source, position+1)
 	if position < len(source) && source[position] == '}' {
 		return position + 1, nil
@@ -285,9 +297,13 @@ func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, repla
 				valueAllowed = false
 			}
 		}
+		settingStart, settingBytes := position, r.inputTextBytes
 		position, err = r.walkJSONValue(source, position, valueAllowed, replacements, depth, valueContext)
 		if err != nil {
 			return position, err
+		}
+		if context == jsonContextResponsesTool && key == jsonKeyMCPSetting {
+			mcpSettings = append(mcpSettings, jsonSpan{start: settingStart, end: position, textBytes: r.inputTextBytes - settingBytes})
 		}
 		if context == jsonContextChatMessage && key == jsonKeyReasoning {
 			reasoningEnd = position
@@ -304,6 +320,12 @@ func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, repla
 			if context == jsonContextChatMessage && hasReasoningDetails && reasoningStart >= 0 {
 				r.discardJSONReplacements(replacements, baseReplacements, reasoningStart, reasoningEnd)
 				r.inputTextBytes -= reasoningBytes
+			}
+			if context == jsonContextResponsesTool && itemType == "mcp" {
+				for _, setting := range mcpSettings {
+					r.discardJSONReplacements(replacements, baseReplacements, setting.start, setting.end)
+					r.inputTextBytes -= setting.textBytes
+				}
 			}
 			protected := context == jsonContextResponsesInputItem && itemType == "reasoning" && hasEncryptedContent
 			if protected {
@@ -331,6 +353,8 @@ func (r *Redactor) walkJSONArray(source []byte, position int, allow bool, replac
 			childContext = jsonContextChatMessage
 		case jsonContextResponsesInput:
 			childContext = jsonContextResponsesInputItem
+		case jsonContextResponsesTools:
+			childContext = jsonContextResponsesTool
 		case jsonContextContent:
 			childContext = jsonContextContentBlock
 		}
@@ -553,6 +577,7 @@ type jsonKeyKind uint8
 const (
 	jsonKeyOther jsonKeyKind = iota
 	jsonKeySkipScalar
+	jsonKeyMCPSetting
 	jsonKeyEncryptedContent
 	jsonKeyType
 	jsonKeyReasoning
@@ -588,9 +613,12 @@ func classifyJSONKey(encoded []byte, escaped bool) (jsonKeyKind, error) {
 		return jsonKeyReasoning, nil
 	case "reasoning_details":
 		return jsonKeyReasoningDetails, nil
+	case "server_url", "connector_id", "tunnel_id", "authorization", "headers",
+		"allowed_tools", "allowed_callers", "require_approval":
+		return jsonKeyMCPSetting, nil
 	case "id", "item_id", "call_id", "tool_call_id", "file_id", "container_id", "conversation_id",
 		"request_id", "session_id", "previous_response_id", "prompt_cache_key", "prompt_cache_isolation_key",
-		"model", "name", "role":
+		"model", "name", "role", "server_label", "approval_request_id":
 		return jsonKeySkipScalar, nil
 	default:
 		return jsonKeyOther, nil
