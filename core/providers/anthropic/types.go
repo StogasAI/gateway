@@ -2416,6 +2416,11 @@ type AnthropicError struct {
 	Error *struct {
 		Type    string `json:"type"`    // Error type
 		Message string `json:"message"` // Error message
+		// Details.ErrorCode tells some errors apart that share a type, such as the monthly spend
+		// cap's enforced_spend_limit_reached under rate_limit_error.
+		Details *struct {
+			ErrorCode string `json:"error_code"`
+		} `json:"details,omitempty"`
 	} `json:"error,omitempty"` // Error details
 }
 
