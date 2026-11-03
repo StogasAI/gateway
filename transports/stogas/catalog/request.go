@@ -833,7 +833,7 @@ func planRoutes(input RequestInput, route Route, rawData map[string]json.RawMess
 	if err != nil {
 		return nil, err
 	}
-	selections, err := routingSelectionsForRequest(route, base.Model, base.variant, input.Policy, input.AvailableCredentials, input.trace)
+	selections, err := routingSelectionsForRequest(route, base.Model, base.variant, input.AvailableCredentials, input.trace)
 	if err != nil {
 		return nil, err
 	}
@@ -842,7 +842,7 @@ func planRoutes(input RequestInput, route Route, rawData map[string]json.RawMess
 		// The variant, a credential or the key's allowed nodes left no deployment. Try the
 		// model's other variants to find which field to name.
 		return nil, base.variant.unavailable(func(other variant) bool {
-			inVariant, err := routingSelectionsForRequest(route, base.Model, other, input.Policy, input.AvailableCredentials, nil)
+			inVariant, err := routingSelectionsForRequest(route, base.Model, other, input.AvailableCredentials, nil)
 			return err == nil && len(filterRoutingSelectionsByPolicy(inVariant, input.Policy, nil)) > 0
 		})
 	}

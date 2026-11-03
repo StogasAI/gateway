@@ -22,7 +22,7 @@ func TestRedactionWorkExhaustionRejectsBothRequestSurfaces(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, path := range []string{"/v1/chat/completions", "/v1/responses"} {
-		raw := map[string]any{"model": "openai/gpt-5.5"}
+		raw := map[string]any{"model": "provider:openai gpt-5.5"}
 		input := strings.Repeat("a", 32768)
 		if path == "/v1/responses" {
 			raw["input"] = input
@@ -65,14 +65,14 @@ func TestRoutingRejectionsPrecedeRedactionWorkForBothSurfaces(t *testing.T) {
 			want        APIError
 		}{
 			{name: "unknown model", model: "not-a-model", want: ErrModelUnavailable},
-			{name: "unknown provider", model: "openai/gpt-5.5", extra: map[string]any{"provider": "not-a-provider"}, want: ErrProviderUnavailable},
-			{name: "unsupported tier", model: "openai/gpt-5.5", extra: map[string]any{"service_tier": "not-a-tier"}, want: ErrUnsupportedServiceTier},
-			{name: "scope exclusion", model: "openai/gpt-5.5", config: denied, want: ErrModelUnavailable},
-			{name: "query exclusion", model: "openai/gpt-5.5", config: filtered, want: ErrModelUnavailable},
-			{name: "invalid output type", model: "openai/gpt-5.5", extra: map[string]any{outputField: "100"}, want: ErrInvalidJSON},
-			{name: "negative output", model: "openai/gpt-5.5", extra: map[string]any{outputField: -1}, want: ErrParameterTooLarge},
-			{name: "excessive output", model: "openai/gpt-5.5", extra: map[string]any{outputField: 100000000}, want: ErrParameterTooLarge},
-			{name: "valid route still redacts", model: "openai/gpt-5.5", want: APIError{StatusCode: 413}},
+			{name: "unknown provider", model: "provider:openai gpt-5.5", extra: map[string]any{"provider": "not-a-provider"}, want: ErrProviderUnavailable},
+			{name: "unsupported tier", model: "provider:openai gpt-5.5", extra: map[string]any{"service_tier": "not-a-tier"}, want: ErrUnsupportedServiceTier},
+			{name: "scope exclusion", model: "provider:openai gpt-5.5", config: denied, want: ErrModelUnavailable},
+			{name: "query exclusion", model: "provider:openai gpt-5.5", config: filtered, want: ErrModelUnavailable},
+			{name: "invalid output type", model: "provider:openai gpt-5.5", extra: map[string]any{outputField: "100"}, want: ErrInvalidJSON},
+			{name: "negative output", model: "provider:openai gpt-5.5", extra: map[string]any{outputField: -1}, want: ErrParameterTooLarge},
+			{name: "excessive output", model: "provider:openai gpt-5.5", extra: map[string]any{outputField: 100000000}, want: ErrParameterTooLarge},
+			{name: "valid route still redacts", model: "provider:openai gpt-5.5", want: APIError{StatusCode: 413}},
 		} {
 			t.Run(path+"/"+test.name, func(t *testing.T) {
 				raw := map[string]any{"model": test.model}
@@ -113,7 +113,7 @@ func TestColdRedactionBuildFollowsCheapChecksAndFailsClosed(t *testing.T) {
 				return nil, errors.New("cold compiler unavailable")
 			}})
 			if model == "not-a-model" {
-				if called != 0 || !errors.Is(err, ErrModelUnavailable) {
+				if called != 0 || PublicError(err).Code != ErrModelUnavailable.Code {
 					t.Fatalf("compiled denied route: %d %v", called, err)
 				}
 			} else if called != 1 || PublicError(err).StatusCode != 503 {
@@ -127,7 +127,7 @@ func TestOmittedRedactionPreservesTextThroughProviderConversion(t *testing.T) {
 	loadTestCatalog(t)
 	for _, path := range []string{"/v1/chat/completions", "/v1/responses"} {
 		t.Run(path, func(t *testing.T) {
-			body := map[string]any{"model": "openai/gpt-5.5"}
+			body := map[string]any{"model": "provider:openai gpt-5.5"}
 			const input = "Contact alice@corp.io at 212-555-1234"
 			if path == "/v1/responses" {
 				body["input"] = input
@@ -167,7 +167,7 @@ func TestResolveRequestRedactsBeforeTokenHoldAndProviderConversion(t *testing.T)
 		Method:          "POST",
 		Path:            "/v1/chat/completions",
 		Body: []byte(`{
-			"model":"openai/gpt-5.5",
+			"model":"provider:openai gpt-5.5",
 			"messages":[{"role":"user","content":"Contact alice@corp.io"}],
 			"tools":[{"type":"function","function":{"name":"lookup","description":"Owner tools@corp.io","parameters":{"type":"object"}}}]
 		}`),
@@ -213,7 +213,7 @@ func TestResolveResponsesPreservesEncryptedReasoning(t *testing.T) {
 		Method:          "POST",
 		Path:            "/v1/responses",
 		Body: []byte(`{
-			"model":"openai/gpt-5.5",
+			"model":"provider:openai gpt-5.5",
 			"input":[
 				{"type":"message","role":"user","content":[{"type":"input_text","text":"Contact outside@corp.io"}]},
 				{"type":"reasoning","summary":[{"type":"summary_text","text":"Keep signed@corp.io"}],"encrypted_content":"ciphertext"}

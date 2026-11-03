@@ -773,7 +773,7 @@ func TestWriteInferenceJSONAddsContentReceipt(t *testing.T) {
 	service, publicKey, boot := testProofService(t)
 	server := &Server{proofs: service}
 	ctx := newTestRequest(t)
-	testRequestBody(ctx, `{"model":"openai/gpt-5.5"}`)
+	testRequestBody(ctx, `{"model":"provider:openai gpt-5.5"}`)
 	bifrostCtx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 	bifrostCtx.SetValue(stogasMetadataKey, true)
 	state := &stogas.State{Pair: stogas.Pair{Resolution: mustResolvedRequest(t, "/v1/chat/completions", string(ctx.body))}, RequestID: "req_1", FinalEvent: &billing.RequestEvent{CreatedAt: "2026-08-24T12:34:56.789Z", Usage: billing.RequestUsage{BilledCostUSD: "0", UpstreamCostUSD: "0", Meters: billing.EventMeters{}}}}
@@ -895,7 +895,7 @@ func TestWriteSSEStreamRetainsProofFailureAtCompletion(t *testing.T) {
 	service, _, _ := testProofService(t)
 	server := &Server{proofs: service}
 	ctx := newTestRequest(t)
-	testRequestBody(ctx, `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true}`)
+	testRequestBody(ctx, `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true}`)
 	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
 	bifrostCtx.SetValue(stogasMetadataKey, true)
 	stream := make(chan *schemas.BifrostStreamChunk)
@@ -2269,7 +2269,7 @@ func TestWriteSSEStreamKeepsForcedUsagePrivateUnlessClientRequestedIt(t *testing
 		{name: "true", streamOptions: `,"stream_options":{"include_usage":true}`, wantUsage: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			body := `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true` + tc.streamOptions + `}`
+			body := `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true` + tc.streamOptions + `}`
 			server := &Server{}
 			ctx := newTestRequest(t)
 			bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
@@ -2356,7 +2356,7 @@ func TestWriteSSEStreamIgnoresFramesAfterBillableTerminal(t *testing.T) {
 		Pair: stogas.Pair{
 			Adapter: stogas.DefaultAdapter{},
 			Resolution: mustResolvedRequest(t, "/v1/chat/completions",
-				`{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true,"stream_options":{"include_usage":true}}`),
+				`{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true,"stream_options":{"include_usage":true}}`),
 		},
 	}
 	role := string(schemas.ChatMessageRoleAssistant)
@@ -2517,7 +2517,7 @@ func TestWriteSSEStreamEmitsFinalConfidentialProof(t *testing.T) {
 	stream := make(chan *schemas.BifrostStreamChunk)
 	state := &stogas.State{
 		Pair: stogas.Pair{
-			Resolution: mustResolvedRequest(t, "/v1/chat/completions", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true}`),
+			Resolution: mustResolvedRequest(t, "/v1/chat/completions", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true}`),
 			Adapter:    stogas.DefaultAdapter{},
 		},
 		RequestID: "018f4f70-7c88-7b9a-baf8-31a93d2cf613",
@@ -2617,13 +2617,13 @@ func TestWriteSSEStreamEmitsReceiptBeforeResponsesTerminalEvent(t *testing.T) {
 	service, publicKey, boot := testProofService(t)
 	server := &Server{proofs: service}
 	ctx := newTestRequest(t)
-	testRequestBody(ctx, `{"model":"openai/gpt-5.5","input":"hi","stream":true}`)
+	testRequestBody(ctx, `{"model":"provider:openai gpt-5.5","input":"hi","stream":true}`)
 	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
 	bifrostCtx.SetValue(stogasMetadataKey, true)
 	stream := make(chan *schemas.BifrostStreamChunk)
 	state := &stogas.State{
 		Pair: stogas.Pair{
-			Resolution: mustResolvedRequest(t, "/v1/responses", `{"model":"openai/gpt-5.5","input":"hi","stream":true}`),
+			Resolution: mustResolvedRequest(t, "/v1/responses", `{"model":"provider:openai gpt-5.5","input":"hi","stream":true}`),
 			Adapter:    stogas.DefaultAdapter{},
 		},
 		RequestID: "018f4f70-7c88-7b9a-baf8-31a93d2cf615",
@@ -2731,7 +2731,7 @@ func TestWriteSSEStreamDoesNotProofMalformedStream(t *testing.T) {
 			stream := make(chan *schemas.BifrostStreamChunk)
 			state := &stogas.State{
 				Pair: stogas.Pair{
-					Resolution: mustResolvedRequest(t, "/v1/chat/completions", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true}`),
+					Resolution: mustResolvedRequest(t, "/v1/chat/completions", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true}`),
 					Adapter:    stogas.DefaultAdapter{},
 				},
 				RequestID: "018f4f70-7c88-7b9a-baf8-31a93d2cf614",

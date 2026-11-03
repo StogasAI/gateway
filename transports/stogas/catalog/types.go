@@ -122,11 +122,12 @@ type MeterEstimate = billing.MeterEstimate
 // A snapshot is one catalog state of a release. The base state also holds the dated states
 // that follow it.
 type snapshot struct {
-	graph compiledGraph
-	// groups holds every model group. Each is a request selector for its models.
-	groups         map[string]bool
-	identity       Identity
+	graph    compiledGraph
+	identity Identity
+	// modelSelectors maps each model ID and alias to its model, for /v1/models.
 	modelSelectors map[string]string
+	// index finds the IDs that a request's model field names.
+	index *selectorIndex
 	// served is the root with the identity of its release, as readers fetch it.
 	served []byte
 	// parts holds each part of the root that the release came with, by SHA-256 in hex.

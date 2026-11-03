@@ -33,7 +33,7 @@ func TestCredentialEligibilityPrecedesPoliciesAndTheirOrder(t *testing.T) {
 			// Equal prices fall back to the lower deployment ID.
 			{name: "two configured providers", model: "gpt-5.6-sol", providers: map[string][]int{"azure": {0}, "openai": {0}}, deployment: "azure-gpt-5.6-sol"},
 			{name: "cheapest region first", model: "gpt-5.6-sol", providers: map[string][]int{"azure": {0}}, filter: `deployment.id != 'azure-gpt-5.6-sol' && deployment.id != 'azure-gpt-5.6-sol-instant'`, deployment: "azure-gpt-5.6-sol-apac"},
-			{name: "provider still has regions", model: "azure/gpt-5.6-sol", providers: map[string][]int{"azure": {0}}, deployment: "azure-gpt-5.6-sol"},
+			{name: "provider still has regions", model: "provider:azure gpt-5.6-sol", providers: map[string][]int{"azure": {0}}, deployment: "azure-gpt-5.6-sol"},
 			// The newest OpenAI model leads the test default; with no fallbacks the
 			// models behind it change nothing.
 			{name: "no model and several models", providers: map[string][]int{"openai": {0}}, deployment: "openai-gpt-6.1-sol"},
@@ -635,7 +635,7 @@ func TestCredentialOrderCannotChooseBetweenDeployments(t *testing.T) {
 	loadTestCatalog(t)
 	var attempts []string
 	resolved, err := ResolveRequest(RequestInput{
-		Body:   []byte(`{"model":"azure/gpt-5.6-sol","messages":[{"role":"user","content":"hello"}],"provider":{"order":["azure"]}}`),
+		Body:   []byte(`{"model":"provider:azure gpt-5.6-sol","messages":[{"role":"user","content":"hello"}],"provider":{"order":["azure"]}}`),
 		Method: "POST", Path: "/v1/chat/completions", Policy: policyConfig(3),
 		AvailableCredentials: map[string][]int{"azure": {1, 0}},
 		// Credential 1 runs only the US Data Zone, so it cannot move that

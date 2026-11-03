@@ -1,7 +1,6 @@
 package catalog
 
 import (
-	"cmp"
 	"errors"
 	"fmt"
 	"maps"
@@ -77,14 +76,13 @@ type policyNode struct {
 	fields any
 }
 
-// routingSelectionsForRequest returns the deployments that the requested model selects at the
-// variant. It returns none when the variant leaves no deployment, and the caller names the
-// field.
+// routingSelectionsForRequest returns the deployments that the request's model field selects at
+// the variant. It returns none when the variant, a credential or the interface leaves no
+// deployment, and the caller names the field.
 func routingSelectionsForRequest(
 	route Route,
 	requestedModel string,
 	want variant,
-	config *policy.Config,
 	availableCredentials map[string][]int,
 	trace *routingTrace,
 ) ([]routingSelection, error) {
@@ -92,156 +90,17 @@ func routingSelectionsForRequest(
 	if snap == nil {
 		return nil, ErrCatalogUnavailable
 	}
-	if requestedModel == "" {
-		return routingSelectionsInPool(snap, route, want, availableCredentials, nil, "", trace)
+	selection, err := snap.parseModelSelection(requestedModel)
+	if err != nil {
+		return nil, err
 	}
-	if qualifier, selector := splitQualifiedModel(requestedModel); snap.groups[selector] {
-		return routingSelectionsInPool(snap, route, want, availableCredentials, qualifier, selector, trace)
-	}
-	providers := snap.routeModelProviders(route, requestedModel, availableCredentials, trace)
-	providers = filterRoutingProvidersByAllowedNodes(snap, route, requestedModel, want, providers, config, trace)
-	if len(providers) == 0 {
-		if date, retired := snap.retiredOn(requestedModel, time.Now()); retired {
+	selections := snap.routingSelections(route, selection, want, availableCredentials, trace)
+	if len(selections) == 0 {
+		if date, retired := snap.retiredSelection(selection, time.Now()); retired {
 			return nil, modelRetired(date)
 		}
-		return nil, ErrModelUnavailable
-	}
-	selections := make([]routingSelection, 0)
-	for _, provider := range providers {
-		deployments := routingDeploymentsForProvider(snap, route, provider, requestedModel, want)
-		if trace != nil && len(deployments) == 0 {
-			if _, servesMode := snap.deploymentForRoute(provider, requestedModel, route, variant{mode: want.mode}); servesMode {
-				trace.removeProvider(provider, RemovedServiceTier)
-			} else if want.mode != "" {
-				trace.removeProvider(provider, RemovedReasoningMode)
-			}
-		}
-		selections = append(selections, deployments...)
 	}
 	return selections, nil
-}
-
-// An omitted selector or a group leaves model selection to the intersected routing filters and
-// ordering. The pool holds every model, or the group's models; deployments that need approval
-// join it only through exact selectors. Enumerate the catalog once, before request parsing and
-// token work.
-//
-// A trace names providers without credentials and deployments that need approval. For a group,
-// it also names providers that serve the group only through another interface.
-func routingSelectionsInPool(snap *snapshot, route Route, want variant, availableCredentials map[string][]int, qualifier []string, group string, trace *routingTrace) ([]routingSelection, error) {
-	tier, mode := cmp.Or(want.tier, TierStandard), want.upstreamMode()
-	selections := make([]routingSelection, 0)
-	skipped := providerSkips{trace: trace}
-	now := time.Now()
-	for _, routeNode := range snap.graph.Routes {
-		provider := schemas.ModelProvider(routeNode.ProviderID)
-		supported := routeSupportsInterface(routeNode, route)
-		credentialed := availableCredentials == nil || len(availableCredentials[routeNode.ProviderID]) > 0
-		if trace == nil && (!supported || !credentialed) || trace != nil && !supported && group == "" {
-			continue
-		}
-		for _, id := range routeNode.DeploymentIDs {
-			compiled := snap.graph.Deployments[id]
-			if !servesAt(compiled, routeNode, now) || compiled.Upstream.ReasoningMode != mode {
-				continue
-			}
-			if group != "" && (!slices.Contains(snap.graph.Models[compiled.ModelID].GroupIDs, group) ||
-				!snap.qualifierMatches(qualifier, routeNode.ProviderID, compiled.ModelID)) {
-				continue
-			}
-			if compiled.Upstream.ServiceTier != tier {
-				continue
-			}
-			if !supported || !credentialed {
-				skipped.add(provider, supported)
-				break
-			}
-			if compiled.ApprovalRequired {
-				if trace != nil {
-					if deployment, ok := snap.deploymentFromCompiled(id, routeNode); ok {
-						trace.removeSelection(routingSelection{deployment: deployment, provider: provider}, RemovedApproval, nil)
-					}
-				}
-				continue
-			}
-			deployment, ok := snap.deploymentFromCompiled(id, routeNode)
-			if ok {
-				selections = append(selections, routingSelection{deployment: deployment, provider: provider})
-			}
-		}
-	}
-	for _, selection := range selections {
-		skipped.served(selection.provider)
-	}
-	skipped.record()
-	// Stable ties must not depend on Go map iteration or catalog serialization.
-	sort.Slice(selections, func(i, j int) bool {
-		if selections[i].deployment.ID != selections[j].deployment.ID {
-			return selections[i].deployment.ID < selections[j].deployment.ID
-		}
-		return selections[i].deployment.RouteID < selections[j].deployment.RouteID
-	})
-	return selections, nil
-}
-
-// Filter exact key restrictions before request compatibility. A deployment
-// that the key cannot use must not influence provider selection or error text.
-func filterRoutingProvidersByAllowedNodes(
-	snap *snapshot,
-	route Route,
-	requestedModel string,
-	want variant,
-	providers []schemas.ModelProvider,
-	config *policy.Config,
-	trace *routingTrace,
-) []schemas.ModelProvider {
-	if snap == nil || config == nil || config.Routing.AllowedCatalogNodes == nil {
-		return providers
-	}
-	filtered := make([]schemas.ModelProvider, 0, len(providers))
-	for _, provider := range providers {
-		matched := false
-		for _, routeNode := range snap.routes(provider, route) {
-			selectedID, pinned := snap.deploymentIDFor(routeNode, requestedModel)
-			selected, ok := snap.graph.Deployments[selectedID]
-			if !ok {
-				continue
-			}
-			for _, deploymentID := range routeNode.DeploymentIDs {
-				if pinned && deploymentID != selectedID {
-					continue
-				}
-				candidate, ok := snap.graph.Deployments[deploymentID]
-				if !ok || candidate.ModelID != selected.ModelID {
-					continue
-				}
-				deployment, ok := snap.deploymentFromCompiled(deploymentID, routeNode)
-				if !ok {
-					continue
-				}
-				if policyAllowsSelection(config, routingSelection{deployment: deployment}) {
-					matched = true
-					break
-				}
-			}
-			if matched {
-				break
-			}
-		}
-		if matched {
-			filtered = append(filtered, provider)
-		} else if trace != nil {
-			// Name the deployments that the provider would otherwise serve.
-			deployments := routingDeploymentsForProvider(snap, route, provider, requestedModel, want)
-			if len(deployments) == 0 {
-				deployments = routingDeploymentsForProvider(snap, route, provider, requestedModel, variant{})
-			}
-			for _, selection := range deployments {
-				trace.removeSelection(selection, RemovedAllowedNodes, nodesOrigin(config, selection.deployment))
-			}
-		}
-	}
-	return filtered
 }
 
 // Strict provider choices are eligibility filters. Ordering is applied after
@@ -299,51 +158,6 @@ func policyEvaluationError(err error) error {
 		code = "policy_work_limit_exceeded"
 	}
 	return APIError{StatusCode: 400, Type: ErrorTypeInvalidRequest, Code: code, Message: err.Error()}
-}
-
-func routingDeploymentsForProvider(
-	snap *snapshot,
-	route Route,
-	provider schemas.ModelProvider,
-	requestedModel string,
-	want variant,
-) []routingSelection {
-	base, ok := snap.deploymentForRoute(provider, requestedModel, route, want)
-	if !ok {
-		return nil
-	}
-	routeNode, ok := snap.graph.Routes[base.RouteID]
-	if !ok {
-		return nil
-	}
-	_, pinned := snap.deploymentIDFor(routeNode, requestedModel)
-	result := []routingSelection{{deployment: base, provider: provider}}
-	if pinned {
-		return result
-	}
-	baseCompiled, ok := snap.graph.Deployments[base.ID]
-	if !ok {
-		return nil
-	}
-	for _, deploymentID := range routeNode.DeploymentIDs {
-		if deploymentID == base.ID {
-			continue
-		}
-		candidate, exists := snap.graph.Deployments[deploymentID]
-		if !exists ||
-			!servesAt(candidate, routeNode, time.Now()) ||
-			candidate.ModelID != base.ModelID ||
-			candidate.Upstream.ReasoningMode != baseCompiled.Upstream.ReasoningMode ||
-			candidate.Upstream.ServiceTier != baseCompiled.Upstream.ServiceTier {
-			continue
-		}
-		resolved, exists := snap.deploymentFromCompiled(deploymentID, routeNode)
-		if !exists {
-			continue
-		}
-		result = append(result, routingSelection{deployment: resolved, provider: provider})
-	}
-	return result
 }
 
 type routingCandidates struct {

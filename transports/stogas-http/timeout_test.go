@@ -119,7 +119,7 @@ func TestRequestTimeoutIncludesPreparationAndRejectsExpiredAdmission(t *testing.
 		if err != nil {
 			t.Fatal(err)
 		}
-		resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/chat/completions", Body: []byte(`{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hello"}]}`), Policy: config})
+		resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/chat/completions", Body: []byte(`{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hello"}]}`), Policy: config})
 		if err != nil {
 			t.Fatal(err)
 		}

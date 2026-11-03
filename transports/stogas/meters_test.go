@@ -13,7 +13,7 @@ import (
 
 func TestEstimatedInputMeterIsIndependentOfReportedAndChargedUsage(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/chat/completions",
-		Body: []byte(`{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hello"}],"max_completion_tokens":16}`)})
+		Body: []byte(`{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hello"}],"max_completion_tokens":16}`)})
 	if err != nil {
 		t.Fatal(err)
 	}

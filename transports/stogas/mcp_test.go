@@ -19,25 +19,25 @@ const mcpServerTool = `{"type":"mcp","server_label":"wiki","server_url":"https:/
 
 func TestResponsesPolicyAcceptsOpenAIRemoteMCP(t *testing.T) {
 	for _, body := range []string{
-		`{"model":"openai/gpt-5.5","input":"hi","tools":[` + mcpServerTool + `]}`,
-		`{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"calendar","connector_id":"connector_googlecalendar","authorization":"oauth","require_approval":"never"}],"max_tool_calls":3}`,
-		`{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"tunnel","tunnel_id":"tun_1","server_description":"Internal docs","allowed_tools":["search","fetch"],"require_approval":"always"}]}`,
-		`{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"wiki","server_url":"https://mcp.example.com","allowed_tools":{"tool_names":["search"],"read_only":true},"require_approval":{"never":{"tool_names":["search"]},"always":{"read_only":false}},"allowed_callers":["direct"],"defer_loading":false}]}`,
-		`{"model":"openai/gpt-5.5","input":"hi","tools":[` + mcpServerTool + `,{"type":"mcp","server_label":"docs","server_url":"https://docs.example.com/mcp"},{"type":"function","name":"search"}],"tool_choice":{"type":"mcp","server_label":"docs","name":"lookup"}}`,
-		`{"model":"openai/gpt-5.5","input":"hi","tools":[` + mcpServerTool + `,{"type":"web_search"}],"tool_choice":{"type":"allowed_tools","mode":"required","tools":[{"type":"mcp","server_label":"wiki"},{"type":"web_search"}]}}`,
+		`{"model":"provider:openai gpt-5.5","input":"hi","tools":[` + mcpServerTool + `]}`,
+		`{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"calendar","connector_id":"connector_googlecalendar","authorization":"oauth","require_approval":"never"}],"max_tool_calls":3}`,
+		`{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"tunnel","tunnel_id":"tun_1","server_description":"Internal docs","allowed_tools":["search","fetch"],"require_approval":"always"}]}`,
+		`{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"wiki","server_url":"https://mcp.example.com","allowed_tools":{"tool_names":["search"],"read_only":true},"require_approval":{"never":{"tool_names":["search"]},"always":{"read_only":false}},"allowed_callers":["direct"],"defer_loading":false}]}`,
+		`{"model":"provider:openai gpt-5.5","input":"hi","tools":[` + mcpServerTool + `,{"type":"mcp","server_label":"docs","server_url":"https://docs.example.com/mcp"},{"type":"function","name":"search"}],"tool_choice":{"type":"mcp","server_label":"docs","name":"lookup"}}`,
+		`{"model":"provider:openai gpt-5.5","input":"hi","tools":[` + mcpServerTool + `,{"type":"web_search"}],"tool_choice":{"type":"allowed_tools","mode":"required","tools":[{"type":"mcp","server_label":"wiki"},{"type":"web_search"}]}}`,
 		// A stateless continuation replays the listing and the approval request, then answers it.
-		`{"model":"openai/gpt-5.5","tools":[` + mcpServerTool + `],"input":[
+		`{"model":"provider:openai gpt-5.5","tools":[` + mcpServerTool + `],"input":[
 			{"role":"user","content":"Look it up"},
 			{"type":"mcp_list_tools","id":"mcpl_1","server_label":"wiki","tools":[{"name":"ask","input_schema":{"type":"object"},"description":"Ask the wiki"}]},
 			{"type":"mcp_approval_request","id":"mcpr_1","server_label":"wiki","name":"ask","arguments":"{\"q\":\"x\"}"},
 			{"type":"mcp_approval_response","approval_request_id":"mcpr_1","approve":true,"reason":"fine"}]}`,
-		`{"model":"openai/gpt-5.5","tools":[` + mcpServerTool + `],"input":[
+		`{"model":"provider:openai gpt-5.5","tools":[` + mcpServerTool + `],"input":[
 			{"role":"user","content":"Look it up"},
 			{"type":"mcp_call","id":"mcp_1","server_label":"wiki","name":"ask","arguments":"{}","output":"answer","error":null,"status":"completed","approval_request_id":"mcpr_1"},
 			{"type":"mcp_call","id":"mcp_2","server_label":"wiki","name":"ask","arguments":"","error":{"type":"http_error","code":500,"message":"down"},"status":"failed"},
 			{"role":"user","content":"Thanks"}]}`,
 		// MCP items can sit between a client call and its output, as a response returns them.
-		`{"model":"openai/gpt-5.5","tools":[` + mcpServerTool + `,{"type":"function","name":"lookup"}],"input":[
+		`{"model":"provider:openai gpt-5.5","tools":[` + mcpServerTool + `,{"type":"function","name":"lookup"}],"input":[
 			{"role":"user","content":"Both"},
 			{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"},
 			{"type":"mcp_approval_request","id":"mcpr_1","server_label":"wiki","name":"ask","arguments":"{}"},
@@ -52,25 +52,25 @@ func TestResponsesPolicyAcceptsOpenAIRemoteMCP(t *testing.T) {
 
 func TestResponsesPolicyRefusesUnsupportedRemoteMCP(t *testing.T) {
 	for _, item := range []struct{ name, body, want string }{
-		{"missing label", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"mcp","server_url":"https://mcp.example.com"}]}`, "server_label must name the server"},
-		{"padded label", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":" wiki","server_url":"https://mcp.example.com"}]}`, "server_label must name the server"},
-		{"duplicate label", `{"model":"openai/gpt-5.5","input":"hi","tools":[` + mcpServerTool + `,` + mcpServerTool + `]}`, "duplicates another MCP server"},
-		{"unknown key", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"wiki","server_url":"https://mcp.example.com","future":true}]}`, "tools[0].future is not supported"},
-		{"header values", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"wiki","server_url":"https://mcp.example.com","headers":{"X":1}}]}`, "Invalid JSON body"},
-		{"approval setting", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"wiki","server_url":"https://mcp.example.com","require_approval":"sometimes"}]}`, "require_approval must be always, never"},
-		{"approval filter key", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"wiki","server_url":"https://mcp.example.com","require_approval":{"maybe":{}}}]}`, "require_approval.maybe is not supported"},
-		{"approval list", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"wiki","server_url":"https://mcp.example.com","require_approval":{"never":["search"]}}]}`, "Invalid JSON body"},
+		{"missing label", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"mcp","server_url":"https://mcp.example.com"}]}`, "server_label must name the server"},
+		{"padded label", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":" wiki","server_url":"https://mcp.example.com"}]}`, "server_label must name the server"},
+		{"duplicate label", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[` + mcpServerTool + `,` + mcpServerTool + `]}`, "duplicates another MCP server"},
+		{"unknown key", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"wiki","server_url":"https://mcp.example.com","future":true}]}`, "tools[0].future is not supported"},
+		{"header values", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"wiki","server_url":"https://mcp.example.com","headers":{"X":1}}]}`, "Invalid JSON body"},
+		{"approval setting", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"wiki","server_url":"https://mcp.example.com","require_approval":"sometimes"}]}`, "require_approval must be always, never"},
+		{"approval filter key", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"wiki","server_url":"https://mcp.example.com","require_approval":{"maybe":{}}}]}`, "require_approval.maybe is not supported"},
+		{"approval list", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"wiki","server_url":"https://mcp.example.com","require_approval":{"never":["search"]}}]}`, "Invalid JSON body"},
 		// The forwarded filter would leave an empty tool_names out and so cover every tool.
-		{"empty allowed filter", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"wiki","server_url":"https://mcp.example.com","allowed_tools":{"tool_names":[]}}]}`, "allowed_tools.tool_names must name at least one tool"},
-		{"empty never filter", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"wiki","server_url":"https://mcp.example.com","require_approval":{"never":{"tool_names":[],"read_only":true}}}]}`, "require_approval.never.tool_names must name at least one tool"},
-		{"programmatic callers", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"wiki","server_url":"https://mcp.example.com","allowed_callers":["programmatic"]}]}`, "programmatic calls need code execution"},
-		{"deferred loading", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"wiki","server_url":"https://mcp.example.com","defer_loading":true}]}`, "defer_loading needs tool_search"},
-		{"undeclared server choice", `{"model":"openai/gpt-5.5","input":"hi","tools":[` + mcpServerTool + `],"tool_choice":{"type":"mcp","server_label":"docs"}}`, "selects an undeclared MCP server"},
-		{"undeclared allowed server", `{"model":"openai/gpt-5.5","input":"hi","tools":[` + mcpServerTool + `],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"mcp","server_label":"docs"}]}}`, "selects an undeclared MCP server"},
-		{"approval without decision", `{"model":"openai/gpt-5.5","tools":[` + mcpServerTool + `],"input":[{"role":"user","content":"hi"},{"type":"mcp_approval_response","approval_request_id":"mcpr_1"}]}`, "approve must be a boolean"},
-		{"listing without tools", `{"model":"openai/gpt-5.5","tools":[` + mcpServerTool + `],"input":[{"role":"user","content":"hi"},{"type":"mcp_list_tools","id":"mcpl_1","server_label":"wiki"}]}`, "tools must list the server's tools"},
-		{"call without name", `{"model":"openai/gpt-5.5","tools":[` + mcpServerTool + `],"input":[{"role":"user","content":"hi"},{"type":"mcp_call","id":"mcp_1","server_label":"wiki","arguments":"{}"}]}`, "name is required"},
-		{"azure", `{"model":"azure/gpt-5.5","input":"hi","tools":[` + mcpServerTool + `]}`, "No deployment for this request runs mcp."},
+		{"empty allowed filter", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"wiki","server_url":"https://mcp.example.com","allowed_tools":{"tool_names":[]}}]}`, "allowed_tools.tool_names must name at least one tool"},
+		{"empty never filter", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"wiki","server_url":"https://mcp.example.com","require_approval":{"never":{"tool_names":[],"read_only":true}}}]}`, "require_approval.never.tool_names must name at least one tool"},
+		{"programmatic callers", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"wiki","server_url":"https://mcp.example.com","allowed_callers":["programmatic"]}]}`, "programmatic calls need code execution"},
+		{"deferred loading", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"wiki","server_url":"https://mcp.example.com","defer_loading":true}]}`, "defer_loading needs tool_search"},
+		{"undeclared server choice", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[` + mcpServerTool + `],"tool_choice":{"type":"mcp","server_label":"docs"}}`, "selects an undeclared MCP server"},
+		{"undeclared allowed server", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[` + mcpServerTool + `],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"mcp","server_label":"docs"}]}}`, "selects an undeclared MCP server"},
+		{"approval without decision", `{"model":"provider:openai gpt-5.5","tools":[` + mcpServerTool + `],"input":[{"role":"user","content":"hi"},{"type":"mcp_approval_response","approval_request_id":"mcpr_1"}]}`, "approve must be a boolean"},
+		{"listing without tools", `{"model":"provider:openai gpt-5.5","tools":[` + mcpServerTool + `],"input":[{"role":"user","content":"hi"},{"type":"mcp_list_tools","id":"mcpl_1","server_label":"wiki"}]}`, "tools must list the server's tools"},
+		{"call without name", `{"model":"provider:openai gpt-5.5","tools":[` + mcpServerTool + `],"input":[{"role":"user","content":"hi"},{"type":"mcp_call","id":"mcp_1","server_label":"wiki","arguments":"{}"}]}`, "name is required"},
+		{"azure", `{"model":"provider:azure gpt-5.5","input":"hi","tools":[` + mcpServerTool + `]}`, "No deployment for this request runs mcp."},
 		{"anthropic", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[` + mcpServerTool + `]}`, "No deployment for this request runs mcp."},
 		{"anthropic replayed item", `{"model":"anthropic-claude-sonnet-4-6","input":[{"role":"user","content":"hi"},{"type":"mcp_approval_response","approval_request_id":"mcpr_1","approve":true}]}`, "supported only for OpenAI deployments"},
 	} {
@@ -115,7 +115,7 @@ func heldInputTokens(t *testing.T, body string) (int64, *State) {
 }
 
 func TestRemoteMCPHoldsEveryModelPassThatCallsCanAdd(t *testing.T) {
-	plain, plainState := heldInputTokens(t, `{"model":"openai/gpt-5.5","input":"hi"}`)
+	plain, plainState := heldInputTokens(t, `{"model":"provider:openai gpt-5.5","input":"hi"}`)
 	limit := int64(plainState.Resolution.Deployment.MaxInputTokens)
 	if limit <= 0 || plain <= 0 || plain >= limit {
 		t.Fatalf("unexpected base hold %d for input limit %d", plain, limit)
@@ -132,10 +132,10 @@ func TestRemoteMCPHoldsEveryModelPassThatCallsCanAdd(t *testing.T) {
 		passes int64
 	}{
 		// A listing can fill the first pass, so the hold covers that pass at the input limit.
-		{"approval required", `{"model":"openai/gpt-5.5","input":"hi","tools":[` + mcpServerTool + `]}`, 1},
-		{"one approved call", `{"model":"openai/gpt-5.5","tools":[` + mcpServerTool + `],"input":[{"role":"user","content":"hi"},` + approval(true) + `,` + approval(false) + `]}`, 2},
-		{"calls without approval up to the default", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"wiki","server_url":"https://mcp.example.com","require_approval":"never"}]}`, 1 + defaultResponsesHostedToolCalls},
-		{"calls without approval up to the cap", `{"model":"openai/gpt-5.5","input":"hi","max_tool_calls":3,"tools":[{"type":"mcp","server_label":"wiki","server_url":"https://mcp.example.com","require_approval":{"never":{"read_only":true}}}]}`, 4},
+		{"approval required", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[` + mcpServerTool + `]}`, 1},
+		{"one approved call", `{"model":"provider:openai gpt-5.5","tools":[` + mcpServerTool + `],"input":[{"role":"user","content":"hi"},` + approval(true) + `,` + approval(false) + `]}`, 2},
+		{"calls without approval up to the default", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"wiki","server_url":"https://mcp.example.com","require_approval":"never"}]}`, 1 + defaultResponsesHostedToolCalls},
+		{"calls without approval up to the cap", `{"model":"provider:openai gpt-5.5","input":"hi","max_tool_calls":3,"tools":[{"type":"mcp","server_label":"wiki","server_url":"https://mcp.example.com","require_approval":{"never":{"read_only":true}}}]}`, 4},
 	} {
 		t.Run(item.name, func(t *testing.T) {
 			held, _ := heldInputTokens(t, item.body)
@@ -146,8 +146,8 @@ func TestRemoteMCPHoldsEveryModelPassThatCallsCanAdd(t *testing.T) {
 	}
 	// Without a callable MCP server, nothing more is held.
 	for _, body := range []string{
-		`{"model":"openai/gpt-5.5","input":"hi","tools":[` + mcpServerTool + `],"tool_choice":"none"}`,
-		`{"model":"openai/gpt-5.5","input":"hi","tools":[` + mcpServerTool + `,{"type":"function","name":"lookup"}],"tool_choice":{"type":"function","name":"lookup"}}`,
+		`{"model":"provider:openai gpt-5.5","input":"hi","tools":[` + mcpServerTool + `],"tool_choice":"none"}`,
+		`{"model":"provider:openai gpt-5.5","input":"hi","tools":[` + mcpServerTool + `,{"type":"function","name":"lookup"}],"tool_choice":{"type":"function","name":"lookup"}}`,
 	} {
 		if held, _ := heldInputTokens(t, body); held >= limit {
 			t.Fatalf("held input %d reaches the input limit for a request that allows no MCP call\n%s", held, body)
@@ -157,10 +157,10 @@ func TestRemoteMCPHoldsEveryModelPassThatCallsCanAdd(t *testing.T) {
 
 func TestRemoteMCPCallsWithoutApprovalGetTheDefaultCap(t *testing.T) {
 	for body, want := range map[string]*int{
-		`{"model":"openai/gpt-5.5","input":"hi","tools":[` + mcpServerTool + `]}`:                                                                                  schemas.Ptr(defaultResponsesHostedToolCap),
-		`{"model":"openai/gpt-5.5","input":"hi","max_tool_calls":2,"tools":[` + mcpServerTool + `]}`:                                                               schemas.Ptr(2),
-		`{"model":"openai/gpt-5.5","input":"hi","tool_choice":"none","tools":[` + mcpServerTool + `]}`:                                                             nil,
-		`{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"wiki","server_url":"https://mcp.example.com","require_approval":"never"}]}`: schemas.Ptr(defaultResponsesHostedToolCap),
+		`{"model":"provider:openai gpt-5.5","input":"hi","tools":[` + mcpServerTool + `]}`:                                                                                  schemas.Ptr(defaultResponsesHostedToolCap),
+		`{"model":"provider:openai gpt-5.5","input":"hi","max_tool_calls":2,"tools":[` + mcpServerTool + `]}`:                                                               schemas.Ptr(2),
+		`{"model":"provider:openai gpt-5.5","input":"hi","tool_choice":"none","tools":[` + mcpServerTool + `]}`:                                                             nil,
+		`{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"wiki","server_url":"https://mcp.example.com","require_approval":"never"}]}`: schemas.Ptr(defaultResponsesHostedToolCap),
 	} {
 		resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/responses", Body: []byte(body)})
 		if err != nil {
@@ -198,7 +198,7 @@ func TestRemoteMCPToolsReachOpenAIAsSent(t *testing.T) {
 		`{"type":"mcp","server_label":"wiki","connector_id":"connector_dropbox","allowed_tools":{"read_only":false},"require_approval":{"never":{"read_only":true},"always":{"tool_names":["delete"]}}}`,
 		`{"type":"mcp","server_label":"wiki","tunnel_id":"tun_1","server_description":"Docs","allowed_tools":{"tool_names":["search"],"read_only":true},"require_approval":{"always":{}},"allowed_callers":["direct"]}`,
 	} {
-		body := `{"model":"openai/gpt-5.5","input":"hi","tools":[` + tool + `]}`
+		body := `{"model":"provider:openai gpt-5.5","input":"hi","tools":[` + tool + `]}`
 		resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/responses", Body: []byte(body)})
 		if err != nil {
 			t.Fatal(err)
@@ -264,7 +264,7 @@ func mcpApprovalRequest(id, label string) schemas.ResponsesMessage {
 }
 
 func TestProviderResponsesAcceptRemoteMCPItemsFromDeclaredServers(t *testing.T) {
-	approvalRequest := `{"model":"openai/gpt-5.5","input":"hi","tool_choice":"required","tools":[` + mcpServerTool + `]}`
+	approvalRequest := `{"model":"provider:openai gpt-5.5","input":"hi","tool_choice":"required","tools":[` + mcpServerTool + `]}`
 	state := resolvedResponseValidationState(t, approvalRequest)
 	response := validUnaryResponsesProviderResponse("resp_mcp_approval")
 	response.Output = []schemas.ResponsesMessage{mcpListing("mcpl_1", "wiki"), mcpApprovalRequest("mcpr_1", "wiki")}
@@ -282,7 +282,7 @@ func TestProviderResponsesAcceptRemoteMCPItemsFromDeclaredServers(t *testing.T) 
 		t.Fatalf("echoed tools = %#v", response.Tools)
 	}
 
-	unattended := `{"model":"openai/gpt-5.5","input":"hi","max_tool_calls":2,"tools":[{"type":"mcp","server_label":"wiki","server_url":"https://mcp.example.com","require_approval":"never"}]}`
+	unattended := `{"model":"provider:openai gpt-5.5","input":"hi","max_tool_calls":2,"tools":[{"type":"mcp","server_label":"wiki","server_url":"https://mcp.example.com","require_approval":"never"}]}`
 	state = resolvedResponseValidationState(t, unattended)
 	response = validUnaryResponsesProviderResponse("resp_mcp_calls")
 	failed := mcpCall("mcp_2", "wiki")
@@ -308,8 +308,8 @@ func TestProviderResponsesAcceptRemoteMCPItemsFromDeclaredServers(t *testing.T) 
 		output  []schemas.ResponsesMessage
 	}{
 		"undeclared server":   {unattended, []schemas.ResponsesMessage{mcpCall("mcp_1", "docs")}},
-		"server not chosen":   {`{"model":"openai/gpt-5.5","input":"hi","tools":[` + mcpServerTool + `,{"type":"mcp","server_label":"docs","server_url":"https://docs.example.com"}],"tool_choice":{"type":"mcp","server_label":"docs"}}`, []schemas.ResponsesMessage{mcpCall("mcp_1", "wiki")}},
-		"no MCP tool":         {`{"model":"openai/gpt-5.5","input":"hi"}`, []schemas.ResponsesMessage{mcpListing("mcpl_1", "wiki")}},
+		"server not chosen":   {`{"model":"provider:openai gpt-5.5","input":"hi","tools":[` + mcpServerTool + `,{"type":"mcp","server_label":"docs","server_url":"https://docs.example.com"}],"tool_choice":{"type":"mcp","server_label":"docs"}}`, []schemas.ResponsesMessage{mcpCall("mcp_1", "wiki")}},
+		"no MCP tool":         {`{"model":"provider:openai gpt-5.5","input":"hi"}`, []schemas.ResponsesMessage{mcpListing("mcpl_1", "wiki")}},
 		"calls above the cap": {unattended, []schemas.ResponsesMessage{mcpCall("mcp_1", "wiki"), mcpCall("mcp_2", "wiki"), mcpCall("mcp_3", "wiki")}},
 		"call still running":  {unattended, changed(mcpCall("mcp_1", "wiki"), func(call *schemas.ResponsesMessage) { call.Status = schemas.Ptr("calling") })},
 		"call without name":   {unattended, changed(mcpCall("mcp_1", "wiki"), func(call *schemas.ResponsesMessage) { call.ResponsesToolMessage.Name = nil })},
@@ -330,7 +330,7 @@ func TestProviderResponsesAcceptRemoteMCPItemsFromDeclaredServers(t *testing.T) 
 }
 
 func TestProviderResponsesStreamFollowsRemoteMCPLifecycles(t *testing.T) {
-	request := `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"wiki","server_url":"https://mcp.example.com","require_approval":"never"}]}`
+	request := `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"wiki","server_url":"https://mcp.example.com","require_approval":"never"}]}`
 	run := func(argumentFragments []string, doneArguments, finalArguments string, skipCallEvents bool) error {
 		state := resolvedResponseValidationState(t, request)
 		sequence := 0

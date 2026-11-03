@@ -150,7 +150,7 @@ func TestHostedToolResultURLsFollowDomainFiltersHoweverTheHostIsSpelled(t *testi
 		{"Anthropic web fetch result", `{"type":"web_fetch_20250910","name":"web_fetch","filters":%s}`, fetchResult},
 	}
 	for _, location := range locations {
-		model := "openai/gpt-5.5"
+		model := "provider:openai gpt-5.5"
 		if strings.HasPrefix(location.name, "Anthropic") {
 			model = "anthropic-claude-sonnet-4-6"
 		}

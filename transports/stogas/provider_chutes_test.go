@@ -20,7 +20,7 @@ import (
 
 func TestChutesChatWireUsesVerifiedOpenAICompatibleFields(t *testing.T) {
 	state := resolveChutesState(t, `{
-		"model":"chutes/qwen3.6-27b",
+		"model":"provider:chutes qwen3.6-27b",
 		"provider":"chutes",
 		"messages":[{"role":"system","content":"Be concise."},{"role":"user","content":"Reply with JSON."}],
 		"metadata":{"tenant":"must-not-reach-provider"},
@@ -345,7 +345,7 @@ func TestChutesReasoningPolicyRejectsUnreviewedControls(t *testing.T) {
 	// Each request passes without the control, so each refusal is the control's.
 	// The provider prefix keeps routing on Chutes, where other providers also
 	// serve GLM 5.2.
-	for _, model := range []string{"chutes/glm-5.2", "chutes/kimi-k3"} {
+	for _, model := range []string{"provider:chutes glm-5.2", "provider:chutes kimi-k3"} {
 		if err := validateResolvedChat(t, chutesBodyForModel(model, "")); err != nil {
 			t.Fatalf("the %s request without a reasoning control was refused: %v", model, err)
 		}
@@ -356,7 +356,7 @@ func TestChutesReasoningPolicyRejectsUnreviewedControls(t *testing.T) {
 		`"reasoning_max_tokens":100`,
 	} {
 		t.Run(field, func(t *testing.T) {
-			if validateResolvedChat(t, chutesBodyForModel("chutes/glm-5.2", field)) == nil {
+			if validateResolvedChat(t, chutesBodyForModel("provider:chutes glm-5.2", field)) == nil {
 				t.Fatal("unsupported Chutes reasoning control was accepted")
 			}
 		})
@@ -434,7 +434,7 @@ func TestChutesFieldPolicyIsClosedOverTheSharedChatSurface(t *testing.T) {
 		"cache_control":              `{"type":"ephemeral"}`,
 		"container":                  `"container_123"`,
 		"context_management":         `{"edits":[{"type":"compact_20260112"}]}`,
-		"fallbacks":                  `["openai/gpt-5-nano"]`,
+		"fallbacks":                  `["provider:openai gpt-5-nano"]`,
 		"function_call":              `"auto"`,
 		"functions":                  `[{"name":"lookup","parameters":{"type":"object"}}]`,
 		"inference_geo":              `"us"`,
@@ -499,7 +499,7 @@ func TestChutesRequestMetadataIsConsumedBeforeProviderValidation(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"chutes/qwen3.6-27b","messages":[{"role":"user","content":"hi"}],"encryption_keys":{"providers":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},"policy":{"routing":{"filter": "provider.id == \"chutes\""}}}`),
+		Body:   []byte(`{"model":"provider:chutes qwen3.6-27b","messages":[{"role":"user","content":"hi"}],"encryption_keys":{"providers":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},"policy":{"routing":{"filter": "provider.id == \"chutes\""}}}`),
 		Policy: config,
 	})
 	if err != nil {
@@ -703,8 +703,8 @@ func resolveChutesState(t *testing.T, body string) *State {
 		t.Fatalf("decode Chutes test request: %v", err)
 	}
 	model := rawString(request["model"])
-	if model != "" && !strings.Contains(model, "/") {
-		encodedModel, err := sonic.Marshal("chutes/" + model)
+	if model != "" && !strings.ContainsAny(model, "/: ") {
+		encodedModel, err := sonic.Marshal("provider:chutes " + model)
 		if err != nil {
 			t.Fatalf("encode Chutes-qualified model: %v", err)
 		}

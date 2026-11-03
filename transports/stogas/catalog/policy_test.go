@@ -144,6 +144,8 @@ func TestRoutingFallbacksFollowCandidateOrderWithinTheirSlots(t *testing.T) {
 		{"one pair never falls back", policyConfig(1), `,"provider":{"order":["openai","azure"]}`, []schemas.ModelProvider{schemas.OpenAI}, true, true},
 		{"explicit fallback", policyConfig(2), `,"provider":{"order":["openai","azure"]}`, []schemas.ModelProvider{schemas.OpenAI, schemas.Azure}, true, false},
 		{"client order", policyConfig(2), `,"provider":{"order":["azure","openai"]}`, []schemas.ModelProvider{schemas.Azure, schemas.OpenAI}, true, false},
+		// Provider names match as model field IDs do.
+		{"client order by alias in another case", policyConfig(2), `,"provider":{"order":["Azure_OpenAI","OpenAI"]}`, []schemas.ModelProvider{schemas.Azure, schemas.OpenAI}, true, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var attempts []schemas.ModelProvider
@@ -299,7 +301,7 @@ func TestServiceTierErrorNeedsAnotherTierThatServes(t *testing.T) {
 		{model: "claude", tier: "standard", config: allowing("openai-gpt-5.6-sol"), err: ErrModelUnavailable},
 		{model: "claude", tier: "standard", config: allowing("anthropic-claude-opus-5-5-fast"), err: ErrServiceTierUnavailable},
 		{model: "claude-opus", tier: "fast", config: allowing("anthropic-claude-opus-5-5-fast"), deployment: "anthropic-claude-opus-5-5-fast"},
-		{model: "anthropic/claude-opus-5-5", tier: "fast", credentials: openAI, err: ErrModelUnavailable},
+		{model: "provider:anthropic claude-opus-5-5", tier: "fast", credentials: openAI, err: ErrModelUnavailable},
 		{model: "claude-opus-5-5", tier: "flex", credentials: anthropic, err: ErrServiceTierUnavailable},
 		{model: "claude-opus-5-5", tier: "flex", config: allowing("openai-gpt-5.6-sol"), err: ErrModelUnavailable},
 	} {

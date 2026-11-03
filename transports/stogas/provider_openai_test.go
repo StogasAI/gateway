@@ -144,8 +144,8 @@ func TestOpenAIWireChatSendsSmallOutputCapsAsGiven(t *testing.T) {
 		name string
 		body string
 	}{
-		{"OpenAI max_completion_tokens", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":5}`},
-		{"OpenAI max_tokens alias", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"max_tokens":5}`},
+		{"OpenAI max_completion_tokens", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":5}`},
+		{"OpenAI max_tokens alias", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"max_tokens":5}`},
 		{"Azure OpenAI", `{"model":"azure-gpt-5.6-sol","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":5}`},
 	} {
 		t.Run(item.name, func(t *testing.T) {
@@ -191,8 +191,8 @@ func TestResponsesOutputMinimumFollowsTheProvider(t *testing.T) {
 		limit int
 		ok    bool
 	}{
-		{"openai/gpt-5.5", 15, false},
-		{"openai/gpt-5.5", 16, true},
+		{"provider:openai gpt-5.5", 15, false},
+		{"provider:openai gpt-5.5", 16, true},
 		{"azure-gpt-5.6-sol", 15, false},
 		{"azure-gpt-5.6-sol", 16, true},
 		{"anthropic-claude-opus-4-8", 1, true},
@@ -222,12 +222,12 @@ func TestOpenAIAdapterRejectsZeroOutputCaps(t *testing.T) {
 		{
 			name: "chat max_completion_tokens",
 			path: "/v1/chat/completions",
-			body: `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":0}`,
+			body: `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":0}`,
 		},
 		{
 			name: "responses max_output_tokens",
 			path: "/v1/responses",
-			body: `{"model":"openai/gpt-5.5","input":"hi","max_output_tokens":0}`,
+			body: `{"model":"provider:openai gpt-5.5","input":"hi","max_output_tokens":0}`,
 		},
 	} {
 		t.Run(item.name, func(t *testing.T) {

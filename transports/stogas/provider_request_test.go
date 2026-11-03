@@ -35,7 +35,7 @@ func TestPreparedProviderRequestPreservesDecodedPrompt(t *testing.T) {
 				}
 				resolved, err := catalog.ResolveRequest(catalog.RequestInput{
 					Method: "POST", Path: "/v1/" + route,
-					Body: []byte(fmt.Sprintf(`{"model":"openai/gpt-5.5",%q:16,%s}`, limitField, input)),
+					Body: []byte(fmt.Sprintf(`{"model":"provider:openai gpt-5.5",%q:16,%s}`, limitField, input)),
 				})
 				if err != nil {
 					t.Fatal(err)
@@ -325,7 +325,7 @@ func TestCustomerRequestBodyEndUserIDsReachOpenAI(t *testing.T) {
 		{"long responses values", "responses", `"input":"hi","user":"` + long + `","safety_identifier":"` + long + `"`, long, long},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			resolved, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/" + tc.route, Body: []byte(`{"model":"openai/gpt-5.5",` + tc.fields + `}`)})
+			resolved, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/" + tc.route, Body: []byte(`{"model":"provider:openai gpt-5.5",` + tc.fields + `}`)})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -364,7 +364,7 @@ func TestCustomerRequestBodyEndUserIDsReachOpenAI(t *testing.T) {
 		})
 	}
 	for _, fields := range []string{`"user":123`, `"safety_identifier":{"id":"user-1"}`} {
-		if _, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/chat/completions", Body: []byte(`{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],` + fields + `}`)}); err == nil {
+		if _, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/chat/completions", Body: []byte(`{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],` + fields + `}`)}); err == nil {
 			t.Fatalf("%s was accepted", fields)
 		}
 	}
@@ -386,7 +386,7 @@ func TestPrepareProviderRequestRecordsSettingsWithoutContent(t *testing.T) {
 		{
 			name:  "responses to OpenAI keeps only the format and tool choice types",
 			route: "responses",
-			body: `{"model":"openai/gpt-5.5","input":"secret prompt","instructions":"secret instructions","max_output_tokens":64,
+			body: `{"model":"provider:openai gpt-5.5","input":"secret prompt","instructions":"secret instructions","max_output_tokens":64,
 				"reasoning":{"effort":"low","summary":"auto"},"include":["reasoning.encrypted_content"],"truncation":"auto",
 				"text":{"verbosity":"low","format":{"type":"json_schema","name":"secret_schema","strict":true,
 					"schema":{"type":"object","properties":{"secret":{"type":"string"}},"required":["secret"],"additionalProperties":false}}},
@@ -400,7 +400,7 @@ func TestPrepareProviderRequestRecordsSettingsWithoutContent(t *testing.T) {
 		{
 			name:  "responses records the hosted tools that the model may call",
 			route: "responses",
-			body: `{"model":"openai/gpt-5.5","input":"secret prompt","max_output_tokens":64,
+			body: `{"model":"provider:openai gpt-5.5","input":"secret prompt","max_output_tokens":64,
 				"tools":[{"type":"web_search"},{"type":"mcp","server_label":"secret","server_url":"https://mcp.example.com"}],
 				"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_search"}]}}`,
 			want: `{"max_output_tokens":64,"tool_choice":"allowed_tools","max_tool_calls":20,"hosted_tools":["web_search"]}`,
@@ -415,21 +415,21 @@ func TestPrepareProviderRequestRecordsSettingsWithoutContent(t *testing.T) {
 		{
 			name:  "chat to Chutes reads the fields the gateway sends to Chutes",
 			route: "chat/completions",
-			body: `{"model":"chutes/qwen3.6-27b","messages":[{"role":"user","content":"secret prompt"}],"max_tokens":64,
+			body: `{"model":"provider:chutes qwen3.6-27b","messages":[{"role":"user","content":"secret prompt"}],"max_tokens":64,
 				"reasoning":{"enabled":false},"temperature":0.2,"frequency_penalty":0.5,"repetition_penalty":1.1,"seed":7}`,
 			want: `{"max_output_tokens":64,"reasoning_enabled":false,"temperature":0.2,"frequency_penalty":0.5,"repetition_penalty":1.1,"seed":7}`,
 		},
 		{
 			name:  "chat to Chutes leaves out integers that would round in the log",
 			route: "chat/completions",
-			body: `{"model":"chutes/qwen3.6-27b","messages":[{"role":"user","content":"secret prompt"}],"max_tokens":64,
+			body: `{"model":"provider:chutes qwen3.6-27b","messages":[{"role":"user","content":"secret prompt"}],"max_tokens":64,
 				"seed":9007199254740993,"top_k":-9007199254740992,"temperature":0.2}`,
 			want: `{"max_output_tokens":64,"temperature":0.2}`,
 		},
 		{
 			name:  "responses to OpenAI leaves out long text",
 			route: "responses",
-			body: `{"model":"openai/gpt-5.5","input":"secret prompt","max_output_tokens":64,
+			body: `{"model":"provider:openai gpt-5.5","input":"secret prompt","max_output_tokens":64,
 				"reasoning":{"effort":"low","summary":"` + strings.Repeat("x", 65) + `"}}`,
 			want: `{"max_output_tokens":64,"reasoning_effort":"low"}`,
 		},
@@ -731,7 +731,7 @@ func TestPrepareProviderRequestSendsOpenAIWebSearchDomainFilters(t *testing.T) {
 		t.Run(tool, func(t *testing.T) {
 			resolved, err := catalog.ResolveRequest(catalog.RequestInput{
 				Method: "POST", Path: "/v1/responses",
-				Body: []byte(`{"model":"openai/gpt-5.5","input":"hi","max_output_tokens":16,"tools":[` + tool + `}]}`),
+				Body: []byte(`{"model":"provider:openai gpt-5.5","input":"hi","max_output_tokens":16,"tools":[` + tool + `}]}`),
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -771,16 +771,16 @@ func TestOpenAIAccessProgramsReachOnlyOpenAI(t *testing.T) {
 	for _, item := range []struct {
 		name, model, programs, want, err string
 	}{
-		{name: "OpenAI selection", model: "openai/gpt-5.5", programs: `{"cyber":"daybreak_red"}`, want: `{"cyber":"daybreak_red"}`},
-		{name: "OpenAI standard", model: "openai/gpt-5.5", programs: `{"cyber":"standard"}`, want: `{"cyber":"standard"}`},
-		{name: "OpenAI empty selection is omission", model: "openai/gpt-5.5", programs: `{}`},
-		{name: "OpenAI null program is omission", model: "openai/gpt-5.5", programs: `{"cyber":null}`},
+		{name: "OpenAI selection", model: "provider:openai gpt-5.5", programs: `{"cyber":"daybreak_red"}`, want: `{"cyber":"daybreak_red"}`},
+		{name: "OpenAI standard", model: "provider:openai gpt-5.5", programs: `{"cyber":"standard"}`, want: `{"cyber":"standard"}`},
+		{name: "OpenAI empty selection is omission", model: "provider:openai gpt-5.5", programs: `{}`},
+		{name: "OpenAI null program is omission", model: "provider:openai gpt-5.5", programs: `{"cyber":null}`},
 		{name: "Claude without a selection", model: "anthropic-claude-opus-4-8", programs: `{}`},
 		{name: "Claude refuses a selection", model: "anthropic-claude-opus-4-8", programs: `{"cyber":"standard"}`, err: "access_programs is supported only on OpenAI deployments"},
 		{name: "Azure OpenAI refuses a selection", model: "azure-gpt-5.6-sol", programs: `{"cyber":"standard"}`, err: "access_programs is supported only on OpenAI deployments"},
-		{name: "unknown program", model: "openai/gpt-5.5", programs: `{"cyber":"daybreak_green"}`, err: "access_programs.cyber must be standard, daybreak_blue or daybreak_red"},
-		{name: "unknown member", model: "openai/gpt-5.5", programs: `{"bio":"standard"}`, err: "access_programs.bio is not supported"},
-		{name: "not an object", model: "openai/gpt-5.5", programs: `"standard"`, err: "access_programs must be an object"},
+		{name: "unknown program", model: "provider:openai gpt-5.5", programs: `{"cyber":"daybreak_green"}`, err: "access_programs.cyber must be standard, daybreak_blue or daybreak_red"},
+		{name: "unknown member", model: "provider:openai gpt-5.5", programs: `{"bio":"standard"}`, err: "access_programs.bio is not supported"},
+		{name: "not an object", model: "provider:openai gpt-5.5", programs: `"standard"`, err: "access_programs must be an object"},
 	} {
 		t.Run(item.name, func(t *testing.T) {
 			resolved, err := catalog.ResolveRequest(catalog.RequestInput{
@@ -826,7 +826,7 @@ func TestOpenAIAccessProgramsReachOnlyOpenAI(t *testing.T) {
 // out and the schema allows it; false and null keep it non-strict.
 func TestResponsesFunctionToolsKeepTheClientsStrict(t *testing.T) {
 	const parameters = `{"type":"object","properties":{"q":{"type":"string"}},"required":["q"],"additionalProperties":false}`
-	for _, model := range []string{"openai/gpt-5.5", "azure-gpt-5.6-sol"} {
+	for _, model := range []string{"provider:openai gpt-5.5", "azure-gpt-5.6-sol"} {
 		t.Run(model, func(t *testing.T) {
 			resolved, err := catalog.ResolveRequest(catalog.RequestInput{
 				Method: "POST", Path: "/v1/responses",
@@ -881,7 +881,7 @@ func TestResponsesFunctionToolsKeepTheClientsStrict(t *testing.T) {
 func TestClientMetadataNeverReachesProvider(t *testing.T) {
 	resolved, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST", Path: "/v1/responses",
-		Body: []byte(`{"model":"openai/gpt-5.5","input":"hi","max_output_tokens":16,"client_metadata":{"x-codex-installation-id":"must-not-leave","traceparent":null}}`),
+		Body: []byte(`{"model":"provider:openai gpt-5.5","input":"hi","max_output_tokens":16,"client_metadata":{"x-codex-installation-id":"must-not-leave","traceparent":null}}`),
 	})
 	if err != nil {
 		t.Fatal(err)
