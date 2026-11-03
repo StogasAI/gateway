@@ -42,6 +42,11 @@ type RequestPerformance struct {
 	RateLimitWaitMS uint32  `json:"rate_limit_wait_ms"`
 	FirstOutputMS   *uint32 `json:"first_output_ms"`
 	TTFTMS          *uint32 `json:"ttft_ms"`
+	// ToolCalls are the response's first tool calls in output order, and AnsweredCalls hash
+	// the calls that the request's input answers after the latest model turn. A later
+	// request's AnsweredCalls name the calls of this one that its client ran.
+	ToolCalls     []ToolCall `json:"tool_calls,omitempty"`
+	AnsweredCalls []string   `json:"answered_calls,omitempty"`
 }
 
 type EventError struct {
@@ -357,7 +362,7 @@ type EventMeter struct {
 
 type EventMeters map[string]EventMeter
 
-// The largest log the contract allows is about 66 KiB. Postgres stores its
+// The largest log the contract allows is about 70 KiB. Postgres stores its
 // text up to half as long again, within its 128 KiB check.
 const requestLogMaxEventBytes = 72 * 1024
 

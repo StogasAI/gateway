@@ -394,6 +394,8 @@ func PrepareFinalState(state *State) *gatewaybilling.RequestEvent {
 		Metadata:              state.Metadata,
 		Transport:             state.Transport,
 		StartedAt:             state.StartedAt,
+		ToolCalls:             state.loggedToolCalls(),
+		AnsweredCallIDs:       state.answeredCallIDs,
 	})
 	if err != nil {
 		markFinalPricingFailure(state, err)
@@ -420,6 +422,8 @@ func PrepareFinalState(state *State) *gatewaybilling.RequestEvent {
 			Metadata:            state.Metadata,
 			Transport:           state.Transport,
 			StartedAt:           state.StartedAt,
+			ToolCalls:           state.loggedToolCalls(),
+			AnsweredCallIDs:     state.answeredCallIDs,
 		})
 		if err != nil {
 			return nil

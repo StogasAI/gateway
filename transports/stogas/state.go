@@ -97,6 +97,13 @@ type State struct {
 	textMaterialObserved    bool
 	responsesTextMaterial   map[int]textMaterial
 
+	// toolCalls are the response's first tool calls in output order, for the request log, and
+	// toolCallPositions find a Responses item's call among them. answeredCallIDs are the IDs
+	// that the input's results name after the latest model turn.
+	toolCalls         []observedToolCall
+	toolCallPositions map[string]int
+	answeredCallIDs   []string
+
 	// chatFinishReason and chatRefusal describe the validated Chat choice, and
 	// chatOutput keeps streamed content for the structured output check up to
 	// its size bound; chatOutputLong records content past that bound.
@@ -126,6 +133,9 @@ type providerChatToolCall struct {
 	id        string
 	name      string
 	arguments *bytes.Buffer
+	// A streamed call starts with its first delta and ends with its last.
+	startedAt time.Time
+	doneAt    time.Time
 }
 
 type providerResponsesItem struct {

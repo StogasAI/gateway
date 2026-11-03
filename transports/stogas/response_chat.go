@@ -3,6 +3,7 @@ package stogas
 import (
 	"bytes"
 	"strings"
+	"time"
 
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
@@ -204,6 +205,12 @@ func validateProviderChatToolCalls(state *State, calls []schemas.ChatAssistantMe
 		}
 		if !appendProviderBuffer(observed.arguments, call.Function.Arguments) {
 			return ErrProviderResponseMalformed
+		}
+		if streaming {
+			observed.doneAt = time.Now()
+			if !exists {
+				observed.startedAt = observed.doneAt
+			}
 		}
 		state.chatToolCalls[index] = observed
 	}
