@@ -7,40 +7,26 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
 
-func (a AzureAdapter) ValidateRequest(state *State) error {
-	if err := a.DefaultAdapter.ValidateRequest(state); err != nil {
-		return err
-	}
-	if state == nil || state.Resolution == nil {
-		return catalog.ErrUnsupportedRequest
-	}
+// format is the adapter of the format that the deployment takes: Anthropic's for Claude, OpenAI's
+// for the other models. Azure runs each step as that adapter does, so a priced feature that the
+// format bills, such as Claude's web search, is billed on Azure too. Azure differs only where its
+// methods below say so.
+func (a AzureAdapter) format(state *State) Adapter {
 	if azureDeploymentUsesAnthropicWire(state) {
-		if rawJSONValueSet(state.Resolution.RawBody()["task_budget"]) {
-			return invalidRequest("task_budget is not supported for Azure Claude deployments")
-		}
-		if err := validateAnthropicOutputTokenLimit(state); err != nil {
-			return err
-		}
-		if err := validateAnthropicContextManagement(state); err != nil {
-			return err
-		}
-		if err := validateAnthropicChatCompletionPolicy(state); err != nil {
-			return err
-		}
-		return validateAnthropicResponsesPolicy(state)
+		return AnthropicAdapter{a.DefaultAdapter}
 	}
-	if err := validateOpenAIPromptCaching(state); err != nil {
-		return err
-	}
-	if err := validateOpenAIWireChatPolicy(state); err != nil {
-		return err
-	}
-	if err := validateOpenAIWireResponsesPolicy(state); err != nil {
-		return err
-	}
-	return openAIGuardrailError(validateOpenAIGuardrails(openAIAdapterContextForState(state)))
+	return OpenAIAdapter{a.DefaultAdapter}
 }
 
+func (a AzureAdapter) ValidateRequest(state *State) error {
+	if azureDeploymentUsesAnthropicWire(state) && rawJSONValueSet(state.Resolution.RawBody()["task_budget"]) {
+		return invalidRequest("task_budget is not supported for Azure Claude deployments")
+	}
+	return a.format(state).ValidateRequest(state)
+}
+
+// SanitizeRequest sends Claude neither speed nor inference_geo, which Anthropic's adapter sets for
+// Anthropic's own API.
 func (a AzureAdapter) SanitizeRequest(state *State) error {
 	if err := a.DefaultAdapter.SanitizeRequest(state); err != nil {
 		return err
@@ -57,21 +43,19 @@ func (a AzureAdapter) SanitizeRequest(state *State) error {
 }
 
 func (a AzureAdapter) EstimateHold(state *State) error {
-	if err := a.DefaultAdapter.EstimateHold(state); err != nil {
-		return err
-	}
-	if azureDeploymentUsesAnthropicWire(state) {
-		return estimateAnthropicWireHold(state)
-	}
-	return nil
+	return a.format(state).EstimateHold(state)
+}
+
+func (a AzureAdapter) IngestChunk(state *State, chunk *schemas.BifrostStreamChunk) error {
+	return a.format(state).IngestChunk(state, chunk)
+}
+
+func (a AzureAdapter) IngestResponse(state *State, resp *schemas.BifrostResponse, bifrostErr *schemas.BifrostError) error {
+	return a.format(state).IngestResponse(state, resp, bifrostErr)
 }
 
 func (a AzureAdapter) CalculateUpstreamCost(state *State) error {
-	if azureDeploymentUsesAnthropicWire(state) && anthropicRefusalUnbilled(state) {
-		settleUnbilledRefusal(state)
-		return nil
-	}
-	return a.DefaultAdapter.CalculateUpstreamCost(state)
+	return a.format(state).CalculateUpstreamCost(state)
 }
 
 func azureDeploymentUsesAnthropicWire(state *State) bool {

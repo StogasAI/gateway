@@ -424,6 +424,33 @@ func TestAzureClaudeHoldCoversAnthropicCacheWriteAndToolOverhead(t *testing.T) {
 	}
 }
 
+// Claude on Azure runs Anthropic's web search, which Foundry bills per call, so Azure counts and
+// prices the calls as Anthropic's API does.
+func TestAzureClaudeBillsWebSearchCallsAsAnthropicDoes(t *testing.T) {
+	state := resolveAzureState(t, "/v1/responses", `{"model":"azure-claude-opus-4-8-anthropic-hosted","input":"Search the news.","tools":[{"type":"web_search_20250305","name":"web_search"}],"max_tool_calls":3,"max_output_tokens":64}`)
+	if err := state.Adapter.EstimateHold(state); err != nil {
+		t.Fatalf("EstimateHold returned error: %v", err)
+	}
+	response := validUnaryResponsesProviderResponse("resp_1")
+	response.Output = []schemas.ResponsesMessage{
+		providerWebSearchOutputItem("ws_1", "https://example.com/a"),
+		providerWebSearchOutputItem("ws_2", "https://example.com/b"),
+	}
+	state.Signals = &StandardSignals{Prompt: 10, Completion: 10}
+	if err := state.Adapter.IngestResponse(state, &schemas.BifrostResponse{ResponsesResponse: response}, nil); err != nil {
+		t.Fatalf("IngestResponse returned error: %v", err)
+	}
+	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
+		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
+	}
+	if meter := findMeterEstimate(state.FinalMeters, meterAnthropicWebSearchCalls); meter == nil || meter.Quantity != "2" {
+		t.Fatalf("web search calls were not billed: %#v", state.FinalMeters)
+	}
+	if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD) < 0 {
+		t.Fatalf("hold %s does not cover the cost %s", state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD)
+	}
+}
+
 // MiniMax M3 on Azure only turns reasoning on and off. The OpenAI format carries reasoning only as
 // reasoning_effort, so reasoning off is the effort "none", and reasoning on leaves the model's
 // default.
