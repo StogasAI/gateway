@@ -466,17 +466,26 @@ func inspectionSetBy(entries []InspectionSource, sources []ScopedSource, compile
 	if compiled.Input != nil {
 		add("input", permissionInput, true, func(c *Config) bool { return c.Input.applies() })
 	}
-	// Each plugin names the policies whose settings for it combine. A required
-	// plugin replaces the defaults of that plugin alone.
+	// Export and redaction name the policies whose settings for them combine. A
+	// required plugin replaces the defaults of that plugin alone.
 	for _, plugin := range []struct {
 		setting string
 		unit    Permission
-	}{{"plugins.export", permissionExport}, {"plugins.redaction", permissionRedaction}, {"plugins.textExtraction", permissionTextExtraction}} {
+	}{{"plugins.export", permissionExport}, {"plugins.redaction", permissionRedaction}} {
 		for _, part := range compiled.PluginSources {
 			if part.units()&plugin.unit != 0 {
 				add(plugin.setting, plugin.unit, true, always)
 				break
 			}
+		}
+	}
+	// The strongest text extraction mode wins, so it names the first policy that
+	// sets that mode.
+	for _, part := range compiled.PluginSources {
+		if part.units()&permissionTextExtraction != 0 {
+			mode := compiled.TextExtraction()
+			add("plugins.textExtraction", permissionTextExtraction, false, func(c *Config) bool { return c.TextExtraction() == mode })
+			break
 		}
 	}
 	if compiled.Routing.AllowedCatalogNodes != nil {
