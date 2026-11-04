@@ -256,11 +256,11 @@ func TestEverySettingDeclaresItsScopeAndCombination(t *testing.T) {
 	}
 	settings := map[string]declared{
 		"access":                        {"candidate", "union of deny periods"},
-		"input":                         {"candidate", "any true requires ASCII"},
+		"input":                         {"candidate", "any true requires ASCII; allowed types intersect and denied types join"},
 		"limits":                        {"saved", "every limit applies"},
 		"plugins.redaction":             {"candidate", "union of presets and expressions"},
 		"plugins.encrypted":             {"candidate", "hides an export or redaction, which then combines as readable"},
-		"plugins.textExtraction":        {"candidate", "any true extracts"},
+		"plugins.textExtraction":        {"candidate", "the strongest mode: always, then auto, then off"},
 		"plugins.export":                {"candidate", "union of destinations"},
 		"routing.filter":                {"candidate", "every filter must match"},
 		"routing.allowedCatalogNodes":   {"candidate", "intersection"},

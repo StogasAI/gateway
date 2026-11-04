@@ -51,6 +51,9 @@ type requestVariants struct {
 	budget        policy.SourceBudget
 	// attachments are the request's attachments, where they can narrow the candidates.
 	attachments []Attachment
+	// textFiles are its inline text files, of which auto text extraction keeps those that a
+	// pair's deployment reads as files.
+	textFiles []Attachment
 	// hostedTools are the hosted tools that the request lets the model call, whose data
 	// handling joins each candidate's.
 	hostedTools []HostedTool
@@ -309,6 +312,11 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 		return nil, attachmentsRefusal(variants.attachments, attachmentPairs)
 	}
 	// Later pairs are prepared with their own checks, which read the attachments in full.
+	for _, attachment := range variants.attachments {
+		if attachment.text {
+			variants.textFiles = append(variants.textFiles, attachment)
+		}
+	}
 	variants.attachments = nil
 	if len(candidates.filtered) == 0 && targetRemoved && !targetPassed {
 		if err := variants.ruledOutError(input, route); err != nil {
@@ -535,28 +543,30 @@ func (v *requestVariants) reserve(bytes int) error {
 	return nil
 }
 
-func (v *requestVariants) bodyFor(value RequestPolicy) (*requestBodyVariant, error) {
+// bodyFor prepares the request's body for a pair: its deployment, which decides which text
+// files stay files where extraction is auto, and its policy.
+func (v *requestVariants) bodyFor(selection routingSelection, value RequestPolicy) (*requestBodyVariant, error) {
 	surface := redaction.SurfaceChat
 	if v.route == RouteResponses {
 		surface = redaction.SurfaceResponses
 	}
-	return v.prepareBody(value, surface)
+	return v.prepareBody(selection, value, surface)
 }
 
-func (v *requestVariants) prepareBody(value RequestPolicy, surface redaction.Surface) (*requestBodyVariant, error) {
+func (v *requestVariants) prepareBody(selection routingSelection, value RequestPolicy, surface redaction.Surface) (*requestBodyVariant, error) {
 	exports, err := value.Config.ExportConfig()
 	if err != nil {
 		return nil, requestPolicyError(err)
 	}
 	compiled := value.RedactionPolicy
-	extract := value.Config.TextExtractionEnabled()
+	extraction := value.Config.TextExtraction()
 	if value.LoadActivePlugins != nil {
 		var err error
 		var active *policy.ActivePlugins
 		active, err = value.LoadActivePlugins(value.Config)
 		if err == nil {
 			compiled = active.Redaction
-			extract = active.TextExtraction
+			extraction = active.TextExtraction
 			exports = active.Export
 		}
 		if err != nil {
@@ -600,11 +610,29 @@ func (v *requestVariants) prepareBody(value RequestPolicy, surface redaction.Sur
 	if v.reserveBody != nil {
 		reserveExpansion = func(bytes int) error { return v.reserve(v.inputBytes + bytes) }
 	}
-	files, err := inputfiles.Process(fields, v.route == RouteResponses, extract, reserveExpansion)
+	asciiOnly := value.Config != nil && value.Config.Input != nil && value.Config.Input.ASCIIOnly
+	options := inputfiles.Options{Extract: extraction != policy.TextExtractionOff, Reserve: reserveExpansion}
+	// Auto keeps a text file that the deployment reads as a file, unless input checks or
+	// redaction must read it.
+	if extraction == policy.TextExtractionAuto && !asciiOnly && !compiled.Enabled() {
+		options.Native = func(path string) bool {
+			for _, attachment := range v.textFiles {
+				if attachment.Path == path {
+					return attachmentError(selection.provider, selection.deployment, attachment, routingSubject) == nil
+				}
+			}
+			return false
+		}
+	}
+	if types := value.Config.MediaTypes(); types != nil {
+		options.Check = func(path string, mediaType inputfiles.MediaType) error {
+			return mediaTypeRefusal(types, path, mediaType, nil)
+		}
+	}
+	files, err := inputfiles.Process(fields, v.route == RouteResponses, options)
 	if err != nil {
 		return nil, errors.Join(err, APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: err.Error()})
 	}
-	asciiOnly := value.Config != nil && value.Config.Input != nil && value.Config.Input.ASCIIOnly
 	if files.Opaque && (asciiOnly || compiled.Enabled()) {
 		return nil, APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Opaque attachments cannot satisfy the active input inspection policy; submit text or enable text extraction for inline UTF-8 text files"}
 	}

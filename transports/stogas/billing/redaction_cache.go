@@ -241,7 +241,7 @@ func (snapshot *KeyConfigSnapshot) ActivePlugins(config *policy.Config, keys cus
 	if err != nil {
 		return nil, err
 	}
-	return &policy.ActivePlugins{Redaction: combined, TextExtraction: active.TextExtractionEnabled(), Export: exports}, nil
+	return &policy.ActivePlugins{Redaction: combined, TextExtraction: active.TextExtraction(), Export: exports}, nil
 }
 
 func conditionalReferenceBytes(source *sharedPolicySource) int64 {

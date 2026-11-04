@@ -59,6 +59,10 @@ type Attachment struct {
 	FileType      string
 	// text marks an inline text file, which text extraction turns into prompt text.
 	text bool
+	// mediaType is what the part and the start of its content say of its type, for the
+	// policy's input.mediaTypes, and mediaTypeErr why the two disagree.
+	mediaType    inputfiles.MediaType
+	mediaTypeErr error
 }
 
 // AttachmentError reports why the selected deployment cannot read an attachment, or nil when it
@@ -151,11 +155,30 @@ func CloudRunsClaude(provider schemas.ModelProvider, deployment Deployment) bool
 	return (provider == ProviderAWS || provider == ProviderGoogleCloud) && deployment.Upstream.Hosting != "anthropic"
 }
 
+// mediaTypeRefusal refuses the attachment at path when the policy's input.mediaTypes refuse
+// its type, or cannot tell it, or nil.
+func mediaTypeRefusal(types *policy.MediaTypes, path string, mediaType inputfiles.MediaType, resolveErr error) error {
+	switch {
+	case types == nil:
+		return nil
+	case resolveErr != nil:
+		return attachmentRefusal(path, " "+resolveErr.Error())
+	case !types.Refuses(mediaType.Class, mediaType.Value):
+		return nil
+	case mediaType.Value == "":
+		return attachmentRefusal(path, " has no media type that input.mediaTypes can check; send it inline with its media type")
+	}
+	return attachmentRefusal(path, " is "+mediaType.Value+", which input.mediaTypes refuses")
+}
+
 // attachmentPair is what routing knows, before any plugin is opened, about how a pair reads
 // attachments.
 type attachmentPair struct {
 	selection routingSelection
-	// extracts turns inline text files into prompt text. Text extraction is never encrypted.
+	// mediaTypes are the policy's input.mediaTypes.
+	mediaTypes *policy.MediaTypes
+	// extracts turns inline text files into prompt text, as a file or as text depending on the
+	// mode. Text extraction is never encrypted.
 	extracts bool
 	// inspects refuses an attachment that stays opaque: input limited to ASCII, or redaction
 	// that the policy holds unencrypted. Encrypted redaction is known only once the pair is
@@ -166,12 +189,20 @@ type attachmentPair struct {
 }
 
 func newAttachmentPair(selection routingSelection, config *policy.Config, managed bool) attachmentPair {
-	return attachmentPair{selection: selection, extracts: config.TextExtractionEnabled(), inspects: config.InspectsInput(), managed: managed}
+	return attachmentPair{selection: selection, mediaTypes: config.MediaTypes(), extracts: config.TextExtraction() != policy.TextExtractionOff, inspects: config.InspectsInput(), managed: managed}
+}
+
+// typeRefusal reports why the pair's policy refuses an attachment's media type, or nil.
+func (p attachmentPair) typeRefusal(attachment Attachment) error {
+	return mediaTypeRefusal(p.mediaTypes, attachment.Path, attachment.mediaType, attachment.mediaTypeErr)
 }
 
 // refusal reports why the pair cannot read an attachment, as the preparation of the pair would
 // refuse it, or nil when it can. subject names the deployments in question.
 func (p attachmentPair) refusal(attachment Attachment, subject string) error {
+	if err := p.typeRefusal(attachment); err != nil {
+		return err
+	}
 	if attachment.text && p.extracts {
 		return nil
 	}
@@ -216,20 +247,21 @@ func attachmentsRefusal(attachments []Attachment, pairs []attachmentPair) error 
 	var split []string
 	for _, attachment := range attachments {
 		var first error
-		read := false
+		read, byType := false, false
 		for _, pair := range pairs {
 			if err := pair.refusal(attachment, routingSubject); err == nil {
 				read = true
 			} else if first == nil {
-				first = err
+				first, byType = err, pair.typeRefusal(attachment) != nil
 			}
 		}
 		switch {
 		case !read:
 			refusal := PublicError(first)
 			refusal.Code = AttachmentUnsupported
-			// Only text extraction makes an inline text file readable where nothing reads it.
-			if attachment.text && !slices.ContainsFunc(pairs, func(pair attachmentPair) bool { return pair.extracts }) {
+			// Only text extraction makes an inline text file readable where nothing reads it, unless
+			// its type is what the policy refuses.
+			if attachment.text && !byType && !slices.ContainsFunc(pairs, func(pair attachmentPair) bool { return pair.extracts }) {
 				refusal.Message += "; enable text extraction to send it as prompt text"
 			}
 			return refusal
@@ -309,7 +341,7 @@ func attachmentNamed(messages []byte) bool {
 // an attachment, or that the request's preparation refuses on any deployment.
 func readAttachment(block map[string]json.RawMessage, path string, responses bool) (Attachment, bool) {
 	attachment := Attachment{Path: path, Kind: rawStringValue(block["type"]), Responses: responses}
-	holderKey, urlKey, dataKey, idKey := "", "", "", ""
+	holderKey, urlKey, dataKey, idKey, formatKey := "", "", "", "", ""
 	document := false
 	switch {
 	case !responses && attachment.Kind == "image_url":
@@ -317,7 +349,7 @@ func readAttachment(block map[string]json.RawMessage, path string, responses boo
 	case responses && attachment.Kind == "input_image":
 		urlKey, idKey = "image_url", "file_id"
 	case !responses && attachment.Kind == "input_audio":
-		holderKey, dataKey = "input_audio", "data"
+		holderKey, dataKey, formatKey = "input_audio", "data", "format"
 	case !responses && attachment.Kind == "file":
 		holderKey, document = "file", true
 	case responses && attachment.Kind == "input_file":
@@ -348,6 +380,7 @@ func readAttachment(block map[string]json.RawMessage, path string, responses boo
 	if document {
 		attachment.Filename, attachment.FileType = read("filename", false), read("file_type", false)
 	}
+	format := read(formatKey, false)
 	sources := 0
 	for _, source := range []string{attachment.URL, attachment.Data, attachment.ID} {
 		if source != "" {
@@ -361,19 +394,25 @@ func readAttachment(block map[string]json.RawMessage, path string, responses boo
 	if strings.HasPrefix(attachment.URL, "data:") {
 		inline = attachment.URL
 	}
+	declared, payload := "", ""
 	if inline != "" {
-		mediaType, _, err := inputfiles.ParseInline(inline, attachment.FileType)
-		if err != nil {
+		var err error
+		if declared, payload, err = inputfiles.ParseInline(inline, attachment.FileType); err != nil {
 			return Attachment{}, false
 		}
-		attachment.text = document && inputfiles.TextMediaType(mediaType)
+		attachment.text = document && inputfiles.TextMediaType(declared)
 	}
+	if format != "" {
+		declared = inputfiles.AudioMediaType(format)
+	}
+	attachment.mediaType, attachment.mediaTypeErr = inputfiles.ResolveMediaType(attachment.Kind, declared, payload)
 	return attachment, true
 }
 
-// attachmentHeadBytes is about how much of a long source other than a data URL routing decodes.
-// Routing reads only whether such a source is there.
-const attachmentHeadBytes = 1024
+// attachmentHeadBytes is how much of a long source routing decodes beyond a data URL's header:
+// enough for content sniffing to read the same bytes as the request's preparation, however the
+// JSON escapes them, which takes at most six bytes for each character.
+const attachmentHeadBytes = 6 * inputfiles.SniffChars
 
 // attachmentString reads a member that the checks take only as a string with text, as "" where
 // it is absent. A null member fails, as the checks refuse it. head decodes a long value only in
@@ -394,15 +433,18 @@ func attachmentString(raw json.RawMessage, head bool) (string, bool) {
 }
 
 // stringHead cuts a JSON string longer than attachmentHeadBytes to what routing reads of it: a
-// data URL through the comma that ends its header, since no escape holds a comma, and another
-// value through a prefix of at most attachmentHeadBytes that splits no escape and no character.
+// prefix of at most attachmentHeadBytes, after the comma that ends a data URL's header, since no
+// escape holds a comma, that splits no escape and no character.
 func stringHead(raw json.RawMessage) json.RawMessage {
+	end := attachmentHeadBytes
 	if bytes.HasPrefix(raw[1:], []byte("data:")) {
 		if comma := bytes.IndexByte(raw, ','); comma >= 0 {
-			return append(slices.Clip(raw[:comma+1]), '"')
+			end += comma + 1
 		}
 	}
-	end := attachmentHeadBytes
+	if end >= len(raw)-1 {
+		return raw
+	}
 	for i := 1; i < end; i++ {
 		if raw[i] != '\\' {
 			continue

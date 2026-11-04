@@ -526,8 +526,8 @@ func TestReplacedDefaultsNameTheRequirementOnEachDeployment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	org := ruleSource(t, `{"encryption":{"keys":{"test":"`+fixture.Envelope.KeyID+`"}},"plugins":{"textExtraction":true},"rules":{`+
-		`"base":{"mode":"default","input":{"asciiOnly":true},"plugins":{"textExtraction":false,"redaction":{"email_address":true}},"routing":{"retries":2,"sort":[{"by":"provider.id"}]}},`+
+	org := ruleSource(t, `{"encryption":{"keys":{"test":"`+fixture.Envelope.KeyID+`"}},"plugins":{"textExtraction":"always"},"rules":{`+
+		`"base":{"mode":"default","input":{"asciiOnly":true},"plugins":{"textExtraction":"off","redaction":{"email_address":true}},"routing":{"retries":2,"sort":[{"by":"provider.id"}]}},`+
 		`"strict_openai":{"when":"provider.id == 'openai'","plugins":{"redaction":{"credit_card_number":true}}}}}`)
 	role := ruleSource(t, `{"rules":{`+
 		`"openai_too":{"when":"provider.id == 'openai'","plugins":{"redaction":{"phone_number":true}}},`+

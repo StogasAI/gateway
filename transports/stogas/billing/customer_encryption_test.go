@@ -287,7 +287,7 @@ func TestPolicyValidationOpensEachPluginWithItsOwnRoot(t *testing.T) {
 	export := sealTestEnvelope(t, roots["exports"], keys["exports"].ID(), org, "plugins/export", `{"destinations":[{"url":"https://collector.example/v1/traces","headers":{"Authorization":"Bearer private"}}]}`)
 	redaction := sealTestEnvelope(t, roots["redactions"], keys["redactions"].ID(), org, "plugins/redaction", `{"literals":[{"values":["CUSTOMER_PRIVATE_VALUE"]}]}`)
 	registry := map[string]any{"keys": map[string]string{"exports": keys["exports"].ID(), "redactions": keys["redactions"].ID()}}
-	plugins := map[string]any{"textExtraction": true, "export": map[string]any{"encrypted": json.RawMessage(export)}, "redaction": map[string]any{"encrypted": json.RawMessage(redaction)}}
+	plugins := map[string]any{"textExtraction": "always", "export": map[string]any{"encrypted": json.RawMessage(export)}, "redaction": map[string]any{"encrypted": json.RawMessage(redaction)}}
 	base, _ := json.Marshal(map[string]any{"encryption": registry, "plugins": plugins})
 	rule, _ := json.Marshal(map[string]any{"rules": map[string]any{"private": map[string]any{"when": `provider.id == "openai"`, "plugins": plugins}}})
 	s := &Service{}

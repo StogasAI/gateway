@@ -1,5 +1,6 @@
 // Package inputfiles inspects declared attachments without fetching remote
-// resources or decoding binary formats. Only opted-in UTF-8 text is expanded.
+// resources or decoding binary formats. Only opted-in UTF-8 text is expanded,
+// and content sniffing reads no more than a payload's first 512 bytes.
 package inputfiles
 
 import (
@@ -9,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"maps"
 	"mime"
@@ -27,12 +29,26 @@ type Stats struct {
 	Opaque      bool
 }
 
-// Process borrows unchanged JSON. reserveExpansion admits the worst-case JSON
-// expansion before decoding text or allocating its replacement containers.
-func Process(fields map[string]json.RawMessage, responses, extract bool, reserveExpansion func(int) error) (Stats, error) {
-	p := processor{extract: extract, reserve: reserveExpansion}
-	if err := replaceBlocks(fields, responses, func(block map[string]json.RawMessage) (json.RawMessage, error) {
-		return p.block(block, responses)
+// Options say what Process does with a request's attachments.
+type Options struct {
+	// Extract turns inline text files into prompt text.
+	Extract bool
+	// Native reports whether the deployment reads the text file at a path, such as
+	// messages[0].content[1], as a file, which then stays one. Nil extracts every text file.
+	Native func(path string) bool
+	// Check refuses an attachment at a path by its media type. Nil checks nothing, and leaves
+	// the content unsniffed.
+	Check func(path string, mediaType MediaType) error
+	// Reserve admits the worst-case JSON expansion before decoding text or allocating its
+	// replacement containers.
+	Reserve func(int) error
+}
+
+// Process borrows unchanged JSON.
+func Process(fields map[string]json.RawMessage, responses bool, options Options) (Stats, error) {
+	p := processor{Options: options}
+	if err := replaceBlocks(fields, responses, func(path string, block map[string]json.RawMessage) (json.RawMessage, error) {
+		return p.block(path, block, responses)
 	}); err != nil {
 		return Stats{}, err
 	}
@@ -44,7 +60,7 @@ func Process(fields map[string]json.RawMessage, responses, extract bool, reserve
 // decoded bytes. URLs, provider file IDs and other values are borrowed.
 func Describe(fields map[string]json.RawMessage, responses bool) (map[string]json.RawMessage, error) {
 	described := maps.Clone(fields)
-	err := replaceBlocks(described, responses, func(block map[string]json.RawMessage) (json.RawMessage, error) {
+	err := replaceBlocks(described, responses, func(_ string, block map[string]json.RawMessage) (json.RawMessage, error) {
 		parent, key := "", ""
 		switch kind := stringField(block, "type"); {
 		case !responses && kind == "image_url":
@@ -103,8 +119,9 @@ func Describe(fields map[string]json.RawMessage, responses bool) (map[string]jso
 }
 
 // replaceBlocks visits the content blocks of each message and re-encodes only
-// the containers whose blocks were replaced.
-func replaceBlocks(fields map[string]json.RawMessage, responses bool, replace func(map[string]json.RawMessage) (json.RawMessage, error)) error {
+// the containers whose blocks were replaced. It names each block by its path, as
+// messages[0].content[1].
+func replaceBlocks(fields map[string]json.RawMessage, responses bool, replace func(string, map[string]json.RawMessage) (json.RawMessage, error)) error {
 	field := "messages"
 	if responses {
 		field = "input"
@@ -141,7 +158,7 @@ func replaceBlocks(fields map[string]json.RawMessage, responses bool, replace fu
 			if err != nil {
 				continue
 			}
-			replacement, err := replace(block)
+			replacement, err := replace(fmt.Sprintf("%s[%d].content[%d]", field, i, j), block)
 			if err != nil {
 				return err
 			}
@@ -170,16 +187,15 @@ func replaceBlocks(fields map[string]json.RawMessage, responses bool, replace fu
 }
 
 type processor struct {
+	Options
 	stats     Stats
-	extract   bool
-	reserve   func(int) error
 	expansion int
 }
 
-func (p *processor) block(block map[string]json.RawMessage, responses bool) (json.RawMessage, error) {
+func (p *processor) block(path string, block map[string]json.RawMessage, responses bool) (json.RawMessage, error) {
 	kind := stringField(block, "type")
 	var file map[string]json.RawMessage
-	var data, sourceURL, id string
+	var data, sourceURL, id, audioType string
 	document := false
 	switch {
 	case !responses && kind == "file":
@@ -205,6 +221,7 @@ func (p *processor) block(block map[string]json.RawMessage, responses bool) (jso
 			return nil, errors.New("input_audio must be an object")
 		}
 		data = stringField(audio, "data")
+		audioType = AudioMediaType(stringField(audio, "format"))
 	default:
 		return nil, nil
 	}
@@ -221,29 +238,44 @@ func (p *processor) block(block map[string]json.RawMessage, responses bool) (jso
 		return nil, errors.New("an attachment requires exactly one inline payload, URL, or provider file ID")
 	}
 	p.stats.Count++
+	if strings.HasPrefix(sourceURL, "data:") {
+		data, sourceURL = sourceURL, ""
+	}
+	mediaType, payload := audioType, ""
+	if data != "" {
+		var err error
+		if mediaType, payload, err = ParseInline(data, stringField(file, "file_type")); err != nil {
+			return nil, err
+		}
+		if audioType != "" {
+			mediaType = audioType
+		}
+	}
+	if p.Check != nil {
+		resolved, err := ResolveMediaType(kind, mediaType, payload)
+		if err != nil {
+			return nil, fmt.Errorf("%s %w", path, err)
+		}
+		if err := p.Check(path, resolved); err != nil {
+			return nil, err
+		}
+	}
 	if id != "" {
 		p.stats.IDs++
 		p.stats.Opaque = true
 		return nil, nil
-	}
-	if strings.HasPrefix(sourceURL, "data:") {
-		data, sourceURL = sourceURL, ""
 	}
 	if sourceURL != "" {
 		p.stats.URLs++
 		p.stats.Opaque = true
 		return nil, nil
 	}
-	mediaType, payload, err := ParseInline(data, stringField(file, "file_type"))
-	if err != nil {
-		return nil, err
-	}
-	if document && p.extract && TextMediaType(mediaType) {
+	if document && p.Extract && TextMediaType(mediaType) && (p.Native == nil || !p.Native(path)) {
 		// Every UTF-8 byte may require six JSON bytes. The existing request lease
 		// also covers simultaneous encoded and decoded representations.
 		p.expansion += base64.StdEncoding.DecodedLen(len(payload)) * 6
-		if p.reserve != nil {
-			if err := p.reserve(p.expansion); err != nil {
+		if p.Reserve != nil {
+			if err := p.Reserve(p.expansion); err != nil {
 				return nil, err
 			}
 		}
@@ -269,16 +301,18 @@ func (p *processor) block(block map[string]json.RawMessage, responses bool) (jso
 				return nil, errors.New("unsupported text attachment block field")
 			}
 		}
-		text := string(decoded)
 		if raw, exists := file["filename"]; exists {
 			var name string
 			if err := sonic.Unmarshal(raw, &name); err != nil || strings.TrimSpace(name) == "" {
 				return nil, errors.New("filename must be a non-empty string")
 			}
 		}
+		// The first line keeps what the file part said of the file: its name and media type.
+		header := "(" + mediaType + ")"
 		if name := stringField(file, "filename"); name != "" {
-			text = name + "\n" + text
+			header = name + " " + header
 		}
+		text := header + "\n" + string(decoded)
 		replacement := map[string]json.RawMessage{}
 		for _, key := range []string{"cache_control", "prompt_cache_breakpoint"} {
 			if raw, ok := block[key]; ok {
@@ -342,8 +376,13 @@ func stringField(fields map[string]json.RawMessage, key string) string {
 	return value
 }
 
-// TextMediaType reports whether text extraction reads a file of the media type as text.
-func TextMediaType(value string) bool {
-	value = strings.ToLower(value)
-	return strings.HasPrefix(value, "text/") || value == "application/json" || value == "application/xml" || strings.HasSuffix(value, "+json") || strings.HasSuffix(value, "+xml")
+// AudioMediaType names the media type of a Chat audio part's format, such as wav.
+func AudioMediaType(format string) string {
+	switch format = strings.ToLower(format); format {
+	case "":
+		return ""
+	case "mp3":
+		return "audio/mpeg"
+	}
+	return "audio/" + format
 }

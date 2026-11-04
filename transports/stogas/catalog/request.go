@@ -892,7 +892,7 @@ func resolveChatRequests(input RequestInput, route Route) (*ResolvedRequest, err
 	}
 	variants := plan.variants
 	plan.resolve = func(selection routingSelection, candidatePolicy RequestPolicy) (*ResolvedRequest, error) {
-		variant, err := variants.bodyFor(candidatePolicy)
+		variant, err := variants.bodyFor(selection, candidatePolicy)
 		if err != nil {
 			return nil, err
 		}
@@ -966,7 +966,7 @@ func resolveResponsesRequests(input RequestInput, route Route) (*ResolvedRequest
 	}
 	variants := plan.variants
 	plan.resolve = func(selection routingSelection, candidatePolicy RequestPolicy) (*ResolvedRequest, error) {
-		variant, err := variants.bodyFor(candidatePolicy)
+		variant, err := variants.bodyFor(selection, candidatePolicy)
 		if err != nil {
 			return nil, err
 		}

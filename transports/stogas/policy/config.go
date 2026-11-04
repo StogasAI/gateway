@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"mime"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -84,7 +86,150 @@ type Config struct {
 }
 
 type Input struct {
-	ASCIIOnly bool `json:"asciiOnly"`
+	ASCIIOnly  bool        `json:"asciiOnly,omitzero"`
+	MediaTypes *MediaTypes `json:"mediaTypes,omitempty"`
+}
+
+// MaxMediaTypes is how many entries a media type list holds.
+const MaxMediaTypes = 64
+
+// MediaTypes limits attachments by media type. An entry is a media type, such as image/png, or
+// every type of a class, such as image/*.
+type MediaTypes struct {
+	// Allow, when present, admits only attachments of its types: an empty list admits none.
+	Allow []string `json:"allow,omitzero"`
+	// Deny refuses attachments of its types.
+	Deny []string `json:"deny,omitzero"`
+}
+
+// applies reports whether the input section checks anything.
+func (in *Input) applies() bool {
+	return in != nil && (in.ASCIIOnly || in.MediaTypes != nil)
+}
+
+func (in *Input) validate() error {
+	if in == nil || in.MediaTypes == nil {
+		return nil
+	}
+	types := in.MediaTypes
+	if types.Allow == nil && types.Deny == nil {
+		return configError("input.mediaTypes requires allow or deny")
+	}
+	for _, list := range []struct {
+		name   string
+		values []string
+	}{{"allow", types.Allow}, {"deny", types.Deny}} {
+		if len(list.values) > MaxMediaTypes {
+			return configError("input.mediaTypes.%s lists at most %d types", list.name, MaxMediaTypes)
+		}
+		seen := map[string]bool{}
+		for _, value := range list.values {
+			if !validMediaTypePattern(value) {
+				return configError("input.mediaTypes.%s has %q, which is not a lowercase media type such as image/png or class such as image/*", list.name, value)
+			}
+			if seen[value] {
+				return configError("input.mediaTypes.%s lists %q twice", list.name, value)
+			}
+			seen[value] = true
+		}
+	}
+	return nil
+}
+
+func validMediaTypePattern(value string) bool {
+	class, subtype, ok := strings.Cut(value, "/")
+	if !ok || len(value) > 255 || value != strings.ToLower(value) || class == "*" {
+		return false
+	}
+	if subtype == "*" {
+		value = class + "/x"
+	}
+	parsed, params, err := mime.ParseMediaType(value)
+	return err == nil && len(params) == 0 && parsed == value
+}
+
+// mediaTypeMatches reports whether a type or class pattern takes value, which may itself be a
+// class such as image/*.
+func mediaTypeMatches(pattern, value string) bool {
+	return pattern == value || strings.HasSuffix(pattern, "/*") && !strings.HasSuffix(value, "/*") && strings.HasPrefix(value, strings.TrimSuffix(pattern, "*"))
+}
+
+// combine returns the checks of both sections: ASCII where either requires it, the types that
+// both allow, and the types that either denies.
+func (in *Input) combine(other *Input) *Input {
+	if in == nil {
+		in = &Input{}
+	}
+	out := &Input{ASCIIOnly: in.ASCIIOnly || other.ASCIIOnly, MediaTypes: in.MediaTypes}
+	if other.MediaTypes == nil {
+		return out
+	}
+	if out.MediaTypes == nil {
+		out.MediaTypes = other.MediaTypes
+		return out
+	}
+	a, b := out.MediaTypes, other.MediaTypes
+	combined := &MediaTypes{Allow: a.Allow, Deny: sortedUnion(a.Deny, b.Deny)}
+	switch {
+	case a.Allow == nil:
+		combined.Allow = b.Allow
+	case b.Allow != nil:
+		combined.Allow = []string{}
+		for _, x := range a.Allow {
+			for _, y := range b.Allow {
+				switch {
+				case mediaTypeMatches(x, y):
+					combined.Allow = append(combined.Allow, y)
+				case mediaTypeMatches(y, x):
+					combined.Allow = append(combined.Allow, x)
+				}
+			}
+		}
+		combined.Allow = sortedUnion(combined.Allow, nil)
+	}
+	out.MediaTypes = combined
+	return out
+}
+
+func sortedUnion(a, b []string) []string {
+	if a == nil && b == nil {
+		return nil
+	}
+	out := append(append([]string{}, a...), b...)
+	sort.Strings(out)
+	return slices.Compact(out)
+}
+
+// Refuses reports whether the media types refuse an attachment whose class, such as image, and
+// full type, such as image/png, are known as far as they are: an empty type is unknown. An
+// attachment whose type is unknown is refused wherever its type could decide.
+func (m *MediaTypes) Refuses(class, value string) bool {
+	if m == nil {
+		return false
+	}
+	could := func(pattern string) bool {
+		switch {
+		case value != "":
+			return mediaTypeMatches(pattern, value)
+		case class != "":
+			return strings.HasPrefix(pattern, class+"/")
+		}
+		return true
+	}
+	for _, pattern := range m.Deny {
+		if could(pattern) {
+			return true
+		}
+	}
+	if m.Allow == nil {
+		return false
+	}
+	for _, pattern := range m.Allow {
+		if value != "" && mediaTypeMatches(pattern, value) || value == "" && class != "" && pattern == class+"/*" {
+			return false
+		}
+	}
+	return true
 }
 
 type Timeouts struct {
@@ -151,7 +296,29 @@ type DenyWindow struct {
 type Plugins struct {
 	Export         *exportconfig.Config `json:"export,omitempty"`
 	Redaction      *Redaction           `json:"redaction,omitempty"`
-	TextExtraction *bool                `json:"textExtraction,omitempty"`
+	TextExtraction *string              `json:"textExtraction,omitempty"`
+}
+
+// Text extraction modes, from the weakest to the strongest: a policy that sets a stronger one
+// overrides a weaker one.
+const (
+	// TextExtractionOff sends text files as they are.
+	TextExtractionOff = "off"
+	// TextExtractionAuto turns a text file into prompt text where the deployment does not read
+	// it as a file, or where input checks or redaction must read it.
+	TextExtractionAuto = "auto"
+	// TextExtractionAlways turns every text file into prompt text.
+	TextExtractionAlways = "always"
+)
+
+var textExtractionModes = []string{TextExtractionOff, TextExtractionAuto, TextExtractionAlways}
+
+// strongerTextExtraction returns the stronger of two modes, where "" is none.
+func strongerTextExtraction(a, b string) string {
+	if slices.Index(textExtractionModes, b) > slices.Index(textExtractionModes, a) {
+		return b
+	}
+	return a
 }
 
 type Redaction struct {
@@ -234,6 +401,9 @@ func (c *Config) validate() error {
 	}
 
 	if err := c.Access.validate(); err != nil {
+		return err
+	}
+	if err := c.Input.validate(); err != nil {
 		return err
 	}
 	if err := c.Plugins.validate(); err != nil {
@@ -344,6 +514,9 @@ func (p *Plugins) validate() error {
 	if p != nil {
 		if err := p.Export.Validate(); err != nil {
 			return configError("invalid export configuration")
+		}
+		if p.TextExtraction != nil && !slices.Contains(textExtractionModes, *p.TextExtraction) {
+			return configError("plugins.textExtraction must be off, auto or always")
 		}
 	}
 	if p == nil || p.Redaction == nil {
