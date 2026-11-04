@@ -396,8 +396,8 @@ func TestAzureDiscoveryAtItsLimits(t *testing.T) {
 				t.Fatalf("discovery = %+v; want %+v", got, entry.want)
 			}
 			// A discovery has 25 seconds, the claim that it holds for the fleet less five.
-			if elapsed > 10*time.Second {
-				t.Fatalf("discovery took %s", elapsed)
+			if limit := 10 * time.Second * raceSlowdown; elapsed > limit {
+				t.Fatalf("discovery took %s, more than %s", elapsed, limit)
 			}
 			t.Logf("%s in %s with %d requests", entry.name, elapsed.Round(time.Millisecond), arm.requests.Load())
 		})
