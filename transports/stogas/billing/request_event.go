@@ -15,6 +15,8 @@ import (
 // ProviderAttempt is one provider call. ProviderRequestID is the ID from the provider's response
 // headers, which its support asks for. ProviderResponseID is the ID of the provider's reply, which
 // the client also received. ProviderModel is the model that the provider reported serving.
+// ProviderInstanceID names the provider's machine that ran the call where the provider names one:
+// the Chutes instance, by which with the call's time Chutes's records find an encrypted call.
 type ProviderAttempt struct {
 	CatalogChainHash         string  `json:"catalog_chain_hash"`
 	ResolvedCatalogChainHash string  `json:"resolved_catalog_chain_hash,omitempty"`
@@ -27,6 +29,7 @@ type ProviderAttempt struct {
 	ProviderRequestID        string  `json:"provider_request_id"`
 	ProviderResponseID       string  `json:"provider_response_id"`
 	ProviderModel            string  `json:"provider_model"`
+	ProviderInstanceID       string  `json:"provider_instance_id,omitempty"`
 	FinishReason             string  `json:"finish_reason"`
 	Byok                     *string `json:"byok"`
 }

@@ -536,8 +536,9 @@ func TestChutesSafeRetriesRetainEachInvocationInFinalEvent(t *testing.T) {
 	_, handle := tracer.StartSpan(ctx, "chutes invocation", schemas.SpanKindLLMCall)
 	tracer.SetAttribute(handle, schemas.AttrBifrostProviderName, "chutes")
 	span := handle.(*providerAttemptSpan)
-	span.nextChutesInvocation(http.StatusTooManyRequests, base.Add(30*time.Millisecond), base.Add(40*time.Millisecond))
-	span.nextChutesInvocation(http.StatusNotFound, base.Add(60*time.Millisecond), base.Add(70*time.Millisecond))
+	busy, gone := "10000000-0000-4000-8000-000000000001", "10000000-0000-4000-8000-000000000002"
+	span.nextChutesInvocation(http.StatusTooManyRequests, busy, base.Add(30*time.Millisecond), base.Add(40*time.Millisecond))
+	span.nextChutesInvocation(http.StatusNotFound, gone, base.Add(60*time.Millisecond), base.Add(70*time.Millisecond))
 	response := &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{ID: "completed-invocation"}}
 	tracer.PopulateLLMResponseAttributes(ctx, handle, response, nil)
 	now = base.Add(100 * time.Millisecond)
@@ -557,13 +558,17 @@ func TestChutesSafeRetriesRetainEachInvocationInFinalEvent(t *testing.T) {
 	if len(event.ProviderAttempts) != 3 {
 		t.Fatalf("provider attempts = %#v", event.ProviderAttempts)
 	}
+	// Each rejected call names the instance that rejected it. The final call's instance comes from
+	// the transport's metadata on the context, which this context lacks.
 	for i, want := range []struct {
-		status string
-		code   int
-		ms     uint32
-	}{{"rate_limited", 429, 30}, {"model_unavailable", 404, 20}, {"success", 200, 30}} {
+		status   string
+		code     int
+		ms       uint32
+		instance string
+	}{{"rate_limited", 429, 30, busy}, {"model_unavailable", 404, 20, gone}, {"success", 200, 30, ""}} {
 		got := event.ProviderAttempts[i]
-		if got.Provider != "chutes" || got.Status != want.status || got.StatusCode == nil || *got.StatusCode != want.code || got.LatencyMS != want.ms {
+		if got.Provider != "chutes" || got.Status != want.status || got.StatusCode == nil || *got.StatusCode != want.code || got.LatencyMS != want.ms ||
+			got.ProviderInstanceID != want.instance {
 			t.Fatalf("attempt %d = %#v, want %#v", i, got, want)
 		}
 		if i < 2 && got.ProviderResponseID != "" {

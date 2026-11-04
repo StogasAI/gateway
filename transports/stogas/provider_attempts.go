@@ -83,9 +83,10 @@ func (t *providerAttemptTracer) wrapAttempt(ctx context.Context, kind schemas.Sp
 
 // Chutes retries stay inside its transport, so core emits no new LLM span.
 // Move this span's accounting owner forward without losing the rejected call.
-func (s *providerAttemptSpan) nextChutesInvocation(status int, completedAt, startedAt time.Time) {
+func (s *providerAttemptSpan) nextChutesInvocation(status int, instanceID string, completedAt, startedAt time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.state.setProviderAttemptUpstream(s.index, billing.UpstreamRecord{InstanceID: instanceID})
 	s.state.finishProviderAttempt(s.index, completedAt, nil, &schemas.BifrostError{
 		StatusCode: &status,
 		Error:      &schemas.ErrorField{Message: "Chutes rejected the invocation before execution"},
@@ -213,11 +214,16 @@ func readUpstreamRecord(ctx *schemas.BifrostContext, resolution *catalog.Resolve
 			break
 		}
 	}
-	if resolution.Provider == schemas.Azure {
+	switch resolution.Provider {
+	case schemas.Azure:
 		// Azure replies can repeat the deployment's name, which the customer chose. Its header
 		// names the model with its version, where Azure reports it.
 		record.Model = upstreamHeader(headers, "x-ms-served-model")
-	} else {
+	case catalog.ProviderChutes:
+		// Chutes sends no request ID on encrypted calls; its records name the instance.
+		record.Model = replyModel(response)
+		record.InstanceID = chutese2ee.InvocationInstanceID(ctx)
+	default:
 		record.Model = replyModel(response)
 	}
 	return record

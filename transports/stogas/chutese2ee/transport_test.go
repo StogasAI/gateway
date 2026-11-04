@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -118,13 +119,13 @@ func TestTransportEncryptsAndTargetsVerifiedInstance(t *testing.T) {
 	}
 	metadata := InvocationMetadata(ctx)
 	digest := sha256.Sum256(instanceKey.EncapsulationKey().Bytes())
-	if metadata["instance_id"] != testInstanceID || metadata["encryption_key_sha256"] != hex.EncodeToString(digest[:]) {
+	if metadata["instance_id"] != testInstanceID || InvocationInstanceID(ctx) != testInstanceID || metadata["encryption_key_sha256"] != hex.EncodeToString(digest[:]) {
 		t.Fatalf("metadata differs from selected instance: %v", metadata)
 	}
 	if len(metadata) != 4 || metadata["measurement"].(map[string]string)["version"] != "fixture-v1" {
 		t.Fatal("provider metadata missing or contains unexpected fields")
 	}
-	if InvocationMetadata(t.Context()) != nil {
+	if InvocationMetadata(t.Context()) != nil || InvocationInstanceID(t.Context()) != "" {
 		t.Fatal("request metadata leaked across contexts")
 	}
 	if NotSent(ctx) {
@@ -627,6 +628,7 @@ func TestTransportStopsAtInvocationBudget(t *testing.T) {
 				caller, stopWaiting := context.WithCancel(t.Context())
 				defer stopWaiting()
 				instanceIDs := make(map[string]struct{})
+				var invoked []string
 				nonces := make(map[string]struct{})
 				server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 					if request.URL.Path != invocationPath {
@@ -638,6 +640,7 @@ func TestTransportStopsAtInvocationBudget(t *testing.T) {
 						stopWaiting()
 					}
 					instanceIDs[request.Header.Get("X-Instance-Id")] = struct{}{}
+					invoked = append(invoked, request.Header.Get("X-Instance-Id"))
 					nonces[request.Header.Get("X-E2E-Nonce")] = struct{}{}
 					response.WriteHeader(http.StatusTooManyRequests)
 					_, _ = response.Write([]byte(`{"detail":"Instance is at maximum capacity, try again later"}`))
@@ -687,11 +690,13 @@ func TestTransportStopsAtInvocationBudget(t *testing.T) {
 				ctx := schemas.NewBifrostContext(t.Context(), schemas.NoDeadline)
 				defer ctx.Cancel()
 				var retries []int
-				SetRetryObserver(ctx, func(status int, completedAt, nextStartedAt time.Time) {
+				var rejectedBy []string
+				SetRetryObserver(ctx, func(status int, instanceID string, completedAt, nextStartedAt time.Time) {
 					if status != http.StatusTooManyRequests || completedAt.IsZero() || nextStartedAt.Before(completedAt) {
 						t.Errorf("retry observation: status=%d completed=%v next=%v", status, completedAt, nextStartedAt)
 					}
 					retries = append(retries, status)
+					rejectedBy = append(rejectedBy, instanceID)
 				})
 				if test.limit > 0 {
 					SetInvocationBudget(ctx, test.limit, func() bool { return caller.Err() == nil })
@@ -709,6 +714,11 @@ func TestTransportStopsAtInvocationBudget(t *testing.T) {
 						"status=%d calls=%d instances=%d nonces=%d",
 						response.StatusCode(), calls.Load(), len(instanceIDs), len(nonces),
 					)
+				}
+				// Each rejection names the instance that the rejected call went to, and the
+				// request's metadata names the last one.
+				if !slices.Equal(rejectedBy, invoked[:len(invoked)-1]) || InvocationInstanceID(ctx) != invoked[len(invoked)-1] {
+					t.Fatalf("rejected by %v, latest %q, invoked %v", rejectedBy, InvocationInstanceID(ctx), invoked)
 				}
 			})
 		}

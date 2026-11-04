@@ -47,9 +47,10 @@ func SetInvocationBudget(ctx interface{ SetValue(any, any) }, attempts int, retr
 	ctx.SetValue(invocationBudgetKey{}, invocationBudget{max(1, attempts), retryAllowed})
 }
 
-// SetRetryObserver reports a proven pre-execution rejection only when another
-// invocation is about to start. Failed ticket preparation is not a new dispatch.
-func SetRetryObserver(ctx interface{ SetValue(any, any) }, observe func(status int, completedAt, nextStartedAt time.Time)) {
+// SetRetryObserver reports a proven pre-execution rejection, with the instance that
+// rejected it, only when another invocation is about to start. Failed ticket
+// preparation is not a new dispatch.
+func SetRetryObserver(ctx interface{ SetValue(any, any) }, observe func(status int, instanceID string, completedAt, nextStartedAt time.Time)) {
 	ctx.SetValue(retryObserverKey{}, observe)
 }
 
@@ -80,6 +81,13 @@ func InvocationMetadata(ctx context.Context) map[string]any {
 	}
 	metadata, _ := ctx.Value(invocationMetadataKey{}).(map[string]any)
 	return metadata
+}
+
+// InvocationInstanceID names the instance that the latest invocation went to. Chutes sends
+// no request ID on encrypted calls, so its records find a call by instance and time.
+func InvocationInstanceID(ctx context.Context) string {
+	id, _ := InvocationMetadata(ctx)["instance_id"].(string)
+	return id
 }
 
 func setInvocationMetadata(ctx context.Context, ticket *reservedTicket) {
@@ -338,8 +346,9 @@ func (t *Transport) roundTrip(ctx context.Context, request *fasthttp.Request, re
 	}()
 	credential.diagnostics.registerModel(chuteID, metadata.Model)
 	budget, _ := ctx.Value(invocationBudgetKey{}).(invocationBudget)
-	observeRetry, _ := ctx.Value(retryObserverKey{}).(func(int, time.Time, time.Time))
+	observeRetry, _ := ctx.Value(retryObserverKey{}).(func(int, string, time.Time, time.Time))
 	var rejectedAt time.Time
+	var rejectedInstance string
 	setInvocationMetadata(ctx, nil)
 	for attempt := 0; attempt < max(1, budget.attempts); attempt++ {
 		if attempt > 0 && budget.retryAllowed != nil && !budget.retryAllowed() {
@@ -369,7 +378,7 @@ func (t *Transport) roundTrip(ctx context.Context, request *fasthttp.Request, re
 				return false, nil
 			}
 			if observeRetry != nil {
-				observeRetry(response.StatusCode(), rejectedAt, time.Now())
+				observeRetry(response.StatusCode(), rejectedInstance, rejectedAt, time.Now())
 			}
 			response.Reset()
 		}
@@ -395,7 +404,7 @@ func (t *Transport) roundTrip(ctx context.Context, request *fasthttp.Request, re
 				!safeInvokeFallbackResponse(response) {
 				return false, streamErr
 			}
-			rejectedAt = time.Now()
+			rejectedAt, rejectedInstance = time.Now(), ticket.InstanceID
 			continue
 		}
 		unaryErr := t.roundTripUnary(ctx, credential, request, response, ticket, encrypted)
@@ -404,7 +413,7 @@ func (t *Transport) roundTrip(ctx context.Context, request *fasthttp.Request, re
 			!safeInvokeFallbackResponse(response) {
 			return false, unaryErr
 		}
-		rejectedAt = time.Now()
+		rejectedAt, rejectedInstance = time.Now(), ticket.InstanceID
 	}
 	return false, nil
 }
