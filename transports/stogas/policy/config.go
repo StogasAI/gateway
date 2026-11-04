@@ -54,6 +54,9 @@ var (
 		"health_identifiers",
 	)
 	nodeIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._:-]{0,127}$`)
+	// The contract's timeZoneSchema: only UTC and Area/Location names mean the same zone everywhere
+	// a policy is read. LoadLocation alone would also take Local, an empty name and abbreviations.
+	timeZonePattern = regexp.MustCompile(`^(?:UTC|[A-Z][A-Za-z]*(?:/[A-Za-z0-9_+-]+)+)$`)
 )
 
 type Config struct {
@@ -308,7 +311,7 @@ func (w *DenyWindow) validate(locations map[string]*time.Location) error {
 	if !ok || start >= end {
 		return configError("deny window end is invalid")
 	}
-	if len(w.TimeZone) > 64 {
+	if len(w.TimeZone) > 64 || !timeZonePattern.MatchString(w.TimeZone) {
 		return configError("deny window time zone is invalid")
 	}
 	location := locations[w.TimeZone]
