@@ -518,6 +518,88 @@ func TestOriginsLocateTheDecidingPolicyAndRule(t *testing.T) {
 	}
 }
 
+// A routing simulation shows, for each deployment that a request tries, which settings of the
+// matched default rules a requirement replaces there, and which requirement does.
+func TestReplacedDefaultsNameTheRequirementOnEachDeployment(t *testing.T) {
+	fixture, _ := loadWebcryptoFixture(t)
+	envelope, err := json.Marshal(fixture.Envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	org := ruleSource(t, `{"encryption":{"keys":{"test":"`+fixture.Envelope.KeyID+`"}},"plugins":{"textExtraction":true},"rules":{`+
+		`"base":{"mode":"default","input":{"asciiOnly":true},"plugins":{"textExtraction":false,"redaction":{"email_address":true}},"routing":{"retries":2,"sort":[{"by":"provider.id"}]}},`+
+		`"strict_openai":{"when":"provider.id == 'openai'","plugins":{"redaction":{"credit_card_number":true}}}}}`)
+	role := ruleSource(t, `{"rules":{`+
+		`"openai_too":{"when":"provider.id == 'openai'","plugins":{"redaction":{"phone_number":true}}},`+
+		`"private":{"mode":"default","when":"provider.id != 'openai'","plugins":{"redaction":{"encrypted":`+string(envelope)+`}}},`+
+		`"never":{"mode":"default","when":"provider.id == 'none'","timeouts":{"outputIdleSeconds":5}}}}`)
+	key := ruleSource(t, `{"routing":{"retries":0,"sort":[{"by":"provider.id","direction":"desc"}]},"rules":{`+
+		`"chutes_redaction":{"when":"provider.id == 'chutes'","plugins":{"redaction":{}}}}}`)
+	combined, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: org}, {Scope: RoleScope, Value: role}, {Scope: KeyScope, Value: key}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Before activation no rule has matched, so nothing is replaced yet.
+	if got := combined.ReplacedDefaults(); got != nil {
+		t.Fatalf("replaced before activation: %+v", got)
+	}
+	textExtraction := ReplacedDefault{Setting: "plugins.textExtraction", Default: Origin{Source: 0, Rule: "base"}, By: Origin{Source: 0}}
+	retries := ReplacedDefault{Setting: "routing.retries", Default: Origin{Source: 0, Rule: "base"}, By: Origin{Source: 2}}
+	for provider, want := range map[string][]ReplacedDefault{
+		// Two required rules replace the default redaction; the first in the chain is named. The
+		// unmatched default sets nothing, and orderings and input, which no requirement sets, stay.
+		"openai": {
+			{Setting: "plugins.redaction", Default: Origin{Source: 0, Rule: "base"}, By: Origin{Source: 0, Rule: "strict_openai"}, Others: 1},
+			textExtraction, retries,
+		},
+		// No requirement sets redaction, so both default redactions apply, the encrypted one too.
+		"anthropic": {textExtraction, retries},
+		// An empty redaction replaces each default redaction, encrypted or not.
+		"chutes": {
+			{Setting: "plugins.redaction", Default: Origin{Source: 0, Rule: "base"}, By: Origin{Source: 2, Rule: "chutes_redaction"}},
+			textExtraction, retries,
+			{Setting: "plugins.redaction", Default: Origin{Source: 1, Rule: "private"}, By: Origin{Source: 2, Rule: "chutes_redaction"}},
+		},
+	} {
+		active, err := combined.Activate(ruleValues{"provider.id": {Type: "string", String: provider}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := active.ReplacedDefaults(); !slices.Equal(got, want) {
+			t.Errorf("%s: replaced %+v, want %+v", provider, got, want)
+		}
+		// What the list names is what composition dropped.
+		replaced := slices.ContainsFunc(active.ReplacedDefaults(), func(r ReplacedDefault) bool { return r.Default.Rule == "private" })
+		if opaque := len(active.ActiveEncryptedPlugins) > 0; provider != "openai" && opaque == replaced {
+			t.Errorf("%s: encrypted default applies %v, listed as replaced %v", provider, opaque, replaced)
+		}
+	}
+}
+
+// Each kind of setting that a default can lose to a requirement has one name, so a new kind
+// cannot go unlisted.
+func TestEveryReplaceableKindHasOneName(t *testing.T) {
+	var kinds Permission
+	var names []string
+	for _, setting := range replaceableSettings {
+		if kinds&setting.kind != 0 {
+			t.Fatalf("%s repeats a kind", setting.name)
+		}
+		kinds |= setting.kind
+		names = append(names, setting.name)
+	}
+	if want := requestPermissions &^ orderingPermissions &^ permissionEncryptedPlugins; kinds != want {
+		t.Fatalf("named kinds %b, want %b", kinds, want)
+	}
+	if want := []string{
+		"access", "input", "plugins.export", "plugins.redaction", "plugins.textExtraction",
+		"routing.allowedCatalogNodes", "routing.fallbacks", "routing.filter", "routing.missingEncryptionKeys",
+		"routing.retries", "timeouts.outputIdleSeconds", "timeouts.totalSeconds",
+	}; !slices.Equal(names, want) {
+		t.Fatalf("names %q", names)
+	}
+}
+
 func TestFallbacksAndTotalTimeoutCannotDependOnTheCandidate(t *testing.T) {
 	for _, raw := range []string{
 		`{"rules":{"r":{"when":"provider.id == 'chutes'","routing":{"fallbacks":0}}}}`,
