@@ -256,6 +256,43 @@ func TestRoutingSimulationGivesEachPairTheRetriesOfItsPolicy(t *testing.T) {
 	}
 }
 
+// Each pair that a request tries lists the defaults that a requirement replaces on it, from the
+// rules that match its deployment. The pairs that it never tries list nothing.
+func TestRoutingSimulationNamesTheDefaultsThatEachTriedPairReplaces(t *testing.T) {
+	loadTestCatalog(t)
+	source, err := policy.CompileSource([]byte(`{"routing":{"fallbacks":1,"sort":[{"by":"provider.id","direction":"desc"},{"by":"deployment.id"}]},"rules":{` +
+		`"base":{"mode":"default","plugins":{"redaction":{"email_address":true}}},` +
+		`"azure_redaction":{"when":"provider.id == 'azure'","plugins":{"redaction":{}}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := policy.ComposeSources([]policy.ScopedSource{{Scope: policy.OrganizationScope, Value: source}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	simulation := SimulateRouting(RequestInput{Policy: config, AvailableCredentials: map[string][]int{"azure": {0}, "openai": {0}}}, RouteChat, "gpt-5.6-sol", "", "", nil, nil)
+	if simulation.Err != nil || simulation.Tried != 2 || len(simulation.Pairs) <= simulation.Tried {
+		t.Fatalf("pairs %v tried %d: %v", describePairs(simulation.Pairs), simulation.Tried, simulation.Err)
+	}
+	replaced := []policy.ReplacedDefault{{Setting: "plugins.redaction", Default: policy.Origin{Rule: "base"}, By: policy.Origin{Rule: "azure_redaction"}}}
+	providers := map[schemas.ModelProvider]bool{}
+	for i, pair := range simulation.Pairs {
+		var want []policy.ReplacedDefault
+		if i < simulation.Tried {
+			providers[pair.Provider] = true
+			if pair.Provider == "azure" {
+				want = replaced
+			}
+		}
+		if !reflect.DeepEqual(pair.ReplacedDefaults, want) {
+			t.Errorf("%s#%d replaced %+v, want %+v", pair.Deployment.ID, pair.Credential, pair.ReplacedDefaults, want)
+		}
+	}
+	if !providers["azure"] || !providers["openai"] {
+		t.Fatalf("tried %v", describePairs(simulation.Pairs[:simulation.Tried]))
+	}
+}
+
 func TestRoutingSimulationBoundsItsRemovals(t *testing.T) {
 	loadTestCatalog(t)
 	source, err := policy.CompileSource([]byte(`{"routing":{"filter":"provider.id == 'none'"}}`))

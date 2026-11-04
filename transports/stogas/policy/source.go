@@ -956,6 +956,74 @@ func (c *Config) MissingKeysOrigin() (Origin, bool) {
 	return Origin{}, false
 }
 
+// ReplacedDefault is a setting of a matched default rule that a requirement of
+// the same kind replaces on one activated request and deployment.
+type ReplacedDefault struct {
+	// Setting names the section as policies write it, such as
+	// plugins.redaction.
+	Setting string
+	// Default locates the default rule.
+	Default Origin
+	// By locates the first requirement in the chain that sets the same kind:
+	// a policy's own settings, or a required rule that matched. Others counts
+	// the rest.
+	By     Origin
+	Others int
+}
+
+type replaceableSetting struct {
+	name string
+	kind Permission
+}
+
+// replaceableSettings names each kind of setting that a requirement replaces,
+// in name order. Orderings are never replaced: a default ordering orders the
+// ties that the others leave.
+var replaceableSettings = func() []replaceableSetting {
+	var settings []replaceableSetting
+	kinds := requestPermissions &^ orderingPermissions &^ permissionEncryptedPlugins
+	for name, kind := range permissionSections {
+		if kind&(kind-1) == 0 && kind&kinds == kind {
+			settings = append(settings, replaceableSetting{name, kind})
+		}
+	}
+	slices.SortFunc(settings, func(a, b replaceableSetting) int { return strings.Compare(a.name, b.name) })
+	return settings
+}()
+
+// ReplacedDefaults lists, on an activated request, each setting of a matched
+// default rule that a requirement replaces, by rule in the chain's order. It
+// says for one request and deployment what the policy page can say only of
+// every request.
+func (c *Config) ReplacedDefaults() []ReplacedDefault {
+	if c == nil {
+		return nil
+	}
+	var out []ReplacedDefault
+	for i, entry := range c.sources {
+		replaced := entry.Value.settings & c.requiredSettings
+		if !entry.Value.defaultSettings || replaced == 0 {
+			continue
+		}
+		for _, setting := range replaceableSettings {
+			if replaced&setting.kind == 0 {
+				continue
+			}
+			found := ReplacedDefault{Setting: setting.name, Default: c.origin(i), Others: -1}
+			for j, requirement := range c.sources {
+				if !requirement.Value.defaultSettings && requirement.Value.settings&setting.kind != 0 {
+					if found.Others < 0 {
+						found.By = c.origin(j)
+					}
+					found.Others++
+				}
+			}
+			out = append(out, found)
+		}
+	}
+	return out
+}
+
 // SortOrigins locates the policy, and for a default ordering its rule, that
 // sets each composed routing.sort criterion. The first RequiredSorts are
 // required; the rest are defaults.

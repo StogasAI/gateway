@@ -31,6 +31,19 @@ type simulationPair struct {
 	Model      string                `json:"model"`
 	Credential int                   `json:"credential"`
 	Retries    int                   `json:"retries"`
+	// ReplacedDefaults is set on each pair that the request tries, and lists
+	// the settings of its matched default rules that a requirement replaces.
+	ReplacedDefaults []simulationReplacedDefault `json:"replacedDefaults,omitzero"`
+}
+
+// simulationReplacedDefault is a default rule's setting that a requirement
+// replaces on one pair, with the first requirement in the pair's policy chain
+// that does, and how many others do too.
+type simulationReplacedDefault struct {
+	Setting string           `json:"setting"`
+	Default simulationOrigin `json:"default"`
+	By      simulationOrigin `json:"by"`
+	Others  int              `json:"others,omitempty"`
 }
 
 type simulationRemoval struct {
@@ -333,8 +346,20 @@ func (s *Server) simulatePolicy(ctx *requestContext) {
 		s.writeJSON(ctx, http.StatusOK, result)
 		return
 	}
-	for _, pair := range simulation.Pairs {
-		result.Pairs = append(result.Pairs, simulationPair{Provider: pair.Provider, Deployment: pair.Deployment.ID, Model: pair.Deployment.ModelID, Credential: pair.Credential, Retries: pair.Retries})
+	for i, pair := range simulation.Pairs {
+		entry := simulationPair{Provider: pair.Provider, Deployment: pair.Deployment.ID, Model: pair.Deployment.ModelID, Credential: pair.Credential, Retries: pair.Retries}
+		if i < simulation.Tried {
+			chain := chains[simulationCandidate{pair.Provider, pair.Credential}]
+			entry.ReplacedDefaults = []simulationReplacedDefault{}
+			for _, replaced := range pair.ReplacedDefaults {
+				defaults, _ := originFor(&replaced.Default, chain, input.Policy)
+				by, _ := originFor(&replaced.By, chain, input.Policy)
+				if defaults != nil && by != nil {
+					entry.ReplacedDefaults = append(entry.ReplacedDefaults, simulationReplacedDefault{Setting: replaced.Setting, Default: *defaults, By: *by, Others: replaced.Others})
+				}
+			}
+		}
+		result.Pairs = append(result.Pairs, entry)
 	}
 	first := chains[simulationCandidate{simulation.Pairs[0].Provider, simulation.Pairs[0].Credential}]
 	result.Tried, result.Fallbacks = simulation.Tried, simulation.Fallbacks

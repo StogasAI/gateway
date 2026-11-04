@@ -70,6 +70,9 @@ type SimulatedPair struct {
 	// Retries is routing.retries in the pair's policy, which a request
 	// takes when it uses the pair.
 	Retries int
+	// ReplacedDefaults lists, for a pair that the request tries, the
+	// settings of its matched default rules that a requirement replaces.
+	ReplacedDefaults []policy.ReplacedDefault
 }
 
 // SimulatedCriterion is one composed routing.sort criterion and the policy,
@@ -148,14 +151,17 @@ func SimulateRouting(input RequestInput, route Route, model, tier, mode string, 
 	if err != nil {
 		return result
 	}
-	for _, choice := range plan.choices {
+	result.Tried, result.Fallbacks = min(plan.slots, len(plan.choices)), plan.slots-1
+	for i, choice := range plan.choices {
 		pair := SimulatedPair{Provider: choice.candidate.Provider, Deployment: choice.candidate.Deployment, Credential: choice.index}
 		if config := choice.candidate.policy; config != nil {
 			pair.Retries = config.Routing.Retries
+			if i < result.Tried {
+				pair.ReplacedDefaults = config.ReplacedDefaults()
+			}
 		}
 		result.Pairs = append(result.Pairs, pair)
 	}
-	result.Tried, result.Fallbacks = min(plan.slots, len(plan.choices)), plan.slots-1
 	if config := plan.choices[0].candidate.policy; config != nil {
 		if origin, ok := config.FallbacksOrigin(); ok {
 			result.FallbacksOrigin = &origin
