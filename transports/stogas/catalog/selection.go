@@ -276,7 +276,8 @@ func (s *snapshot) retiredSelection(sel modelSelection, now time.Time) (string, 
 // routingSelections returns the deployments that a selection reaches on an interface at a
 // variant. A named deployment keeps its own tier and reasoning mode unless the request sets one;
 // other selections use the Standard tier, or the request's. Deployments that need approval join
-// only when the selection names their model or the deployment.
+// only when the selection names their model or the deployment. A deployment joins through the
+// translation only when no route that the selection allows takes the interface itself for it.
 //
 // A trace names providers without a credential or the interface, deployments that need approval,
 // and, for a selection that names a model, group or deployment, providers that serve it only at
@@ -295,14 +296,16 @@ func (s *snapshot) routingSelections(route Route, sel modelSelection, want varia
 			continue
 		}
 		provider := schemas.ModelProvider(routeNode.ProviderID)
-		supported := routeSupportsInterface(routeNode, route)
+		bridging := routeBridges(routeNode, route)
+		supported := bridging || routeSupportsInterface(routeNode, route)
 		credentialed := availableCredentials == nil || len(availableCredentials[routeNode.ProviderID]) > 0
 		if trace == nil && (!supported || !credentialed) || trace != nil && !supported && !sel.names() {
 			continue
 		}
 		for _, id := range routeNode.DeploymentIDs {
 			compiled := s.graph.Deployments[id]
-			if !servesAt(compiled, routeNode, now) || !s.selects(sel, routeNode, id, compiled) {
+			if !servesAt(compiled, routeNode, now) || !s.selects(sel, routeNode, id, compiled) ||
+				bridging && s.takesItself(sel, route, id, compiled, now) {
 				continue
 			}
 			inMode := compiled.Upstream.ReasoningMode == mode

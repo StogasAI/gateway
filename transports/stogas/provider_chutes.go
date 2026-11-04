@@ -42,10 +42,10 @@ func (a ChutesAdapter) ValidateRequest(state *State) error {
 	if err := a.DefaultAdapter.ValidateRequest(state); err != nil {
 		return err
 	}
-	if state == nil || state.Resolution == nil || state.Resolution.Route != catalog.RouteChat {
+	if state == nil || state.Resolution == nil || state.Resolution.WireRoute() != catalog.RouteChat {
 		return catalog.ErrUnsupportedRequest
 	}
-	return validateChutesChatPolicy(state)
+	return validateChutesChatPolicy(wireState(state))
 }
 
 func (a ChutesAdapter) SanitizeRequest(state *State) error {

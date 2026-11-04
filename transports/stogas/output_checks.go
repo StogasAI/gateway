@@ -150,7 +150,8 @@ func (s *State) checkOutputs() outputChecks {
 		return checks
 	}
 	checker := &outputChecker{resolution: s.Resolution, budget: checkBudgetSteps}
-	switch s.Resolution.Route {
+	// A bridged request's state holds the provider's Chat Completions reply.
+	switch s.Resolution.WireRoute() {
 	case catalog.RouteChat:
 		s.checkChatOutputs(checker, &checks)
 	case catalog.RouteResponses:

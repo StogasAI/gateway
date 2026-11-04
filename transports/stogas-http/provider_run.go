@@ -96,6 +96,8 @@ func (c *unsentCall) Error() string { return bifrostErrorMessage(c.failure) }
 // of the run.
 func (r *providerRun) bind(resolution *catalog.ResolvedRequest) error {
 	next := &providerPair{ctx: schemas.NewBifrostContext(r.request, schemas.NoDeadline), number: r.pairs}
+	// A bridged request calls its provider with Chat Completions.
+	next.ctx.SetValue(schemas.BifrostContextKeyHTTPRequestType, resolution.WireRequestType())
 	r.pairs++
 	previous := r.attempted
 	r.attempted = next

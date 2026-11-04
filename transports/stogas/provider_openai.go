@@ -72,16 +72,17 @@ func (a OpenAIAdapter) ValidateRequest(state *State) error {
 	if err := a.DefaultAdapter.ValidateRequest(state); err != nil {
 		return err
 	}
-	if err := validateOpenAIPromptCaching(state); err != nil {
+	wire := wireState(state)
+	if err := validateOpenAIPromptCaching(wire); err != nil {
 		return err
 	}
-	if err := validateOpenAIWireChatPolicy(state); err != nil {
+	if err := validateOpenAIWireChatPolicy(wire); err != nil {
 		return err
 	}
-	if err := validateOpenAIWireResponsesPolicy(state); err != nil {
+	if err := validateOpenAIWireResponsesPolicy(wire); err != nil {
 		return err
 	}
-	return openAIGuardrailError(validateOpenAIGuardrails(openAIAdapterContextForState(state)))
+	return openAIGuardrailError(validateOpenAIGuardrails(openAIAdapterContextForState(wire)))
 }
 
 func validateOpenAIPromptCaching(state *State) error {

@@ -1004,7 +1004,7 @@ func chatReasoningDetailsInputSupported(state *State) bool {
 }
 
 func chatPlainReasoningInputSupported(state *State) bool {
-	return state != nil && state.Resolution != nil && state.Resolution.Provider == catalog.ProviderChutes
+	return state != nil && state.Resolution != nil && catalog.PlainReasoningHistory(state.Resolution.Provider)
 }
 
 func chatAnnotationsInputSupported(state *State) bool {

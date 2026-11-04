@@ -153,7 +153,7 @@ func billingUpstreamTarget(resolution *catalog.ResolvedRequest) *gatewaybilling.
 		ModelFormat:         upstream.ModelFormat,
 		ModelVersion:        upstream.ModelVersion,
 		ProcessingLocations: places.Inside(dataHandling.ProcessingLocation),
-		VersionUnreported:   !azureRepliesNameVersion(resolution.Route, resolution.Deployment),
+		VersionUnreported:   !azureRepliesNameVersion(resolution.WireRoute(), resolution.Deployment),
 	}
 	// A catalog no-storage guarantee makes the account's placement inapplicable.
 	if dataHandling.StorageLocation != "none" {
@@ -237,7 +237,7 @@ func applyUpstreamCredentials(
 					VerifiedAt: authorization.AzureVerifiedAt,
 					DiscoverAt: authorization.AzureDiscoverAt,
 					Envelope:   authorization.UpstreamByokEnvelope,
-					Unreported: !azureRepliesNameVersion(state.Resolution.Route, state.Resolution.Deployment),
+					Unreported: !azureRepliesNameVersion(state.Resolution.WireRoute(), state.Resolution.Deployment),
 					Credential: azureauth.Credential{
 						TenantID: azure.TenantID.GetValue(),
 						ClientID: azure.ClientID.GetValue(),

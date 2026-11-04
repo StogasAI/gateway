@@ -49,8 +49,18 @@ func TestRoutingSimulationNamesWhatRemovedEachCandidate(t *testing.T) {
 		code               string
 	}{
 		{name: "every pair beyond the fallbacks", model: "gpt-5.6-sol", credentials: map[string][]int{"azure": {0}, "openai": {0}}, pairs: 6, tried: 3},
-		{name: "another interface", route: RouteResponses, model: "gpt-oss-120b", credentials: map[string][]int{"azure": {0}},
-			removed: []string{"interface azure"}, code: "model_unavailable"},
+		{name: "another interface", route: RouteResponses, model: "openai-gpt-5-search-api-2025-10-14", credentials: map[string][]int{"openai": {0}},
+			removed: []string{"interface openai"}, code: "model_unavailable"},
+		// Deployments without Responses take Responses requests through Chat Completions.
+		{name: "Chat Completions for Responses", route: RouteResponses, model: "gpt-oss-120b", credentials: map[string][]int{"azure": {0}},
+			pairs: 2, tried: 2},
+		{name: "the Chat Completions route that the model field names", route: RouteResponses, model: "route:azure-chat-completions gpt-5.6-sol",
+			credentials: map[string][]int{"azure": {0}}, pairs: 5, tried: 3},
+		// A policy removes a deployment from its Responses route. It does not send the request
+		// through the deployment's Chat Completions route.
+		{name: "allowed nodes without the Responses route", route: RouteResponses, model: "azure-gpt-5.6-sol", credentials: map[string][]int{"azure": {0}},
+			base:    compose(`{}`, `{"routing":{"allowedCatalogNodes":{"routes":["azure-chat-completions"]}}}`),
+			removed: []string{"allowed_nodes azure/azure-gpt-5.6-sol @1"}, code: "model_unavailable"},
 		{name: "a missing credential outranks another interface", model: "gpt-5.6-sol", credentials: map[string][]int{"openai": {0}},
 			removed: []string{"no_credential azure"}, pairs: 1, tried: 1},
 		{name: "exact deployment without a credential", model: "azure-gpt-5.6-sol-us", credentials: map[string][]int{"openai": {0}},

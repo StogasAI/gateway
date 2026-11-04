@@ -244,14 +244,6 @@ func KnownFields(route Route) map[string]bool {
 	return parameterSet(route)
 }
 
-func (s *snapshot) route(provider schemas.ModelProvider, route Route) (compiledRoute, bool) {
-	routes := s.routes(provider, route)
-	if len(routes) == 0 {
-		return compiledRoute{}, false
-	}
-	return routes[0], true
-}
-
 func (s *snapshot) routes(provider schemas.ModelProvider, route Route) []compiledRoute {
 	routes := []compiledRoute{}
 	for _, routeNode := range s.graph.Routes {

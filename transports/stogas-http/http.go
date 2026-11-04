@@ -283,16 +283,16 @@ func (s *Server) inference(ctx *requestContext) {
 	}
 	run.commit()
 	s.finalizeAfterResponse(ctx, run, result.ctx)
-	outcome, failure := ingestProviderResult(lease, run.request, run.state, result.response, nil)
+	reply, outcome, failure := ingestProviderResult(lease, run.request, run.state, result.response, nil)
 	if ctx.responseWait.timedOut() {
 		failure = requestTimeoutError()
 	}
 	if failure != nil {
-		captureUnaryResult(run.state, result.response, outcome)
+		captureUnaryResult(run.state, reply, outcome)
 		s.writeProviderError(ctx, result.ctx, failure)
 		return
 	}
-	s.writeInferenceJSON(ctx, result.ctx, run.state, http.StatusOK, unaryResponsePayload(result.response, servedModel(run.state)))
+	s.writeInferenceJSON(ctx, result.ctx, run.state, http.StatusOK, unaryResponsePayload(reply, servedModel(run.state)))
 }
 
 func (s *Server) openProviderStream(ctx *schemas.BifrostContext, request *schemas.BifrostRequest) (chan *schemas.BifrostStreamChunk, *schemas.BifrostError) {
@@ -357,7 +357,7 @@ func (s *Server) failRun(ctx *requestContext, run *providerRun, respond bool) {
 // report ingests the last call's failure and returns what the caller gets:
 // the run's reported failure, unless processing the call failed too.
 func (r *providerRun) report(memory *requestMemoryLease, outcome *schemas.BifrostContext, last *schemas.BifrostError) errorResponse {
-	_, failure := ingestProviderResult(memory, r.request, r.state, nil, last)
+	_, _, failure := ingestProviderResult(memory, r.request, r.state, nil, last)
 	if failure != last {
 		return providerErrorResponse(failure, outcome)
 	}
@@ -386,16 +386,22 @@ func (s *Server) finalizeState(outcome *schemas.BifrostContext, state *stogas.St
 	stogas.FinalizeState(context.WithoutCancel(outcome), s.runtime.Billing(), state)
 }
 
-// ingestProviderResult returns the provider outcome, nil for a valid
-// response, and the caller's failure, which also includes local processing
-// errors.
-func ingestProviderResult(memory *requestMemoryLease, request *schemas.BifrostContext, state *stogas.State, response *schemas.BifrostResponse, failure *schemas.BifrostError) (outcome, callerFailure *schemas.BifrostError) {
+// ingestProviderResult returns the reply that the caller gets, the provider
+// outcome, nil for a valid response, and the caller's failure, which also
+// includes local processing errors. A bridged request's caller gets the
+// provider's Chat Completions reply as Responses.
+func ingestProviderResult(memory *requestMemoryLease, request *schemas.BifrostContext, state *stogas.State, response *schemas.BifrostResponse, failure *schemas.BifrostError) (reply *schemas.BifrostResponse, outcome, callerFailure *schemas.BifrostError) {
 	state.MarkProviderCompleted()
+	reply = response
 	if err := state.Adapter.IngestResponse(state, response, failure); err != nil {
 		failure = stogas.UpstreamProtocolError(err)
 		state.BifrostError = failure
 	} else if failure == nil {
-		if err := stogas.ValidateCompletedExecution(state); err != nil {
+		err := stogas.ValidateCompletedExecution(state)
+		if err == nil {
+			reply, err = stogas.BridgedResponse(state, response)
+		}
+		if err != nil {
 			failure = stogas.UpstreamProtocolError(err)
 			state.BifrostError = failure
 		}
@@ -407,9 +413,9 @@ func ingestProviderResult(memory *requestMemoryLease, request *schemas.BifrostCo
 	failure = providerResponseMemoryError(memory, state, failure)
 	stogas.PrepareFinalState(state)
 	if failure != nil {
-		return failure, failure
+		return reply, failure, failure
 	}
-	return nil, state.ResponseError()
+	return reply, nil, state.ResponseError()
 }
 
 func unaryResponsePayload(response *schemas.BifrostResponse, model string) any {
@@ -438,8 +444,8 @@ func (s *Server) finishDetachedUnary(run *providerRun, memory *requestMemoryLeas
 	default:
 		run.commit()
 		outcome = result.ctx
-		failure, _ := ingestProviderResult(memory, run.request, run.state, result.response, nil)
-		captureUnaryResult(run.state, result.response, failure)
+		reply, failure, _ := ingestProviderResult(memory, run.request, run.state, result.response, nil)
+		captureUnaryResult(run.state, reply, failure)
 		return
 	}
 	failure, attempt := run.end()
@@ -447,7 +453,7 @@ func (s *Server) finishDetachedUnary(run *providerRun, memory *requestMemoryLeas
 		return
 	}
 	outcome = attempt
-	failure, _ = ingestProviderResult(memory, run.request, run.state, nil, failure)
+	_, failure, _ = ingestProviderResult(memory, run.request, run.state, nil, failure)
 	captureUnaryResult(run.state, nil, failure)
 }
 
@@ -497,6 +503,9 @@ func (s *Server) startSSEStream(ctx *requestContext, run *providerRun, started p
 		_ = reader.Close()
 	}
 	includeChatUsage := clientRequestedChatStreamUsage(state)
+	// A bridged request's client gets the provider's chunks as Responses events.
+	var bridge *stogas.BridgedStream
+	bridgeChecked := false
 	completedAsync = true
 
 	go func() {
@@ -754,56 +763,28 @@ func (s *Server) startSSEStream(ctx *requestContext, run *providerRun, started p
 				return
 			}
 
-			var (
-				eventName string
-				payload   any
-			)
-
-			switch {
-			case chunk.BifrostChatResponse != nil:
-				eventName = ""
-				payload = publicResponsePayload(chunk.BifrostChatResponse, servedModel(state))
-			case chunk.BifrostResponsesStreamResponse != nil:
-				eventName = string(chunk.BifrostResponsesStreamResponse.Type)
-				normalized := chunk.BifrostResponsesStreamResponse.WithDefaults()
-				if normalized == nil {
-					if terminal {
-						finishSuccess(nil)
-						return
-					}
-					continue
-				}
-				if normalized.Response != nil {
-					normalized.Response.Store = schemas.Ptr(false)
-					normalized.Response.Background = schemas.Ptr(false)
-				}
-				payload = publicResponsePayload(normalized, servedModel(state))
-			default:
-				continue
+			// The pair that serves the stream is the one that sent its first chunk.
+			if !bridgeChecked {
+				bridge, bridgeChecked = stogas.NewBridgedStream(state), true
 			}
-
-			encoded, err := marshalPayload(payload)
+			events, err := clientStreamEvents(state, bridge, chunk, includeChatUsage)
 			if err != nil {
-				failure := responseEncodingFailure()
 				state.MarkProviderCompleted()
-				retainResponseFailure(state, failure)
-				sendStreamError(failure)
+				bifrostErr := stogas.UpstreamProtocolError(err)
+				state.BifrostError = bifrostErr
+				sendStreamError(bifrostErr)
 				return
 			}
-			state.Export.Event(encoded)
-			// Exports retain forced upstream usage even when the caller omits it.
-			if chat := chunk.BifrostChatResponse; chat != nil && !includeChatUsage && chat.Usage != nil {
-				clear(encoded)
-				if len(chat.Choices) == 0 {
-					if terminal {
-						finishSuccess(nil)
-						return
+			delivered := false
+			for index, event := range events {
+				encoded, err := marshalPayload(event.payload)
+				if err == nil {
+					state.Export.Event(encoded)
+					if event.client != nil {
+						clear(encoded)
+						encoded, err = marshalPayload(event.client)
 					}
-					continue
 				}
-				filtered := *chat
-				filtered.Usage = nil
-				encoded, err = marshalPayload(publicResponsePayload(&filtered, servedModel(state)))
 				if err != nil {
 					failure := responseEncodingFailure()
 					state.MarkProviderCompleted()
@@ -811,46 +792,21 @@ func (s *Server) startSSEStream(ctx *requestContext, run *providerRun, started p
 					sendStreamError(failure)
 					return
 				}
-			}
-			frame := frameSSEEvent(streamEventName(includeEventName, eventName), encoded)
-			clear(encoded)
-			if inferenceStreamResponseLimitExceeded(responseBytes, len(frame)) {
-				clear(frame)
-				bifrostErr := stogas.UpstreamProtocolError(stogas.ErrProviderResponseTooLarge)
-				state.MarkProviderCompleted()
-				state.BifrostError = bifrostErr
-				sendStreamError(bifrostErr)
-				return
-			}
-			if !responseMemory.grow(len(frame)) {
-				clear(frame)
-				bifrostErr := streamMemoryCapacityError()
-				state.MarkProviderCompleted()
-				retainResponseFailure(state, bifrostErr)
-				sendStreamError(bifrostErr)
-				return
-			}
-			responseBytes += len(frame)
-			if terminal && !sendDone && streamProof != nil {
-				finishSuccess(frame)
-				return
-			}
-			if !clientConnected {
-				clear(frame)
-				if terminal {
-					finishSuccess(nil)
+				if event.exportOnly {
+					clear(encoded)
+					continue
+				}
+				frame := frameSSEEvent(streamEventName(includeEventName, event.name), encoded)
+				clear(encoded)
+				if inferenceStreamResponseLimitExceeded(responseBytes, len(frame)) {
+					clear(frame)
+					bifrostErr := stogas.UpstreamProtocolError(stogas.ErrProviderResponseTooLarge)
+					state.MarkProviderCompleted()
+					state.BifrostError = bifrostErr
+					sendStreamError(bifrostErr)
 					return
 				}
-				continue
-			}
-			// Read before handing ownership to the delivery reader, which clears
-			// consumed bytes. Failed delivery cannot produce normal completion.
-			if streamProof != nil {
-				streamProof.SentEvent(frame)
-			}
-			sent, deliveryCapacityExceeded := reader.send(deliveryContext, frame)
-			if !sent {
-				if deliveryCapacityExceeded {
+				if !responseMemory.grow(len(frame)) {
 					clear(frame)
 					bifrostErr := streamMemoryCapacityError()
 					state.MarkProviderCompleted()
@@ -858,26 +814,50 @@ func (s *Server) startSSEStream(ctx *requestContext, run *providerRun, started p
 					sendStreamError(bifrostErr)
 					return
 				}
-				if wait.timedOut() {
-					finishClientTimeout()
-				} else if request.Err() != nil {
-					finishRequestTimeout()
-					stopDelivery()
-				} else {
-					state.MarkClientStopped()
-					stopDelivery()
-				}
-				if terminal {
-					finishSuccess(nil)
+				responseBytes += len(frame)
+				if terminal && index == len(events)-1 && !sendDone && streamProof != nil {
+					finishSuccess(frame)
 					return
 				}
-				continue
+				if !clientConnected {
+					clear(frame)
+					continue
+				}
+				// Read before handing ownership to the delivery reader, which clears
+				// consumed bytes. Failed delivery cannot produce normal completion.
+				if streamProof != nil {
+					streamProof.SentEvent(frame)
+				}
+				sent, deliveryCapacityExceeded := reader.send(deliveryContext, frame)
+				if !sent {
+					if deliveryCapacityExceeded {
+						clear(frame)
+						bifrostErr := streamMemoryCapacityError()
+						state.MarkProviderCompleted()
+						retainResponseFailure(state, bifrostErr)
+						sendStreamError(bifrostErr)
+						return
+					}
+					if wait.timedOut() {
+						finishClientTimeout()
+					} else if request.Err() != nil {
+						finishRequestTimeout()
+						stopDelivery()
+					} else {
+						state.MarkClientStopped()
+						stopDelivery()
+					}
+					continue
+				}
+				keepalive.Reset(responseKeepaliveInterval)
+				delivered = true
 			}
-			keepalive.Reset(responseKeepaliveInterval)
-			if chunk.BifrostChatResponse != nil {
-				state.ObserveChatStreamOutput(chunk.BifrostChatResponse)
-			} else if chunk.BifrostResponsesStreamResponse != nil {
-				state.ObserveResponsesStreamOutput(chunk.BifrostResponsesStreamResponse)
+			if delivered {
+				if chunk.BifrostChatResponse != nil {
+					state.ObserveChatStreamOutput(chunk.BifrostChatResponse)
+				} else if chunk.BifrostResponsesStreamResponse != nil {
+					state.ObserveResponsesStreamOutput(chunk.BifrostResponsesStreamResponse)
+				}
 			}
 			if terminal {
 				finishSuccess(nil)
@@ -901,6 +881,72 @@ func (s *Server) startSSEStream(ctx *requestContext, run *providerRun, started p
 
 func inferenceStreamResponseLimitExceeded(current, next int) bool {
 	return current < 0 || next < 0 || current > maxInferenceStreamResponseBytes-next
+}
+
+// streamEvent is an event of a provider chunk. The export keeps payload. The
+// client gets client instead when it is set, and nothing for an export-only
+// event.
+type streamEvent struct {
+	name       string
+	payload    any
+	client     any
+	exportOnly bool
+}
+
+// clientStreamEvents returns the events of a chunk that the state took. A
+// bridged request's chunk gives the Responses events that convert it.
+func clientStreamEvents(state *stogas.State, bridge *stogas.BridgedStream, chunk *schemas.BifrostStreamChunk, includeChatUsage bool) ([]streamEvent, error) {
+	model := servedModel(state)
+	switch {
+	case bridge != nil:
+		converted, err := bridge.Convert(chunk.BifrostChatResponse)
+		if err != nil {
+			return nil, err
+		}
+		events := make([]streamEvent, 0, len(converted))
+		for _, event := range converted {
+			if payload := responsesStreamPayload(event, model); payload != nil {
+				events = append(events, streamEvent{name: string(event.Type), payload: payload})
+			}
+		}
+		return events, nil
+	case chunk.BifrostChatResponse != nil:
+		chat := chunk.BifrostChatResponse
+		event := streamEvent{payload: publicResponsePayload(chat, model)}
+		// Exports retain forced upstream usage even when the caller omits it.
+		if !includeChatUsage && chat.Usage != nil {
+			if len(chat.Choices) == 0 {
+				event.exportOnly = true
+			} else {
+				filtered := *chat
+				filtered.Usage = nil
+				event.client = publicResponsePayload(&filtered, model)
+			}
+		}
+		return []streamEvent{event}, nil
+	case chunk.BifrostResponsesStreamResponse != nil:
+		payload := responsesStreamPayload(chunk.BifrostResponsesStreamResponse, model)
+		if payload == nil {
+			return nil, nil
+		}
+		return []streamEvent{{name: string(chunk.BifrostResponsesStreamResponse.Type), payload: payload}}, nil
+	default:
+		return nil, nil
+	}
+}
+
+// responsesStreamPayload is a Responses event as the client gets it, or nil
+// for an event that only core uses.
+func responsesStreamPayload(event *schemas.BifrostResponsesStreamResponse, model string) any {
+	normalized := event.WithDefaults()
+	if normalized == nil {
+		return nil
+	}
+	if normalized.Response != nil {
+		normalized.Response.Store = schemas.Ptr(false)
+		normalized.Response.Background = schemas.Ptr(false)
+	}
+	return publicResponsePayload(normalized, model)
 }
 
 func clientRequestedChatStreamUsage(state *stogas.State) bool {

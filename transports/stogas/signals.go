@@ -564,7 +564,7 @@ func validateActualResponseModel(state *State, model string) error {
 // for other model formats, repeat the name, so even a name that reads as another model or version
 // is no evidence.
 func reportsServedModel(resolution *catalog.ResolvedRequest) bool {
-	return resolution.Provider == schemas.Azure && resolution.Route == catalog.RouteChat &&
+	return resolution.Provider == schemas.Azure && resolution.WireRoute() == catalog.RouteChat &&
 		resolution.Deployment.Upstream.ModelFormat == "OpenAI"
 }
 

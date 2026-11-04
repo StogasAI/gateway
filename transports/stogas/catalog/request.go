@@ -104,7 +104,8 @@ type RequestInput struct {
 	// Nil leaves provider eligibility to the caller; an empty map denies all.
 	AvailableCredentials map[string][]int
 	// DeploymentEligible applies cached credential target metadata without secrets. It gets the
-	// request's route, since a provider's replies can report more on one route than another.
+	// route on which the gateway calls the provider, since a provider's replies can report more
+	// on one route than another.
 	DeploymentEligible func(schemas.ModelProvider, int, Route, Deployment) bool
 	// DeploymentChanged reports a credential whose target for the deployment no longer serves the
 	// cataloged model, version or SKU, so the request names that cause when nothing else serves.
@@ -184,11 +185,13 @@ type ResolvedRequest struct {
 	pricing            requestPricingContext
 	redactionSummary   *redaction.Summary
 	responses          *openaiprovider.OpenAIResponsesRequest
-	policy             *policy.Config
-	activePolicyRules  []policy.RuleMatch
-	retries            int
-	policyTimeouts     *policy.Timeouts
-	plan               *requestPlan
+	// wireBody is the Chat Completions body of a bridged request, which TranslateToChat makes.
+	wireBody          map[string]json.RawMessage
+	policy            *policy.Config
+	activePolicyRules []policy.RuleMatch
+	retries           int
+	policyTimeouts    *policy.Timeouts
+	plan              *requestPlan
 }
 
 // HostedTools lists, in canonical order, the hosted tools that the request lets the model call.
@@ -305,6 +308,9 @@ func (r *ResolvedRequest) ToBifrost(ctx *schemas.BifrostContext) (*schemas.Bifro
 		}()
 	}
 	switch {
+	case r.Bridged() && r.chat == nil:
+		// TranslateToChat has not run, and the deployment takes only Chat Completions.
+		return nil, ErrUnsupportedRequest
 	case r.chat != nil:
 		body := r.chat.ToBifrostChatRequest(ctx)
 		if body == nil {
@@ -314,7 +320,7 @@ func (r *ResolvedRequest) ToBifrost(ctx *schemas.BifrostContext) (*schemas.Bifro
 		body.Model = r.Model
 		body.Fallbacks = nil
 		converted = true
-		return &schemas.BifrostRequest{RequestType: r.RequestType, ChatRequest: body}, nil
+		return &schemas.BifrostRequest{RequestType: r.WireRequestType(), ChatRequest: body}, nil
 	case r.responses != nil:
 		body := r.responses.ToBifrostResponsesRequest(ctx)
 		if body == nil {
@@ -538,6 +544,15 @@ func (r *ResolvedRequest) ReleaseInput() {
 		}
 	}
 	r.pricing.RawBody = retained
+	if r.wireBody != nil {
+		wire := make(map[string]json.RawMessage, len(r.wireBody))
+		for key, value := range r.wireBody {
+			if key != "messages" {
+				wire[strings.Clone(key)] = bytes.Clone(value)
+			}
+		}
+		r.wireBody = wire
+	}
 	for i, tool := range r.pricing.RawTools {
 		retained := make(map[string]json.RawMessage, len(tool))
 		for key, value := range tool {
@@ -994,7 +1009,10 @@ func resolveResponsesRequests(input RequestInput, route Route) (*ResolvedRequest
 			selection,
 			variant.estimate,
 		)
-		if err == nil {
+		// A bridged request takes Chat Completions' reasoning controls, which TranslateToChat
+		// applies once the request's checks have passed. The catalog gives a fixed mode only to
+		// deployments that take Responses.
+		if err == nil && !resolution.Bridged() {
 			err = normalizeResponsesReasoning(request.ResponsesParameters.Reasoning, resolution.Deployment, resolution.outputTokenLimit)
 		}
 		if err != nil {
@@ -1060,11 +1078,16 @@ func filterRequestParameters(selections []routingSelection, raw map[string]json.
 	if err != nil {
 		return nil, nil, err
 	}
+	validateBridged := bridgedRequestValidation(raw)
 	kept := selections[:0]
 	var removed []ruledOut
 	for _, selection := range selections {
 		outputLimit, err := effectiveOutputTokenLimit(requested, selection.deployment.MaxOutputTokens)
-		if err == nil && validateReasoning != nil {
+		switch {
+		case err != nil:
+		case selection.deployment.bridges(route):
+			err = validateBridged(selection.provider, selection.deployment, outputLimit)
+		case validateReasoning != nil:
 			err = validateReasoning(selection.deployment, outputLimit)
 		}
 		if err != nil {
@@ -1117,7 +1140,7 @@ func resolveOpenAIRequest(
 	if deployment.snapshot == nil {
 		return nil, ErrRouteUnavailable
 	}
-	if _, ok := deployment.snapshot.route(provider, route); !ok {
+	if node, ok := deployment.snapshot.graph.Routes[deployment.RouteID]; !ok || !routeServes(node, route) {
 		return nil, ErrRouteUnavailable
 	}
 	model := requestedModel
@@ -1596,15 +1619,19 @@ func (r *ResolvedRequest) PrepareChutesChatWire(
 	upstreamReasoningEffort string,
 	thinking *bool,
 ) {
-	if r == nil || r.chat == nil || r.Route != RouteChat {
+	if r == nil || r.chat == nil || r.WireRoute() != RouteChat {
 		return
 	}
-	if _, maxTokensSet := rawIntValue(r.pricing.RawBody["max_tokens"]); !maxTokensSet {
-		if _, maxCompletionTokensSet := rawIntValue(r.pricing.RawBody["max_completion_tokens"]); !maxCompletionTokensSet &&
-			defaultOutputTokens >= 0 && defaultOutputTokens < r.outputTokenLimit {
-			r.outputTokenLimit = defaultOutputTokens
-			r.inputTokenLimit = min(r.Deployment.MaxInputTokens, maxInputTokenHold(r.Deployment.ContextWindowTokens, defaultOutputTokens))
+	// Each interface checks its own names of the output limit, so only one can be set.
+	limited := false
+	for _, name := range []string{"max_tokens", "max_completion_tokens", "max_output_tokens"} {
+		if _, set := rawIntValue(r.pricing.RawBody[name]); set {
+			limited = true
 		}
+	}
+	if !limited && defaultOutputTokens >= 0 && defaultOutputTokens < r.outputTokenLimit {
+		r.outputTokenLimit = defaultOutputTokens
+		r.inputTokenLimit = min(r.Deployment.MaxInputTokens, maxInputTokenHold(r.Deployment.ContextWindowTokens, defaultOutputTokens))
 	}
 	limit := r.outputTokenLimit
 	r.chat.ChatParameters.MaxCompletionTokens = nil
