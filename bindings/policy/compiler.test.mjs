@@ -39,7 +39,7 @@ test('opaque plugins survive the memory bridge in their original order', () => {
 				// Inspection reports a policy's export before its redaction.
 				plugins: {
 					redaction: { encrypted: envelope(byte) },
-					...(index === 1 && { textExtraction: true, export: { encrypted: envelope(4, 1000) } })
+					...(index === 1 && { textExtraction: 'always', export: { encrypted: envelope(4, 1000) } })
 				}
 			}
 		})),
@@ -57,7 +57,7 @@ test('opaque plugins survive the memory bridge in their original order', () => {
 				['redaction', envelope(1)]
 			]
 		);
-		assert.equal(result.effective.plugins.textExtraction, true);
+		assert.equal(result.effective.plugins.textExtraction, 'always');
 		result.effective.uncheckedPlugins[0].encrypted.blob = 'changed';
 		assert.equal(sources[1].config.plugins.redaction.encrypted.blob, envelope(1).blob);
 	}
@@ -102,7 +102,7 @@ test('conditional opaque rules preserve their source identity without retaining 
 				rules: {
 					z_opaque: {
 						when: "provider.id == 'openai'",
-						plugins: { textExtraction: true, redaction: { encrypted: envelope(byte) } }
+						plugins: { textExtraction: 'always', redaction: { encrypted: envelope(byte) } }
 					},
 					a_plain: { input: { asciiOnly: true } }
 				}
@@ -125,7 +125,7 @@ test('conditional opaque rules preserve their source identity without retaining 
 		first.effective.rules
 			.filter((rule) => rule.name === 'z_opaque')
 			.map((rule) => rule.config.plugins),
-		[1, 2].map((byte) => ({ textExtraction: true, redaction: { encrypted: envelope(byte) } }))
+		[1, 2].map((byte) => ({ textExtraction: 'always', redaction: { encrypted: envelope(byte) } }))
 	);
 	first.effective.rules[1].config.plugins.redaction.encrypted.blob = 'changed';
 	assert.equal(sources[1].config.rules.z_opaque.plugins.redaction.encrypted.blob, envelope(1).blob);
@@ -145,7 +145,7 @@ test('a rule whose only setting is the default ordering shows in routing.sort, n
 	});
 	const opaque = (byte) => ({
 		when: "provider.id == 'openai'",
-		plugins: { textExtraction: true, redaction: { encrypted: envelope(byte) } }
+		plugins: { textExtraction: 'always', redaction: { encrypted: envelope(byte) } }
 	});
 	const sources = [
 		{

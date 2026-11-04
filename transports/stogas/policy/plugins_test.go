@@ -9,13 +9,15 @@ func TestTextExtractionRequirementsAndDefaults(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		sources []string
-		want    bool
+		want    string
 	}{
-		{"omitted", []string{`{}`}, false},
-		{"required", []string{`{"plugins":{"textExtraction":true}}`, `{"plugins":{"textExtraction":false}}`}, true},
-		{"default", []string{`{"rules":{"extract":{"mode":"default","plugins":{"textExtraction":true}}}}`}, true},
-		{"explicit neutral", []string{`{"rules":{"extract":{"mode":"default","plugins":{"textExtraction":true}}}}`, `{"plugins":{"textExtraction":false}}`}, false},
-		{"another plugin's requirement", []string{`{"rules":{"extract":{"mode":"default","plugins":{"textExtraction":true}}}}`, `{"plugins":{"redaction":{}}}`}, true},
+		{"omitted", []string{`{}`}, TextExtractionOff},
+		{"the strongest requirement", []string{`{"plugins":{"textExtraction":"always"}}`, `{"plugins":{"textExtraction":"off"}}`}, TextExtractionAlways},
+		{"auto over off", []string{`{"plugins":{"textExtraction":"off"}}`, `{"plugins":{"textExtraction":"auto"}}`}, TextExtractionAuto},
+		{"always over auto", []string{`{"plugins":{"textExtraction":"auto"}}`, `{"plugins":{"textExtraction":"always"}}`}, TextExtractionAlways},
+		{"default", []string{`{"rules":{"extract":{"mode":"default","plugins":{"textExtraction":"auto"}}}}`}, TextExtractionAuto},
+		{"a requirement replaces the default", []string{`{"rules":{"extract":{"mode":"default","plugins":{"textExtraction":"always"}}}}`, `{"plugins":{"textExtraction":"off"}}`}, TextExtractionOff},
+		{"another plugin's requirement", []string{`{"rules":{"extract":{"mode":"default","plugins":{"textExtraction":"always"}}}}`, `{"plugins":{"redaction":{}}}`}, TextExtractionAlways},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sources := []ScopedSource{{Scope: OrganizationScope, Value: ruleSource(t, `{}`)}}
@@ -30,8 +32,8 @@ func TestTextExtractionRequirementsAndDefaults(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if active.TextExtractionEnabled() != tc.want {
-				t.Fatalf("extraction = %v, want %v", active.TextExtractionEnabled(), tc.want)
+			if active.TextExtraction() != tc.want {
+				t.Fatalf("extraction = %v, want %v", active.TextExtraction(), tc.want)
 			}
 			if _, err := CompileRedaction(active); err != nil {
 				t.Fatal(err)
@@ -40,15 +42,23 @@ func TestTextExtractionRequirementsAndDefaults(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if (&Config{Plugins: inspected}).TextExtractionEnabled() != tc.want {
+			if (&Config{Plugins: inspected}).TextExtraction() != tc.want {
 				t.Fatal("inspection differs from execution")
 			}
 		})
 	}
 }
 
+func TestTextExtractionTakesOnlyItsModes(t *testing.T) {
+	for _, value := range []string{`true`, `false`, `"yes"`, `"Always"`, `""`, `null`} {
+		if _, err := CompileSource([]byte(`{"plugins":{"textExtraction":` + value + `}}`)); err == nil {
+			t.Errorf("accepted %s", value)
+		}
+	}
+}
+
 func TestTextExtractionRequiresItsOwnRequestPermission(t *testing.T) {
-	request, err := CompileRequest([]byte(`{"plugins":{"textExtraction":true}}`), "org", nil)
+	request, err := CompileRequest([]byte(`{"plugins":{"textExtraction":"always"}}`), "org", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

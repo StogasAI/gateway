@@ -73,11 +73,11 @@ func TestTextExtractionPrecedesASCIIAndRedaction(t *testing.T) {
 			name, plugins, data      string
 			ascii, reject, encrypted bool
 		}{
-			{"opt in", `"textExtraction":true`, "aGVsbG8=", false, false, false},
-			{"redaction after extraction", `"textExtraction":true,"redaction":{"customPattern":"hello"}`, "aGVsbG8=", false, false, false},
-			{"encrypted redaction after extraction", `"textExtraction":true,"redaction":{"customPattern":"hello"}`, "aGVsbG8=", false, false, true},
-			{"ASCII after extraction", `"textExtraction":true`, "w6k=", true, true, false},
-			{"opaque cannot bypass ASCII", `"textExtraction":false`, "aGVsbG8=", true, true, false},
+			{"opt in", `"textExtraction":"always"`, "aGVsbG8=", false, false, false},
+			{"redaction after extraction", `"textExtraction":"always","redaction":{"customPattern":"hello"}`, "aGVsbG8=", false, false, false},
+			{"encrypted redaction after extraction", `"textExtraction":"always","redaction":{"customPattern":"hello"}`, "aGVsbG8=", false, false, true},
+			{"ASCII after extraction", `"textExtraction":"always"`, "w6k=", true, true, false},
+			{"opaque cannot bypass ASCII", `"textExtraction":"off"`, "aGVsbG8=", true, true, false},
 			{"opaque cannot bypass redaction", `"redaction":{"customPattern":"hello"}`, "aGVsbG8=", false, true, false},
 		} {
 			t.Run(route+"/"+tc.name, func(t *testing.T) {
@@ -95,7 +95,7 @@ func TestTextExtractionPrecedesASCIIAndRedaction(t *testing.T) {
 					defer key.Clear()
 					// Independently generated with Node crypto for this organization and purpose.
 					const envelope = `{"version":1,"keyId":"3a1121028ba40964d5f10b47662650a021d736bd671f4083b5066d9bd51c9ef0","salt":"AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM","nonce":"BAQEBAQEBAQEBAQE","blob":"MUgKUlBwNjuw0aMvsAVKMdfwJ_mzeyhYggR0-E20ahBYWNcbmyo_HmA"}`
-					document := []byte(`{"encryption":{"keys":{"default":"` + key.ID() + `"}},"plugins":{"textExtraction":true,"redaction":{"encrypted":` + envelope + `}}}`)
+					document := []byte(`{"encryption":{"keys":{"default":"` + key.ID() + `"}},"plugins":{"textExtraction":"always","redaction":{"encrypted":` + envelope + `}}}`)
 					if _, missingErr := policy.OpenSource(document, "org-test", nil); missingErr == nil {
 						t.Fatal("encrypted redaction accepted without key")
 					}
@@ -399,7 +399,7 @@ func TestNativeFileFormatsFollowSelectedRouteAfterTextExtraction(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var config *policy.Config
 			if tc.extract {
-				source, err := policy.CompileSource([]byte(`{"plugins":{"textExtraction":true}}`))
+				source, err := policy.CompileSource([]byte(`{"plugins":{"textExtraction":"always"}}`))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -440,6 +440,50 @@ func TestNativeFileFormatsFollowSelectedRouteAfterTextExtraction(t *testing.T) {
 				}
 			} else if estimate, _ := resolved.EstimatedInputTokens(); estimate != resolved.Deployment.MaxInputTokens {
 				t.Fatal("native document lost full input hold")
+			}
+		})
+	}
+}
+
+// Auto extraction keeps a text file where the selected deployment reads it as a file, and turns
+// it into prompt text elsewhere or where input checks must read it.
+func TestAutoTextExtractionFollowsTheDeployment(t *testing.T) {
+	for _, tc := range []struct {
+		name, model, route, mime, policy string
+		extracted                        bool
+	}{
+		{"Anthropic reads plain text", "anthropic-claude-opus-4-8", "responses", "text/plain", `{"plugins":{"textExtraction":"auto"}}`, false},
+		{"Anthropic does not read CSV", "anthropic-claude-opus-4-8", "responses", "text/csv", `{"plugins":{"textExtraction":"auto"}}`, true},
+		{"OpenAI Responses reads CSV", "openai-gpt-5.6-luna", "responses", "text/csv", `{"plugins":{"textExtraction":"auto"}}`, false},
+		{"OpenAI Chat does not read CSV", "openai-gpt-5.6-luna", "chat/completions", "text/csv", `{"plugins":{"textExtraction":"auto"}}`, true},
+		{"input checks read the text", "openai-gpt-5.6-luna", "responses", "text/csv", `{"plugins":{"textExtraction":"auto"},"input":{"asciiOnly":true}}`, true},
+		{"redaction reads the text", "anthropic-claude-opus-4-8", "responses", "text/plain", `{"plugins":{"textExtraction":"auto","redaction":{"email_address":true}}}`, true},
+		{"always", "anthropic-claude-opus-4-8", "responses", "text/plain", `{"plugins":{"textExtraction":"always"}}`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source, err := policy.CompileSource([]byte(tc.policy))
+			if err != nil {
+				t.Fatal(err)
+			}
+			config, err := policy.ComposeSources([]policy.ScopedSource{{Scope: policy.OrganizationScope, Value: source}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			file := `"file_data":"data:` + tc.mime + `;base64,aGVsbG8=","filename":"note"`
+			block, field := `{"type":"file","file":{`+file+`}}`, "messages"
+			if tc.route == "responses" {
+				block, field = `{"type":"input_file",`+file+`}`, "input"
+			}
+			resolved, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/" + tc.route, Policy: config, Body: []byte(`{"model":"` + tc.model + `","` + field + `":[{"role":"user","content":[` + block + `]}]}`)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if files := resolved.InputFiles(); files.Opaque == tc.extracted || files.Count != 1 {
+				t.Fatalf("extracted %v, files %+v", !files.Opaque, files)
+			}
+			state := NewState(resolved, "sk-test", nil, AdapterFor(resolved.Provider))
+			if err := state.Adapter.ValidateRequest(state); err != nil {
+				t.Fatal(err)
 			}
 		})
 	}

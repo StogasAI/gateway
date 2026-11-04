@@ -7,25 +7,37 @@ import (
 
 // ActivePlugins contains the request's selected and decrypted plugin settings.
 type ActivePlugins struct {
-	Redaction      *redaction.Policy
-	TextExtraction bool
+	Redaction *redaction.Policy
+	// TextExtraction is the text extraction mode, one of the TextExtraction constants.
+	TextExtraction string
 	Export         *exportconfig.Config
 }
 
-func (c *Config) TextExtractionEnabled() bool {
+// TextExtraction returns the strongest text extraction mode that the policy's plugins set, or
+// TextExtractionOff.
+func (c *Config) TextExtraction() string {
+	mode := TextExtractionOff
 	if c == nil {
-		return false
+		return mode
 	}
 	parts := c.PluginSources
 	if len(parts) == 0 && c.Plugins != nil {
 		parts = []*Plugins{c.Plugins}
 	}
 	for _, part := range parts {
-		if part != nil && part.TextExtraction != nil && *part.TextExtraction {
-			return true
+		if part != nil && part.TextExtraction != nil {
+			mode = strongerTextExtraction(mode, *part.TextExtraction)
 		}
 	}
-	return false
+	return mode
+}
+
+// MediaTypes returns the policy's input.mediaTypes, or nil.
+func (c *Config) MediaTypes() *MediaTypes {
+	if c == nil || c.Input == nil {
+		return nil
+	}
+	return c.Input.MediaTypes
 }
 
 // InspectsInput reports whether the policy, as far as it is unencrypted, inspects input text:

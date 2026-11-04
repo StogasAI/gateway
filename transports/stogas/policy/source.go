@@ -587,7 +587,7 @@ func compileSourcePlugins(raw []byte) (*Plugins, error) {
 	var doc struct {
 		Export         *exportconfig.Config       `json:"export"`
 		Redaction      map[string]json.RawMessage `json:"redaction"`
-		TextExtraction *bool                      `json:"textExtraction"`
+		TextExtraction *string                    `json:"textExtraction"`
 	}
 	if err := decodeStrict(raw, &doc); err != nil {
 		return nil, configError("invalid plugins: %v", err)
@@ -1162,8 +1162,8 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 			hasRequestPermission = true
 			out.RequestPermission &= *source.Delegation.Request
 		}
-		if allowed&permissionInput != 0 && config.Input != nil && config.Input.ASCIIOnly {
-			out.Input = config.Input
+		if allowed&permissionInput != 0 && config.Input.applies() {
+			out.Input = out.Input.combine(config.Input)
 		}
 		if config.Timeouts != nil {
 			if out.Timeouts == nil {

@@ -7,6 +7,7 @@ import (
 
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
+	"github.com/maximhq/bifrost/transports/stogas/inputfiles"
 	"github.com/maximhq/bifrost/transports/stogas/policy"
 )
 
@@ -73,7 +74,7 @@ func TestRoutingSkipsDeploymentsThatCannotReadTheAttachments(t *testing.T) {
 			config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Deployments: order}
 			config.Routing.Query = orderedQuery(t, "", order...)
 			if tc.extract {
-				extract := true
+				extract := policy.TextExtractionAlways
 				config.Plugins = &policy.Plugins{TextExtraction: &extract}
 			}
 			messages := `"messages":[{"role":"user","content":[{"type":"text","text":"read this"},` + tc.part + `]}]`
@@ -186,7 +187,7 @@ func TestRoutingSkipsPairsWhosePolicyRefusesOpaqueAttachments(t *testing.T) {
 		config.Plugins = &policy.Plugins{Redaction: &policy.Redaction{Presets: []string{"ip_address"}}}
 	}
 	extraction := func(config *policy.Config) {
-		extract := true
+		extract := policy.TextExtractionAlways
 		config.Plugins = &policy.Plugins{TextExtraction: &extract}
 	}
 	for _, tc := range []struct {
@@ -233,6 +234,93 @@ func TestRoutingSkipsPairsWhosePolicyRefusesOpaqueAttachments(t *testing.T) {
 				t.Fatalf("want %s: resolved=%v error=%v", tc.want, resolved, err)
 			}
 		})
+	}
+}
+
+// A policy's input.mediaTypes refuse attachments by the type that their part and the start of
+// their content show. Routing skips a pair whose policy refuses one, and a type that the gateway
+// cannot check is refused wherever it could decide.
+func TestRoutingSkipsPairsWhosePolicyRefusesMediaTypes(t *testing.T) {
+	loadTestCatalog(t)
+	gpt := []string{"azure-gpt-5.6-sol", "openai-gpt-5.6-sol"}
+	const (
+		pdf     = `{"type":"input_file","filename":"a.pdf","file_data":"data:application/pdf;base64,JVBERi0xLjcK"}`
+		fakePDF = `{"type":"input_file","filename":"a.txt","file_data":"data:text/plain;base64,JVBERi0xLjcK"}`
+		text    = `{"type":"input_file","filename":"a.txt","file_data":"data:text/plain;base64,aGVsbG8="}`
+		linked  = `{"type":"input_file","file_url":"https://example.com/a.pdf"}`
+		image   = `{"type":"input_image","image_url":"https://example.com/a.png"}`
+	)
+	types := func(allow, deny []string) *policy.Input {
+		return &policy.Input{MediaTypes: &policy.MediaTypes{Allow: allow, Deny: deny}}
+	}
+	for _, tc := range []struct {
+		name, part, want, wantErr string
+		azure, openai             *policy.Input
+	}{
+		{name: "one pair denies", part: pdf, azure: types(nil, []string{"application/pdf"}), want: gpt[1]},
+		{name: "one pair allows other types", part: pdf, azure: types([]string{"image/*"}, nil), want: gpt[1]},
+		{name: "every pair denies", part: pdf, azure: types(nil, []string{"application/*"}), openai: types(nil, []string{"application/pdf"}),
+			wantErr: "input[0].content[1] is application/pdf, which input.mediaTypes refuses"},
+		{name: "a declared type that the content contradicts", part: fakePDF, azure: types(nil, []string{"application/pdf"}), openai: types(nil, []string{"application/pdf"}),
+			wantErr: "input[0].content[1] declares text/plain, but its content is application/pdf"},
+		{name: "a URL that a deny list could cover", part: linked, azure: types(nil, []string{"audio/*"}), openai: types(nil, []string{"audio/*"}),
+			wantErr: "input[0].content[1] has no media type that input.mediaTypes can check; send it inline with its media type"},
+		{name: "an image URL that a class allows", part: image, azure: types([]string{"image/*"}, nil), want: gpt[0]},
+		{name: "an image URL that a deny list of other classes leaves", part: image, azure: types(nil, []string{"audio/*"}), want: gpt[0]},
+		{name: "an image URL that a type could deny", part: image, azure: types(nil, []string{"image/gif"}), want: gpt[1]},
+		{name: "a refused text file gets no extraction hint", part: text, azure: types(nil, []string{"text/*"}), openai: types(nil, []string{"text/plain"}),
+			wantErr: "input[0].content[1] is text/plain, which input.mediaTypes refuses"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			configure := func(input *policy.Input) *policy.Config {
+				config := policyConfig(1)
+				config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Deployments: gpt}
+				config.Routing.Query = orderedQuery(t, "", gpt...)
+				config.Input = input
+				return config
+			}
+			azure, openai := configure(tc.azure), configure(tc.openai)
+			resolved, err := ResolveRequest(RequestInput{
+				Body:   []byte(`{"model":"gpt-5.6-sol","input":[{"role":"user","content":[{"type":"input_text","text":"read this"},` + tc.part + `]}]}`),
+				Method: "POST", Path: "/v1/responses", Policy: configure(nil),
+				CredentialPolicy: func(provider schemas.ModelProvider, _ int) (RequestPolicy, error) {
+					if provider == ProviderAzure {
+						return RequestPolicy{Config: azure}, nil
+					}
+					return RequestPolicy{Config: openai}, nil
+				},
+			})
+			if tc.wantErr != "" {
+				public := PublicError(err)
+				if public.StatusCode != 400 || public.Code != AttachmentUnsupported || public.Message != tc.wantErr {
+					t.Fatalf("want %q: %+v", tc.wantErr, public)
+				}
+				return
+			}
+			if err != nil || resolved.Deployment.ID != tc.want {
+				t.Fatalf("want %s: resolved=%v error=%v", tc.want, resolved, err)
+			}
+		})
+	}
+}
+
+// Routing reads a data URL's header and the start of its payload, however the JSON escapes it,
+// so that it sniffs the bytes that the request's preparation sniffs.
+func TestStringHeadKeepsTheBytesThatSniffingReads(t *testing.T) {
+	payload := strings.Repeat("ab/c", 400)
+	escaped := strings.ReplaceAll(payload, "/", `\/`)
+	for _, raw := range []string{`"data:text/plain;base64,` + escaped + `"`, `"` + escaped + `"`} {
+		var head string
+		if err := json.Unmarshal(stringHead(json.RawMessage(raw)), &head); err != nil {
+			t.Fatal(err)
+		}
+		_, got, _ := strings.Cut(head, ",")
+		if !strings.HasPrefix(raw, `"data:`) {
+			got = head
+		}
+		if len(got) < inputfiles.SniffChars || !strings.HasPrefix(payload, got) {
+			t.Fatalf("head keeps %d characters", len(got))
+		}
 	}
 }
 
@@ -308,7 +396,9 @@ func TestRoutingReportsTheErrorOfAPairThatCouldReadTheAttachments(t *testing.T) 
 	}
 }
 
-func TestAttachmentStringReadsADataURLOnlyThroughItsHeader(t *testing.T) {
+// Routing reads a long value only in part: a data URL's header and as much of its payload as
+// content sniffing reads, and as much of another value.
+func TestAttachmentStringReadsTheStartOfALongValue(t *testing.T) {
 	payload := strings.Repeat("QUJD", 4096)
 	backslash := string(rune(92))
 	for _, tc := range []struct {
@@ -318,12 +408,12 @@ func TestAttachmentStringReadsADataURLOnlyThroughItsHeader(t *testing.T) {
 		{"absent", ``, "", true},
 		{"null", `null`, "", false},
 		{"short", `"data:application/pdf;base64,JVBE"`, "data:application/pdf;base64,JVBE", true},
-		{"long data URL", `"data:application/pdf;base64,` + payload + `"`, "data:application/pdf;base64,", true},
-		{"escaped slash", `"data:application\/pdf;base64,` + payload + `"`, "data:application/pdf;base64,", true},
+		{"long data URL", `"data:application/pdf;base64,` + payload + `"`, "data:application/pdf;base64," + payload[:attachmentHeadBytes], true},
+		{"escaped slash", `"data:application\/pdf;base64,` + payload + `"`, "data:application/pdf;base64," + payload[:attachmentHeadBytes], true},
 		{"raw base64", `"` + payload + `"`, payload[:attachmentHeadBytes-1], true},
 		{"escape without a comma", `"` + backslash + "u0041" + payload + `"`, "A" + payload[:attachmentHeadBytes-7], true},
-		{"long data URL header", `"data:text/plain;name=` + strings.Repeat("a", 2*attachmentHeadBytes) + `;base64,` + payload + `"`, "data:text/plain;name=" + strings.Repeat("a", 2*attachmentHeadBytes) + ";base64,", true},
-		{"escaped slashes in raw base64", `"` + strings.Repeat("QUJ"+backslash+"/", 2*attachmentHeadBytes) + `"`, strings.Repeat("QUJ/", 204) + "QUJ", true},
+		{"long data URL header", `"data:text/plain;name=` + strings.Repeat("a", 2*attachmentHeadBytes) + `;base64,` + payload + `"`, "data:text/plain;name=" + strings.Repeat("a", 2*attachmentHeadBytes) + ";base64," + payload[:attachmentHeadBytes], true},
+		{"escaped slashes in raw base64", `"` + strings.Repeat("QUJ"+backslash+"/", 2*attachmentHeadBytes) + `"`, strings.Repeat("QUJ/", (attachmentHeadBytes-1)/5) + "QUJ", true},
 		{"short escape at the cut", `"` + strings.Repeat("A", attachmentHeadBytes-2) + backslash + "/" + payload + `"`, strings.Repeat("A", attachmentHeadBytes-2), true},
 		{"unicode escape at the cut", `"` + strings.Repeat("A", attachmentHeadBytes-4) + backslash + "u0041" + payload + `"`, strings.Repeat("A", attachmentHeadBytes-4), true},
 		{"two-byte character at the cut", `"` + strings.Repeat("A", attachmentHeadBytes-2) + "é" + payload + `"`, strings.Repeat("A", attachmentHeadBytes-2), true},

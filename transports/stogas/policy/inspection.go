@@ -83,7 +83,7 @@ func InspectSource(raw []byte) (*Inspection, error) {
 			return nil, err
 		}
 	}
-	if source.Config.Input != nil && !source.Config.Input.ASCIIOnly {
+	if !source.Config.Input.applies() {
 		source.Config.Input = nil
 	}
 	conditions := make(map[string]string)
@@ -390,8 +390,11 @@ func inspectionPlugins(parts []*Plugins) (*Plugins, error) {
 			exports = append(exports, part.Export)
 		}
 		if part.TextExtraction != nil {
-			enabled := *part.TextExtraction || plugins.TextExtraction != nil && *plugins.TextExtraction
-			plugins.TextExtraction = &enabled
+			mode := *part.TextExtraction
+			if plugins.TextExtraction != nil {
+				mode = strongerTextExtraction(*plugins.TextExtraction, mode)
+			}
+			plugins.TextExtraction = &mode
 		}
 		if part.Redaction == nil {
 			continue
@@ -461,7 +464,7 @@ func inspectionSetBy(entries []InspectionSource, sources []ScopedSource, compile
 		add("access", permissionAccess, true, func(c *Config) bool { return c.Access != nil && len(c.Access.Deny) > 0 })
 	}
 	if compiled.Input != nil {
-		add("input", permissionInput, false, func(c *Config) bool { return c.Input != nil && c.Input.ASCIIOnly })
+		add("input", permissionInput, true, func(c *Config) bool { return c.Input.applies() })
 	}
 	// Each plugin names the policies whose settings for it combine. A required
 	// plugin replaces the defaults of that plugin alone.
