@@ -119,6 +119,32 @@ func TestDenyWindowCanEndAtMidnight(t *testing.T) {
 	}
 }
 
+func TestDenyWindowsTakeOnlyTheContractsTimeZones(t *testing.T) {
+	for zone, valid := range map[string]bool{
+		"UTC":                            true,
+		"America/New_York":               true,
+		"America/Argentina/Buenos_Aires": true,
+		"Etc/GMT+5":                      true,
+		// Go would read these, but the contract and Postgres do not, or not the same way.
+		"":                 false,
+		"Local":            false,
+		"CET":              false,
+		"EST":              false,
+		"utc":              false,
+		"+05:00":           false,
+		"America/new_york": false,
+		"Mars/Olympus":     false,
+	} {
+		config := validCompiledConfig()
+		config.Access = &Access{Deny: []DenyWindow{{
+			Days: []string{"mon"}, Start: "09:00", End: "17:00", TimeZone: zone,
+		}}}
+		if err := config.validate(); (err == nil) != valid {
+			t.Errorf("time zone %q: validate() = %v, want valid %t", zone, err, valid)
+		}
+	}
+}
+
 func TestPolicyFieldRegistryIsClosed(t *testing.T) {
 	paths := FieldPaths()
 	for _, path := range paths {
