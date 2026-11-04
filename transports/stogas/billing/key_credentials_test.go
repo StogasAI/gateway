@@ -107,6 +107,32 @@ func TestEncryptedCredentialsKeepTheirPlaceAndNameMissingRoots(t *testing.T) {
 	}
 }
 
+// A key that holds a credential of a provider or mode that a later release
+// added keeps serving on this release, as if that credential were not assigned.
+func TestCredentialsOfALaterReleaseAreLeftOut(t *testing.T) {
+	claims := &APIKeyClaims{OrganizationID: "org"}
+	const id = "01900000-0000-7000-8000-000000000001"
+	stored := CredentialSelection{Mode: "stored", ID: id, Credential: &CachedCredential{
+		ID: id, OrganizationID: "org", Provider: "openai", Kind: "stored", Enabled: true, EncryptedSecret: "ciphertext",
+		Policy: credentialPolicyRecord{policySourceRecord: policySourceRecord{PolicyVersion: PolicyVersion{Scope: policy.CredentialScope, ID: id, Revision: 1}, Source: json.RawMessage(`null`)}, Enabled: true},
+	}}
+	credentials := knownCredentials(map[string][]CredentialSelection{
+		"openai":          {{Mode: "delegated", ID: "01900000-0000-7000-8000-000000000002"}, stored},
+		"anthropic":       {{Mode: "delegated"}},
+		"future-provider": {{Mode: "stored", ID: "01900000-0000-7000-8000-000000000003"}},
+	})
+	if err := validateCredentials(claims, credentials); err != nil {
+		t.Fatal(err)
+	}
+	if len(credentials) != 1 || len(credentials["openai"]) != 1 || credentials["openai"][0].ID != id {
+		t.Fatalf("credentials = %v", credentials)
+	}
+	snapshot := &KeyConfigSnapshot{Claims: claims, Config: &policy.Config{}, Credentials: credentials}
+	if available := snapshot.AvailableCredentials(); len(available) != 1 || !slices.Equal(available["openai"], []int{0}) {
+		t.Fatalf("available = %v", available)
+	}
+}
+
 func TestCredentialSnapshotRejectsConfusedScopeAndMaterial(t *testing.T) {
 	claims := &APIKeyClaims{OrganizationID: "org"}
 	valid := func() map[string][]CredentialSelection {
