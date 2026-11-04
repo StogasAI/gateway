@@ -305,6 +305,7 @@ func (s *Service) composeKeyConfig(row keyConfigRow, pins policySourcePins, encr
 	digest := policy.ChainDigest(values)
 	compiled, err := s.keyConfigs.composeSources(values, digest)
 	if err == nil {
+		row.Credentials = knownCredentials(row.Credentials)
 		err = restoreCredentialPolicySources(row.Credentials, pins, row.CredentialSources)
 	}
 	if err == nil && (row.CredentialsGeneration == nil || *row.CredentialsGeneration < 1 || validateCredentials(row.Claims, row.Credentials) != nil) {

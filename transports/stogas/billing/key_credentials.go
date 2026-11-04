@@ -335,6 +335,33 @@ var credentialProviders = map[string]bool{
 	"anthropic": false, "aws": true, "azure": false, "chutes": false, "google-cloud": true, "openai": false,
 }
 
+// knownCredentials leaves out the providers and modes that this release does
+// not know. The database lists them as soon as Control accepts them, while
+// older releases still serve, and a release that refused them would refuse
+// every request of a key that holds one. Without them, the key routes as if
+// they were not assigned.
+func knownCredentials(credentials map[string][]CredentialSelection) map[string][]CredentialSelection {
+	for provider, selections := range credentials {
+		if _, known := credentialProviders[provider]; !known {
+			delete(credentials, provider)
+			continue
+		}
+		kept := selections[:0]
+		for _, selection := range selections {
+			switch selection.Mode {
+			case "managed", "stored", "encrypted":
+				kept = append(kept, selection)
+			}
+		}
+		if len(kept) == 0 {
+			delete(credentials, provider)
+		} else {
+			credentials[provider] = kept
+		}
+	}
+	return credentials
+}
+
 func validateCredentials(claims *APIKeyClaims, credentials map[string][]CredentialSelection) error {
 	if claims == nil || len(credentials) > len(credentialProviders) {
 		return errors.New("invalid credential snapshot")
