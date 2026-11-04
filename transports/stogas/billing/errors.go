@@ -99,7 +99,7 @@ func NormalizeStogasErrorCode(code string, status int) string {
 		return code
 	}
 	switch code {
-	case "billing_price_invalid", "encryption_key_required", "encrypted_content_invalid",
+	case "attachment_unsupported", "billing_price_invalid", "encryption_key_required", "encrypted_content_invalid",
 		"byok_not_allowed", "byok_required", "byok_target_changed", "byok_target_unavailable", "byok_unavailable",
 		"catalog_unavailable", "dashboard_key_denied", "deployment_ambiguous", "gateway_capacity_exceeded", "gateway_draining",
 		"gateway_unavailable", "input_ascii_required", "insufficient_balance", "internal_error",
