@@ -105,6 +105,9 @@ func newFakeSettlementDatabase(t *testing.T, answer func(settlementCall) settlem
 		keepFailedLogQuery: "select * from keep_failed_gateway_request_log($1::uuid, $2::json)",
 		storeLogBatchQuery: "select * from store_gateway_log_batch($1::json)",
 	}
+	// Tests close batches themselves. The end of a UTC minute would close one early, and a test
+	// that fills a batch takes about a second under the race detector.
+	db.service.logBatches.period = 24 * time.Hour
 	t.Cleanup(func() {
 		db.service.Close()
 		listener.Close()
