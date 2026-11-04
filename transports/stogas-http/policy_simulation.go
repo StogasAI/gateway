@@ -28,9 +28,12 @@ type simulationOrigin struct {
 type simulationPair struct {
 	Provider   schemas.ModelProvider `json:"provider"`
 	Deployment string                `json:"deployment"`
-	Model      string                `json:"model"`
-	Credential int                   `json:"credential"`
-	Retries    int                   `json:"retries"`
+	// Chain is the hash of the catalog chain that the pair calls through, as a
+	// request log names each attempt's.
+	Chain      string `json:"chain"`
+	Model      string `json:"model"`
+	Credential int    `json:"credential"`
+	Retries    int    `json:"retries"`
 	// ReplacedDefaults is set on each pair that the request tries, and lists
 	// the settings of its matched default rules that a requirement replaces.
 	ReplacedDefaults []simulationReplacedDefault `json:"replacedDefaults,omitzero"`
@@ -347,7 +350,7 @@ func (s *Server) simulatePolicy(ctx *requestContext) {
 		return
 	}
 	for i, pair := range simulation.Pairs {
-		entry := simulationPair{Provider: pair.Provider, Deployment: pair.Deployment.ID, Model: pair.Deployment.ModelID, Credential: pair.Credential, Retries: pair.Retries}
+		entry := simulationPair{Provider: pair.Provider, Deployment: pair.Deployment.ID, Chain: pair.Deployment.ChainHash, Model: pair.Deployment.ModelID, Credential: pair.Credential, Retries: pair.Retries}
 		if i < simulation.Tried {
 			chain := chains[simulationCandidate{pair.Provider, pair.Credential}]
 			entry.ReplacedDefaults = []simulationReplacedDefault{}
