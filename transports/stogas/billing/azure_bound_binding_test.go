@@ -37,10 +37,16 @@ func TestParseAzureBoundBindingNamesTheTargetAndItsAccount(t *testing.T) {
 	if stored := (Authorization{}); stored.bindAzure(nil) || stored.AzureBinding != nil {
 		t.Fatal("bound a missing binding")
 	}
+	// A key that a newer function adds, at either level, does not stop an older release.
+	raw = `{"schema":"stogas.azure-binding.v1","accountId":"` + account + `","verifiedAt":null,"extra":1,"binding":` + strings.Replace(binding, `{`, `{"extra":{"a":[1]},`, 1) + `}`
+	if added := (Authorization{}); !added.bindAzure(&raw) || added.AzureBinding.ID != "019a0000-0000-7000-8000-000000000001" {
+		t.Fatalf("binding with added keys = %#v", added)
+	}
 	for name, raw := range map[string]string{
-		"no account":    `{"schema":"stogas.azure-binding.v1","verifiedAt":null,"binding":` + binding + `}`,
-		"no target ID":  `{"schema":"stogas.azure-binding.v1","accountId":"` + account + `","verifiedAt":null,"binding":` + strings.Replace(binding, `"id":"019a0000-0000-7000-8000-000000000001",`, "", 1) + `}`,
-		"unknown field": `{"schema":"stogas.azure-binding.v1","accountId":"` + account + `","verifiedAt":null,"extra":1,"binding":` + binding + `}`,
+		"no account":     `{"schema":"stogas.azure-binding.v1","verifiedAt":null,"binding":` + binding + `}`,
+		"no target ID":   `{"schema":"stogas.azure-binding.v1","accountId":"` + account + `","verifiedAt":null,"binding":` + strings.Replace(binding, `"id":"019a0000-0000-7000-8000-000000000001",`, "", 1) + `}`,
+		"another schema": `{"schema":"stogas.azure-binding.v2","accountId":"` + account + `","verifiedAt":null,"binding":` + binding + `}`,
+		"trailing JSON":  `{"schema":"stogas.azure-binding.v1","accountId":"` + account + `","verifiedAt":null,"binding":` + binding + `} {}`,
 	} {
 		if _, err := parseAzureBoundBinding(raw); err == nil {
 			t.Fatalf("%s: accepted %s", name, raw)

@@ -192,9 +192,12 @@ func (a *Authorization) bindAzure(raw *string) bool {
 	return true
 }
 
+// parseAzureBoundBinding reads the binding that the hold function wrote. It accepts keys that it
+// does not know, because the database's functions add keys before every gateway release reads
+// them, and a release that refused them would refuse every Azure hold until it was replaced. A
+// key that limits how a target may be used needs a new schema literal instead.
 func parseAzureBoundBinding(raw string) (azureBoundBinding, error) {
 	decoder := json.NewDecoder(bytes.NewReader([]byte(raw)))
-	decoder.DisallowUnknownFields()
 	value := azureBoundBinding{}
 	if err := decoder.Decode(&value); err != nil {
 		return azureBoundBinding{}, err
