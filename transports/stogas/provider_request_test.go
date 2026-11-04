@@ -818,6 +818,14 @@ func TestOpenAIAccessProgramsReachOnlyOpenAI(t *testing.T) {
 			if got := string(payload["access_programs"]); got != item.want {
 				t.Fatalf("access_programs = %q, want %q: %s", got, item.want, body)
 			}
+			// The record names the program that went upstream, and nothing when none did.
+			var sent struct{ Cyber string }
+			if item.want != "" {
+				_ = json.Unmarshal([]byte(item.want), &sent)
+			}
+			if got := state.RequestSettings.CyberAccessProgram; got != sent.Cyber {
+				t.Fatalf("logged cyber access program = %q, want %q", got, sent.Cyber)
+			}
 		})
 	}
 }
