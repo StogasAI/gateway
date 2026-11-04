@@ -1,13 +1,15 @@
 package stogashttp
 
 import (
+	"bytes"
+	"encoding/json"
+	"net/http"
 	"sync/atomic"
 	"time"
 
+	"github.com/maximhq/bifrost/core/schemas"
 	stogas "github.com/maximhq/bifrost/transports/stogas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
-
-	"net/http"
 )
 
 type requestAdmissionCounters struct {
@@ -87,10 +89,7 @@ func (s *Server) recordAdmissionRejection(ctx *requestContext, status int, code 
 	}
 	requestType := ctx.requestType
 	if requestType == "" {
-		requestType = "responses_request"
-		if ctx.request.URL.Path == "/v1/chat/completions" {
-			requestType = "chat_completion_request"
-		}
+		requestType = requestTypeOf(ctx.request.URL.Path, nil)
 	}
 	requestID, err := inferenceRequestID(ctx)
 	if err != nil {
@@ -110,4 +109,20 @@ func (s *Server) recordAdmissionRejection(ctx *requestContext, status int, code 
 		Transport: ctx.transport(),
 	}, export)
 	export = nil
+}
+
+// requestTypeOf names the type that a request on path asks for, as resolution
+// derives it: a stream only for a literal true. A body that was not decoded
+// counts as unary.
+func requestTypeOf(path string, fields map[string]json.RawMessage) string {
+	stream := bytes.Equal(bytes.TrimSpace(fields["stream"]), []byte("true"))
+	switch {
+	case path == "/v1/chat/completions" && stream:
+		return string(schemas.ChatCompletionStreamRequest)
+	case path == "/v1/chat/completions":
+		return string(schemas.ChatCompletionRequest)
+	case stream:
+		return string(schemas.ResponsesStreamRequest)
+	}
+	return string(schemas.ResponsesRequest)
 }

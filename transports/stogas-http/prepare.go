@@ -34,6 +34,8 @@ func (s *Server) startRun(ctx *requestContext, startedAt time.Time, preparation 
 		s.writeCatalogError(ctx, err)
 		return nil
 	}
+	// A refusal before the plan resolves logs the type that the body asks for.
+	ctx.requestType = requestTypeOf(ctx.request.URL.Path, fields)
 	credential.EncryptionKeys, err = takeEncryptionKeys(fields)
 	if err != nil {
 		s.writeBillingError(ctx, err)

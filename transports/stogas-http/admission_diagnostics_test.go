@@ -52,3 +52,28 @@ func TestAdmissionDiagnosticsBoundRejectedTrafficAndExcludeAdmittedErrors(t *tes
 		t.Fatalf("admission snapshot retained client content: %s, %v", encoded, err)
 	}
 }
+
+func TestRefusalsBeforeResolutionLogTheRequestedType(t *testing.T) {
+	for _, test := range []struct {
+		path, stream, want string
+	}{
+		{"/v1/chat/completions", "true", "chat_completion_stream"},
+		{"/v1/chat/completions", " true ", "chat_completion_stream"},
+		{"/v1/chat/completions", "false", "chat_completion"},
+		{"/v1/chat/completions", `"true"`, "chat_completion"},
+		{"/v1/chat/completions", "", "chat_completion"},
+		{"/v1/responses", "true", "responses_stream"},
+		{"/v1/responses", "null", "responses"},
+	} {
+		fields := map[string]json.RawMessage{}
+		if test.stream != "" {
+			fields["stream"] = json.RawMessage(test.stream)
+		}
+		if got := requestTypeOf(test.path, fields); got != test.want {
+			t.Errorf("%s stream %q = %s, want %s", test.path, test.stream, got, test.want)
+		}
+	}
+	if got := requestTypeOf("/v1/responses", nil); got != "responses" {
+		t.Errorf("an undecoded body = %s, want responses", got)
+	}
+}

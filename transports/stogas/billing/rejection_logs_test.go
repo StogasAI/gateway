@@ -211,6 +211,27 @@ func TestRejectionLogsFlushWhenTrafficStopsAndRetryTheSameBatchUntilStored(t *te
 	}
 }
 
+func TestRejectionLogsNameResolvedRequestTypes(t *testing.T) {
+	db := newFakeSettlementDatabase(t, settleAll)
+	service := db.service
+	for i, requestType := range []string{"chat_completion", "chat_completion_stream", "responses", "responses_stream", "chat_completion_request", "responses_request"} {
+		input := rejectionFixture()
+		input.CreatedAt = time.Now().Add(time.Hour).Truncate(rejectionLogWindow).Add(time.Duration(i) * rejectionLogWindow)
+		input.RequestType = requestType
+		service.RecordRejection(input, nil)
+	}
+	got := map[string]int{}
+	service.rejectionLogs.mu.Lock()
+	for _, row := range service.rejectionLogs.groups {
+		got[row.RequestType]++
+	}
+	service.rejectionLogs.mu.Unlock()
+	want := map[string]int{"chat_completion_request": 2, "chat_completion_stream": 1, "responses_request": 2, "responses_stream": 1}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("rejection request types = %v, want %v", got, want)
+	}
+}
+
 func TestRejectionLogsBoundMemoryAndDiscardUntrustedLabels(t *testing.T) {
 	db := newFakeSettlementDatabase(t, settleAll)
 	service := db.service
