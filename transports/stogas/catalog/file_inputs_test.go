@@ -36,7 +36,7 @@ func TestRoutingSkipsDeploymentsThatCannotReadTheAttachments(t *testing.T) {
 		{name: "chat image", part: `{"type":"image_url","image_url":{"url":` + image + `}}`, want: gpt[0]},
 		{name: "chat image without the modality", part: `{"type":"image_url","image_url":{"url":` + image + `}}`, want: gpt[1], textOnly: true},
 		{name: "chat audio", part: `{"type":"input_audio","input_audio":{"data":"AAAA","format":"wav"}}`, want: gpt[1], textOnly: true, audio: true},
-		{name: "chat audio that no candidate reads", part: `{"type":"input_audio","input_audio":{"data":"AAAA","format":"wav"}}`, wantErr: "messages[0].content[1] audio input is not supported by the selected deployment", textOnly: true},
+		{name: "chat audio that no candidate reads", part: `{"type":"input_audio","input_audio":{"data":"AAAA","format":"wav"}}`, wantErr: "messages[0].content[1] audio input is not supported by any deployment that this request can use", textOnly: true},
 		{name: "chat file URL", part: `{"type":"file","file":{"file_url":"https://example.com/a.pdf"}}`, wantErr: "messages[0].content[1] file URLs require Responses or an Anthropic-format deployment"},
 		{name: "responses PDF", path: "/v1/responses", part: responsesFile(pdf), want: gpt[0]},
 		{name: "responses text file", path: "/v1/responses", part: responsesFile(text), want: gpt[1]},
@@ -116,8 +116,190 @@ func TestRoutingRefusesAnAttachmentThatNoCandidateCanRead(t *testing.T) {
 		CheckCandidate: func(schemas.ModelProvider, int, Deployment) error { checks++; return nil },
 	})
 	public := PublicError(err)
-	if public.StatusCode != 400 || checks != 0 || !strings.HasPrefix(public.Message, "messages[0].content[1] native file") {
-		t.Fatalf("the request was not refused before credential preparation: %v, %d", err, checks)
+	if public.StatusCode != 400 || checks != 0 || !strings.HasPrefix(public.Message, "messages[0].content[1] native file") ||
+		public.Code != AttachmentUnsupported || public.Param != "messages[0].content[1]" {
+		t.Fatalf("the request was not refused before credential preparation: %+v, %d", public, checks)
+	}
+}
+
+// Provider file IDs resolve only through a customer's own credential. A Stogas credential leaves
+// without using the request's one pair, even where it shares the customer credential's policy,
+// and where only Stogas credentials remain, the request is refused before any is prepared.
+func TestRoutingSendsProviderFileIDsOnlyThroughCustomerCredentials(t *testing.T) {
+	loadTestCatalog(t)
+	body := []byte(`{"model":"gpt-5.6-sol","input":[{"role":"user","content":[{"type":"input_text","text":"read this"},{"type":"input_file","file_id":"file-abc"}]}]}`)
+	for _, tc := range []struct {
+		name string
+		byok []bool
+		// want is the credential that serves, or -1 where the request is refused.
+		want int
+	}{
+		{"a customer credential after a Stogas one", []bool{false, true}, 1},
+		{"Stogas credentials only", []bool{false, false}, -1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			config := policyConfig(1)
+			config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Deployments: []string{"openai-gpt-5.6-sol"}}
+			var checked []int
+			resolved, err := ResolveRequest(RequestInput{
+				Body: body, Method: "POST", Path: "/v1/responses", Policy: config,
+				AvailableCredentials: map[string][]int{string(schemas.OpenAI): {0, 1}},
+				CredentialBYOK:       func(_ schemas.ModelProvider, index int) bool { return tc.byok[index] },
+				CheckCandidate: func(_ schemas.ModelProvider, index int, _ Deployment) error {
+					checked = append(checked, index)
+					return nil
+				},
+			})
+			if tc.want >= 0 {
+				if err != nil || resolved.CredentialIndex != tc.want || len(checked) != 1 {
+					t.Fatalf("want credential %d: resolved=%v checked=%v error=%v", tc.want, resolved, checked, err)
+				}
+				return
+			}
+			public := PublicError(err)
+			if public.StatusCode != 400 || public.Code != AttachmentUnsupported || public.Param != "input[0].content[1]" ||
+				public.Message != "input[0].content[1] provider file IDs require BYOK" || len(checked) != 0 {
+				t.Fatalf("want a refusal before any credential is prepared: %+v, checked=%v", public, checked)
+			}
+		})
+	}
+}
+
+// An attachment stays opaque where text extraction does not turn it into prompt text, and a
+// policy that inspects input refuses an opaque attachment. Routing skips a pair with such a
+// policy as it skips a deployment that cannot read the attachment.
+func TestRoutingSkipsPairsWhosePolicyRefusesOpaqueAttachments(t *testing.T) {
+	loadTestCatalog(t)
+	gpt := []string{"azure-gpt-5.6-sol", "openai-gpt-5.6-sol"}
+	const (
+		pdf  = `{"type":"input_file","filename":"a.pdf","file_data":"data:application/pdf;base64,JVBERi0xLjcK"}`
+		text = `{"type":"input_file","filename":"a.txt","file_data":"data:text/plain;base64,aGVsbG8="}`
+	)
+	type setting func(*policy.Config)
+	asciiOnly := func(config *policy.Config) { config.Input = &policy.Input{ASCIIOnly: true} }
+	redaction := func(config *policy.Config) {
+		config.Plugins = &policy.Plugins{Redaction: &policy.Redaction{Presets: []string{"ip_address"}}}
+	}
+	extraction := func(config *policy.Config) {
+		extract := true
+		config.Plugins = &policy.Plugins{TextExtraction: &extract}
+	}
+	for _, tc := range []struct {
+		name, part, want, wantErr string
+		azure, openai             []setting
+	}{
+		{name: "input limited to ASCII", part: pdf, azure: []setting{asciiOnly}, want: gpt[1]},
+		{name: "redaction", part: pdf, azure: []setting{redaction}, want: gpt[1]},
+		{name: "inspection on every pair", part: pdf, azure: []setting{asciiOnly}, openai: []setting{redaction},
+			wantErr: "input[0].content[1] cannot satisfy the active input inspection policy; submit text or enable text extraction for inline UTF-8 text files"},
+		{name: "an extracted text file", part: text, azure: []setting{asciiOnly, extraction}, want: gpt[0]},
+		{name: "a text file that no pair extracts", part: text, azure: []setting{asciiOnly}, openai: []setting{redaction},
+			wantErr: "input[0].content[1] native file media type is not supported by any deployment that this request can use; enable text extraction to send it as prompt text"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			configure := func(settings []setting) *policy.Config {
+				config := policyConfig(1)
+				config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Deployments: gpt}
+				config.Routing.Query = orderedQuery(t, "", gpt...)
+				for _, set := range settings {
+					set(config)
+				}
+				return config
+			}
+			azure, openai := configure(tc.azure), configure(tc.openai)
+			resolved, err := ResolveRequest(RequestInput{
+				Body:   []byte(`{"model":"gpt-5.6-sol","input":[{"role":"user","content":[{"type":"input_text","text":"read this"},` + tc.part + `]}]}`),
+				Method: "POST", Path: "/v1/responses", Policy: configure(nil),
+				CredentialPolicy: func(provider schemas.ModelProvider, _ int) (RequestPolicy, error) {
+					if provider == ProviderAzure {
+						return RequestPolicy{Config: azure}, nil
+					}
+					return RequestPolicy{Config: openai}, nil
+				},
+			})
+			if tc.wantErr != "" {
+				public := PublicError(err)
+				if public.StatusCode != 400 || public.Code != AttachmentUnsupported || public.Message != tc.wantErr {
+					t.Fatalf("want %q: %+v", tc.wantErr, public)
+				}
+				return
+			}
+			if err != nil || resolved.Deployment.ID != tc.want {
+				t.Fatalf("want %s: resolved=%v error=%v", tc.want, resolved, err)
+			}
+		})
+	}
+}
+
+// Each attachment has a deployment that reads it, but none reads both, so the refusal names the
+// attachments to send apart.
+func TestRoutingNamesAttachmentsThatNoDeploymentReadsTogether(t *testing.T) {
+	snap := loadTestCatalog(t)
+	gpt := []string{"azure-gpt-5.6-sol", "openai-gpt-5.6-sol"}
+	for id, modalities := range map[string][]string{gpt[0]: {"text", "image"}, gpt[1]: {"text", "audio"}} {
+		deployment := snap.graph.Deployments[id]
+		for routeID, route := range deployment.Routes {
+			route.InputModalities = modalities
+			deployment.Routes[routeID] = route
+		}
+	}
+	config := policyConfig(2)
+	config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Deployments: gpt}
+	_, err := ResolveRequest(RequestInput{
+		Body: []byte(`{"model":"gpt-5.6-sol","messages":[{"role":"user","content":[{"type":"text","text":"x"},` +
+			`{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgo="}},` +
+			`{"type":"input_audio","input_audio":{"data":"AAAA","format":"wav"}}]}]}`),
+		Method: "POST", Path: "/v1/chat/completions", Policy: config,
+	})
+	public := PublicError(err)
+	const want = "messages[0].content[1], messages[0].content[2] are not supported together by any deployment that this request can use; send them in separate requests"
+	if public.StatusCode != 400 || public.Code != AttachmentUnsupported || public.Param != "messages[0].content[1]" || public.Message != want {
+		t.Fatalf("want %q: %+v", want, public)
+	}
+}
+
+// A pair that leaves for another reason reports that reason only where its deployment reads the
+// attachments, since fixing the reason serves the request only there.
+func TestRoutingReportsTheErrorOfAPairThatCouldReadTheAttachments(t *testing.T) {
+	disabled := APIError{StatusCode: 403, Code: "credential_disabled", Type: "permission_error", Message: "The credential is disabled"}
+	for _, tc := range []struct {
+		name     string
+		audio    bool
+		wantCode string
+	}{
+		{"the deployment reads the attachment", true, disabled.Code},
+		{"no deployment reads the attachment", false, AttachmentUnsupported},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			snap := loadTestCatalog(t)
+			gpt := []string{"azure-gpt-5.6-sol", "openai-gpt-5.6-sol"}
+			modalities := map[string][]string{gpt[0]: {"text"}, gpt[1]: {"text"}}
+			if tc.audio {
+				modalities[gpt[1]] = []string{"text", "audio"}
+			}
+			for id, values := range modalities {
+				deployment := snap.graph.Deployments[id]
+				for routeID, route := range deployment.Routes {
+					route.InputModalities = values
+					deployment.Routes[routeID] = route
+				}
+			}
+			config := policyConfig(2)
+			config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Deployments: gpt}
+			_, err := ResolveRequest(RequestInput{
+				Body:   []byte(`{"model":"gpt-5.6-sol","messages":[{"role":"user","content":[{"type":"input_audio","input_audio":{"data":"AAAA","format":"wav"}}]}]}`),
+				Method: "POST", Path: "/v1/chat/completions", Policy: config,
+				CredentialPolicy: func(provider schemas.ModelProvider, _ int) (RequestPolicy, error) {
+					if provider == ProviderAzure {
+						return RequestPolicy{Config: config}, nil
+					}
+					return RequestPolicy{}, disabled
+				},
+			})
+			if code := PublicError(err).Code; code != tc.wantCode {
+				t.Fatalf("want %s: %v", tc.wantCode, err)
+			}
+		})
 	}
 }
 
@@ -129,12 +311,18 @@ func TestAttachmentStringReadsADataURLOnlyThroughItsHeader(t *testing.T) {
 		ok              bool
 	}{
 		{"absent", ``, "", true},
-		{"null", `null`, "", true},
+		{"null", `null`, "", false},
 		{"short", `"data:application/pdf;base64,JVBE"`, "data:application/pdf;base64,JVBE", true},
 		{"long data URL", `"data:application/pdf;base64,` + payload + `"`, "data:application/pdf;base64,", true},
 		{"escaped slash", `"data:application\/pdf;base64,` + payload + `"`, "data:application/pdf;base64,", true},
 		{"raw base64", `"` + payload + `"`, payload[:attachmentHeadBytes-1], true},
-		{"escape without a comma", `"` + backslash + "u0041" + payload + `"`, "A" + payload, true},
+		{"escape without a comma", `"` + backslash + "u0041" + payload + `"`, "A" + payload[:attachmentHeadBytes-7], true},
+		{"long data URL header", `"data:text/plain;name=` + strings.Repeat("a", 2*attachmentHeadBytes) + `;base64,` + payload + `"`, "data:text/plain;name=" + strings.Repeat("a", 2*attachmentHeadBytes) + ";base64,", true},
+		{"escaped slashes in raw base64", `"` + strings.Repeat("QUJ"+backslash+"/", 2*attachmentHeadBytes) + `"`, strings.Repeat("QUJ/", 204) + "QUJ", true},
+		{"short escape at the cut", `"` + strings.Repeat("A", attachmentHeadBytes-2) + backslash + "/" + payload + `"`, strings.Repeat("A", attachmentHeadBytes-2), true},
+		{"unicode escape at the cut", `"` + strings.Repeat("A", attachmentHeadBytes-4) + backslash + "u0041" + payload + `"`, strings.Repeat("A", attachmentHeadBytes-4), true},
+		{"two-byte character at the cut", `"` + strings.Repeat("A", attachmentHeadBytes-2) + "é" + payload + `"`, strings.Repeat("A", attachmentHeadBytes-2), true},
+		{"three-byte character at the cut", `"` + strings.Repeat("A", attachmentHeadBytes-3) + "€" + payload + `"`, strings.Repeat("A", attachmentHeadBytes-3), true},
 		{"whitespace", `"   "`, "", false},
 		{"number", `12`, "", false},
 	} {

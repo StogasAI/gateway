@@ -124,7 +124,20 @@ type PreparedCredential struct {
 // UsesBYOK requires a prepared customer-owned credential. Provider file IDs
 // must never resolve through a shared managed credential.
 func (p *PreparedCredential) UsesBYOK() bool {
-	return p != nil && (p.selection.Mode == "stored" || p.selection.Mode == "encrypted")
+	return p != nil && p.selection.customerOwned()
+}
+
+// UsesBYOK reports whether an assigned credential is the customer's own, before it is prepared.
+func (s *KeyConfigSnapshot) UsesBYOK(provider string, index int) bool {
+	if s == nil {
+		return false
+	}
+	selections := s.Credentials[provider]
+	return index >= 0 && index < len(selections) && selections[index].customerOwned()
+}
+
+func (s CredentialSelection) customerOwned() bool {
+	return s.Mode == "stored" || s.Mode == "encrypted"
 }
 
 // Target returns the public target of the prepared AWS or Google Cloud credential.

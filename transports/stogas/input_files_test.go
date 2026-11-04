@@ -332,18 +332,18 @@ func TestNativeDocumentsPreserveProviderContent(t *testing.T) {
 						block, field = `{"type":"input_file",`+file.fields+`}`, "input"
 					}
 					resolved, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/" + route, Body: []byte(`{"model":"` + model + `","` + field + `":[{"role":"user","content":[` + block + `]}]}`)})
-					if err != nil {
-						t.Fatal(err)
-					}
-					state := NewState(resolved, "sk-test", nil, AdapterFor(resolved.Provider))
-					err = state.Adapter.ValidateRequest(state)
+					// No OpenAI Chat deployment fetches a URL, so routing refuses one.
 					if model == "provider:openai gpt-5.5" && route == "chat/completions" && file.name == "URL" {
-						if err == nil {
-							t.Fatal("OpenAI Chat admitted a URL requiring gateway fetch")
+						if catalog.PublicError(err).Code != catalog.AttachmentUnsupported {
+							t.Fatalf("OpenAI Chat admitted a URL requiring gateway fetch: %v", err)
 						}
 						return
 					}
 					if err != nil {
+						t.Fatal(err)
+					}
+					state := NewState(resolved, "sk-test", nil, AdapterFor(resolved.Provider))
+					if err := state.Adapter.ValidateRequest(state); err != nil {
 						t.Fatal(err)
 					}
 					ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
@@ -420,18 +420,18 @@ func TestNativeFileFormatsFollowSelectedRouteAfterTextExtraction(t *testing.T) {
 				block, field = `{"type":"input_file",`+file+`}`, "input"
 			}
 			resolved, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/" + tc.route, Policy: config, Body: []byte(`{"model":"` + tc.model + `","` + field + `":[{"role":"user","content":[` + block + `]}]}`)})
-			if err != nil {
-				t.Fatal(err)
-			}
-			state := NewState(resolved, "sk-test", nil, AdapterFor(resolved.Provider))
-			err = state.Adapter.ValidateRequest(state)
+			// The model has one deployment, so routing refuses a file that it cannot read.
 			if tc.reject {
-				if err == nil || !strings.Contains(err.Error(), "file") {
+				if public := catalog.PublicError(err); public.Code != catalog.AttachmentUnsupported || !strings.Contains(public.Message, "file") {
 					t.Fatalf("native format accepted: %v", err)
 				}
 				return
 			}
 			if err != nil {
+				t.Fatal(err)
+			}
+			state := NewState(resolved, "sk-test", nil, AdapterFor(resolved.Provider))
+			if err := state.Adapter.ValidateRequest(state); err != nil {
 				t.Fatal(err)
 			}
 			if tc.extract {
