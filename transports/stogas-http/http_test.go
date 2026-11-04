@@ -1106,12 +1106,13 @@ func TestPublicBifrostErrorClassifiesProviderDependencyFailures(t *testing.T) {
 		{name: "provider quota", status: http.StatusPaymentRequired, msg: "upstream account quota exceeded", code: "insufficient_quota", wantCode: "upstream_quota_exceeded", wantMessage: "The configured provider account has insufficient quota"},
 		{name: "provider quota code overrides rate-limit status", status: http.StatusTooManyRequests, msg: "quota exhausted", code: "insufficient_quota", wantCode: "upstream_quota_exceeded", wantMessage: "The configured provider account has insufficient quota"},
 		{name: "provider permission", status: http.StatusForbidden, msg: "organization policy disabled provider access", code: "permission_denied", wantCode: "upstream_access_denied", wantMessage: "The configured provider credential cannot access the requested model"},
+		{name: "provider refuses the gateway's region", status: http.StatusForbidden, msg: "Country, region, or territory not supported", code: "unsupported_country_region_territory", wantCode: "upstream_access_denied", wantMessage: "The configured provider credential cannot access the requested model"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			status, payload := publicBifrostError(testBifrostError(tt.status, tt.msg, "", tt.code))
 
-			if status != http.StatusBadGateway {
-				t.Fatalf("expected 502, got %d", status)
+			if status != http.StatusFailedDependency {
+				t.Fatalf("expected 424, got %d", status)
 			}
 			errorObject := publicErrorObject(t, payload)
 			if errorObject["type"] != "gateway_error" {

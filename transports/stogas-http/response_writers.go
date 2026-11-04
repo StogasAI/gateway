@@ -24,28 +24,36 @@ func (s *Server) writeBifrostError(ctx *requestContext, bifrostErr *schemas.Bifr
 	s.writeError(ctx, statusCode, payload)
 }
 
-// writeProviderError passes on the provider's wait, which SDKs wait for
-// instead of their short backoff when a provider is rate limited or overloaded.
 func (s *Server) writeProviderError(ctx *requestContext, bifrostCtx *schemas.BifrostContext, bifrostErr *schemas.BifrostError) {
-	statusCode, payload := publicBifrostError(bifrostErr)
-	if retryAfter := providerErrorRetryAfter(statusCode, bifrostCtx); retryAfter != "" {
-		ctx.writer.Header().Set("Retry-After", retryAfter)
-	}
-	s.writeError(ctx, statusCode, payload)
+	s.writeErrorResponse(ctx, providerErrorResponse(bifrostErr, bifrostCtx))
 }
 
-// providerErrorRetryAfter spreads a provider's wait as spreadRetryAfter does
-// ours: one provider account refuses many callers together. A zero wait sends
-// no header, because openai-node and the AI SDK retry at once on
-// Retry-After: 0, while without it they wait their randomized backoff.
-func providerErrorRetryAfter(statusCode int, bifrostCtx *schemas.BifrostContext) string {
+// providerErrorResponse passes on the provider's wait, which SDKs wait for
+// instead of their short backoff when a provider is rate limited or overloaded.
+// The wait is spread as spreadRetryAfter spreads ours, because one provider
+// account refuses many callers together. A zero wait sends no header, because
+// openai-node and the AI SDK retry at once on Retry-After: 0, while without it
+// they wait their randomized backoff. A wait over a minute tells them not to
+// retry, as the gateway's own refusals do (billingErrorResponse).
+func providerErrorResponse(bifrostErr *schemas.BifrostError, bifrostCtx *schemas.BifrostContext) errorResponse {
+	statusCode, payload := publicBifrostError(bifrostErr)
+	response := errorResponse{status: statusCode, payload: payload}
+	if wait := providerErrorWait(statusCode, bifrostCtx); wait > 0 {
+		response.retryAfter, response.final = spreadRetryAfter(wait), wait > time.Minute
+	}
+	return response
+}
+
+// providerErrorWait is the provider's wait that a response with statusCode
+// passes on, or zero.
+func providerErrorWait(statusCode int, bifrostCtx *schemas.BifrostContext) time.Duration {
 	if statusCode != http.StatusTooManyRequests && statusCode != http.StatusServiceUnavailable && statusCode != 529 {
-		return ""
+		return 0
 	}
 	if wait, ok := providerRetryAfter(bifrostCtx); ok && wait > 0 {
-		return spreadRetryAfter(wait)
+		return wait
 	}
-	return ""
+	return 0
 }
 
 // providerResponseHeader returns a header of the provider's response.
@@ -155,17 +163,26 @@ func publicStableGatewayError(bifrostErr *schemas.BifrostError) (int, string, st
 
 	// Use the same bounded structured classification as request telemetry. A
 	// provider code such as insufficient_quota must not become a rate limit only
-	// because the provider paired it with HTTP 429.
+	// because the provider paired it with HTTP 429. A provider account that
+	// fails the request answers 424, which no client retries by itself.
 	switch stogasbilling.NormalizeUpstreamStatus(bifrostErr) {
 	case "authentication_error":
-		return http.StatusBadGateway, "gateway_error", "upstream_authentication_failed",
+		return http.StatusFailedDependency, "gateway_error", "upstream_authentication_failed",
 			"The configured provider credential was rejected", true
 	case "over_budget":
-		return http.StatusBadGateway, "gateway_error", "upstream_quota_exceeded",
+		return http.StatusFailedDependency, "gateway_error", "upstream_quota_exceeded",
 			"The configured provider account has insufficient quota", true
 	case "permission_error":
-		return http.StatusBadGateway, "gateway_error", "upstream_access_denied",
+		return http.StatusFailedDependency, "gateway_error", "upstream_access_denied",
 			"The configured provider credential cannot access the requested model", true
+	case "model_unavailable":
+		// A provider 404 keeps its status and code. A provider that refuses the
+		// gateway's region refuses its account, as a permission error does.
+		if bifrostErr.StatusCode == nil || *bifrostErr.StatusCode != http.StatusNotFound {
+			return http.StatusFailedDependency, "gateway_error", "upstream_access_denied",
+				"The configured provider credential cannot access the requested model", true
+		}
+		return 0, "", "", "", false
 	case "rate_limited":
 		return http.StatusTooManyRequests, "rate_limit_error", "upstream_rate_limit_error",
 			"The upstream provider rate limit was exceeded", true
@@ -448,10 +465,8 @@ func (s *Server) writeError(ctx *requestContext, statusCode int, payload any) {
 			}
 		}
 	}
-	switch code {
-	case "upstream_authentication_failed", "upstream_quota_exceeded", "upstream_access_denied":
-		// A retry cannot fix the provider account. OpenAI and Anthropic SDKs
-		// otherwise retry these 502 responses twice.
+	if providerAccountFailure(code) && ctx.writer.Header().Get("X-Should-Retry") == "" {
+		// A retry cannot fix the provider account.
 		ctx.writer.Header().Set("X-Should-Retry", "false")
 	}
 	if len(ctx.writer.Header().Get("X-Request-ID")) == 0 {
@@ -482,8 +497,9 @@ type errorResponse struct {
 	status     int
 	payload    map[string]any
 	retryAfter string
-	// final tells SDK clients not to retry.
-	final bool
+	// final tells SDK clients not to retry, and retry to retry a status that
+	// they do not retry by themselves.
+	final, retry bool
 }
 
 // code is the error code that writeError reports for the response.
@@ -495,12 +511,51 @@ func (r errorResponse) code() string {
 	return stogasbilling.NormalizeStogasErrorCode(code, r.status)
 }
 
+// retried reports whether the OpenAI and Anthropic SDKs retry the response by
+// themselves: they read X-Should-Retry, and otherwise retry 408, 409, 429 and
+// server errors.
+func (r errorResponse) retried() bool {
+	switch {
+	case r.final:
+		return false
+	case r.retry:
+		return true
+	case providerAccountFailure(r.code()):
+		return false
+	}
+	return r.status == http.StatusRequestTimeout || r.status == http.StatusConflict ||
+		r.status == http.StatusTooManyRequests || r.status >= http.StatusInternalServerError
+}
+
+// gone reports a response that says the requested model is gone. Another pair
+// can still serve the model.
+func (r errorResponse) gone() bool {
+	switch r.code() {
+	case "model_retired", "model_unavailable":
+		return true
+	}
+	return r.status == http.StatusNotFound || r.status == http.StatusGone
+}
+
+// providerAccountFailure reports a code that only a change to the provider
+// credential or account fixes.
+func providerAccountFailure(code string) bool {
+	switch code {
+	case "upstream_authentication_failed", "upstream_quota_exceeded", "upstream_access_denied":
+		return true
+	}
+	return false
+}
+
 func (s *Server) writeErrorResponse(ctx *requestContext, response errorResponse) {
 	if response.retryAfter != "" {
 		ctx.writer.Header().Set("Retry-After", response.retryAfter)
 	}
-	if response.final {
+	switch {
+	case response.final:
 		ctx.writer.Header().Set("X-Should-Retry", "false")
+	case response.retry:
+		ctx.writer.Header().Set("X-Should-Retry", "true")
 	}
 	s.writeError(ctx, response.status, response.payload)
 }
@@ -512,8 +567,7 @@ func localErrorResponse(err error) errorResponse {
 	var refusal billingFailure
 	switch {
 	case errors.As(err, &unsent):
-		status, payload := publicBifrostError(unsent.failure)
-		return errorResponse{status: status, payload: payload, retryAfter: providerErrorRetryAfter(status, unsent.ctx)}
+		return providerErrorResponse(unsent.failure, unsent.ctx)
 	case errors.Is(err, errRequestMemoryCapacity):
 		return capacityErrorResponse()
 	case errors.As(err, &refusal), errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
@@ -529,9 +583,18 @@ func catalogErrorResponse(err error) errorResponse {
 	if apiErr.Param != "" {
 		param = apiErr.Param
 	}
-	return errorResponse{status: apiErr.StatusCode, payload: map[string]any{
+	response := errorResponse{status: apiErr.StatusCode, payload: map[string]any{
 		"error": map[string]any{"message": apiErr.Message, "type": apiErr.Type, "code": stogasbilling.NormalizeStogasErrorCode(apiErr.Code, apiErr.StatusCode), "param": param},
 	}}
+	// A pair's refusal can carry its credential's wait, which billingErrorResponse's rule passes on.
+	var retry interface{ RetryAfter() time.Duration }
+	if errors.As(err, &retry) && retry.RetryAfter() > 0 {
+		response.retryAfter = spreadRetryAfter(retry.RetryAfter())
+		response.final = retry.RetryAfter() > time.Minute
+	} else {
+		response.final = apiErr.StatusCode == http.StatusTooManyRequests
+	}
+	return response
 }
 
 func billingErrorResponse(err error) errorResponse {

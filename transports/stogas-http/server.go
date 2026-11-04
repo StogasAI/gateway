@@ -74,6 +74,7 @@ type Server struct {
 	admission             requestAdmissionCounters
 	providers             providerReach
 	providerCalls         providerCalls
+	pairWaits             pairWaits
 	ipAdmission           *ipAdmission
 	sanctionedNetworks    *sanctionedNetworks
 	idleConnections       idleConnections

@@ -177,7 +177,10 @@ type providerAttemptObservation struct {
 	CompletedAt      time.Time
 	Response         *schemas.BifrostResponse
 	Error            *schemas.BifrostError
-	Upstream         billing.UpstreamRecord
+	// Rejected fails a call whose reply the gateway refused after the call
+	// returned. The call's span never replaces it.
+	Rejected *schemas.BifrostError
+	Upstream billing.UpstreamRecord
 }
 
 type HoldEstimate struct {
@@ -246,6 +249,20 @@ func (s *State) MarkProviderNotSent() {
 	}
 	if len(s.providerAttempts) == 0 {
 		s.ProviderStartedAt, s.ProviderCompletedAt = time.Time{}, time.Time{}
+	}
+}
+
+// RejectProviderReply fails the latest provider call, whose reply the gateway
+// refused after the call returned. The request's owner calls no other provider
+// until then.
+func (s *State) RejectProviderReply(failure *schemas.BifrostError) {
+	if s == nil {
+		return
+	}
+	s.providerAttemptsMu.Lock()
+	defer s.providerAttemptsMu.Unlock()
+	if count := len(s.providerAttempts); count > 0 {
+		s.providerAttempts[count-1].Rejected = failure
 	}
 }
 
@@ -414,6 +431,9 @@ func (s *State) providerAttemptInputs() []billing.ProviderAttemptInput {
 	}
 	attempts := make([]billing.ProviderAttemptInput, len(s.providerAttempts))
 	for index, attempt := range s.providerAttempts {
+		if attempt.Rejected != nil {
+			attempt.Error = attempt.Rejected
+		}
 		attempts[index] = billing.ProviderAttemptInput{
 			Provider:                 attempt.Provider,
 			Byok:                     attempt.Byok,

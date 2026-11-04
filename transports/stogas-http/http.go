@@ -312,15 +312,15 @@ func (s *Server) callProvider(ctx *schemas.BifrostContext, request *schemas.Bifr
 }
 
 // failRun ends a run without a provider response and, when respond is set,
-// answers the caller with the failure that the run reports.
+// answers the caller with the failure that the run reports. The export keeps
+// the error that the caller gets.
 func (s *Server) failRun(ctx *requestContext, run *providerRun, respond bool) {
 	ctx.finishClientWait()
-	failure, outcome := run.end()
-	if failure == nil {
-		// The export keeps the error that the caller gets.
+	last, outcome := run.end()
+	if last == nil {
 		var response *errorResponse
 		if !cancelledLocally(run.local) {
-			local := localErrorResponse(run.local)
+			local := run.response()
 			response = &local
 			captureExportPayload(run.state, local.payload)
 		}
@@ -341,16 +341,31 @@ func (s *Server) failRun(ctx *requestContext, run *providerRun, respond bool) {
 		}
 		return
 	}
-	failure, callerFailure := ingestProviderResult(ctx.memory, run.request, run.state, nil, failure)
-	captureExportError(run.state, failure)
+	response := run.report(ctx.memory, outcome, last)
+	captureExportPayload(run.state, response.payload)
 	if ctx.responseWait.timedOut() {
-		callerFailure = requestTimeoutError()
-		retainResponseFailure(run.state, callerFailure)
+		failure := requestTimeoutError()
+		retainResponseFailure(run.state, failure)
+		response = providerErrorResponse(failure, outcome)
 	}
 	s.finalizeAfterResponse(ctx, run, outcome)
 	if respond {
-		s.writeProviderError(ctx, outcome, callerFailure)
+		s.writeErrorResponse(ctx, response)
 	}
+}
+
+// report ingests the last call's failure and returns what the caller gets:
+// the run's reported failure, unless processing the call failed too.
+func (r *providerRun) report(memory *requestMemoryLease, outcome *schemas.BifrostContext, last *schemas.BifrostError) errorResponse {
+	_, failure := ingestProviderResult(memory, r.request, r.state, nil, last)
+	if failure != last {
+		return providerErrorResponse(failure, outcome)
+	}
+	response := r.response()
+	if r.reportsLocal() {
+		retainResponseFailure(r.state, gatewayFailure(response))
+	}
+	return response
 }
 
 // finalizeAfterResponse settles the request once its response is complete.
@@ -545,14 +560,10 @@ func (s *Server) startSSEStream(ctx *requestContext, run *providerRun, started p
 			}
 			sendClientError(bifrostErr)
 		}
-		// A run that reached no provider ends with its local failure, which
-		// a departed caller does not need.
-		sendLocalError := func(err error) {
+		// A run that no provider served ends with the failure that it reports.
+		sendRunFailure := func(response errorResponse) {
 			wait.stop()
-			if cancelledLocally(err) {
-				return
-			}
-			encoded, marshalErr := marshalPayload(localErrorResponse(err).payload)
+			encoded, marshalErr := marshalPayload(response.payload)
 			if marshalErr != nil {
 				return
 			}
@@ -674,14 +685,17 @@ func (s *Server) startSSEStream(ctx *requestContext, run *providerRun, started p
 					}
 					continue
 				}
-				failure, attempt := run.end()
-				if failure == nil {
-					sendLocalError(run.local)
-					return
+				last, attempt := run.end()
+				switch {
+				case last != nil:
+					outcome = attempt
+					sendRunFailure(run.report(memory, outcome, last))
+				case cancelledLocally(run.local):
+					// A departed caller needs no failure.
+					wait.stop()
+				default:
+					sendRunFailure(run.response())
 				}
-				outcome = attempt
-				_, failure = ingestProviderResult(memory, request, state, nil, failure)
-				sendStreamError(failure)
 				return
 			case <-keepaliveC:
 				if clientConnected {

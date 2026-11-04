@@ -118,6 +118,18 @@ func (s *Server) startRun(ctx *requestContext, startedAt time.Time, preparation 
 			run.prepared = candidate
 			return nil
 		},
+		PairWaits: func(provider schemas.ModelProvider, index int, deployment catalog.Deployment) error {
+			if key, ok := pairWaitKey(keyConfig, provider, index, deployment.ID); ok {
+				return s.pairWaits.refusal(key)
+			}
+			return nil
+		},
+		// The run ranks a pair that the plan refused like a failed call, and
+		// the plan, when it refuses every pair, keeps the one the run would.
+		PairSkipped: func(err error) { run.noteLocal(err, -1) },
+		Prefers: func(err, kept error) bool {
+			return localFailure(err, -1).replaces(localFailure(kept, -1))
+		},
 		CredentialPolicy: func(provider schemas.ModelProvider, index int) (catalog.RequestPolicy, error) {
 			selected, err := keyConfig.PolicyForCredential(string(provider), index, credential.EncryptionKeys, startedAt, &candidateBudget)
 			if err != nil {

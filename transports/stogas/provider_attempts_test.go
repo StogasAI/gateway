@@ -579,3 +579,39 @@ func TestChutesSafeRetriesRetainEachInvocationInFinalEvent(t *testing.T) {
 		t.Fatalf("final invocation missing response identity: %#v", last)
 	}
 }
+
+// A reply that the gateway refused after its call returned fails that call in
+// the log, whether the call's span ended before the refusal or after it, as a
+// stream's does.
+func TestRefusedReplyFailsItsAttempt(t *testing.T) {
+	refused := &schemas.BifrostError{StatusCode: schemas.Ptr(http.StatusBadRequest), Error: &schemas.ErrorField{
+		Code: schemas.Ptr(billing.ErrByokTargetChanged.Code), Message: billing.ErrByokTargetChanged.Message,
+	}}
+	for _, spanEndsFirst := range []bool{true, false} {
+		tracer := newProviderAttemptTracer(schemas.DefaultTracer())
+		state := &State{Pair: Pair{Resolution: &catalog.ResolvedRequest{Provider: schemas.Azure}}}
+		ctx := schemas.NewBifrostContext(t.Context(), schemas.NoDeadline)
+		SetState(ctx, state)
+		_, handle := tracer.StartSpan(ctx, "azure call", schemas.SpanKindLLMCall)
+		reply := &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{ID: "discarded-reply"}}
+		tracer.PopulateLLMResponseAttributes(ctx, handle, reply, nil)
+		if spanEndsFirst {
+			tracer.EndSpan(handle, schemas.SpanStatusOk, "")
+		}
+		state.RejectProviderReply(refused)
+		if !spanEndsFirst {
+			tracer.EndSpan(handle, schemas.SpanStatusOk, "")
+		}
+		_, next := tracer.StartSpan(ctx, "next pair", schemas.SpanKindLLMCall)
+		tracer.PopulateLLMResponseAttributes(ctx, next, &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{ID: "served"}}, nil)
+		tracer.EndSpan(next, schemas.SpanStatusOk, "")
+		ctx.Cancel()
+		attempts := state.providerAttemptInputs()
+		if len(attempts) != 2 || attempts[0].Error != refused || attempts[1].Error != nil {
+			t.Fatalf("span ends first %v: attempts = %#v", spanEndsFirst, attempts)
+		}
+		if status := billing.NormalizeUpstreamStatus(attempts[0].Error); status != "model_unavailable" {
+			t.Fatalf("refused reply logged as %s", status)
+		}
+	}
+}

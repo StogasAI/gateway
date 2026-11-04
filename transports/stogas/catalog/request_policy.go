@@ -126,13 +126,13 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 	var attachmentPairs []attachmentPair
 	// keep records why a pair left. A pair whose deployment cannot read an attachment counts as
 	// one that cannot read it, since waiting or another policy cannot change that. Otherwise the
-	// first error stays, unless a later one ends sooner by waiting, as in take.
+	// input's preference keeps one error, as in take.
 	keep := func(selection routingSelection, err error) {
 		if !deploymentReads(variants.attachments, selection) {
 			attachmentPairs = append(attachmentPairs, attachmentPair{selection: selection})
 			return
 		}
-		if firstErr == nil || retriesSooner(err, firstErr) {
+		if firstErr == nil || input.prefers(err, firstErr) {
 			firstErr = err
 		}
 	}
@@ -407,8 +407,8 @@ type MissingKeysError struct {
 func (e *MissingKeysError) Unwrap() error { return e.error }
 
 // take resolves the next pair, recording failure as the previous pair's local
-// error. A pair that fails its credential check or body preparation uses its
-// slot. With no pair left, take returns the error that fail kept.
+// error. A pair that waits, or fails its credential check or body preparation,
+// uses its slot. With no pair left, take returns the error that fail kept.
 func (p *requestPlan) take(failure error) (*ResolvedRequest, error) {
 	if failure != nil && stopsPlan(failure) {
 		return nil, failure
@@ -418,12 +418,18 @@ func (p *requestPlan) take(failure error) (*ResolvedRequest, error) {
 		choice := p.choices[0]
 		p.choices, p.slots = p.choices[1:], p.slots-1
 		candidate := choice.candidate
+		if p.input.PairWaits != nil && p.slots > 0 && len(p.choices) > 0 {
+			if err := p.input.PairWaits(candidate.Provider, choice.index, candidate.Deployment); err != nil {
+				p.skip(err)
+				continue
+			}
+		}
 		if p.input.CheckCandidate != nil {
 			if err := p.input.CheckCandidate(candidate.Provider, choice.index, candidate.Deployment); err != nil {
 				if stopsPlan(err) {
 					return nil, err
 				}
-				p.fail(err)
+				p.skip(err)
 				continue
 			}
 		}
@@ -439,7 +445,7 @@ func (p *requestPlan) take(failure error) (*ResolvedRequest, error) {
 		if stopsPlan(err) {
 			return nil, err
 		}
-		p.fail(err)
+		p.skip(err)
 	}
 	switch {
 	case p.firstErr != nil:
@@ -449,16 +455,31 @@ func (p *requestPlan) take(failure error) (*ResolvedRequest, error) {
 	}
 }
 
-// fail keeps the first local error, unless a later one ends sooner by
-// waiting: a client that waits for it can then pass on that pair.
+// skip records the failure of a pair that the plan refused before its call.
+func (p *requestPlan) skip(err error) {
+	if p.input.PairSkipped != nil {
+		p.input.PairSkipped(err)
+	}
+	p.fail(err)
+}
+
+// fail keeps the first local error, unless the input prefers a later one.
 func (p *requestPlan) fail(err error) {
-	if p.firstErr == nil || retriesSooner(err, p.firstErr) {
+	if p.firstErr == nil || p.input.prefers(err, p.firstErr) {
 		p.firstErr = err
 	}
 }
 
-// retriesSooner reports whether waiting ends err before other. An error that
-// waiting cannot end never ends sooner.
+func (input RequestInput) prefers(err, kept error) bool {
+	if input.Prefers != nil {
+		return input.Prefers(err, kept)
+	}
+	return retriesSooner(err, kept)
+}
+
+// retriesSooner reports whether waiting ends err before other: a client that
+// waits for it can then pass on that pair. An error that waiting cannot end
+// never ends sooner.
 func retriesSooner(err, other error) bool {
 	var wait, otherWait interface{ RetryAfter() time.Duration }
 	if !errors.As(err, &wait) {

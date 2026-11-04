@@ -3,14 +3,18 @@ package stogashttp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"net/http"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/transports/stogas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
+	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
 
 type retryableBillingTestError struct{ delay time.Duration }
@@ -76,7 +80,7 @@ func TestWriteProviderErrorTellsClientsWhenToRetry(t *testing.T) {
 	}{
 		{"rate limit", map[string]string{"Retry-After": "7"}, testBifrostError(http.StatusTooManyRequests, "slow down", "rate_limit_error", ""), []string{"7", "8"}, ""},
 		{"milliseconds", map[string]string{"retry-after-ms": "250", "Retry-After": "9"}, testBifrostError(http.StatusTooManyRequests, "slow down", "rate_limit_error", ""), []string{"1", "2"}, ""},
-		{"overloaded for over a minute", map[string]string{"Retry-After": "90"}, testBifrostError(529, "overloaded", "overloaded_error", ""), []string{"90"}, ""},
+		{"overloaded for over a minute", map[string]string{"Retry-After": "90"}, testBifrostError(529, "overloaded", "overloaded_error", ""), []string{"90"}, "false"},
 		{"no wait", map[string]string{"Retry-After": "0"}, testBifrostError(http.StatusServiceUnavailable, "unavailable", "", ""), []string{""}, ""},
 		{"overload until a past date", map[string]string{"Retry-After": "Wed, 21 Oct 2015 07:28:00 GMT"}, testBifrostError(529, "overloaded", "overloaded_error", ""), []string{""}, ""},
 		{"invalid delay", map[string]string{"Retry-After": "soon"}, testBifrostError(http.StatusServiceUnavailable, "unavailable", "", ""), []string{""}, ""},
@@ -142,6 +146,37 @@ func TestPublicBifrostErrorKeepsProviderLimitAndPolicyDetails(t *testing.T) {
 			errorObject := publicErrorObject(t, payload)
 			if status != http.StatusBadRequest || errorObject["code"] != tc.wantCode || errorObject["message"] != tc.err.Error.Message {
 				t.Fatalf("status = %d, error = %#v", status, errorObject)
+			}
+		})
+	}
+}
+
+// A pair that the plan refused can carry its credential's wait, which its
+// answer passes on as the gateway's own refusals do.
+func TestCatalogRefusalPassesOnItsWait(t *testing.T) {
+	refusal := func(wait time.Duration) error {
+		public := stogas.PublicBillingErrorFor(billing.ErrRateLimit)
+		apiErr := catalog.APIError{Code: public.Code, StatusCode: public.StatusCode, Type: public.Type, Message: public.Message}
+		if wait == 0 {
+			return errors.Join(billing.ErrRateLimit, apiErr)
+		}
+		return errors.Join(waitRefusal{billing.ErrRateLimit, wait}, apiErr)
+	}
+	for _, tc := range []struct {
+		name       string
+		err        error
+		retryAfter []string
+		final      bool
+	}{
+		{"a short wait", refusal(5 * time.Second), []string{"5", "6"}, false},
+		{"a wait over a minute", refusal(2 * time.Minute), []string{"120"}, true},
+		{"no wait", refusal(0), []string{""}, true},
+		{"not a refusal", catalog.ErrModelUnavailable, []string{""}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := catalogErrorResponse(tc.err)
+			if !slices.Contains(tc.retryAfter, response.retryAfter) || response.final != tc.final {
+				t.Fatalf("Retry-After %q, final %v", response.retryAfter, response.final)
 			}
 		})
 	}

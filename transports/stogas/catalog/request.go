@@ -119,6 +119,17 @@ type RequestInput struct {
 	// non-cryptographic failures. Invalid encryption keys or content are terminal.
 	// It runs before any redaction or tokenization and must not place a hold.
 	CheckCandidate func(schemas.ModelProvider, int, Deployment) error
+	// PairWaits refuses a planned pair whose provider asked callers to wait.
+	// The plan asks only while another pair remains, and the refusal uses
+	// the pair's place, so the request's last pair still gets its call.
+	PairWaits func(schemas.ModelProvider, int, Deployment) error
+	// PairSkipped receives, in order, each failure of a planned pair before
+	// its call: a credential check or preparation that refused it. The caller
+	// ranks these with its calls' failures.
+	PairSkipped func(error)
+	// Prefers reports whether a caller does better to get err than kept, an
+	// earlier pair's failure. Nil prefers an error whose wait ends sooner.
+	Prefers func(err, kept error) bool
 	// CheckRoots receives pairs before any is prepared and fails, naming the
 	// labels, when one needs a root the request did not send. Planning leaves
 	// out each pair whose policy skips missing roots, and then passes it every
