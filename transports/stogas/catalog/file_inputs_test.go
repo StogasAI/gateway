@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/policy"
 )
 
@@ -119,6 +120,10 @@ func TestRoutingRefusesAnAttachmentThatNoCandidateCanRead(t *testing.T) {
 	if public.StatusCode != 400 || checks != 0 || !strings.HasPrefix(public.Message, "messages[0].content[1] native file") ||
 		public.Code != AttachmentUnsupported || public.Param != "messages[0].content[1]" {
 		t.Fatalf("the request was not refused before credential preparation: %+v, %d", public, checks)
+	}
+	// Clients and request logs see a code only if the public vocabulary lists it.
+	if code := billing.NormalizeStogasErrorCode(public.Code, public.StatusCode); code != AttachmentUnsupported {
+		t.Fatalf("the refusal reaches clients as %s", code)
 	}
 }
 
