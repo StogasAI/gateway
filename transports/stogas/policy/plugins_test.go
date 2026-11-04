@@ -1,7 +1,10 @@
 package policy
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -76,5 +79,28 @@ func TestTextExtractionRequiresItsOwnRequestPermission(t *testing.T) {
 		} else if err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+// The strongest mode wins, so the combined policy names the first policy that sets it, not every
+// policy that sets a mode.
+func TestInspectionNamesThePolicyWhoseTextExtractionModeWins(t *testing.T) {
+	result, err := InspectSources([]InspectionSource{
+		{Scope: OrganizationScope, Config: json.RawMessage(`{"plugins":{"textExtraction":"auto"}}`)},
+		{Scope: RoleScope, ID: "role", Config: json.RawMessage(`{"plugins":{"textExtraction":"always"}}`)},
+		{Scope: KeyScope, ID: "key", Config: json.RawMessage(`{"plugins":{"textExtraction":"always"}}`)},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var setBy []string
+	entries, _ := result.Effective["setBy"].([]map[string]any)
+	for _, entry := range entries {
+		if entry["setting"] == "plugins.textExtraction" {
+			setBy = append(setBy, fmt.Sprint(entry["policy"]))
+		}
+	}
+	if len(setBy) != 1 || !strings.Contains(setBy[0], "role") {
+		t.Fatalf("plugins.textExtraction set by %v", setBy)
 	}
 }
