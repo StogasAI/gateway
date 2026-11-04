@@ -57,21 +57,33 @@ export function createPolicyCompiler(module) {
 					const originals = sources.flatMap((source) =>
 						Object.keys(source.config.rules ?? {})
 							.sort()
-							.map((name) => ({ name, config: source.config.rules[name] }))
+							.map((name) => ({ source, name, config: source.config.rules[name] }))
 					);
-					if (rules.length !== originals.length)
-						throw new Error('Policy inspection returned invalid rule references');
-					for (const [index, rule] of rules.entries()) {
-						const original = originals[index];
-						if (rule.name !== original.name)
-							throw new Error('Policy inspection returned invalid rule references');
-						for (const { name, envelope } of encryptedPlugins(original.config.plugins)) {
+					let next = 0;
+					for (const original of originals) {
+						const rule = rules[next];
+						const envelopes = encryptedPlugins(original.config.plugins);
+						if (
+							rule?.name !== original.name ||
+							rule.policy?.scope !== original.source.scope ||
+							(rule.policy?.id ?? '') !== (original.source.id ?? '')
+						) {
+							// Inspection leaves out a rule whose only setting is the default
+							// ordering, which routing.sort shows. Such a rule has no plugins.
+							if (envelopes.length)
+								throw new Error('Policy inspection returned invalid rule references');
+							continue;
+						}
+						next += 1;
+						for (const { name, envelope } of envelopes) {
 							const plugin = rule.config?.plugins?.[name];
 							if (!plugin || !Object.hasOwn(plugin, 'encrypted'))
 								throw new Error('Policy inspection returned invalid rule references');
 							plugin.encrypted = { ...envelope };
 						}
 					}
+					if (next !== rules.length)
+						throw new Error('Policy inspection returned invalid rule references');
 				}
 				const opaque = result.effective?.uncheckedPlugins;
 				if (opaque) {
