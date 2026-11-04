@@ -12,6 +12,48 @@
 		"sessionId": "recorded-session"
 	},
 	"authorizations": {
+		"azure encrypted": {
+			"hashed_key": "recorded-hashed-key",
+			"key_id": "00000000-0000-7000-8000-00000000000a",
+			"dashboard_actor_user_id": null,
+			"dashboard_session_id": null,
+			"request_id": "00000000-0000-7000-8000-00000000000d",
+			"hold_id": "00000000-0000-7000-8000-00000000000e",
+			"provider_key": "azure",
+			"product_key": "gpt-5.6-sol",
+			"estimated_upstream_cost_usd": "0.01",
+			"expires_at": "2026-01-02T03:19:05.678901Z",
+			"hold_params_hash": "c3d09a2dc898ceee0a6a4099bfe57483c23c04a0dd4dda62a13e869edf9aaa5b",
+			"upstream_target": {
+				"deploymentType": "global_standard",
+				"hosting": "azure",
+				"model": "gpt-5.6-sol",
+				"modelFormat": "OpenAI",
+				"modelVersion": "2026-07-09",
+				"processingLocations": null,
+				"storageLocations": null,
+				"versionUnreported": false
+			},
+			"encryption_key_id": "0000000000000000000000000000000000000000000000000000000000000c0c",
+			"authorize_before": "2026-01-02T03:04:07.178901Z",
+			"reserved_tokens": 1000,
+			"active_until": "2026-01-02T03:00:05.678901Z",
+			"credentials_generation": 1,
+			"cached_byok": {
+				"mode": "encrypted",
+				"byokId": "00000000-0000-7000-8000-00000000000b"
+			},
+			"policy_versions": [
+				{
+					"scope": "key",
+					"id": "recorded-policy",
+					"revision": 1
+				}
+			],
+			"active_rules": [],
+			"input_text_bytes": 100,
+			"node_id": "recorded-node-000000000000000000000000000000000000000000000000000000000000000f"
+		},
 		"azure in places": {
 			"hashed_key": "recorded-hashed-key",
 			"key_id": "00000000-0000-7000-8000-00000000000a",
@@ -270,6 +312,155 @@
 			"active_rules": [],
 			"input_text_bytes": 100,
 			"node_id": "recorded-node-000000000000000000000000000000000000000000000000000000000000000f"
+		}
+	},
+	"holds": {
+		"azure encrypted": {
+			"binding": {
+				"accountId": {
+					"type": "string"
+				},
+				"binding.deploymentName": {
+					"type": "string"
+				},
+				"binding.deploymentType": {
+					"type": "string"
+				},
+				"binding.endpoint": {
+					"type": "string"
+				},
+				"binding.hosting": {
+					"type": "string"
+				},
+				"binding.id": {
+					"type": "string"
+				},
+				"binding.modelFormat": {
+					"type": "string"
+				},
+				"binding.modelName": {
+					"type": "string"
+				},
+				"binding.modelVersion": {
+					"type": "string"
+				},
+				"binding.processingLocation": {
+					"type": "string"
+				},
+				"binding.storageLocation": {
+					"type": "string"
+				},
+				"binding.tokenScope": {
+					"type": "string"
+				},
+				"discoverAt": {
+					"type": "time"
+				},
+				"schema": {
+					"equals": "stogas.azure-binding.v1"
+				}
+			}
+		},
+		"azure in places": {
+			"binding": {
+				"accountId": {
+					"type": "string"
+				},
+				"binding.deploymentName": {
+					"type": "string"
+				},
+				"binding.deploymentType": {
+					"type": "string"
+				},
+				"binding.endpoint": {
+					"type": "string"
+				},
+				"binding.hosting": {
+					"type": "string"
+				},
+				"binding.id": {
+					"type": "string"
+				},
+				"binding.modelFormat": {
+					"type": "string"
+				},
+				"binding.modelName": {
+					"type": "string"
+				},
+				"binding.modelVersion": {
+					"type": "string"
+				},
+				"binding.processingLocation": {
+					"type": "string"
+				},
+				"binding.storageLocation": {
+					"type": "string"
+				},
+				"binding.tokenScope": {
+					"type": "string"
+				},
+				"schema": {
+					"equals": "stogas.azure-binding.v1"
+				}
+			}
+		},
+		"azure stored": {
+			"binding": {
+				"accountId": {
+					"type": "string"
+				},
+				"binding.deploymentName": {
+					"type": "string"
+				},
+				"binding.deploymentType": {
+					"type": "string"
+				},
+				"binding.endpoint": {
+					"type": "string"
+				},
+				"binding.hosting": {
+					"type": "string"
+				},
+				"binding.id": {
+					"type": "string"
+				},
+				"binding.modelFormat": {
+					"type": "string"
+				},
+				"binding.modelName": {
+					"type": "string"
+				},
+				"binding.modelVersion": {
+					"type": "string"
+				},
+				"binding.processingLocation": {
+					"type": "string"
+				},
+				"binding.storageLocation": {
+					"type": "string"
+				},
+				"binding.tokenScope": {
+					"type": "string"
+				},
+				"schema": {
+					"equals": "stogas.azure-binding.v1"
+				}
+			}
+		},
+		"dashboard session": {
+			"binding": null
+		},
+		"encrypted": {
+			"binding": null
+		},
+		"managed": {
+			"binding": null
+		},
+		"matched rule": {
+			"binding": null
+		},
+		"stored": {
+			"binding": null
 		}
 	}
 }

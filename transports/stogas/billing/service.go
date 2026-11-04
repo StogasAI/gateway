@@ -175,6 +175,17 @@ type azureBoundBinding struct {
 	VerifiedAt *time.Time   `json:"verifiedAt"`
 }
 
+// takeBinding takes the Azure target that a hold bound to a credential of the mode and provider,
+// and reports whether the hold returned what such a credential needs: a valid binding for a
+// customer's Azure credential, which a customer-encrypted one pairs with the time to discover its
+// targets again, and no binding otherwise.
+func (a *Authorization) takeBinding(mode, provider string, raw *string) bool {
+	if mode == "managed" || provider != "azure" {
+		return raw == nil
+	}
+	return a.bindAzure(raw) && (mode != "encrypted" || !a.AzureDiscoverAt.IsZero())
+}
+
 // bindAzure takes the Azure target that the hold bound, and reports whether there was a valid one.
 func (a *Authorization) bindAzure(raw *string) bool {
 	bound, err := parseAzureBoundBinding(derefString(raw))
@@ -700,11 +711,7 @@ func (s *Service) authorizeResolvedRequest(ctx context.Context, apiKeyHash strin
 				credential.Provider != providerKey {
 				return authorization, ErrByok
 			}
-			if providerKey == "azure" {
-				if !authorization.bindAzure(row.UpstreamByokBinding) {
-					return authorization, ErrByok
-				}
-			} else if row.UpstreamByokBinding != nil {
+			if !authorization.takeBinding(selection.Mode, providerKey, row.UpstreamByokBinding) {
 				return authorization, ErrByok
 			}
 			authorization.UpstreamByokSecret = prepared.Secret
@@ -713,17 +720,18 @@ func (s *Service) authorizeResolvedRequest(ctx context.Context, apiKeyHash strin
 			if credential == nil || credential.ID != upstreamByok || !encryptionKeys.Matches(credential.EncryptionKeyID) {
 				return authorization, customerkey.ErrKey
 			}
-			if providerKey == "azure" {
-				if !authorization.bindAzure(row.UpstreamByokBinding) || authorization.AzureDiscoverAt.IsZero() {
+			if !authorization.takeBinding(selection.Mode, providerKey, row.UpstreamByokBinding) {
+				if providerKey == "azure" {
 					return authorization, ErrByok
 				}
-				authorization.UpstreamByokEnvelope = credential.EncryptedSecret
-			} else if row.UpstreamByokBinding != nil {
 				return authorization, customerkey.ErrKey
+			}
+			if providerKey == "azure" {
+				authorization.UpstreamByokEnvelope = credential.EncryptedSecret
 			}
 			authorization.UpstreamByokSecret = prepared.Secret
 
-		} else if upstreamByok != ManagedUpstreamByok || row.UpstreamByokBinding != nil {
+		} else if upstreamByok != ManagedUpstreamByok || !authorization.takeBinding("managed", providerKey, row.UpstreamByokBinding) {
 			return authorization, ErrByok
 		}
 		return authorization, nil
