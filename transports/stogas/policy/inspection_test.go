@@ -494,12 +494,9 @@ func TestInspectionShowsWhichRequirementsReplaceDefaults(t *testing.T) {
 
 	// Every ordering applies, so no requirement replaces a default one.
 	preferred := `{"rules":{"d":{"mode":"default","routing":{"order":["openai"],"sort":[{"by":"provider.id"}]}}}}`
-	for _, test := range []struct {
-		org      string
-		replaced [2]any
-	}{
-		{`{"routing":{"sort":[{"by":"model.id"}]}}`, [2]any{nil, nil}},
-		{preferred, [2]any{nil, nil}},
+	for _, test := range []struct{ org string }{
+		{`{"routing":{"sort":[{"by":"model.id"}]}}`},
+		{preferred},
 	} {
 		inspection, err = InspectSources([]InspectionSource{
 			{Scope: OrganizationScope, Config: json.RawMessage(test.org)},
@@ -508,21 +505,52 @@ func TestInspectionShowsWhichRequirementsReplaceDefaults(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		rules, _ = inspection.Effective["rules"].([]map[string]any)
-		key := rules[len(rules)-1]
-		var org any
-		if len(rules) == 2 {
-			org = rules[0]["replaced"]
-		}
-		if (org == nil) != (test.replaced[0] == nil) || org != nil && !reflect.DeepEqual(org, test.replaced[0]) ||
-			(key["replaced"] == nil) != (test.replaced[1] == nil) || key["replaced"] != nil && !reflect.DeepEqual(key["replaced"], test.replaced[1]) {
-			t.Fatalf("%s: replaced %+v", test.org, rules)
+		// A rule that sets only an ordering shows in routing.sortFrom instead.
+		if rules := inspection.Effective["rules"]; rules != nil {
+			t.Fatalf("%s: rules %+v", test.org, rules)
 		}
 		for _, note := range inspection.Notes {
 			if note.Kind == "replaced" {
 				t.Fatalf("%s: ordering note %+v", test.org, note)
 			}
 		}
+	}
+}
+
+func TestInspectionListsADefaultOrderingOnce(t *testing.T) {
+	inspect := func(key string) map[string]any {
+		inspection, err := InspectSources([]InspectionSource{
+			{Scope: OrganizationScope, Config: json.RawMessage(`{}`)},
+			{Scope: KeyScope, ID: "key", Config: json.RawMessage(key)},
+		}, &InspectionEdit{Scope: KeyScope, ID: "key", Previous: json.RawMessage(key)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return inspection.Effective
+	}
+	// The ordering shows in routing.sort, with its rule in routing.sortFrom.
+	effective := inspect(`{"rules":{"d":{"mode":"default","routing":{"sort":[{"by":"provider.id"}]}}}}`)
+	routing, _ := effective["routing"].(map[string]any)
+	from, _ := routing["sortFrom"].([]map[string]any)
+	if len(from) != 1 || from[0]["rule"] != "d" || effective["rules"] != nil {
+		t.Fatalf("ordering only: %+v", effective)
+	}
+	// The rule keeps its other settings, without the ordering.
+	effective = inspect(`{"rules":{"d":{"mode":"default","routing":{"retries":2,"sort":[{"by":"provider.id"}]},"timeouts":{"totalSeconds":60}}}}`)
+	rules, _ := effective["rules"].([]map[string]any)
+	if len(rules) != 1 {
+		t.Fatalf("rules: %+v", effective["rules"])
+	}
+	config, _ := rules[0]["config"].(map[string]json.RawMessage)
+	if string(config["routing"]) != `{"retries":2}` || string(config["timeouts"]) == "" || string(config["mode"]) != `"default"` {
+		t.Fatalf("config: %s %s %s", config["routing"], config["timeouts"], config["mode"])
+	}
+	// A rule with a when cannot set an ordering, so other rules list as written.
+	effective = inspect(`{"rules":{"openai":{"when":"provider.id == 'openai'","routing":{"retries":1}}}}`)
+	rules, _ = effective["rules"].([]map[string]any)
+	config, _ = rules[0]["config"].(map[string]json.RawMessage)
+	if len(rules) != 1 || string(config["routing"]) != `{"retries":1}` {
+		t.Fatalf("conditional rule: %+v", rules)
 	}
 }
 
@@ -738,6 +766,13 @@ func TestReplacedDefaultsAgreeWithActivation(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
+		routing, _ := inspection.Effective["routing"].(map[string]any)
+		from, _ := routing["sortFrom"].([]map[string]any)
+		for _, run := range from {
+			if run["rule"] != nil {
+				seen["ordering"]++
+			}
+		}
 		rules, _ := inspection.Effective["rules"].([]map[string]any)
 		for _, item := range rules {
 			reference := item["policy"].(map[string]any)
@@ -761,21 +796,15 @@ func TestReplacedDefaultsAgreeWithActivation(t *testing.T) {
 			for _, setting := range ruleSettings(fields) {
 				entry := marked[setting]
 				kind := settingsMask(permissionSections[setting])
+				// A default ordering is never replaced: it joins routing.sort,
+				// which names its rule, and leaves the rule's own listing.
+				if kind&orderingPermissions != 0 {
+					t.Fatalf("trial %d: rule %s lists its ordering %s", trial, name, setting)
+				}
 				for _, matched := range []bool{true, false} {
-					var replaced bool
-					if kind&orderingPermissions != 0 {
-						// A default ordering is never replaced; it orders the
-						// ties that the others leave, unless an earlier equal
-						// criterion already applies.
-						query := active[matched].Routing.Query
-						replaced = query == nil || !slices.ContainsFunc(query.OrderBy, func(s Sort) bool { return s.By == "model.id" })
-					} else {
-						replaced = kind&active[matched].requiredSettings != 0
-					}
+					replaced := kind&active[matched].requiredSettings != 0
 					want := entry != nil && (entry["conditional"] == nil || matched)
 					switch {
-					case kind&orderingPermissions != 0:
-						seen[fmt.Sprintf("ordering %v", want)]++
 					case entry == nil:
 						seen["kept"]++
 					case entry["conditional"] != nil:
@@ -790,7 +819,7 @@ func TestReplacedDefaultsAgreeWithActivation(t *testing.T) {
 			}
 		}
 	}
-	for _, name := range []string{"kept", "always", "conditional", "ordering false"} {
+	for _, name := range []string{"kept", "always", "conditional", "ordering"} {
 		if seen[name] < 20 {
 			t.Fatalf("checked %s %d times: %v", name, seen[name], seen)
 		}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -265,7 +266,15 @@ func (v *Inspector) Finish() (*Inspection, error) {
 	for i, entry := range entries {
 		document := documents[i]
 		for _, rule := range sources[i].Value.Rules {
-			item := map[string]any{"policy": inspectionReference(entry), "name": rule.Name, "config": document.rules[rule.Name].fields}
+			config := document.rules[rule.Name].fields
+			// A default ordering joins routing.sort, whose sortFrom names its
+			// rule, so the rule lists only its other settings, if it has any.
+			if ordering := sources[i].Value.defaultOrdering; ordering != nil && ordering.rule == rule.Name {
+				if config = withoutOrdering(config); len(ruleSettings(config)) == 0 {
+					continue
+				}
+			}
+			item := map[string]any{"policy": inspectionReference(entry), "name": rule.Name, "config": config}
 			if list := replacements[ruleKey{i, rule.Name}]; len(list) > 0 {
 				replaced[len(rules)] = list
 			}
@@ -591,6 +600,24 @@ func replacedDefaults(documents []*SourceDocument, sources []ScopedSource, requi
 				}
 			}
 		}
+	}
+	return out
+}
+
+// withoutOrdering copies a rule's fields without routing.order and
+// routing.sort, and without routing when nothing else remains in it.
+func withoutOrdering(fields map[string]json.RawMessage) map[string]json.RawMessage {
+	var routing map[string]json.RawMessage
+	if json.Unmarshal(fields["routing"], &routing) != nil {
+		return fields
+	}
+	delete(routing, "order")
+	delete(routing, "sort")
+	out := maps.Clone(fields)
+	if len(routing) == 0 {
+		delete(out, "routing")
+	} else if raw, err := json.Marshal(routing); err == nil {
+		out["routing"] = raw
 	}
 	return out
 }

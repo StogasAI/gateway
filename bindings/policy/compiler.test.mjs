@@ -135,6 +135,52 @@ test('conditional opaque rules preserve their source identity without retaining 
 	assert.notEqual(inspectPolicy({ sources: changed }).digest, first.digest);
 });
 
+test('a rule whose only setting is the default ordering shows in routing.sort, not in rules', () => {
+	const envelope = (byte) => ({
+		version: 1,
+		keyId: 'c'.repeat(64),
+		salt: Buffer.alloc(32, byte).toString('base64url'),
+		nonce: Buffer.alloc(12).toString('base64url'),
+		blob: Buffer.alloc(1000, byte).toString('base64url')
+	});
+	const opaque = (byte) => ({
+		when: "provider.id == 'openai'",
+		plugins: { textExtraction: true, redaction: { encrypted: envelope(byte) } }
+	});
+	const sources = [
+		{
+			scope: 'organization',
+			config: {
+				encryption: { keys: { rules: 'c'.repeat(64) } },
+				rules: {
+					a_order: { mode: 'default', routing: { sort: [{ by: 'provider.id' }] } },
+					z_opaque: opaque(1)
+				}
+			}
+		},
+		{ scope: 'role', id: '2', config: { rules: { z_opaque: opaque(2) } } },
+		{ scope: 'key', config: {} }
+	];
+	const result = inspectPolicy({ sources });
+	assert.ok(!result.error, result.error?.message);
+	assert.deepEqual(
+		result.effective.routing.sortFrom.map((item) => [item.policy.scope, item.rule]),
+		[['organization', 'a_order']]
+	);
+	// Each opaque rule keeps its own envelope although the ordering rule before it is left out.
+	assert.deepEqual(
+		result.effective.rules.map((rule) => [
+			rule.policy.scope,
+			rule.name,
+			rule.config.plugins.redaction.encrypted
+		]),
+		[
+			['organization', 'z_opaque', envelope(1)],
+			['role', 'z_opaque', envelope(2)]
+		]
+	);
+});
+
 test('a compiler that traps is replaced on the next call without compiling the module again', () => {
 	const source = { input: { asciiOnly: true } };
 	const expected = inspectPolicy({ source });
