@@ -19,6 +19,7 @@ const (
 	maxProviderRequestIDBytes  = 128
 	maxProviderResponseIDBytes = 256
 	maxProviderModelBytes      = 128
+	maxProviderInstanceIDBytes = 64
 )
 
 type EventInput struct {
@@ -65,10 +66,12 @@ type ProviderAttemptInput struct {
 }
 
 // UpstreamRecord is what a provider said about one call, as far as it says it: the request ID
-// that its support uses to find the call and the model that served it.
+// that its support uses to find the call, the model that served it and, where the provider names
+// one, the instance that ran it.
 type UpstreamRecord struct {
-	RequestID string
-	Model     string
+	RequestID  string
+	Model      string
+	InstanceID string
 }
 
 func NewRequestEvent(input EventInput) (RequestEvent, error) {
@@ -236,6 +239,7 @@ func requestProviderAttempts(input EventInput, startedAt time.Time, totalTimeMS 
 			ProviderRequestID:        boundedTelemetryValue(observed.Upstream.RequestID, maxProviderRequestIDBytes),
 			ProviderResponseID:       providerResponseID(observed.Response),
 			ProviderModel:            boundedTelemetryValue(observed.Upstream.Model, maxProviderModelBytes),
+			ProviderInstanceID:       boundedTelemetryValue(observed.Upstream.InstanceID, maxProviderInstanceIDBytes),
 			FinishReason:             finishReason(observed.Response),
 			Byok:                     loggedCredentialID(observed.Byok),
 		}
