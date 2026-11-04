@@ -157,6 +157,9 @@ func (s *Service) recordRejection(input RejectionInput, export *RejectionExport)
 		return false, nil
 	}
 	input.Code = NormalizeStogasErrorCode(input.Code, input.StatusCode)
+	// A rejection after resolution names the resolved type, which request
+	// logs spell with a _request suffix when the request is unary.
+	input.RequestType = normalizeRequestType(input.RequestType)
 	switch input.RequestType {
 	case "chat_completion_request", "chat_completion_stream", "responses_request", "responses_stream":
 	default:
