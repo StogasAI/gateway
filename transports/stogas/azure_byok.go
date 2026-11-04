@@ -197,7 +197,7 @@ func azureDirectKey(authorization *billing.Authorization, resolution *catalog.Re
 		return schemas.Key{}, "", billing.ErrByok
 	}
 	// The hold chose the target for this; the gateway's clock confirms it.
-	if !azureRepliesNameVersion(resolution.Route, resolution.Deployment) && !azureKeepsVersion(binding, now) {
+	if !azureRepliesNameVersion(resolution.WireRoute(), resolution.Deployment) && !azureKeepsVersion(binding, now) {
 		return schemas.Key{}, "", billing.ErrByokTarget
 	}
 	return schemas.Key{

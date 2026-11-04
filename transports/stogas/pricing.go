@@ -370,7 +370,7 @@ func ExecutionDeployment(state *State) catalog.Deployment {
 	if selected.Upstream.ServiceTier != catalog.TierFast || state.ActualTier != catalog.TierStandard {
 		return selected
 	}
-	if standard, ok := catalog.StandardTierDeployment(state.Resolution.Provider, state.Resolution.Route, selected); ok {
+	if standard, ok := catalog.StandardTierDeployment(state.Resolution.Provider, state.Resolution.WireRoute(), selected); ok {
 		return standard
 	}
 	return selected

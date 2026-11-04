@@ -32,27 +32,15 @@ func validateCommonResponsesPolicy(state *State) error {
 	if _, ok := raw["input"]; !ok {
 		return invalidRequest("input is required")
 	}
-	for _, name := range []string{
-		"background",
-		"container",
-		"conversation",
-		"fallbacks",
-		"inference_geo",
-		"max_completion_tokens",
-		"max_tokens",
-		"moderation",
-		"previous_response_id",
-		"prompt",
-		"reasoning_effort",
-		"reasoning_max_tokens",
-		"response_format",
-		"speed",
-		"stop",
-		"verbosity",
-		"web_search_options",
-	} {
+	for _, name := range catalog.ResponsesRefusedFields {
 		if _, ok := raw[name]; ok {
 			return unsupportedParameterError(name)
+		}
+	}
+	// Chat Completions takes them as stop, which Responses lacks.
+	if state.Resolution.Bridged() {
+		if err := validateStopSequenceArray(raw["stop_sequences"], "stop_sequences", maxPortableStopSequences); err != nil {
+			return err
 		}
 	}
 	if err := validateFalseOnlyBoolean(raw, "store"); err != nil {
@@ -1476,6 +1464,9 @@ func validateResponsesToolCallOutputInput(item map[string]json.RawMessage, path 
 }
 
 func validateResponsesReasoningInput(state *State, item map[string]json.RawMessage, path string) error {
+	if state != nil && state.Resolution.Bridged() && chatPlainReasoningInputSupported(state) {
+		return validateResponsesPlainReasoningInput(item, path)
+	}
 	if state == nil || state.Resolution == nil || state.Resolution.Provider != schemas.OpenAI || !state.Resolution.Deployment.ReasoningSupported {
 		return invalidRequest("reasoning input items are only supported for OpenAI reasoning deployments")
 	}
@@ -1499,6 +1490,33 @@ func validateResponsesReasoningInput(state *State, item map[string]json.RawMessa
 		}
 	}
 	return nil
+}
+
+// validateResponsesPlainReasoningInput accepts the reasoning that a bridged deployment returned, for
+// a provider whose Chat Completions take it back as text. Its summary is empty, as the reply's
+// was.
+func validateResponsesPlainReasoningInput(item map[string]json.RawMessage, path string) error {
+	if rawJSONValueSet(item["encrypted_content"]) {
+		return invalidRequest(path + ".encrypted_content is not supported for Chat Completions deployments")
+	}
+	if err := rejectUnsupportedInputKeys(item, path, "type", "id", "status", "summary", "content", "encrypted_content"); err != nil {
+		return err
+	}
+	if err := validateResponsesInputItemIdentity(item, path); err != nil {
+		return err
+	}
+	if raw, ok := item["summary"]; ok {
+		var summary []json.RawMessage
+		if err := sonic.Unmarshal(raw, &summary); err != nil {
+			return invalidRequest(path + ".summary must be an array")
+		}
+		if len(summary) > 0 {
+			return invalidRequest(path + ".summary must be empty for Chat Completions deployments, which take the reasoning text")
+		}
+	}
+	// Like a Chat Completions message's reasoning, the text can be blank: a reply can return
+	// blank reasoning, and its client can send it back.
+	return validateResponsesReasoningTextBlocks(item["content"], path+".content", "reasoning_text")
 }
 
 func validateResponsesReasoningTextBlocks(raw json.RawMessage, path string, expectedType string) error {

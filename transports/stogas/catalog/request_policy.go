@@ -70,7 +70,7 @@ func (v *requestVariants) ruledOutError(input RequestInput, route Route) error {
 			indexes = input.AvailableCredentials[string(out.selection.provider)]
 		}
 		for _, index := range indexes {
-			if input.DeploymentEligible == nil || input.DeploymentEligible(out.selection.provider, index, route, out.selection.deployment) {
+			if input.DeploymentEligible == nil || input.DeploymentEligible(out.selection.provider, index, out.selection.deployment.WireRoute(route), out.selection.deployment) {
 				return out.err
 			}
 		}
@@ -197,7 +197,7 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 				break
 			}
 			ranks[credentialCandidate{selection.provider, index}] = rank
-			if input.DeploymentEligible != nil && !input.DeploymentEligible(selection.provider, index, route, selection.deployment) {
+			if input.DeploymentEligible != nil && !input.DeploymentEligible(selection.provider, index, selection.deployment.WireRoute(route), selection.deployment) {
 				targetRemoved = true
 				targetChanged = targetChanged || input.DeploymentChanged != nil &&
 					input.DeploymentChanged(selection.provider, index, selection.deployment)

@@ -32,7 +32,8 @@ func PrepareProviderRequest(ctx *schemas.BifrostContext, state *State, request *
 		return catalog.ErrUnsupportedRequest
 	}
 	resolution := state.Resolution
-	if request.RequestType != resolution.RequestType {
+	// A bridged request reaches its provider as Chat Completions.
+	if request.RequestType != resolution.WireRequestType() {
 		return catalog.ErrUnsupportedRequest
 	}
 	trustedRequestType, ok := ctx.Value(schemas.BifrostContextKeyHTTPRequestType).(schemas.RequestType)

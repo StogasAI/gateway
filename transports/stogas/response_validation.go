@@ -19,7 +19,7 @@ func validateProviderChatResponse(state *State, response *schemas.BifrostChatRes
 	if response.SystemFingerprint != "" && !validProviderResponseID(response.SystemFingerprint) {
 		return ErrProviderResponseMalformed
 	}
-	if state.Resolution.Route != catalog.RouteChat || !validProviderResponseID(response.ID) {
+	if state.Resolution.WireRoute() != catalog.RouteChat || !validProviderResponseID(response.ID) {
 		return ErrProviderResponseMalformed
 	}
 	if streaming && !observeProviderStreamPayload(state, response) {

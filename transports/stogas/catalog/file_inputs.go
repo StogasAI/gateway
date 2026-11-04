@@ -78,16 +78,21 @@ const routingSubject = "any deployment that this request can use"
 // attachmentError names the deployments that cannot read the attachment as subject.
 func attachmentError(provider schemas.ModelProvider, deployment Deployment, attachment Attachment, subject string) error {
 	claude := UsesClaudeWire(provider, deployment.ModelID)
+	// Chat Completions, which a bridged deployment gets, has no image file IDs or file URLs.
+	bridged := attachment.Responses && deployment.bridges(RouteResponses)
 	modality := ""
 	switch attachment.Kind {
 	case "image_url", "input_image":
 		modality = "image"
-		if attachment.Kind == "input_image" && attachment.ID != "" && claude {
+		if attachment.Kind == "input_image" && attachment.ID != "" && (claude || bridged) {
 			return attachmentRefusal(attachment.Path, " image file IDs are not supported by "+subject)
 		}
 	case "input_audio":
 		modality = "audio"
 	case "file", "input_file":
+		if bridged && attachment.URL != "" {
+			return attachmentRefusal(attachment.Path, " file URLs are not supported by "+subject)
+		}
 		if err := documentError(claude, deployment.DocumentFormats, attachment, subject); err != nil {
 			return err
 		}

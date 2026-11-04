@@ -287,10 +287,11 @@ func TestDeploymentOutlivesOneOfItsRoutes(t *testing.T) {
 func TestRoutesServeUntilTheirDateHasEndedEverywhere(t *testing.T) {
 	loadTestCatalog(t)
 	snap := activeState()
-	route, ok := snap.route(schemas.OpenAI, RouteResponses)
-	if !ok {
+	routes := snap.routes(schemas.OpenAI, RouteResponses)
+	if len(routes) == 0 {
 		t.Fatal("the OpenAI Responses route is missing")
 	}
+	route := routes[0]
 	now := time.Now()
 	deploymentID := ""
 	for _, id := range route.DeploymentIDs {
