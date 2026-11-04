@@ -20,14 +20,16 @@ import (
 )
 
 const (
-	CompilerVersion          = 1
-	MaxCompiledBytes         = 512 << 10
-	MaxSorts                 = 4
-	MaxRetries               = 3
-	MaxFallbacks             = 2
-	DefaultFallbacks         = 2
-	MaxRequestTimeout        = time.Hour
-	DefaultOutputIdleTimeout = 5 * time.Minute
+	CompilerVersion   = 1
+	MaxCompiledBytes  = 512 << 10
+	MaxSorts          = 4
+	MaxRetries        = 3
+	MaxFallbacks      = 2
+	DefaultFallbacks  = 2
+	MaxRequestTimeout = time.Hour
+	// Without a policy value only the total limit applies. Models reason for
+	// minutes without output, and expiry neither stops nor refunds the call.
+	DefaultOutputIdleTimeout = MaxRequestTimeout
 	MaxCustomPatterns        = 3
 	MaxCustomPatternBytes    = 512
 )

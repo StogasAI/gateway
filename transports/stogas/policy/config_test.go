@@ -145,6 +145,19 @@ func TestDenyWindowsTakeOnlyTheContractsTimeZones(t *testing.T) {
 	}
 }
 
+// A caller timeout ends only the wait, so a default output idle limit would
+// cut long silent reasoning that the provider still finishes and bills.
+func TestOutputIdleDefaultsToTheTotalLimit(t *testing.T) {
+	var none *Timeouts
+	if none.OutputIdle() != none.Total() || (&Timeouts{}).OutputIdle() != MaxRequestTimeout {
+		t.Fatalf("output idle default = %s, want the total %s", none.OutputIdle(), none.Total())
+	}
+	total := 900
+	if idle := (&Timeouts{TotalSeconds: &total}).OutputIdle(); idle < 900*time.Second {
+		t.Fatalf("a total of 900 seconds set an output idle limit of %s", idle)
+	}
+}
+
 func TestPolicyFieldRegistryIsClosed(t *testing.T) {
 	paths := FieldPaths()
 	for _, path := range paths {

@@ -40,9 +40,8 @@ func TestResponseDeadlinePreservesProviderLifetimeAndFinalUsage(t *testing.T) {
 					total = time.Hour
 				}
 				request, cancelRequest := schemas.NewBifrostContextWithTimeout(t.Context(), time.Hour)
-				var defaults *policy.Timeouts
 				ctx.responseWait = newResponseDeadline(time.Now(), total)
-				ctx.responseWait.startOutput(defaults.OutputIdle())
+				ctx.responseWait.startOutput(5 * time.Minute)
 				cancel := func() { ctx.responseWait.stop(); cancelRequest() }
 				defer cancel()
 				state := &stogas.State{Pair: stogas.Pair{Adapter: stogas.DefaultAdapter{}, Resolution: &catalog.ResolvedRequest{Route: catalog.RouteChat}}}
