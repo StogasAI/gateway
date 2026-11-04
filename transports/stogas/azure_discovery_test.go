@@ -403,3 +403,31 @@ func TestAzureDiscoveryAtItsLimits(t *testing.T) {
 		})
 	}
 }
+
+func TestAzureModelRoleSubtractsEachRolesExcludedDataActions(t *testing.T) {
+	for _, test := range []struct {
+		name, permissions string
+		want              bool
+	}{
+		{"Foundry User", `[{"dataActions":["Microsoft.CognitiveServices/*"],"notDataActions":[]}]`, true},
+		{"absent exclusions", `[{"dataActions":["Microsoft.CognitiveServices/accounts/OpenAI/*"]}]`, true},
+		{"Reader", `[{"actions":["*/read"],"dataActions":[],"notDataActions":[]}]`, false},
+		{"all excluded", `[{"dataActions":["Microsoft.CognitiveServices/*"],"notDataActions":["microsoft.cognitiveservices/*"]}]`, false},
+		{"everything but Cognitive Services", `[{"dataActions":["*"],"notDataActions":["Microsoft.CognitiveServices/*"]}]`, false},
+		{"narrower exclusion", `[{"dataActions":["Microsoft.CognitiveServices/*"],"notDataActions":["Microsoft.CognitiveServices/accounts/OpenAI/*"]}]`, true},
+		{"exact exclusion", `[{"dataActions":["Microsoft.CognitiveServices/accounts/OpenAI/deployments/chat/completions/action"],"notDataActions":["Microsoft.CognitiveServices/accounts/OpenAI/deployments/chat/completions/action"]}]`, false},
+		{"inner wildcard never hides", `[{"dataActions":["Microsoft.CognitiveServices/accounts/OpenAI/deployments/chat/completions/action"],"notDataActions":["Microsoft.CognitiveServices/*/action"]}]`, true},
+		{"another role's exclusion", `[{"dataActions":["Microsoft.CognitiveServices/*"],"notDataActions":[]},{"dataActions":[],"notDataActions":["Microsoft.CognitiveServices/*"]}]`, true},
+		{"unexpected exclusions", `[{"dataActions":[],"notDataActions":"Microsoft.CognitiveServices/*"}]`, true},
+		{"null exclusions", `[{"dataActions":[],"notDataActions":null}]`, true},
+		{"unexpected actions", `[{"dataActions":"*"}]`, true},
+	} {
+		var values []json.RawMessage
+		if err := json.Unmarshal([]byte(test.permissions), &values); err != nil {
+			t.Fatal(err)
+		}
+		if got := azureGrantsModelRequests(values); got != test.want {
+			t.Errorf("%s: model role = %v, want %v", test.name, got, test.want)
+		}
+	}
+}

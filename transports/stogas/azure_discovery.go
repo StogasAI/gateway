@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -998,23 +999,73 @@ func azureHasModelRole(ctx context.Context, reads *armReads, accountID string) (
 	if err != nil {
 		return false, err
 	}
+	return azureGrantsModelRequests(values), nil
+}
+
+// azureGrantsModelRequests reports whether a permission grants a Cognitive Services data action
+// that its own notDataActions leave in place. Azure subtracts a role's notDataActions only from
+// that role's dataActions, so each permission is read alone.
+func azureGrantsModelRequests(values []json.RawMessage) bool {
 	role := false
 	for _, value := range values {
 		permission, ok := armObject(value)
-		var actions []json.RawMessage
-		raw := bytes.TrimSpace(permission["dataActions"])
-		if !ok || len(raw) == 0 || raw[0] != '[' || json.Unmarshal(raw, &actions) != nil {
-			return true, nil
+		if !ok {
+			return true
 		}
-		for _, item := range actions {
-			var action string
-			if trimmed := bytes.TrimSpace(item); len(trimmed) == 0 || trimmed[0] != '"' || json.Unmarshal(trimmed, &action) != nil {
-				return true, nil
-			}
-			if action == "*" || strings.HasPrefix(strings.ToLower(action), "microsoft.cognitiveservices/") {
+		granted, ok := armStrings(permission["dataActions"], false)
+		if !ok {
+			return true
+		}
+		excluded, ok := armStrings(permission["notDataActions"], true)
+		if !ok {
+			return true
+		}
+		for _, action := range granted {
+			if model, ok := azureModelAction(action); ok && !slices.ContainsFunc(excluded, func(pattern string) bool { return azureActionCovers(pattern, model) }) {
 				role = true
 			}
 		}
 	}
-	return role, nil
+	return role
+}
+
+// armStrings reads a JSON array of strings. An absent optional field is empty.
+func armStrings(raw json.RawMessage, optional bool) ([]string, bool) {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 {
+		return nil, optional
+	}
+	var items []json.RawMessage
+	if raw[0] != '[' || json.Unmarshal(raw, &items) != nil {
+		return nil, false
+	}
+	values := make([]string, 0, len(items))
+	for _, item := range items {
+		var value string
+		if trimmed := bytes.TrimSpace(item); len(trimmed) == 0 || trimmed[0] != '"' || json.Unmarshal(trimmed, &value) != nil {
+			return nil, false
+		}
+		values = append(values, value)
+	}
+	return values, true
+}
+
+// azureModelAction returns the part of a granted data action that model requests need.
+func azureModelAction(action string) (string, bool) {
+	action = strings.ToLower(action)
+	if action == "*" {
+		return "microsoft.cognitiveservices/*", true
+	}
+	return action, strings.HasPrefix(action, "microsoft.cognitiveservices/")
+}
+
+// azureActionCovers reports whether pattern matches every operation that the lowercase action
+// matches. Only a trailing wildcard is compared; any other pattern covers only an equal action,
+// so it never hides a granted role.
+func azureActionCovers(pattern, action string) bool {
+	pattern = strings.ToLower(pattern)
+	if prefix, ok := strings.CutSuffix(pattern, "*"); ok && !strings.Contains(prefix, "*") {
+		return strings.HasPrefix(action, prefix)
+	}
+	return pattern == action
 }
