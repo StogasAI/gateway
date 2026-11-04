@@ -1,0 +1,275 @@
+{
+	"identifiers": {
+		"actorUserId": "recorded-actor-user",
+		"byokId": "00000000-0000-7000-8000-00000000000b",
+		"encryptionKeyId": "0000000000000000000000000000000000000000000000000000000000000c0c",
+		"hashedKey": "recorded-hashed-key",
+		"holdId": "00000000-0000-7000-8000-00000000000e",
+		"keyId": "00000000-0000-7000-8000-00000000000a",
+		"nodeId": "recorded-node-000000000000000000000000000000000000000000000000000000000000000f",
+		"policyId": "recorded-policy",
+		"requestId": "00000000-0000-7000-8000-00000000000d",
+		"sessionId": "recorded-session"
+	},
+	"authorizations": {
+		"azure in places": {
+			"hashed_key": "recorded-hashed-key",
+			"key_id": "00000000-0000-7000-8000-00000000000a",
+			"dashboard_actor_user_id": null,
+			"dashboard_session_id": null,
+			"request_id": "00000000-0000-7000-8000-00000000000d",
+			"hold_id": "00000000-0000-7000-8000-00000000000e",
+			"provider_key": "azure",
+			"product_key": "gpt-5.6-sol",
+			"estimated_upstream_cost_usd": "0.01",
+			"expires_at": "2026-01-02T03:19:05.678901Z",
+			"hold_params_hash": "3e17c4373f3d10c0b5c9dffb499fa199c0929e9e09c421b8397ca65fb9e0d6cb",
+			"upstream_target": {
+				"deploymentType": "global_standard",
+				"hosting": "azure",
+				"model": "gpt-5.6-sol",
+				"modelFormat": "OpenAI",
+				"modelVersion": "2026-07-09",
+				"processingLocations": [
+					"US"
+				],
+				"storageLocations": [
+					"US"
+				],
+				"versionUnreported": true
+			},
+			"encryption_key_id": null,
+			"authorize_before": "2026-01-02T03:04:07.178901Z",
+			"reserved_tokens": 1000,
+			"active_until": "2026-01-02T03:00:05.678901Z",
+			"credentials_generation": 1,
+			"cached_byok": {
+				"mode": "stored",
+				"byokId": "00000000-0000-7000-8000-00000000000b"
+			},
+			"policy_versions": [
+				{
+					"scope": "key",
+					"id": "recorded-policy",
+					"revision": 1
+				}
+			],
+			"active_rules": [],
+			"input_text_bytes": 100,
+			"node_id": "recorded-node-000000000000000000000000000000000000000000000000000000000000000f"
+		},
+		"azure stored": {
+			"hashed_key": "recorded-hashed-key",
+			"key_id": "00000000-0000-7000-8000-00000000000a",
+			"dashboard_actor_user_id": null,
+			"dashboard_session_id": null,
+			"request_id": "00000000-0000-7000-8000-00000000000d",
+			"hold_id": "00000000-0000-7000-8000-00000000000e",
+			"provider_key": "azure",
+			"product_key": "gpt-5.6-sol",
+			"estimated_upstream_cost_usd": "0.01",
+			"expires_at": "2026-01-02T03:19:05.678901Z",
+			"hold_params_hash": "c3d09a2dc898ceee0a6a4099bfe57483c23c04a0dd4dda62a13e869edf9aaa5b",
+			"upstream_target": {
+				"deploymentType": "global_standard",
+				"hosting": "azure",
+				"model": "gpt-5.6-sol",
+				"modelFormat": "OpenAI",
+				"modelVersion": "2026-07-09",
+				"processingLocations": null,
+				"storageLocations": null,
+				"versionUnreported": false
+			},
+			"encryption_key_id": null,
+			"authorize_before": "2026-01-02T03:04:07.178901Z",
+			"reserved_tokens": 1000,
+			"active_until": "2026-01-02T03:00:05.678901Z",
+			"credentials_generation": 1,
+			"cached_byok": {
+				"mode": "stored",
+				"byokId": "00000000-0000-7000-8000-00000000000b"
+			},
+			"policy_versions": [
+				{
+					"scope": "key",
+					"id": "recorded-policy",
+					"revision": 1
+				}
+			],
+			"active_rules": [],
+			"input_text_bytes": 100,
+			"node_id": "recorded-node-000000000000000000000000000000000000000000000000000000000000000f"
+		},
+		"dashboard session": {
+			"hashed_key": null,
+			"key_id": "00000000-0000-7000-8000-00000000000a",
+			"dashboard_actor_user_id": "recorded-actor-user",
+			"dashboard_session_id": "recorded-session",
+			"request_id": "00000000-0000-7000-8000-00000000000d",
+			"hold_id": "00000000-0000-7000-8000-00000000000e",
+			"provider_key": "chutes",
+			"product_key": "gpt-4o-mini",
+			"estimated_upstream_cost_usd": "0.01",
+			"expires_at": "2026-01-02T03:19:05.678901Z",
+			"hold_params_hash": "1612d2b7c7bb669ed7144b77f54be9c159de5ed82a084dba6159fa1651032089",
+			"upstream_target": null,
+			"encryption_key_id": null,
+			"authorize_before": "2026-01-02T03:04:07.178901Z",
+			"reserved_tokens": 1000,
+			"active_until": "2026-01-02T03:00:05.678901Z",
+			"credentials_generation": 1,
+			"cached_byok": {
+				"mode": "managed",
+				"byokId": null
+			},
+			"policy_versions": [
+				{
+					"scope": "key",
+					"id": "recorded-policy",
+					"revision": 1
+				}
+			],
+			"active_rules": [],
+			"input_text_bytes": 100,
+			"node_id": "recorded-node-000000000000000000000000000000000000000000000000000000000000000f"
+		},
+		"encrypted": {
+			"hashed_key": "recorded-hashed-key",
+			"key_id": "00000000-0000-7000-8000-00000000000a",
+			"dashboard_actor_user_id": null,
+			"dashboard_session_id": null,
+			"request_id": "00000000-0000-7000-8000-00000000000d",
+			"hold_id": "00000000-0000-7000-8000-00000000000e",
+			"provider_key": "openai",
+			"product_key": "gpt-4o-mini",
+			"estimated_upstream_cost_usd": "0.01",
+			"expires_at": "2026-01-02T03:19:05.678901Z",
+			"hold_params_hash": "965485cd4a2c4c6c7ac8510d0fc8fbc4b31ac31280897f66a4a63c4241aff012",
+			"upstream_target": null,
+			"encryption_key_id": "0000000000000000000000000000000000000000000000000000000000000c0c",
+			"authorize_before": "2026-01-02T03:04:07.178901Z",
+			"reserved_tokens": 1000,
+			"active_until": "2026-01-02T03:00:05.678901Z",
+			"credentials_generation": 1,
+			"cached_byok": {
+				"mode": "encrypted",
+				"byokId": "00000000-0000-7000-8000-00000000000b"
+			},
+			"policy_versions": [
+				{
+					"scope": "key",
+					"id": "recorded-policy",
+					"revision": 1
+				}
+			],
+			"active_rules": [],
+			"input_text_bytes": 100,
+			"node_id": "recorded-node-000000000000000000000000000000000000000000000000000000000000000f"
+		},
+		"managed": {
+			"hashed_key": "recorded-hashed-key",
+			"key_id": "00000000-0000-7000-8000-00000000000a",
+			"dashboard_actor_user_id": null,
+			"dashboard_session_id": null,
+			"request_id": "00000000-0000-7000-8000-00000000000d",
+			"hold_id": "00000000-0000-7000-8000-00000000000e",
+			"provider_key": "chutes",
+			"product_key": "gpt-4o-mini",
+			"estimated_upstream_cost_usd": "0.01",
+			"expires_at": "2026-01-02T03:19:05.678901Z",
+			"hold_params_hash": "1612d2b7c7bb669ed7144b77f54be9c159de5ed82a084dba6159fa1651032089",
+			"upstream_target": null,
+			"encryption_key_id": null,
+			"authorize_before": "2026-01-02T03:04:07.178901Z",
+			"reserved_tokens": 1000,
+			"active_until": "2026-01-02T03:00:05.678901Z",
+			"credentials_generation": 1,
+			"cached_byok": {
+				"mode": "managed",
+				"byokId": null
+			},
+			"policy_versions": [
+				{
+					"scope": "key",
+					"id": "recorded-policy",
+					"revision": 1
+				}
+			],
+			"active_rules": [],
+			"input_text_bytes": 100,
+			"node_id": "recorded-node-000000000000000000000000000000000000000000000000000000000000000f"
+		},
+		"matched rule": {
+			"hashed_key": "recorded-hashed-key",
+			"key_id": "00000000-0000-7000-8000-00000000000a",
+			"dashboard_actor_user_id": null,
+			"dashboard_session_id": null,
+			"request_id": "00000000-0000-7000-8000-00000000000d",
+			"hold_id": "00000000-0000-7000-8000-00000000000e",
+			"provider_key": "chutes",
+			"product_key": "gpt-4o-mini",
+			"estimated_upstream_cost_usd": "0.01",
+			"expires_at": "2026-01-02T03:19:05.678901Z",
+			"hold_params_hash": "1612d2b7c7bb669ed7144b77f54be9c159de5ed82a084dba6159fa1651032089",
+			"upstream_target": null,
+			"encryption_key_id": null,
+			"authorize_before": "2026-01-02T03:04:07.178901Z",
+			"reserved_tokens": 1000,
+			"active_until": "2026-01-02T03:00:05.678901Z",
+			"credentials_generation": 1,
+			"cached_byok": {
+				"mode": "managed",
+				"byokId": null
+			},
+			"policy_versions": [
+				{
+					"scope": "key",
+					"id": "recorded-policy",
+					"revision": 1
+				}
+			],
+			"active_rules": [
+				{
+					"scope": "key",
+					"id": "recorded-policy",
+					"rule": "recorded-rule"
+				}
+			],
+			"input_text_bytes": 100,
+			"node_id": "recorded-node-000000000000000000000000000000000000000000000000000000000000000f"
+		},
+		"stored": {
+			"hashed_key": "recorded-hashed-key",
+			"key_id": "00000000-0000-7000-8000-00000000000a",
+			"dashboard_actor_user_id": null,
+			"dashboard_session_id": null,
+			"request_id": "00000000-0000-7000-8000-00000000000d",
+			"hold_id": "00000000-0000-7000-8000-00000000000e",
+			"provider_key": "openai",
+			"product_key": "gpt-4o-mini",
+			"estimated_upstream_cost_usd": "0.01",
+			"expires_at": "2026-01-02T03:19:05.678901Z",
+			"hold_params_hash": "965485cd4a2c4c6c7ac8510d0fc8fbc4b31ac31280897f66a4a63c4241aff012",
+			"upstream_target": null,
+			"encryption_key_id": null,
+			"authorize_before": "2026-01-02T03:04:07.178901Z",
+			"reserved_tokens": 1000,
+			"active_until": "2026-01-02T03:00:05.678901Z",
+			"credentials_generation": 1,
+			"cached_byok": {
+				"mode": "stored",
+				"byokId": "00000000-0000-7000-8000-00000000000b"
+			},
+			"policy_versions": [
+				{
+					"scope": "key",
+					"id": "recorded-policy",
+					"revision": 1
+				}
+			],
+			"active_rules": [],
+			"input_text_bytes": 100,
+			"node_id": "recorded-node-000000000000000000000000000000000000000000000000000000000000000f"
+		}
+	}
+}

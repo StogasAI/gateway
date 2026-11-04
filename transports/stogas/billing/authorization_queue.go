@@ -15,6 +15,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/maximhq/bifrost/transports/stogas/policy"
 )
 
 const (
@@ -53,9 +55,23 @@ type authorizationArguments struct {
 	CredentialsGeneration    int             `json:"credentials_generation"`
 	CachedByok               json.RawMessage `json:"cached_byok"`
 	PolicyVersions           *PolicyVersions `json:"policy_versions"`
-	ActiveRules              any             `json:"active_rules"`
+	ActiveRules              []matchedRule   `json:"active_rules"`
 	InputTextBytes           int64           `json:"input_text_bytes"`
 	NodeID                   *string         `json:"node_id"`
+}
+
+// cachedByok names the credential that the gateway's cached configuration chose,
+// which the database checks against the current one.
+type cachedByok struct {
+	Mode string  `json:"mode"`
+	ID   *string `json:"byokId"`
+}
+
+// matchedRule names a policy rule that applied to a request.
+type matchedRule struct {
+	Scope policy.Scope `json:"scope"`
+	ID    string       `json:"id"`
+	Rule  string       `json:"rule"`
 }
 
 func (a *authorizationArguments) values(previousHoldID *string, finished []uuid.UUID) []any {

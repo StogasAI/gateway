@@ -539,22 +539,15 @@ func (s *Service) authorizeResolvedRequest(ctx context.Context, apiKeyHash strin
 	if err != nil {
 		return nil, err
 	}
-	matchedRules := make([]struct {
-		Scope policy.Scope `json:"scope"`
-		ID    string       `json:"id"`
-		Rule  string       `json:"rule"`
-	}, len(request.ActiveRules))
+	matchedRules := make([]matchedRule, len(request.ActiveRules))
 	for i, match := range request.ActiveRules {
 		if match.Source < 0 || match.Source >= len(*selectedPolicy.Versions) {
 			return nil, ErrGatewayUnavailable
 		}
 		version := (*selectedPolicy.Versions)[match.Source]
-		matchedRules[i].Scope, matchedRules[i].ID, matchedRules[i].Rule = version.Scope, version.ID, match.Name
+		matchedRules[i] = matchedRule{Scope: version.Scope, ID: version.ID, Rule: match.Name}
 	}
-	selectionJSON, err := json.Marshal(struct {
-		Mode string  `json:"mode"`
-		ID   *string `json:"byokId"`
-	}{selection.Mode, nullableString(selection.ID)})
+	selectionJSON, err := json.Marshal(cachedByok{Mode: selection.Mode, ID: nullableString(selection.ID)})
 	if err != nil {
 		return nil, ErrGatewayUnavailable
 	}
