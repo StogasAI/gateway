@@ -1,7 +1,9 @@
 package inputfiles
 
 import (
+	"bytes"
 	"encoding/base64"
+	"encoding/binary"
 	"fmt"
 	"net/http"
 	"slices"
@@ -38,12 +40,25 @@ const SniffChars = 684
 // no binary control characters and application/octet-stream for unknown binary data, and
 // nothing for a payload that is not base64. It reads at most SniffChars characters.
 func Sniff(payload string) string {
+	return sniff(head(payload))
+}
+
+// head decodes the first SniffChars characters of a base64 payload, or returns nothing for a
+// payload that is not base64.
+func head(payload string) []byte {
 	prefix := payload
 	if len(prefix) > SniffChars {
 		prefix = prefix[:SniffChars]
 	}
 	data, err := base64.StdEncoding.Strict().DecodeString(prefix)
-	if err != nil || len(data) == 0 {
+	if err != nil {
+		return nil
+	}
+	return data
+}
+
+func sniff(data []byte) string {
+	if len(data) == 0 {
 		return ""
 	}
 	value, _, _ := strings.Cut(http.DetectContentType(data), ";")
@@ -66,7 +81,8 @@ func ResolveMediaType(kind, declared, payload string) (MediaType, error) {
 	if payload == "" {
 		return MediaType{Class: class}, nil
 	}
-	sniffed := Sniff(payload)
+	data := head(payload)
+	sniffed := sniff(data)
 	if sniffed == "" {
 		return MediaType{}, fmt.Errorf("has invalid base64")
 	}
@@ -79,7 +95,7 @@ func ResolveMediaType(kind, declared, payload string) (MediaType, error) {
 		if sniffed != "application/octet-stream" {
 			value = sniffed
 		}
-	case !sniffedMatches(declared, sniffed):
+	case !sniffedMatches(declared, sniffed, data):
 		return MediaType{}, fmt.Errorf("declares %s, but its content is %s", declared, sniffed)
 	}
 	if value == "" {
@@ -92,26 +108,117 @@ func ResolveMediaType(kind, declared, payload string) (MediaType, error) {
 	return MediaType{Class: valueClass, Value: value}, nil
 }
 
-// sniffedMatches reports whether content sniffed as sniffed can be of the declared type.
-// Sniffing knows a few signatures, so unknown binary data matches any binary type, text matches
-// any text type, and a zip archive matches the formats built on it.
-func sniffedMatches(declared, sniffed string) bool {
+// sniffedMatches reports whether content sniffed as sniffed, whose first bytes are data, can be
+// of the declared type. Sniffing knows few signatures, so unknown binary data matches a binary
+// type unless the type has a signature that the data lacks, text matches a text type, and a zip
+// archive matches the formats built on it.
+func sniffedMatches(declared, sniffed string, data []byte) bool {
 	switch {
 	case sniffed == "application/octet-stream":
-		return !TextMediaType(declared)
+		matches, known := signature(declared, data)
+		return !TextMediaType(declared) && (matches || !known)
 	case strings.HasPrefix(sniffed, "text/"):
-		return TextMediaType(declared)
+		return TextMediaType(declared) || slices.Contains(textEncodedTypes, declared)
 	case declared == sniffed || slices.Contains(sniffedAliases[sniffed], declared):
 		return true
 	case sniffed == "application/zip":
-		return strings.HasSuffix(declared, "+zip") ||
-			strings.HasPrefix(declared, "application/vnd.openxmlformats-officedocument.") ||
-			strings.HasPrefix(declared, "application/vnd.oasis.opendocument.") ||
-			strings.HasPrefix(declared, "application/vnd.ms-") && strings.HasSuffix(declared, ".macroenabled.12") ||
-			slices.Contains(zipFormats, declared)
+		return zipFormat(declared)
 	}
 	return false
 }
+
+// signature reports whether data starts as every file of the declared type does, and whether the
+// type has such a signature at all. A list that admits only images must not admit any data that
+// declares image/png, so a type with a signature must show it.
+func signature(declared string, data []byte) (matches, known bool) {
+	prefix := func(signatures ...string) bool {
+		return slices.ContainsFunc(signatures, func(s string) bool { return bytes.HasPrefix(data, []byte(s)) })
+	}
+	frameSync := func(mask, want byte) bool { return len(data) >= 2 && data[0] == 0xff && data[1]&mask == want }
+	switch declared {
+	case "image/png", "image/apng":
+		return prefix("\x89PNG\r\n\x1a\n"), true
+	case "image/jpeg", "image/jpg", "image/pjpeg":
+		return prefix("\xff\xd8\xff"), true
+	case "image/gif":
+		return prefix("GIF87a", "GIF89a"), true
+	case "image/webp":
+		return riff(data, "WEBP"), true
+	case "image/bmp", "image/x-ms-bmp":
+		return prefix("BM"), true
+	case "image/tiff":
+		return prefix("II*\x00", "MM\x00*"), true
+	case "image/x-icon", "image/vnd.microsoft.icon":
+		return prefix("\x00\x00\x01\x00", "\x00\x00\x02\x00"), true
+	case "image/heic", "image/heic-sequence", "image/heif", "image/heif-sequence", "image/avif":
+		return ftyp(data, heifBrands), true
+	case "application/pdf", "application/x-pdf":
+		// Readers accept a PDF whose header follows a few other bytes.
+		return bytes.Contains(data, []byte("%PDF-")), true
+	case "audio/wav", "audio/wave", "audio/x-wav", "audio/vnd.wave":
+		return riff(data, "WAVE"), true
+	case "audio/aiff", "audio/x-aiff":
+		return prefix("FORM") && len(data) >= 12 && (string(data[8:12]) == "AIFF" || string(data[8:12]) == "AIFC"), true
+	case "audio/mpeg", "audio/mp3", "audio/mpeg3", "audio/x-mpeg-3":
+		return prefix("ID3") || frameSync(0xe0, 0xe0), true
+	case "audio/aac", "audio/x-aac":
+		return prefix("ID3", "ADIF") || frameSync(0xf6, 0xf0), true
+	case "audio/flac", "audio/x-flac":
+		return prefix("ID3", "fLaC"), true
+	case "audio/ogg", "audio/opus", "application/ogg", "video/ogg":
+		return prefix("OggS"), true
+	case "audio/webm", "video/webm", "audio/x-matroska", "video/x-matroska":
+		return prefix("\x1a\x45\xdf\xa3"), true
+	case "audio/mp4", "audio/m4a", "audio/x-m4a", "video/mp4":
+		return ftyp(data, nil), true
+	case "application/msword", "application/vnd.ms-excel", "application/vnd.ms-powerpoint", "application/vnd.ms-outlook":
+		return prefix("\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"), true
+	}
+	if declared == "application/zip" || zipFormat(declared) {
+		return prefix("PK\x03\x04", "PK\x05\x06"), true
+	}
+	return false, false
+}
+
+// riff reports whether data is a RIFF file of the form, such as WAVE.
+func riff(data []byte, form string) bool {
+	return len(data) >= 12 && string(data[:4]) == "RIFF" && string(data[8:12]) == form
+}
+
+// ftyp reports whether data starts with an ISO base media file's ftyp box and, unless brands is
+// nil, whether the box names one of them as its major or a compatible brand.
+func ftyp(data []byte, brands []string) bool {
+	if len(data) < 12 || string(data[4:8]) != "ftyp" {
+		return false
+	}
+	if brands == nil {
+		return true
+	}
+	end := min(int(binary.BigEndian.Uint32(data[:4])), len(data))
+	for i := 8; i+4 <= end; i += 4 {
+		// The four bytes after the major brand are its minor version.
+		if i != 12 && slices.Contains(brands, string(data[i:i+4])) {
+			return true
+		}
+	}
+	return false
+}
+
+// heifBrands are the brands of HEIF images: HEIC and AVIF and their sequences.
+var heifBrands = []string{"avif", "avis", "heic", "heim", "heis", "heix", "hevc", "hevm", "hevs", "hevx", "mif1", "miaf", "msf1"}
+
+// zipFormat reports whether the type is a format built on zip archives.
+func zipFormat(declared string) bool {
+	return strings.HasSuffix(declared, "+zip") ||
+		strings.HasPrefix(declared, "application/vnd.openxmlformats-officedocument.") ||
+		strings.HasPrefix(declared, "application/vnd.oasis.opendocument.") ||
+		strings.HasPrefix(declared, "application/vnd.ms-") && strings.HasSuffix(declared, ".macroenabled.12") ||
+		slices.Contains(zipFormats, declared)
+}
+
+// textEncodedTypes are formats whose bytes are text, which sniffing names text/plain, but which
+// text extraction leaves alone because they encode other data.
+var textEncodedTypes = []string{"application/mbox", "application/postscript", "application/rtf", "message/rfc822"}
 
 // sniffedAliases lists the other names in use for the types that sniffing names.
 var sniffedAliases = map[string][]string{

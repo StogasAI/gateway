@@ -170,6 +170,7 @@ const (
 	zipBytes  = "PK\x03\x04\x14\x00\x00\x00"
 	wavBytes  = "RIFF\x24\x00\x00\x00WAVEfmt "
 	oleBytes  = "\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1\x00\x00"
+	heicBytes = "\x00\x00\x00\x18ftypheic\x00\x00\x00\x00mif1heic"
 )
 
 func TestMediaTypesFollowTheContent(t *testing.T) {
@@ -188,7 +189,15 @@ func TestMediaTypesFollowTheContent(t *testing.T) {
 		{"text", "input_file", "text/csv", encoded("a,b\n1,2"), MediaType{"text", "text/csv"}, ""},
 		{"Word document", "file", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", encoded(zipBytes), MediaType{"application", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}, ""},
 		{"PDF that is an archive", "file", "application/pdf", encoded(zipBytes), MediaType{}, "declares application/pdf, but its content is application/zip"},
-		{"unknown binary format", "file", "application/msword", encoded(oleBytes), MediaType{"application", "application/msword"}, ""},
+		{"Word 97 document", "file", "application/msword", encoded(oleBytes), MediaType{"application", "application/msword"}, ""},
+		{"Word 97 document that is other data", "file", "application/msword", encoded("\x00\x01binary"), MediaType{}, "declares application/msword, but its content is application/octet-stream"},
+		{"image that is other data", "image_url", "image/png", encoded(oleBytes), MediaType{}, "declares image/png, but its content is application/octet-stream"},
+		{"HEIC", "image_url", "image/heic", encoded(heicBytes), MediaType{"image", "image/heic"}, ""},
+		{"HEIC that is other data", "image_url", "image/heic", encoded("\x00\x00\x00\x14ftypisom\x00\x00\x00\x00isom"), MediaType{}, "declares image/heic, but its content is application/octet-stream"},
+		{"M4A", "file", "audio/mp4", encoded("\x00\x00\x00\x14ftypM4A \x00\x00\x00\x00M4A "), MediaType{"audio", "audio/mp4"}, ""},
+		{"MP3 without a tag", "file", "audio/mpeg", encoded("\xff\xfb\x90\x64\x00\x00"), MediaType{"audio", "audio/mpeg"}, ""},
+		{"RTF", "file", "application/rtf", encoded(`{\rtf1\ansi hello}`), MediaType{"application", "application/rtf"}, ""},
+		{"binary format without a signature", "file", "application/x-protobuf", encoded("\x08\x96\x01\x12\x00"), MediaType{"application", "application/x-protobuf"}, ""},
 		{"undeclared", "file", "", encoded(pdfBytes), MediaType{"application", "application/pdf"}, ""},
 		{"undeclared binary", "file", "application/octet-stream", encoded(oleBytes), MediaType{}, ""},
 		{"WAV", "input_audio", "audio/wav", encoded(wavBytes), MediaType{"audio", "audio/wav"}, ""},
