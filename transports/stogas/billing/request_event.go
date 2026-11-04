@@ -140,6 +140,8 @@ type RequestSettings struct {
 	ParallelToolCalls  *bool    `json:"parallel_tool_calls,omitempty"`
 	MaxToolCalls       *int     `json:"max_tool_calls,omitempty"`
 	Truncation         string   `json:"truncation,omitempty"`
+	// The OpenAI cyber access program that the gateway sent.
+	CyberAccessProgram string `json:"cyber_access_program,omitempty"`
 	// HostedTools are the hosted tools that the request let the model call, whose data
 	// handling joined the deployment's.
 	HostedTools []string `json:"hosted_tools,omitempty"`

@@ -78,13 +78,15 @@ func PrepareProviderRequest(ctx *schemas.BifrostContext, state *State, request *
 		sanitizeResponsesProviderFields(ctx, responses, customerAccount)
 		applyRequiredResponsesOutputLimit(ctx, resolution, responses)
 		body, bifrostErr = prepareResponsesProviderBody(ctx, responses, request.RequestType == schemas.ResponsesStreamRequest, resolution.Deployment.Upstream.Hosting)
+		program := ""
 		if bifrostErr == nil && resolution.Provider == schemas.OpenAI {
-			body, bifrostErr = setOpenAIAccessPrograms(body, resolution.RawBody()["access_programs"])
+			body, program, bifrostErr = setOpenAIAccessPrograms(body, resolution.RawBody()["access_programs"])
 		}
 		if bifrostErr == nil && !usesAnthropicWireFormat(ctx, resolution.Provider, resolution.Model) {
 			body, bifrostErr = keepDefaultStrict(body, resolution.RawTools())
 		}
 		settings = billing.ResponsesRequestSettings(responses.Params)
+		settings.CyberAccessProgram = program
 		for _, tool := range resolution.HostedTools() {
 			settings.HostedTools = append(settings.HostedTools, string(tool))
 		}
@@ -305,20 +307,21 @@ func prepareAnthropicResponsesBody(ctx *schemas.BifrostContext, request *schemas
 }
 
 // setOpenAIAccessPrograms sends the validated cyber access program, which core
-// does not model, so OpenAI applies the program the client chose.
-func setOpenAIAccessPrograms(body []byte, raw json.RawMessage) ([]byte, *schemas.BifrostError) {
+// does not model, so OpenAI applies the program the client chose. It returns
+// the program it sent, or "" when it sent none.
+func setOpenAIAccessPrograms(body []byte, raw json.RawMessage) ([]byte, string, *schemas.BifrostError) {
 	program, err := responsesCyberAccessProgram(raw)
 	if err != nil {
-		return nil, providerutils.NewBifrostOperationError(schemas.ErrProviderRequestMarshal, err)
+		return nil, "", providerutils.NewBifrostOperationError(schemas.ErrProviderRequestMarshal, err)
 	}
 	if program == "" {
-		return body, nil
+		return body, "", nil
 	}
 	body, err = providerutils.SetJSONField(body, "access_programs", map[string]string{"cyber": program})
 	if err != nil {
-		return nil, providerutils.NewBifrostOperationError(schemas.ErrProviderRequestMarshal, err)
+		return nil, "", providerutils.NewBifrostOperationError(schemas.ErrProviderRequestMarshal, err)
 	}
-	return body, nil
+	return body, program, nil
 }
 
 // cloudClaudeBuildConfig shapes the Messages body for whoever runs Claude on AWS
