@@ -59,6 +59,27 @@ func (wait *responseDeadline) startOutput(idle time.Duration) bool {
 	return true
 }
 
+// endOutput ends a provider call's output window when the call returns. Until
+// the next call starts, the caller waits within the total deadline. A window
+// that ran out first timed the caller out.
+func (wait *responseDeadline) endOutput() {
+	if wait == nil {
+		return
+	}
+	wait.mu.Lock()
+	defer wait.mu.Unlock()
+	if wait.stopped {
+		return
+	}
+	now := time.Now()
+	if !now.Before(wait.deadline) {
+		wait.expire()
+		return
+	}
+	wait.deadline = wait.total
+	wait.timer.Reset(wait.total.Sub(now))
+}
+
 // remaining reports how long the caller still waits for output.
 func (wait *responseDeadline) remaining() time.Duration {
 	if wait == nil {

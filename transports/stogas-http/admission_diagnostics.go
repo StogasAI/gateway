@@ -70,6 +70,9 @@ func (s *Server) recordAdmissionRejection(ctx *requestContext, status int, code 
 		counter = &s.admission.rateLimit
 	case http.StatusServiceUnavailable:
 		counter = &s.admission.unavailable
+	case http.StatusFailedDependency:
+		// The provider account failed, not the caller's request.
+		counter = &s.admission.internal
 	default:
 		if status < 500 {
 			counter = &s.admission.invalidRequest

@@ -52,11 +52,17 @@ type providerRun struct {
 	// pair is bound for calls, held has the hold, called made the last logged
 	// call, and attempted is the last pair whose preparation started.
 	pair, held, called, attempted *providerPair
-	retries                       int // calls after the first on the bound pair
-	attempts                      int // logged calls before the current one
+	pairs                         int           // pairs whose preparation started
+	retries                       int           // calls after the first on the bound pair
+	attempts                      int           // logged calls before the current one
+	action                        failureAction // what the last logged call's failure allows
 	last                          *schemas.BifrostError
 	lastCtx                       *schemas.BifrostContext
 	local                         error // the latest failure before a provider call
+	// When no pair serves the request, the caller gets the failure that settled
+	// kept from the earlier pairs, or current, the latest failure of the last
+	// pair that failed.
+	settled, current *runFailure
 }
 
 // providerPair keeps a pair's state and its context, which holds the prepared
@@ -65,6 +71,7 @@ type providerPair struct {
 	stogas.Pair
 	ctx     *schemas.BifrostContext
 	request *schemas.BifrostRequest
+	number  int // its place among the run's pairs
 }
 
 type providerCall[T any] func(*schemas.BifrostContext, *schemas.BifrostRequest) (T, *schemas.BifrostError)
@@ -88,7 +95,8 @@ func (c *unsentCall) Error() string { return bifrostErrorMessage(c.failure) }
 // previous pair's; after a failure it stays there for the next bind or the end
 // of the run.
 func (r *providerRun) bind(resolution *catalog.ResolvedRequest) error {
-	next := &providerPair{ctx: schemas.NewBifrostContext(r.request, schemas.NoDeadline)}
+	next := &providerPair{ctx: schemas.NewBifrostContext(r.request, schemas.NoDeadline), number: r.pairs}
+	r.pairs++
 	previous := r.attempted
 	r.attempted = next
 	r.retire(previous)
@@ -186,6 +194,7 @@ func (r *providerRun) bindFrom(first *catalog.ResolvedRequest) bool {
 		return true
 	}
 	r.local = err
+	r.noteLocal(err, r.attempted.number)
 	return !stopsRequest(err) && r.advance(err)
 }
 
@@ -202,14 +211,17 @@ func (r *providerRun) advance(failure error) bool {
 		if err == nil {
 			err = r.accountPolicyMemory()
 		}
+		pair := -1 // the plan's own failure, or one of the request
 		if err == nil {
 			err = r.bind(resolution)
+			pair = r.attempted.number
 		}
 		r.finishPreprocessing()
 		if err == nil {
 			return true
 		}
 		r.local = err
+		r.noteLocal(err, pair)
 		if resolution == nil || stopsRequest(err) {
 			return false
 		}
@@ -242,9 +254,11 @@ func stopsRequest(err error) bool {
 }
 
 // failed records a failed call on the bound pair. It reports false for a call
-// that reached no provider.
+// that reached no provider. The call's output window ends with it, so the
+// caller waits for what follows within the total deadline.
 func (r *providerRun) failed(failure *schemas.BifrostError, attempt *schemas.BifrostContext) bool {
 	defer attempt.Cancel()
+	r.client.responseWait.endOutput()
 	count := r.state.ProviderAttemptCount()
 	if count > r.attempts && chutese2ee.NotSent(attempt) {
 		r.state.MarkProviderNotSent()
@@ -252,6 +266,7 @@ func (r *providerRun) failed(failure *schemas.BifrostError, attempt *schemas.Bif
 	}
 	if count <= r.attempts {
 		r.local = &unsentCall{failure, attempt}
+		r.noteLocal(r.local, r.pair.number)
 		return false
 	}
 	// Chutes calls again inside its transport when the provider proves that it
@@ -260,6 +275,10 @@ func (r *providerRun) failed(failure *schemas.BifrostError, attempt *schemas.Bif
 	previous := r.called
 	r.called, r.last, r.lastCtx = r.pair, failure, attempt
 	r.retire(previous)
+	r.action = failureActionFor(failure, attempt, r.client.memory)
+	f := callFailure(failure, attempt, r.action, r.pair.number)
+	r.recordWait(f)
+	r.note(f)
 	return true
 }
 
@@ -269,10 +288,11 @@ func (r *providerRun) next(failure *schemas.BifrostError, attempt *schemas.Bifro
 	if !r.failed(failure, attempt) {
 		return 0, r.advance(r.local)
 	}
-	if !r.waiting() {
+	if err := r.waitError(); err != nil {
+		r.local = err
 		return 0, false
 	}
-	step, wait := nextStep(failureActionFor(failure, attempt, r.client.memory), r.retries, r.pair.Resolution.Retries(),
+	step, wait := nextStep(r.action, r.retries, r.pair.Resolution.Retries(),
 		func() time.Duration { return retryWait(r.retries, attempt) }, r.client.responseWait.remaining(), r.plan.HasNextPair())
 	switch step {
 	case stepRetry:
@@ -320,8 +340,10 @@ const (
 // failureActionFor classifies a provider failure as the OpenAI and Anthropic
 // SDKs do: the provider's x-should-retry decides whether the call may run
 // again, and without it a timeout, a 409, a 429 or a server error can. A
-// credential or deployment failure can pass on another pair. Billed usage and
-// failures of our own end the request.
+// credential or deployment failure can pass on another pair, as can a request
+// beyond the deployment's own limits on context, size or images. Billed usage,
+// content filters, other invalid requests and failures of our own end the
+// request.
 func failureActionFor(failure *schemas.BifrostError, attempt *schemas.BifrostContext, memory *requestMemoryLease) failureAction {
 	if failure == nil || failure.AllowFallbacks != nil && !*failure.AllowFallbacks || failure.ExtraFields.BilledUsage != nil ||
 		memory != nil && memory.responseFailed.Load() {
@@ -352,7 +374,8 @@ func statusFailureAction(failure *schemas.BifrostError) failureAction {
 	switch billing.NormalizeUpstreamStatus(failure) {
 	case "connection_error", "timeout", "rate_limited", "provider_unavailable", "provider_overloaded", "provider_error", "invalid_response":
 		return retryPair
-	case "authentication_error", "permission_error", "over_budget", "model_unavailable", "model_retired":
+	case "authentication_error", "permission_error", "over_budget", "model_unavailable", "model_retired",
+		"context_length_exceeded", "request_too_large", "invalid_image":
 		return nextPair
 	default:
 		return stopRun
@@ -459,11 +482,15 @@ func startProviderCall[T any](r *providerRun, wait time.Duration, call providerC
 		if server != nil {
 			server.providers.observe(provider, result.failure)
 			if authorization != nil && authorization.AzureBinding != nil {
+				answered := result.failure == nil
 				result.failure = server.checkAzureReply(attempt, authorization, result.failure, func() {
 					var none T
 					discardProviderResponse(attempt, result.response)
 					result.response = none
 				})
+				if answered && result.failure != nil {
+					state.RejectProviderReply(result.failure)
+				}
 			}
 		}
 	}()
@@ -577,9 +604,11 @@ func (r *providerRun) retire(p *providerPair) {
 
 // commit keeps the bound pair after its call succeeded.
 func (r *providerRun) commit() {
+	r.clearWait()
 	r.releasePlan()
 	previous := [...]*providerPair{r.held, r.called, r.attempted}
 	r.held, r.called, r.attempted, r.last, r.lastCtx = r.pair, r.pair, r.pair, nil, nil
+	r.settled, r.current = nil, nil
 	for _, p := range previous {
 		r.retire(p)
 	}
@@ -587,7 +616,8 @@ func (r *providerRun) commit() {
 
 // end binds the pair whose outcome the request reports: the last logged call,
 // else the pair with the hold. It returns that call's failure and context, or
-// nil when no call reached a provider and r.local has the failure.
+// nil when no call reached a provider. Either way, response is what the caller
+// gets unless the request's own processing of that call fails.
 func (r *providerRun) end() (*schemas.BifrostError, *schemas.BifrostContext) {
 	r.releasePlan()
 	final := r.called
@@ -611,9 +641,7 @@ func (r *providerRun) end() (*schemas.BifrostError, *schemas.BifrostContext) {
 		return r.last, r.lastCtx
 	}
 	if r.state.ProcessingError == nil && !cancelledLocally(r.local) {
-		response := localErrorResponse(r.local)
-		code, _ := response.payload["error"].(map[string]any)["code"].(string)
-		r.state.ProcessingError = &schemas.BifrostError{StatusCode: &response.status, Error: &schemas.ErrorField{Code: &code}}
+		r.state.ProcessingError = gatewayFailure(r.response())
 	}
 	return nil, nil
 }
@@ -625,4 +653,145 @@ func cancelledLocally(err error) bool {
 		return billing.NormalizeUpstreamStatus(unsent.failure) == "cancelled"
 	}
 	return errors.Is(err, context.Canceled)
+}
+
+// endsWait reports a failure that says only that the caller left or ran out of
+// time, which ends the run without telling anything about its pairs.
+func endsWait(err error) bool {
+	return cancelledLocally(err) || errors.Is(err, context.DeadlineExceeded)
+}
+
+// gatewayFailure records a response of the gateway's own as the request's
+// gateway error.
+func gatewayFailure(response errorResponse) *schemas.BifrostError {
+	code := response.code()
+	return &schemas.BifrostError{StatusCode: &response.status, Error: &schemas.ErrorField{Code: &code}}
+}
+
+// runFailure is a failure that the caller can get when no pair serves the
+// request, as the caller would get it.
+type runFailure struct {
+	pair     int // the failed pair's number, or -1 for a failure of no pair
+	response errorResponse
+	at       time.Time // when it failed
+	until    time.Time // when the wait that it asks for ends; zero without one
+	passes   bool      // the caller's retry can pass it, once the wait ends
+	ends     bool      // it ended the run
+	gone     bool      // it says that the model is gone
+	local    bool      // no provider call failed with it
+}
+
+// callFailure is a failed provider call. A failure that only another pair
+// avoids tells clients not to retry, as one whose wait is over a minute does
+// (providerErrorResponse); one that the pair passes by waiting tells them to
+// retry, even when its status is one that they do not retry by themselves.
+func callFailure(failure *schemas.BifrostError, attempt *schemas.BifrostContext, action failureAction, pair int) *runFailure {
+	f := &runFailure{pair: pair, response: providerErrorResponse(failure, attempt), at: time.Now(), ends: action == stopRun}
+	if wait := providerErrorWait(f.response.status, attempt); wait > 0 {
+		f.until = f.at.Add(wait)
+	}
+	switch {
+	case action == nextPair:
+		f.response.final = true
+	case action == retryPair && !f.response.final:
+		f.passes = true
+		f.response.retry = !f.response.retried()
+	}
+	f.gone = f.response.gone()
+	return f
+}
+
+// localFailure is a failure before a provider call, which passes when the
+// caller's retry does.
+func localFailure(err error, pair int) *runFailure {
+	f := &runFailure{pair: pair, response: localErrorResponse(err), at: time.Now(), local: true}
+	var unsent *unsentCall
+	var refusal interface{ RetryAfter() time.Duration }
+	if errors.As(err, &unsent) {
+		if wait := providerErrorWait(f.response.status, unsent.ctx); wait > 0 {
+			f.until = f.at.Add(wait)
+		}
+	} else if errors.As(err, &refusal) && refusal.RetryAfter() > 0 {
+		f.until = f.at.Add(refusal.RetryAfter())
+	}
+	f.passes = f.response.retried()
+	f.gone = f.response.gone()
+	return f
+}
+
+// replaces reports whether f, which failed later, answers the caller instead
+// of kept. The first failure answers, as the plan keeps its first local error,
+// unless a later one ended the run or passes sooner by waiting. A failure that
+// says the model is gone yields to any other, since another pair serves the
+// model.
+func (f *runFailure) replaces(kept *runFailure) bool {
+	switch {
+	case kept == nil, f.ends:
+		return true
+	case f.gone != kept.gone:
+		return kept.gone
+	case f.passes != kept.passes:
+		return f.passes
+	case f.passes:
+		return kept.until.After(f.at) && f.until.Before(kept.until)
+	}
+	return false
+}
+
+// answer is the response with what remains of its wait.
+func (f *runFailure) answer() errorResponse {
+	response := f.response
+	if !f.until.IsZero() {
+		response.retryAfter = ""
+		if wait := time.Until(f.until); wait > 0 {
+			response.retryAfter = spreadRetryAfter(wait)
+		}
+	}
+	return response
+}
+
+// note keeps a pair's latest failure: a later call on the same pair replaces
+// its earlier one.
+func (r *providerRun) note(f *runFailure) {
+	if r.current != nil && (f.pair < 0 || f.pair != r.current.pair) {
+		r.settled = r.reported()
+	}
+	r.current = f
+}
+
+// noteLocal notes a failure before a provider call, unless it says only that
+// the caller left or ran out of time.
+func (r *providerRun) noteLocal(err error, pair int) {
+	if !endsWait(err) {
+		r.note(localFailure(err, pair))
+	}
+}
+
+func (r *providerRun) reported() *runFailure {
+	if r.current == nil || r.settled != nil && !r.current.replaces(r.settled) {
+		return r.settled
+	}
+	return r.current
+}
+
+// response is what the caller gets when no pair served the request: the run's
+// reported failure, or why the run stopped when the caller left or ran out of
+// time before any call reached a provider.
+func (r *providerRun) response() errorResponse {
+	reported := r.reported()
+	switch {
+	case reported != nil && (r.last != nil || !endsWait(r.local)):
+		return reported.answer()
+	case r.last != nil:
+		return providerErrorResponse(r.last, r.lastCtx)
+	}
+	return localErrorResponse(r.local)
+}
+
+// reportsLocal reports that a waiting caller gets a failure that came before
+// a provider call, though a call failed too. The request records it as its
+// gateway error.
+func (r *providerRun) reportsLocal() bool {
+	reported := r.reported()
+	return r.last != nil && reported != nil && reported.local && !endsWait(r.local)
 }

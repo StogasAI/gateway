@@ -374,8 +374,8 @@ func NormalizeUpstreamStatus(bifrostErr *schemas.BifrostError) string {
 		// Anthropic's monthly spend cap, a 429 that retries cannot pass until the next month.
 		"enforced_spend_limit_reached"):
 		return "over_budget"
-	case accountRefusal(bifrostErr) != "":
-		return accountRefusal(bifrostErr)
+	case messageRefusal(bifrostErr) != "":
+		return messageRefusal(bifrostErr)
 	case identifiers.has("rate_limit_error", "rate_limited", "too_many_requests", "upstream_rate_limit_error", "rate_limit_exceeded"):
 		return "rate_limited"
 	case identifiers.has("content_filter", "content_filter_error", "safety_error", "content_policy_violation", "refusal", "cyber_policy"):
@@ -424,16 +424,22 @@ func NormalizeUpstreamStatus(bifrostErr *schemas.BifrostError) string {
 	}
 }
 
-// accountRefusal reads the refusals that only their message tells apart from a refused request,
-// for the account behind the key rather than the request: Anthropic's spend cap and the spend
-// limits that an account's owner sets
-// (https://platform.claude.com/docs/en/api/rate-limits#setting-your-own-spend-limit), a credit
-// balance too low to start, and an inference_geo that the key's workspace does not allow (400
-// "inference_geo 'global' is not allowed for this workspace. Allowed values: ['us']", November
-// 3, 2026). Another pair can serve such a request, so they read as the account's quota and
-// access errors.
-func accountRefusal(bifrostErr *schemas.BifrostError) string {
-	if bifrostErr.Error == nil || len(bifrostErr.Error.Message) > maxAccountRefusalBytes {
+// messageRefusal reads the refusals that only their message tells apart from a refused request.
+// Another pair can serve them:
+//   - The account behind the key refuses, rather than the request: Anthropic's spend cap and the
+//     spend limits that an account's owner sets
+//     (https://platform.claude.com/docs/en/api/rate-limits#setting-your-own-spend-limit), a
+//     credit balance too low to start, and an inference_geo that the key's workspace does not
+//     allow (400 "inference_geo 'global' is not allowed for this workspace. Allowed values:
+//     ['us']", November 3, 2026). They read as the account's quota and access errors.
+//   - The prompt is longer than the deployment's context window, which another deployment of the
+//     model can have larger: Anthropic's 400 "prompt is too long: 215000 tokens > 200000
+//     maximum", also on Bedrock and Vertex, Bedrock's "Input is too long for requested model.",
+//     vLLM's "This model's maximum context length is 32768 tokens. However, you requested ..."
+//     and SGLang's "The input (40000 tokens) is longer than the model's context length (32768
+//     tokens)." on Chutes.
+func messageRefusal(bifrostErr *schemas.BifrostError) string {
+	if bifrostErr.Error == nil || len(bifrostErr.Error.Message) > maxMessageRefusalBytes {
 		return ""
 	}
 	message := strings.ToLower(strings.TrimSpace(bifrostErr.Error.Message))
@@ -443,13 +449,18 @@ func accountRefusal(bifrostErr *schemas.BifrostError) string {
 		return "over_budget"
 	case strings.HasPrefix(message, "inference_geo ") && strings.Contains(message, " is not allowed for this workspace"):
 		return "permission_error"
+	case strings.HasPrefix(message, "prompt is too long: "),
+		strings.HasPrefix(message, "input is too long for requested model"),
+		strings.HasPrefix(message, "this model's maximum context length is "),
+		strings.HasPrefix(message, "the input (") && strings.Contains(message, " is longer than the model's context length"):
+		return "context_length_exceeded"
 	}
 	return ""
 }
 
-// maxAccountRefusalBytes bounds the messages that accountRefusal reads; Anthropic's are under 300
-// bytes.
-const maxAccountRefusalBytes = 1024
+// maxMessageRefusalBytes bounds the messages that messageRefusal reads; those it knows are under
+// 300 bytes.
+const maxMessageRefusalBytes = 1024
 
 type errorIdentifierSet map[string]struct{}
 

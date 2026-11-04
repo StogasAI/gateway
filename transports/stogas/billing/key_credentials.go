@@ -136,6 +136,15 @@ func (s *KeyConfigSnapshot) UsesBYOK(provider string, index int) bool {
 	return index >= 0 && index < len(selections) && selections[index].customerOwned()
 }
 
+// CustomerCredentialID is the ID of an assigned credential that is the
+// customer's own, or empty for Stogas's own.
+func (s *KeyConfigSnapshot) CustomerCredentialID(provider string, index int) string {
+	if !s.UsesBYOK(provider, index) {
+		return ""
+	}
+	return s.Credentials[provider][index].ID
+}
+
 func (s CredentialSelection) customerOwned() bool {
 	return s.Mode == "stored" || s.Mode == "encrypted"
 }

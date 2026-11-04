@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/maximhq/bifrost/core/schemas"
@@ -45,6 +46,78 @@ func TestRoutingOrderPutsListedDeploymentsFirstWithinThePairSlots(t *testing.T) 
 					t.Fatalf("the last pair left a slot: %+v", next)
 				}
 			}
+		}
+	}
+}
+
+// The plan hands each pair that it refuses to the caller in plan order, and
+// when it refuses every pair it keeps the error that the caller prefers.
+func TestPlanHandsOverEachRefusedPairAndKeepsThePreferredError(t *testing.T) {
+	loadTestCatalog(t)
+	config := policyConfig(2)
+	config.Routing.Query = orderedQuery(t, "", "openai-gpt-5.6-sol", "anthropic-claude-sonnet-4-6")
+	refusals := map[schemas.ModelProvider]error{schemas.OpenAI: errors.New("openai"), schemas.Anthropic: errors.New("anthropic")}
+	for _, prefersLater := range []bool{false, true} {
+		var skipped []error
+		_, err := ResolveRequest(RequestInput{
+			Body: []byte(`{"input":"hello"}`), Method: "POST", Path: "/v1/responses", Policy: config,
+			AvailableCredentials: map[string][]int{"openai": {0}, "anthropic": {0}},
+			CheckCandidate: func(provider schemas.ModelProvider, _ int, _ Deployment) error {
+				return refusals[provider]
+			},
+			PairSkipped: func(err error) { skipped = append(skipped, err) },
+			Prefers:     func(error, error) bool { return prefersLater },
+		})
+		want := refusals[schemas.OpenAI]
+		if prefersLater {
+			want = refusals[schemas.Anthropic]
+		}
+		if !reflect.DeepEqual(skipped, []error{refusals[schemas.OpenAI], refusals[schemas.Anthropic]}) || err != want {
+			t.Fatalf("prefers later %v: skipped=%v error=%v", prefersLater, skipped, err)
+		}
+	}
+}
+
+// A pair that waits is passed over only while another remains, and uses its
+// place; the request's last pair gets its call whatever it waits.
+func TestPlanPassesOverAWaitingPairWhileAnotherRemains(t *testing.T) {
+	loadTestCatalog(t)
+	waiting := errors.New("waiting")
+	for _, test := range []struct {
+		pairs   int
+		waits   []schemas.ModelProvider
+		checked []schemas.ModelProvider // the pairs that reach preparation, in order
+		skipped int
+	}{
+		{2, []schemas.ModelProvider{schemas.OpenAI}, []schemas.ModelProvider{schemas.Anthropic}, 1},
+		{1, []schemas.ModelProvider{schemas.OpenAI}, []schemas.ModelProvider{schemas.OpenAI}, 0},
+		{2, []schemas.ModelProvider{schemas.OpenAI, schemas.Anthropic}, []schemas.ModelProvider{schemas.Anthropic}, 1},
+		{2, []schemas.ModelProvider{schemas.Anthropic}, []schemas.ModelProvider{schemas.OpenAI, schemas.Anthropic}, 0},
+	} {
+		config := policyConfig(test.pairs)
+		config.Routing.Query = orderedQuery(t, "", "openai-gpt-5.6-sol", "anthropic-claude-sonnet-4-6")
+		var checked []schemas.ModelProvider
+		var skipped []error
+		resolved, err := ResolveRequest(RequestInput{
+			Body: []byte(`{"input":"hello"}`), Method: "POST", Path: "/v1/responses", Policy: config,
+			AvailableCredentials: map[string][]int{"openai": {0}, "anthropic": {0}},
+			PairWaits: func(provider schemas.ModelProvider, _ int, _ Deployment) error {
+				if slices.Contains(test.waits, provider) {
+					return waiting
+				}
+				return nil
+			},
+			CheckCandidate: func(provider schemas.ModelProvider, _ int, _ Deployment) error {
+				checked = append(checked, provider)
+				return nil
+			},
+			PairSkipped: func(err error) { skipped = append(skipped, err) },
+		})
+		for next := resolved; err == nil && next != nil; {
+			next, err = next.NextPair(nil)
+		}
+		if !errors.Is(err, ErrModelUnavailable) && !errors.Is(err, waiting) || !reflect.DeepEqual(checked, test.checked) || len(skipped) != test.skipped {
+			t.Fatalf("%d pairs waiting %v: checked=%v skipped=%v error=%v", test.pairs, test.waits, checked, skipped, err)
 		}
 	}
 }

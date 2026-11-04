@@ -2,11 +2,13 @@ package stogashttp
 
 import (
 	"context"
+	"encoding/json"
 	"maps"
 	"math"
 	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -70,7 +72,10 @@ func TestFailureActionFor(t *testing.T) {
 		{name: "workspace that refuses the deployment's inference geo", failure: anthropicRefusal(http.StatusBadRequest, "inference_geo 'global' is not allowed for this workspace. Allowed values: ['us']"), headers: map[string]string{"x-should-retry": "false"}, want: nextPair},
 		{name: "account spend limit", failure: anthropicRefusal(http.StatusBadRequest, "You have reached your specified workspace API usage limits. You will regain access on 2026-12-01 at 00:00 UTC."), want: nextPair},
 		{name: "spend cap", failure: anthropicRefusal(http.StatusTooManyRequests, "You have reached your API usage limits: your organization has crossed its monthly API usage threshold."), want: nextPair},
-		{name: "context length", failure: failure(http.StatusBadRequest, "context_length_exceeded"), want: stopRun},
+		{name: "context length", failure: failure(http.StatusBadRequest, "context_length_exceeded"), want: nextPair},
+		{name: "prompt longer than the deployment's window", failure: anthropicRefusal(http.StatusBadRequest, "prompt is too long: 215000 tokens > 200000 maximum"), want: nextPair},
+		{name: "body larger than the provider takes", failure: failure(http.StatusRequestEntityTooLarge, ""), want: nextPair},
+		{name: "image the provider cannot read", failure: failure(http.StatusBadRequest, "image_too_large"), want: nextPair},
 		{name: "content filter", failure: failure(http.StatusBadRequest, "content_filter"), want: stopRun},
 		{name: "cancelled", failure: cancelled, want: stopRun},
 		{name: "our failure", failure: ours, want: stopRun},
@@ -396,4 +401,224 @@ func TestRunStepsStayWithinThePlan(t *testing.T) {
 			}
 		}
 	}
+}
+
+// waitRefusal is a billing refusal that ends after wait.
+type waitRefusal struct {
+	*billing.RequestError
+	wait time.Duration
+}
+
+func (e waitRefusal) Unwrap() error             { return e.RequestError }
+func (e waitRefusal) RetryAfter() time.Duration { return e.wait }
+
+// When no pair serves a request, the caller gets the failure that ended the
+// run, else the first failure, unless a later one passes sooner by waiting. A
+// pair counts with its latest failure, and a model that is gone yields to any
+// other failure.
+func TestRunReportsTheFailureThatPassesSoonest(t *testing.T) {
+	type failure struct {
+		pair    int
+		status  int
+		code    string
+		headers map[string]string
+		after   time.Duration // since the previous failure
+		local   error         // a failure before a provider call
+		unsent  bool          // the provider failure came before the call was sent
+	}
+	wait := func(seconds string) map[string]string { return map[string]string{"retry-after": seconds} }
+	noRetry := map[string]string{"x-should-retry": "false"}
+	for _, test := range []struct {
+		name        string
+		failures    []failure
+		status      int
+		code        string
+		retryAfter  []string // the values that Retry-After can take; none when empty
+		shouldRetry string
+		gateway     bool // the request records the answer as its gateway error
+	}{
+		{name: "a wait passes a credential failure", failures: []failure{{status: 429, headers: wait("30")}, {pair: 1, status: 401}},
+			status: 429, code: "upstream_rate_limit_error", retryAfter: []string{"30", "31"}},
+		{name: "a later wait passes an earlier credential failure", failures: []failure{{status: 401}, {pair: 1, status: 429, headers: wait("30")}},
+			status: 429, code: "upstream_rate_limit_error", retryAfter: []string{"30", "31"}},
+		{name: "an overload passes a retired model", failures: []failure{{status: 503}, {pair: 1, status: 410}}, status: 503},
+		{name: "a dropped connection passes a missing deployment", failures: []failure{{code: schemas.ProviderConnectionFailed}, {pair: 1, status: 404}}, status: 502},
+		{name: "a server error passes before a long wait", failures: []failure{{status: 500}, {pair: 1, status: 429, headers: wait("30")}}, status: 500},
+		{name: "the shorter wait", failures: []failure{{status: 429, headers: wait("30")}, {pair: 1, status: 429, headers: wait("2")}},
+			status: 429, code: "upstream_rate_limit_error", retryAfter: []string{"2", "3"}},
+		{name: "the shorter wait first", failures: []failure{{status: 429, headers: wait("2")}, {pair: 1, status: 529, headers: wait("30")}},
+			status: 429, code: "upstream_rate_limit_error", retryAfter: []string{"2", "3"}},
+		{name: "time on later pairs shortens the wait", failures: []failure{{status: 429, headers: wait("20")}, {pair: 1, status: 401, after: 8 * time.Second}},
+			status: 429, code: "upstream_rate_limit_error", retryAfter: []string{"12", "13"}},
+		{name: "a wait that ended passes now", failures: []failure{{status: 429, headers: wait("2")}, {pair: 1, status: 500, after: 5 * time.Second}},
+			status: 429, code: "upstream_rate_limit_error"},
+		{name: "the first of two credential failures", failures: []failure{{status: 401}, {pair: 1, status: 403}},
+			status: 424, code: "upstream_authentication_failed", shouldRetry: "false"},
+		{name: "a missing deployment yields", failures: []failure{{status: 404}, {pair: 1, status: 401}},
+			status: 424, code: "upstream_authentication_failed", shouldRetry: "false"},
+		{name: "a retired model yields", failures: []failure{{status: 410}, {pair: 1, status: 403}},
+			status: 424, code: "upstream_access_denied", shouldRetry: "false"},
+		{name: "every deployment gone", failures: []failure{{status: 404}, {pair: 1, status: 410}}, status: 404, shouldRetry: "false"},
+		{name: "a gone model yields although its provider asks for a retry", failures: []failure{{status: 404, headers: map[string]string{"x-should-retry": "true"}}, {pair: 1, status: 401}},
+			status: 424, code: "upstream_authentication_failed", shouldRetry: "false"},
+		{name: "a later gone model yields although its provider asks for a retry", failures: []failure{{status: 401}, {pair: 1, status: 404, headers: map[string]string{"x-should-retry": "true"}}},
+			status: 424, code: "upstream_authentication_failed", shouldRetry: "false"},
+		{name: "a wait over a minute passes no other failure", failures: []failure{{status: 401}, {pair: 1, status: 429, headers: wait("300")}},
+			status: 424, code: "upstream_authentication_failed", shouldRetry: "false"},
+		{name: "an invalid request ends the run", failures: []failure{{status: 429, headers: wait("30")}, {pair: 1, status: 400}}, status: 400},
+		{name: "a content filter ends the run", failures: []failure{{status: 429, headers: wait("30")}, {pair: 1, status: 400, code: "content_filter"}}, status: 400, code: "content_filter"},
+		{name: "every window too small", failures: []failure{{status: 400, code: "context_length_exceeded"}, {pair: 1, status: 413}},
+			status: 400, code: "context_length_exceeded", shouldRetry: "false"},
+		{name: "a pair's latest failure", failures: []failure{{status: 503}, {status: 429, headers: wait("30"), after: time.Second}, {pair: 1, status: 401}},
+			status: 429, code: "upstream_rate_limit_error", retryAfter: []string{"30", "31"}},
+		{name: "a provider that refuses retries", failures: []failure{{status: 500, headers: noRetry}, {pair: 1, status: 401}}, status: 500, shouldRetry: "false"},
+		{name: "a wait over a minute", failures: []failure{{status: 429, headers: wait("300")}},
+			status: 429, code: "upstream_rate_limit_error", retryAfter: []string{"300"}, shouldRetry: "false"},
+		{name: "a provider that asks for a retry", failures: []failure{{status: 400, headers: map[string]string{"x-should-retry": "true"}}}, status: 400, shouldRetry: "true"},
+		{name: "an unsent call's wait over a minute", failures: []failure{{status: 429, headers: wait("300"), unsent: true}},
+			status: 429, code: "upstream_rate_limit_error", retryAfter: []string{"300"}, shouldRetry: "false"},
+		{name: "a refusal with a wait after a call", failures: []failure{{status: 401}, {pair: 1, local: billingFailure{waitRefusal{billing.ErrRateLimit, 300 * time.Millisecond}}}},
+			status: 429, code: "rate_limit_exceeded", retryAfter: []string{"1", "2"}, gateway: true},
+		{name: "gateway capacity after a call", failures: []failure{{status: 401}, {pair: -1, local: errRequestMemoryCapacity}},
+			status: 503, code: "gateway_capacity_exceeded", retryAfter: []string{"1", "2"}, gateway: true},
+		{name: "a refusal before a call keeps its place", failures: []failure{{local: billingFailure{billing.ErrInsufficientBalance}}, {pair: 1, status: 401}},
+			status: 402, code: "insufficient_balance", gateway: true},
+		{name: "the caller left", failures: []failure{{local: billingFailure{waitRefusal{billing.ErrRateLimit, time.Second}}}, {pair: 1, status: 401}, {pair: -1, local: context.Canceled}},
+			status: 429, code: "rate_limit_exceeded", retryAfter: []string{"1", "2"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx := newTestRequest(t)
+				run := &providerRun{client: ctx}
+				for _, f := range test.failures {
+					time.Sleep(f.after)
+					if f.local != nil {
+						run.local = f.local
+						run.noteLocal(f.local, f.pair)
+						continue
+					}
+					failure := &schemas.BifrostError{Error: &schemas.ErrorField{Message: "provider failure"}}
+					if f.status != 0 {
+						failure.StatusCode = schemas.Ptr(f.status)
+					}
+					if f.code != "" {
+						failure.Error.Code = schemas.Ptr(f.code)
+					}
+					attempt := retryAfterContext(f.headers)
+					if f.unsent {
+						run.local = &unsentCall{failure: failure, ctx: attempt}
+						run.noteLocal(run.local, f.pair)
+						continue
+					}
+					run.last, run.lastCtx = failure, attempt
+					run.note(callFailure(failure, attempt, failureActionFor(failure, attempt, nil), f.pair))
+				}
+				if run.reportsLocal() != test.gateway {
+					t.Fatalf("gateway error = %v", run.reportsLocal())
+				}
+				(&Server{}).writeErrorResponse(ctx, run.response())
+				response := testResponse(ctx)
+				body := map[string]map[string]any{}
+				if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+					t.Fatal(err)
+				}
+				code, _ := body["error"]["code"].(string)
+				if response.Code != test.status || test.code != "" && code != test.code {
+					t.Fatalf("answer = %d %q, want %d %q", response.Code, code, test.status, test.code)
+				}
+				if after := response.Header().Get("Retry-After"); after != "" && !slices.Contains(test.retryAfter, after) || after == "" && len(test.retryAfter) > 0 {
+					t.Fatalf("Retry-After = %q, want one of %v", after, test.retryAfter)
+				}
+				if got := response.Header().Get("X-Should-Retry"); got != test.shouldRetry {
+					t.Fatalf("X-Should-Retry = %q, want %q", got, test.shouldRetry)
+				}
+			})
+		})
+	}
+}
+
+// The choice does not depend on how the failures arrive: against a reference
+// that compares every pair's latest failure at once, the incremental choice
+// picks the same failure.
+func TestRunReportMatchesAReference(t *testing.T) {
+	rng := rand.New(rand.NewPCG(11, 5))
+	for trial := range 20000 {
+		run := &providerRun{}
+		var latest []*runFailure
+		at := time.Unix(0, 0)
+		for pair, count := 0, 1+rng.IntN(6); count > 0; count-- {
+			if rng.IntN(3) == 0 {
+				pair++
+			}
+			at = at.Add(time.Duration(rng.IntN(4)) * time.Second)
+			f := &runFailure{pair: pair, at: at, passes: rng.IntN(2) == 0, gone: rng.IntN(3) == 0, ends: count == 1 && rng.IntN(4) == 0}
+			if f.passes && rng.IntN(2) == 0 {
+				f.until = at.Add(time.Duration(rng.IntN(6)) * time.Second)
+			}
+			if n := len(latest); n > 0 && latest[n-1].pair == pair {
+				latest[n-1] = f
+			} else {
+				latest = append(latest, f)
+			}
+			run.note(f)
+		}
+		if got, want := run.reported(), referenceReport(latest); got != want {
+			t.Fatalf("trial %d: reported %+v, want %+v", trial, *got, *want)
+		}
+	}
+}
+
+// referenceReport applies the rule to every pair's latest failure in order.
+func referenceReport(failures []*runFailure) *runFailure {
+	if last := failures[len(failures)-1]; last.ends {
+		return last
+	}
+	var kept *runFailure
+	for _, f := range failures {
+		switch {
+		case kept == nil:
+			kept = f
+		case f.gone != kept.gone:
+			if kept.gone {
+				kept = f
+			}
+		case f.passes && !kept.passes:
+			kept = f
+		case f.passes && kept.passes:
+			// Each wait ends when it ends, or now if it already did.
+			ready := func(g *runFailure) time.Time {
+				if g.until.After(f.at) {
+					return g.until
+				}
+				return f.at
+			}
+			if ready(f).Before(ready(kept)) {
+				kept = f
+			}
+		}
+	}
+	return kept
+}
+
+// A call's output window ends with the call: until the next call starts, the
+// caller waits within the total deadline.
+func TestFailedCallEndsItsOutputWindow(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		wait := newResponseDeadline(time.Now(), time.Minute)
+		defer wait.stop()
+		wait.startOutput(10 * time.Second)
+		time.Sleep(9900 * time.Millisecond)
+		wait.endOutput()
+		time.Sleep(2 * time.Second)
+		synctest.Wait()
+		if wait.timedOut() || wait.remaining() != 48100*time.Millisecond || !wait.startOutput(10*time.Second) {
+			t.Fatalf("between calls: timed out %v, remaining %s", wait.timedOut(), wait.remaining())
+		}
+		// A window that ran out timed the caller out.
+		time.Sleep(10 * time.Second)
+		wait.endOutput()
+		if !wait.timedOut() || wait.startOutput(10*time.Second) {
+			t.Fatal("an expired window ended without a timeout")
+		}
+	})
 }
