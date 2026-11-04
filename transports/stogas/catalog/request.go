@@ -108,7 +108,11 @@ type RequestInput struct {
 	DeploymentEligible func(schemas.ModelProvider, int, Route, Deployment) bool
 	// DeploymentChanged reports a credential whose target for the deployment no longer serves the
 	// cataloged model, version or SKU, so the request names that cause when nothing else serves.
-	DeploymentChanged    func(schemas.ModelProvider, int, Deployment) bool
+	DeploymentChanged func(schemas.ModelProvider, int, Deployment) bool
+	// CredentialBYOK reports a customer's own credential. Only one reads provider file IDs, so
+	// routing skips the other pairs of a request that sends one. Nil counts every credential as
+	// the customer's own.
+	CredentialBYOK       func(schemas.ModelProvider, int) bool
 	CompileRequestPolicy func([]byte) (*policy.Request, error)
 	// CheckCandidate prepares local credential prerequisites after metadata
 	// routing. An explicit fallback allowance permits another candidate only for
@@ -865,7 +869,7 @@ func planRoutes(input RequestInput, route Route, rawData map[string]json.RawMess
 	variants := &requestVariants{
 		base: RequestPolicy{Config: input.Policy, RedactionPolicy: input.RedactionPolicy, LoadRedactionPolicy: input.LoadRedactionPolicy},
 		load: input.CredentialPolicy, requestPolicy: requestPolicy, fields: rawData, route: route, selections: selections, reserveBody: input.ReserveBody, inputBytes: len(input.Body),
-		attachments: requestAttachments(rawData, route, selections), hostedTools: hostedTools.enabled, ruledOut: append(ruledOut, withoutTools...),
+		attachments: requestAttachments(rawData, route), hostedTools: hostedTools.enabled, ruledOut: append(ruledOut, withoutTools...),
 	}
 	return planRequest(input, route, base.Model, providerPreference, variants)
 }

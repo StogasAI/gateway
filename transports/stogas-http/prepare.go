@@ -80,7 +80,10 @@ func (s *Server) startRun(ctx *requestContext, startedAt time.Time, preparation 
 		AvailableCredentials: keyConfig.AvailableCredentials(),
 		DeploymentEligible:   stogas.CredentialDeploymentFilter(keyConfig, startedAt),
 		DeploymentChanged:    stogas.CredentialTargetChanged(keyConfig),
-		LoadRedactionPolicy:  keyConfig.RedactionPolicy,
+		CredentialBYOK: func(provider schemas.ModelProvider, index int) bool {
+			return keyConfig.UsesBYOK(string(provider), index)
+		},
+		LoadRedactionPolicy: keyConfig.RedactionPolicy,
 		ReserveBody: func(bytes int) error {
 			if !lease.resize(max(bodyCapacity, bytes)) {
 				return errRequestMemoryCapacity

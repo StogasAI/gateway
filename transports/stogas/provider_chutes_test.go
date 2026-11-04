@@ -265,10 +265,12 @@ func TestChutesRejectsUnaccountedAndNonTextFeatures(t *testing.T) {
 		`[{"type":"image_url","image_url":{"url":"https://example.com/image.png"}}]`,
 		`[{"type":"input_audio","input_audio":{"data":"AAAA","format":"wav"}}]`,
 	} {
-		// Kimi K3 reads images and video, but the Chutes route carries only text.
-		body := fmt.Sprintf(`{"model":"kimi-k3","messages":[{"role":"user","content":%s}]}`, content)
-		state := resolveChutesState(t, body)
-		if err := state.Adapter.ValidateRequest(state); err == nil || !strings.Contains(err.Error(), "input is not supported by the selected deployment") {
+		// Kimi K3 reads images and video, but the Chutes route carries only text, so routing
+		// refuses the request before it prepares a pair.
+		body := fmt.Sprintf(`{"model":"provider:chutes kimi-k3","messages":[{"role":"user","content":%s}]}`, content)
+		_, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/chat/completions", Body: []byte(body)})
+		if public := catalog.PublicError(err); public.Code != catalog.AttachmentUnsupported ||
+			!strings.Contains(public.Message, "input is not supported by any deployment that this request can use") {
 			t.Fatalf("non-text content was accepted or failed for another reason: %s: %v", content, err)
 		}
 	}
