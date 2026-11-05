@@ -24,27 +24,29 @@ import (
 type Options struct {
 	APIKey                  string
 	APIBaseURL              string
-	ResolveModel            ModelResolver
 	RequireProductionOrigin bool
 	RequirePostQuantumTLS   bool
 	RequestTimeout          time.Duration
 }
 
 type invocationMetadataKey struct{}
-type invocationBudgetKey struct{}
+type invocationKey struct{}
 type retryObserverKey struct{}
 type dispatchKey struct{}
 
-type invocationBudget struct {
+type invocation struct {
+	target       ModelTarget
 	attempts     int
 	retryAllowed func() bool
 }
 
-// SetInvocationBudget passes the remaining request allowance into the private
-// transport. The caller wait may forbid another attempt without interrupting an
-// invocation already in flight. Install it before provider dispatch.
-func SetInvocationBudget(ctx interface{ SetValue(any, any) }, attempts int, retryAllowed func() bool) {
-	ctx.SetValue(invocationBudgetKey{}, invocationBudget{max(1, attempts), retryAllowed})
+// SetInvocation passes a provider call into the private transport: the chute
+// that the request was routed to, and the remaining request allowance. The
+// caller wait may forbid another attempt without interrupting an invocation
+// already in flight. Install it before provider dispatch; a call without it is
+// not sent.
+func SetInvocation(ctx interface{ SetValue(any, any) }, target ModelTarget, attempts int, retryAllowed func() bool) {
+	ctx.SetValue(invocationKey{}, invocation{target, max(1, attempts), retryAllowed})
 }
 
 // SetRetryObserver reports a proven pre-execution rejection, with the instance that
@@ -112,7 +114,6 @@ func setInvocationMetadata(ctx context.Context, ticket *reservedTicket) {
 
 type Transport struct {
 	api                   *apiClient
-	resolveModel          ModelResolver
 	unaryClient           *fasthttp.Client
 	streamClient          *fasthttp.Client
 	diagnostics           *diagnostics
@@ -129,9 +130,6 @@ type Transport struct {
 }
 
 func New(options Options) (*Transport, error) {
-	if options.ResolveModel == nil {
-		return nil, errors.New("missing Chutes catalog model resolver")
-	}
 	if options.RequestTimeout <= 0 {
 		return nil, errors.New("missing Chutes request timeout")
 	}
@@ -151,10 +149,9 @@ func New(options Options) (*Transport, error) {
 		return nil, err
 	}
 	transport := &Transport{
-		api:          api,
-		resolveModel: options.ResolveModel,
-		diagnostics:  diagnostics,
-		attestor:     attestor,
+		api:         api,
+		diagnostics: diagnostics,
+		attestor:    attestor,
 	}
 	transport.pools = newPoolState(api, attestor, diagnostics)
 	transport.pools.managed = true
@@ -280,6 +277,8 @@ func (t *Transport) Diagnostics() DiagnosticsSnapshot {
 	return snapshot
 }
 
+// RoundTrip serves fasthttp's interface. It has no call context to name a chute,
+// so it answers without sending; Bifrost calls DoRequestWithContext.
 func (t *Transport) RoundTrip(_ *fasthttp.HostClient, request *fasthttp.Request, response *fasthttp.Response) (bool, error) {
 	return t.roundTrip(context.Background(), request, response)
 }
@@ -323,8 +322,9 @@ func (t *Transport) roundTrip(ctx context.Context, request *fasthttp.Request, re
 		setSyntheticError(response, http.StatusBadGateway, "upstream_protocol_error", "Invalid Chutes private inference request", 0)
 		return false, nil
 	}
-	target, ok := t.resolveModel(metadata.Model)
-	if !ok || !validModelTarget(target) {
+	call, _ := ctx.Value(invocationKey{}).(invocation)
+	target := call.target
+	if !validModelTarget(target) {
 		setSyntheticError(response, http.StatusServiceUnavailable, "upstream_configuration_error", "Chutes private inference is unavailable", 0)
 		return false, nil
 	}
@@ -345,13 +345,12 @@ func (t *Transport) roundTrip(ctx context.Context, request *fasthttp.Request, re
 		}
 	}()
 	credential.diagnostics.registerModel(chuteID, metadata.Model)
-	budget, _ := ctx.Value(invocationBudgetKey{}).(invocationBudget)
 	observeRetry, _ := ctx.Value(retryObserverKey{}).(func(int, string, time.Time, time.Time))
 	var rejectedAt time.Time
 	var rejectedInstance string
 	setInvocationMetadata(ctx, nil)
-	for attempt := 0; attempt < max(1, budget.attempts); attempt++ {
-		if attempt > 0 && budget.retryAllowed != nil && !budget.retryAllowed() {
+	for attempt := 0; attempt < call.attempts; attempt++ {
+		if attempt > 0 && call.retryAllowed != nil && !call.retryAllowed() {
 			return false, nil
 		}
 		ticket, reserveErr := credential.pools.reserve(ctx, target)
@@ -373,7 +372,7 @@ func (t *Transport) roundTrip(ctx context.Context, request *fasthttp.Request, re
 			return false, err
 		}
 		if attempt > 0 {
-			if budget.retryAllowed != nil && !budget.retryAllowed() {
+			if call.retryAllowed != nil && !call.retryAllowed() {
 				clear(encrypted.Body)
 				return false, nil
 			}

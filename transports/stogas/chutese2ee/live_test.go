@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/valyala/fasthttp"
 )
 
@@ -32,10 +33,6 @@ func TestLiveChutesE2EE(t *testing.T) {
 		APIBaseURL:              productionAPIBaseURL,
 		RequireProductionOrigin: true,
 		RequestTimeout:          10 * time.Minute,
-		ResolveModel: func(value string) (ModelTarget, bool) {
-			target, ok := byModel[value]
-			return target, ok
-		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -51,12 +48,12 @@ func TestLiveChutesE2EE(t *testing.T) {
 				t.Fatalf("prewarm live Chutes E2EE pool: %v diagnostic=%#v", err, liveChuteDiagnostic(transport.Diagnostics(), liveTarget.ChuteID))
 			}
 
-			unary := invokeLiveChutesForTest(t, transport, apiKey, liveTarget.Model, liveTarget.ChuteID, false)
+			unary := invokeLiveChutesForTest(t, transport, apiKey, liveTarget.Model, target, false)
 			if !json.Valid(unary) || !bytes.Contains(unary, []byte(`"choices"`)) || !bytes.Contains(unary, []byte(`"usage"`)) {
 				t.Fatalf("invalid unary response: %s", unary)
 			}
 			assertLiveChutesResponseContract(t, unary, liveTarget.Model, false)
-			stream := invokeLiveChutesForTest(t, transport, apiKey, liveTarget.Model, liveTarget.ChuteID, true)
+			stream := invokeLiveChutesForTest(t, transport, apiKey, liveTarget.Model, target, true)
 			if !bytes.Contains(stream, []byte("data: [DONE]\n\n")) || !bytes.Contains(stream, []byte(`"choices"`)) {
 				t.Fatalf("invalid stream response: %s", stream)
 			}
@@ -220,8 +217,9 @@ func liveChutesTargets(t *testing.T) []liveChutesTarget {
 	return []liveChutesTarget{{Model: model, ChuteID: chuteID, GPUCount: gpuCount}}
 }
 
-func invokeLiveChutesForTest(t *testing.T, transport *Transport, apiKey, model, chuteID string, stream bool) []byte {
+func invokeLiveChutesForTest(t *testing.T, transport *Transport, apiKey, model string, target ModelTarget, stream bool) []byte {
 	t.Helper()
+	chuteID := target.ChuteID
 	payload, err := json.Marshal(map[string]any{
 		"max_tokens": 4,
 		"messages": []map[string]string{{
@@ -244,8 +242,11 @@ func invokeLiveChutesForTest(t *testing.T, transport *Transport, apiKey, model, 
 	request.Header.Set("Authorization", "Bearer "+apiKey)
 	request.SetRequestURI("https://llm.chutes.ai/v1/chat/completions")
 	request.SetBodyRaw(payload)
-	if retry, err := transport.RoundTrip(nil, request, response); err != nil || retry {
-		t.Fatalf("live RoundTrip retry=%t error=%v diagnostic=%#v", retry, err, liveChuteDiagnostic(transport.Diagnostics(), chuteID))
+	ctx := schemas.NewBifrostContext(t.Context(), schemas.NoDeadline)
+	defer ctx.Cancel()
+	SetInvocation(ctx, target, 1, nil)
+	if retry, err := transport.roundTrip(ctx, request, response); err != nil || retry {
+		t.Fatalf("live round trip retry=%t error=%v diagnostic=%#v", retry, err, liveChuteDiagnostic(transport.Diagnostics(), chuteID))
 	}
 	if response.StatusCode() != http.StatusOK {
 		t.Fatalf("live Chutes status=%d body=%s diagnostic=%#v", response.StatusCode(), response.Body(), liveChuteDiagnostic(transport.Diagnostics(), chuteID))

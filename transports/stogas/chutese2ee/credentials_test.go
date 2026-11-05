@@ -13,7 +13,6 @@ func newCredentialTestTransport(t *testing.T) *Transport {
 		APIKey:         "managed-key",
 		APIBaseURL:     "http://provider.invalid",
 		RequestTimeout: 10 * time.Minute,
-		ResolveModel:   func(string) (ModelTarget, bool) { return testModelTarget, true },
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -51,8 +51,6 @@ type ModelTarget struct {
 	GPUCount int
 }
 
-type ModelResolver func(upstreamModel string) (target ModelTarget, ok bool)
-
 func modelTargetKey(target ModelTarget) string {
 	return target.ChuteID + "\x00" + strconv.Itoa(target.GPUCount)
 }

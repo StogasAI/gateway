@@ -113,7 +113,7 @@ func TestTransportEncryptsAndTargetsVerifiedInstance(t *testing.T) {
 
 	ctx := schemas.NewBifrostContext(t.Context(), schemas.NoDeadline)
 	defer ctx.Cancel()
-	SetInvocationBudget(ctx, 3, func() bool { return caller.Err() == nil })
+	SetInvocation(ctx, testModelTarget, 3, func() bool { return caller.Err() == nil })
 	if err := transport.DoRequestWithContext(ctx, request, response); err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +231,7 @@ func TestTransportEncryptedStreamOwnsCredentialAndNeverReplays(t *testing.T) {
 			request.SetBodyString(`{"model":"upstream-model","stream":true,"messages":[{"role":"user","content":"private prompt"}]}`)
 			ctx := schemas.NewBifrostContext(t.Context(), time.Now().Add(2*time.Second))
 			defer ctx.Cancel()
-			SetInvocationBudget(ctx, 3, func() bool { return caller.Err() == nil })
+			SetInvocation(ctx, testModelTarget, 3, func() bool { return caller.Err() == nil })
 			if err := transport.DoRequestWithContext(ctx, request, response); err != nil {
 				t.Fatal(err)
 			}
@@ -373,8 +373,8 @@ func TestTransportUsesCredentialScopedBYOKPool(t *testing.T) {
 	request.SetRequestURI("http://provider.invalid/v1/chat/completions")
 	request.SetBodyString(`{"model":"upstream-model","messages":[{"role":"user","content":"private prompt"}]}`)
 
-	if retry, roundTripErr := transport.RoundTrip(nil, request, response); roundTripErr != nil || retry {
-		t.Fatalf("RoundTrip retry=%t error=%v", retry, roundTripErr)
+	if retry, roundTripErr := transport.roundTrip(invocationForTest(t), request, response); roundTripErr != nil || retry {
+		t.Fatalf("round trip retry=%t error=%v", retry, roundTripErr)
 	}
 	if response.StatusCode() != http.StatusOK || string(response.Body()) != `{"id":"byok-response","choices":[]}` {
 		t.Fatalf("response status=%d body=%s", response.StatusCode(), response.Body())
@@ -430,8 +430,8 @@ func TestTransportNeverRetriesInvokeAndAppliesCooldown(t *testing.T) {
 	request.SetRequestURI("http://provider.invalid/v1/chat/completions")
 	request.SetBodyString(`{"model":"upstream-model","messages":[]}`)
 
-	if retry, err := transport.RoundTrip(nil, request, response); err != nil || retry {
-		t.Fatalf("RoundTrip retry=%t error=%v", retry, err)
+	if retry, err := transport.roundTrip(invocationForTest(t), request, response); err != nil || retry {
+		t.Fatalf("round trip retry=%t error=%v", retry, err)
 	}
 	if response.StatusCode() != http.StatusTooManyRequests || calls.Load() != 1 {
 		t.Fatalf("status=%d calls=%d", response.StatusCode(), calls.Load())
@@ -495,9 +495,9 @@ func TestTransportNeverRetriesAmbiguousInvokeFailure(t *testing.T) {
 			request.SetRequestURI("http://provider.invalid/v1/chat/completions")
 			request.SetBodyString(fmt.Sprintf(`{"model":"upstream-model","messages":[],"stream":%t}`, stream))
 
-			retry, roundTripErr := transport.RoundTrip(nil, request, response)
+			retry, roundTripErr := transport.roundTrip(invocationForTest(t), request, response)
 			if roundTripErr == nil || retry {
-				t.Fatalf("RoundTrip retry=%t error=%v", retry, roundTripErr)
+				t.Fatalf("round trip retry=%t error=%v", retry, roundTripErr)
 			}
 			if calls.Load() != 1 {
 				t.Fatalf("ambiguous invoke calls = %d, want 1", calls.Load())
@@ -565,9 +565,6 @@ func TestTransportRetriesPreComputeInstanceFailureWithFreshTicket(t *testing.T) 
 		APIKey:         "managed-key",
 		APIBaseURL:     server.URL,
 		RequestTimeout: 10 * time.Minute,
-		ResolveModel: func(model string) (ModelTarget, bool) {
-			return testModelTarget, model == "upstream-model"
-		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -598,7 +595,7 @@ func TestTransportRetriesPreComputeInstanceFailureWithFreshTicket(t *testing.T) 
 	request.SetBodyString(`{"model":"upstream-model","messages":[{"role":"user","content":"private prompt"}]}`)
 	ctx := schemas.NewBifrostContext(t.Context(), schemas.NoDeadline)
 	defer ctx.Cancel()
-	SetInvocationBudget(ctx, 2, nil)
+	SetInvocation(ctx, testModelTarget, 2, nil)
 	if roundTripErr := transport.DoRequestWithContext(ctx, request, response); roundTripErr != nil {
 		t.Fatalf("round trip error=%v", roundTripErr)
 	}
@@ -651,9 +648,6 @@ func TestTransportStopsAtInvocationBudget(t *testing.T) {
 					APIKey:         "managed-key",
 					APIBaseURL:     server.URL,
 					RequestTimeout: 10 * time.Minute,
-					ResolveModel: func(model string) (ModelTarget, bool) {
-						return testModelTarget, model == "upstream-model"
-					},
 				})
 				if err != nil {
 					t.Fatal(err)
@@ -698,9 +692,7 @@ func TestTransportStopsAtInvocationBudget(t *testing.T) {
 					retries = append(retries, status)
 					rejectedBy = append(rejectedBy, instanceID)
 				})
-				if test.limit > 0 {
-					SetInvocationBudget(ctx, test.limit, func() bool { return caller.Err() == nil })
-				}
+				SetInvocation(ctx, testModelTarget, test.limit, func() bool { return caller.Err() == nil })
 				if roundTripErr := transport.DoRequestWithContext(ctx, request, response); roundTripErr != nil {
 					t.Fatalf("round trip error=%v", roundTripErr)
 				}
@@ -850,12 +842,14 @@ func TestTransportRejectsUnsupportedWireRequestsBeforeDispatch(t *testing.T) {
 		path          string
 		authorization string
 		body          string
+		target        ModelTarget
 		wantStatus    int
 	}{
-		{name: "wrong route", method: http.MethodPost, path: "/v1/responses", authorization: "Bearer managed-key", body: `{"model":"upstream-model"}`, wantStatus: http.StatusBadGateway},
-		{name: "wrong method", method: http.MethodGet, path: "/v1/chat/completions", authorization: "Bearer managed-key", body: `{"model":"upstream-model"}`, wantStatus: http.StatusBadGateway},
-		{name: "unknown model", method: http.MethodPost, path: "/v1/chat/completions", authorization: "Bearer managed-key", body: `{"model":"unknown"}`, wantStatus: http.StatusServiceUnavailable},
-		{name: "invalid JSON", method: http.MethodPost, path: "/v1/chat/completions", authorization: "Bearer managed-key", body: `{`, wantStatus: http.StatusBadGateway},
+		{name: "wrong route", method: http.MethodPost, path: "/v1/responses", authorization: "Bearer managed-key", body: `{"model":"upstream-model"}`, target: testModelTarget, wantStatus: http.StatusBadGateway},
+		{name: "wrong method", method: http.MethodGet, path: "/v1/chat/completions", authorization: "Bearer managed-key", body: `{"model":"upstream-model"}`, target: testModelTarget, wantStatus: http.StatusBadGateway},
+		{name: "no chute", method: http.MethodPost, path: "/v1/chat/completions", authorization: "Bearer managed-key", body: `{"model":"upstream-model"}`, wantStatus: http.StatusServiceUnavailable},
+		{name: "invalid chute", method: http.MethodPost, path: "/v1/chat/completions", authorization: "Bearer managed-key", body: `{"model":"upstream-model"}`, target: ModelTarget{ChuteID: testChuteID, GPUCount: 9}, wantStatus: http.StatusServiceUnavailable},
+		{name: "invalid JSON", method: http.MethodPost, path: "/v1/chat/completions", authorization: "Bearer managed-key", body: `{`, target: testModelTarget, wantStatus: http.StatusBadGateway},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -869,6 +863,9 @@ func TestTransportRejectsUnsupportedWireRequestsBeforeDispatch(t *testing.T) {
 			request.SetBodyString(test.body)
 			ctx := schemas.NewBifrostContext(t.Context(), schemas.NoDeadline)
 			defer ctx.Cancel()
+			if test.target != (ModelTarget{}) {
+				SetInvocation(ctx, test.target, 1, nil)
+			}
 			if err := transport.DoRequestWithContext(ctx, request, response); err != nil {
 				t.Fatalf("round trip: %v", err)
 			}
@@ -890,9 +887,6 @@ func TestCredentialPoolsAreReusedIsolatedAndRetired(t *testing.T) {
 		APIKey:         "managed-key",
 		APIBaseURL:     "http://provider.invalid",
 		RequestTimeout: 10 * time.Minute,
-		ResolveModel: func(string) (ModelTarget, bool) {
-			return testModelTarget, true
-		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1095,8 +1089,11 @@ func TestContextAwareStreamStopsBeforeChutesResponseHeaders(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Millisecond)
 	defer cancel()
+	provider := schemas.NewBifrostContext(ctx, schemas.NoDeadline)
+	defer provider.Cancel()
+	SetInvocation(provider, testModelTarget, 1, nil)
 	startedAt := time.Now()
-	err = transport.DoRequestWithContext(ctx, request, response)
+	err = transport.DoRequestWithContext(provider, request, response)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("stream request error = %v, want deadline exceeded", err)
 	}
@@ -1147,7 +1144,7 @@ func TestContextAwareUnaryStopsSafeInstanceRetriesAtRouteDeadline(t *testing.T) 
 	defer cancel()
 	provider := schemas.NewBifrostContext(ctx, schemas.NoDeadline)
 	defer provider.Cancel()
-	SetInvocationBudget(provider, 3, nil)
+	SetInvocation(provider, testModelTarget, 3, nil)
 	startedAt := time.Now()
 	err = transport.DoRequestWithContext(provider, request, response)
 	if !errors.Is(err, context.DeadlineExceeded) {
@@ -1175,15 +1172,20 @@ func TestProductionOriginPolicyDoesNotDependOnPostQuantumTLS(t *testing.T) {
 	client.close()
 }
 
+// invocationForTest is a provider call to the test chute.
+func invocationForTest(t *testing.T) context.Context {
+	ctx := schemas.NewBifrostContext(t.Context(), schemas.NoDeadline)
+	t.Cleanup(ctx.Cancel)
+	SetInvocation(ctx, testModelTarget, 1, nil)
+	return ctx
+}
+
 func transportWithPoolForTest(t *testing.T, baseURL string, instanceKey *mlkem.DecapsulationKey768, tickets ...string) *Transport {
 	t.Helper()
 	transport, err := New(Options{
 		APIKey:         "managed-key",
 		APIBaseURL:     baseURL,
 		RequestTimeout: 10 * time.Minute,
-		ResolveModel: func(model string) (ModelTarget, bool) {
-			return testModelTarget, model == "upstream-model"
-		},
 	})
 	if err != nil {
 		t.Fatal(err)
