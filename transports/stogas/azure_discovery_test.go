@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/maximhq/bifrost/transports/stogas/billing"
+	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
 
 // azureDiscoveryCase is one case in testdata/azure-discovery, which Control's discovery runs too:
@@ -429,5 +431,34 @@ func TestAzureModelRoleSubtractsEachRolesExcludedDataActions(t *testing.T) {
 		if got := azureGrantsModelRequests(values); got != test.want {
 			t.Errorf("%s: model role = %v, want %v", test.name, got, test.want)
 		}
+	}
+}
+
+// The catalog lists a place only while a record names it, so Azure's record names every place
+// that discovery can give a resource. Otherwise a binding in that place fails as unlisted.
+func TestAzureGeographiesAreTheCatalogsAccountLocations(t *testing.T) {
+	root, _, err := catalog.Fallback()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listing struct {
+		Summaries struct {
+			Providers map[string]struct {
+				AccountLocations []string `json:"accountLocations"`
+			} `json:"providers"`
+		} `json:"summaries"`
+	}
+	if err := json.Unmarshal(root, &listing); err != nil {
+		t.Fatal(err)
+	}
+	var geographies []string
+	for _, place := range azureGeographyLocations {
+		if !slices.Contains(geographies, place) {
+			geographies = append(geographies, place)
+		}
+	}
+	slices.Sort(geographies)
+	if listed := listing.Summaries.Providers["azure"].AccountLocations; !slices.Equal(geographies, listed) {
+		t.Errorf("Azure geographies give %v, the catalog lists %v", geographies, listed)
 	}
 }
