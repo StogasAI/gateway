@@ -96,7 +96,10 @@ type groupSummary struct {
 }
 
 // locationNode is what the gateway reads of a location: the places that directly contain it.
+// The countries that a region lists only explain what it covers, since the parents already say
+// what holds each place.
 type locationNode struct {
+	Countries   shown `json:"countries"`
 	Description shown `json:"description"`
 	Kind        shown `json:"kind"`
 	Name        shown `json:"name"`

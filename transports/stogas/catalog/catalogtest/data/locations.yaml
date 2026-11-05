@@ -1,11 +1,13 @@
-# The places that data handling names. Each place but world lists the places that directly
-# contain it, and lies in every place that contains those. A country lists its smallest
-# regions; a subdivision such as US-CA lists its country. A place lies in every place that holds
-# all the places directly inside it, as southeast-asia lies in apac.
+# The places that data handling names. A continent, region or union lists every country that it
+# covers by its ISO 3166-1 code, and what holds each place follows from those lists: a country lies
+# in each smallest region that lists it, a region in each smallest region that lists all of its
+# countries and more, and a subdivision such as US-CA in the country of its code. A place that no
+# region holds lies in world.
 #
 # The catalog lists a place only when a record names it or a place inside it: a data handling
 # location, a headquartered country or a provider's account location. The build names any other
 # place to remove, so the places that policies and the catalog offer are places that data can be in.
+# A region still lists each of its countries, listed or not, so that readers know what it covers.
 #
 # The continents and the regions within them follow the territory containment of Unicode CLDR 48,
 # from UN M.49, except that europe holds every eu member, Cyprus included. No standard defines
@@ -20,180 +22,507 @@ locations:
   africa:
     name: Africa
     kind: continent
-    parentIds: [world]
+    countries:
+      - AO
+      - BF
+      - BI
+      - BJ
+      - BW
+      - CD
+      - CF
+      - CG
+      - CI
+      - CM
+      - CV
+      - DJ
+      - DZ
+      - EG
+      - EH
+      - ER
+      - ET
+      - GA
+      - GH
+      - GM
+      - GN
+      - GQ
+      - GW
+      - IO
+      - KE
+      - KM
+      - LR
+      - LS
+      - LY
+      - MA
+      - MG
+      - ML
+      - MR
+      - MU
+      - MW
+      - MZ
+      - NA
+      - NE
+      - NG
+      - RE
+      - RW
+      - SC
+      - SD
+      - SH
+      - SL
+      - SN
+      - SO
+      - SS
+      - ST
+      - SZ
+      - TD
+      - TF
+      - TG
+      - TN
+      - TZ
+      - UG
+      - YT
+      - ZA
+      - ZM
+      - ZW
   asia:
     name: Asia
     kind: continent
     description: The continent, with the Middle East.
-    parentIds: [world]
+    countries:
+      - AE
+      - AF
+      - AM
+      - AZ
+      - BD
+      - BH
+      - BN
+      - BT
+      - CN
+      - CY
+      - GE
+      - HK
+      - ID
+      - IL
+      - IN
+      - IQ
+      - IR
+      - JO
+      - JP
+      - KG
+      - KH
+      - KP
+      - KR
+      - KW
+      - KZ
+      - LA
+      - LB
+      - LK
+      - MM
+      - MN
+      - MO
+      - MV
+      - MY
+      - NP
+      - OM
+      - PH
+      - PK
+      - PS
+      - QA
+      - SA
+      - SG
+      - SY
+      - TH
+      - TJ
+      - TL
+      - TM
+      - TR
+      - TW
+      - UZ
+      - VN
+      - YE
   europe:
     name: Europe
     kind: continent
     description: The continent, with countries outside the European Union such as Norway, Switzerland and the United Kingdom.
-    parentIds: [world]
+    countries:
+      - AD
+      - AL
+      - AT
+      - AX
+      - BA
+      - BE
+      - BG
+      - BY
+      - CH
+      - CY
+      - CZ
+      - DE
+      - DK
+      - EE
+      - ES
+      - FI
+      - FO
+      - FR
+      - GB
+      - GG
+      - GI
+      - GR
+      - HR
+      - HU
+      - IE
+      - IM
+      - IS
+      - IT
+      - JE
+      - LI
+      - LT
+      - LU
+      - LV
+      - MC
+      - MD
+      - ME
+      - MK
+      - MT
+      - NL
+      - NO
+      - PL
+      - PT
+      - RO
+      - RS
+      - RU
+      - SE
+      - SI
+      - SJ
+      - SK
+      - SM
+      - UA
+      - VA
   north-america:
     name: North America
     kind: continent
     description: The continent, with Central America and the Caribbean.
-    parentIds: [world]
+    countries:
+      - AG
+      - AI
+      - AW
+      - BB
+      - BL
+      - BM
+      - BQ
+      - BS
+      - BZ
+      - CA
+      - CR
+      - CU
+      - CW
+      - DM
+      - DO
+      - GD
+      - GL
+      - GP
+      - GT
+      - HN
+      - HT
+      - JM
+      - KN
+      - KY
+      - LC
+      - MF
+      - MQ
+      - MS
+      - MX
+      - NI
+      - PA
+      - PM
+      - PR
+      - SV
+      - SX
+      - TC
+      - TT
+      - US
+      - VC
+      - VG
+      - VI
   oceania:
     name: Oceania
     kind: continent
     description: Australia, New Zealand and the Pacific islands.
-    parentIds: [apac]
+    countries:
+      - AS
+      - AU
+      - CC
+      - CK
+      - CX
+      - FJ
+      - FM
+      - GU
+      - HM
+      - KI
+      - MH
+      - MP
+      - NC
+      - NF
+      - NR
+      - NU
+      - NZ
+      - PF
+      - PG
+      - PN
+      - PW
+      - SB
+      - TK
+      - TO
+      - TV
+      - UM
+      - VU
+      - WF
+      - WS
   south-america:
     name: South America
     kind: continent
-    parentIds: [world]
+    countries:
+      - AR
+      - BO
+      - BR
+      - BV
+      - CL
+      - CO
+      - EC
+      - FK
+      - GF
+      - GS
+      - GY
+      - PE
+      - PY
+      - SR
+      - UY
+      - VE
   apac:
     name: Asia-Pacific
     kind: region
     description: Asia and Oceania without the Arab states, Israel, Iran and Cyprus. No standard defines Asia-Pacific.
-    parentIds: [world]
+    countries:
+      - AF
+      - AM
+      - AS
+      - AU
+      - AZ
+      - BD
+      - BN
+      - BT
+      - CC
+      - CK
+      - CN
+      - CX
+      - FJ
+      - FM
+      - GE
+      - GU
+      - HK
+      - ID
+      - IN
+      - IO
+      - JP
+      - KG
+      - KH
+      - KI
+      - KP
+      - KR
+      - KZ
+      - LA
+      - LK
+      - MH
+      - MM
+      - MN
+      - MO
+      - MP
+      - MV
+      - MY
+      - NC
+      - NF
+      - NP
+      - NR
+      - NU
+      - NZ
+      - PF
+      - PG
+      - PH
+      - PK
+      - PN
+      - PW
+      - SB
+      - SG
+      - TH
+      - TJ
+      - TK
+      - TL
+      - TM
+      - TO
+      - TR
+      - TV
+      - TW
+      - UM
+      - UZ
+      - VN
+      - VU
+      - WF
+      - WS
   central-america:
     name: Central America
     kind: region
     description: Mexico and the countries south of it to Panama, as UN M.49 defines the region.
-    parentIds: [north-america]
+    countries:
+      - BZ
+      - CR
+      - GT
+      - HN
+      - MX
+      - NI
+      - PA
+      - SV
   eu:
     name: European Union
     kind: union
     description: The 27 member states of the European Union.
-    parentIds: [europe]
+    countries:
+      - AT
+      - BE
+      - BG
+      - CY
+      - CZ
+      - DE
+      - DK
+      - EE
+      - ES
+      - FI
+      - FR
+      - GR
+      - HR
+      - HU
+      - IE
+      - IT
+      - LT
+      - LU
+      - LV
+      - MT
+      - NL
+      - PL
+      - PT
+      - RO
+      - SE
+      - SI
+      - SK
   southeast-asia:
     name: Southeast Asia
     kind: region
     description: Brunei, Cambodia, Indonesia, Laos, Malaysia, Myanmar, the Philippines, Singapore, Thailand, Timor-Leste and Vietnam.
-    parentIds: [apac, asia]
+    countries:
+      - BN
+      - ID
+      - KH
+      - LA
+      - MM
+      - MY
+      - PH
+      - SG
+      - TH
+      - TL
+      - VN
   AE:
     name: United Arab Emirates
     kind: country
-    parentIds: [asia]
   AT:
     name: Austria
     kind: country
-    parentIds: [eu]
   AU:
     name: Australia
     kind: country
-    parentIds: [oceania]
   BE:
     name: Belgium
     kind: country
-    parentIds: [eu]
   BR:
     name: Brazil
     kind: country
-    parentIds: [south-america]
   CA:
     name: Canada
     kind: country
-    parentIds: [north-america]
   CH:
     name: Switzerland
     kind: country
-    parentIds: [europe]
   CL:
     name: Chile
     kind: country
-    parentIds: [south-america]
   CN:
     name: China
     kind: country
-    parentIds: [apac, asia]
   DE:
     name: Germany
     kind: country
-    parentIds: [eu]
   DK:
     name: Denmark
     kind: country
-    parentIds: [eu]
   ES:
     name: Spain
     kind: country
-    parentIds: [eu]
   FI:
     name: Finland
     kind: country
-    parentIds: [eu]
   FR:
     name: France
     kind: country
-    parentIds: [eu]
   GB:
     name: United Kingdom
     kind: country
-    parentIds: [europe]
   ID:
     name: Indonesia
     kind: country
-    parentIds: [southeast-asia]
   IL:
     name: Israel
     kind: country
-    parentIds: [asia]
   IN:
     name: India
     kind: country
-    parentIds: [apac, asia]
   IT:
     name: Italy
     kind: country
-    parentIds: [eu]
   JP:
     name: Japan
     kind: country
-    parentIds: [apac, asia]
   KR:
     name: South Korea
     kind: country
-    parentIds: [apac, asia]
   MX:
     name: Mexico
     kind: country
-    parentIds: [central-america]
   MY:
     name: Malaysia
     kind: country
-    parentIds: [southeast-asia]
   NO:
     name: Norway
     kind: country
-    parentIds: [europe]
   NZ:
     name: New Zealand
     kind: country
-    parentIds: [oceania]
   PL:
     name: Poland
     kind: country
-    parentIds: [eu]
   QA:
     name: Qatar
     kind: country
-    parentIds: [asia]
   SA:
     name: Saudi Arabia
     kind: country
-    parentIds: [asia]
   SE:
     name: Sweden
     kind: country
-    parentIds: [eu]
   SG:
     name: Singapore
     kind: country
-    parentIds: [southeast-asia]
   TW:
     name: Taiwan
     kind: country
-    parentIds: [apac, asia]
   US:
     name: United States
     kind: country
-    parentIds: [north-america]
   ZA:
     name: South Africa
     kind: country
-    parentIds: [africa]
