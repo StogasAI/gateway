@@ -1115,11 +1115,12 @@ var BedrockSourceRegions = map[string]map[string]bool{
 
 // validateCloudClaudeSelector checks Claude on AWS or Google Cloud. inferenceGeo is the
 // geography of Bedrock's inference profile, Google's endpoint location or Anthropic's inference
-// geography, which is global or us.
+// geography, which is global or us, and which Anthropic's models before Claude 4.6 do not take.
 func validateCloudClaudeSelector(deploymentID, providerID string, deployment *compiledDeployment) error {
 	selector := deployment.Upstream
 	route, hosted := providerID+"-messages", slices.Contains(cloudClaudeHostings[providerID], selector.Hosting)
 	geo := selector.InferenceGeo == "global" || selector.InferenceGeo == "us" ||
+		selector.InferenceGeo == "" && selector.Hosting == "anthropic" ||
 		selector.InferenceGeo == "eu" && selector.Hosting == "google" ||
 		selector.Hosting == "aws" && BedrockSourceRegions[selector.InferenceGeo] != nil
 	if !hosted || !geo || !schemas.IsAnthropicModel(deployment.ModelID) ||
