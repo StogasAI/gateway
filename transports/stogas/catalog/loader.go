@@ -1043,13 +1043,29 @@ var cloudClaudeHostings = map[string][]string{
 	"google-cloud": {"anthropic", "google"},
 }
 
-// validateCloudClaudeSelector checks Claude on AWS or Google Cloud. inferenceGeo is the cloud's
-// endpoint location or Anthropic's inference geography; only Google's own hosting has an EU pool.
+// BedrockSourceRegions are, for each geography of Bedrock's inference profiles but global, the
+// source Regions whose profile keeps every destination in the place that the catalog names for
+// that geography. Another source can add its own Region: Canada (Central) adds Canada to the US
+// profile, and London adds the United Kingdom to the EU profile. Opt-in Regions are left out
+// until a check from them shows where their profiles run.
+var BedrockSourceRegions = map[string]map[string]bool{
+	"us": {"us-east-1": true, "us-east-2": true, "us-west-1": true, "us-west-2": true},
+	"eu": {"eu-central-1": true, "eu-north-1": true, "eu-west-1": true, "eu-west-3": true},
+	"jp": {"ap-northeast-1": true, "ap-northeast-3": true},
+	"au": {"ap-southeast-2": true},
+	"in": {"ap-south-1": true},
+	"ca": {"ca-central-1": true},
+}
+
+// validateCloudClaudeSelector checks Claude on AWS or Google Cloud. inferenceGeo is the
+// geography of Bedrock's inference profile, Google's endpoint location or Anthropic's inference
+// geography, which is global or us.
 func validateCloudClaudeSelector(deploymentID, providerID string, deployment *compiledDeployment) error {
 	selector := deployment.Upstream
 	route, hosted := providerID+"-messages", slices.Contains(cloudClaudeHostings[providerID], selector.Hosting)
 	geo := selector.InferenceGeo == "global" || selector.InferenceGeo == "us" ||
-		selector.InferenceGeo == "eu" && selector.Hosting == "google"
+		selector.InferenceGeo == "eu" && selector.Hosting == "google" ||
+		selector.Hosting == "aws" && BedrockSourceRegions[selector.InferenceGeo] != nil
 	if !hosted || !geo || !schemas.IsAnthropicModel(deployment.ModelID) ||
 		selector.ChuteID != "" || selector.GPUCount != nil || selector.ReasoningMode != "" ||
 		selector.DeploymentType != "" || selector.ModelFormat != "" || selector.ModelVersion != "" {

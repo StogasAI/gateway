@@ -1,0 +1,32 @@
+# Bedrock's Canada inference profile, at AWS's 10 percent premium over the global profile. From
+# Canada (Central) it runs only there and in Calgary; the gateway uses no other source Region for
+# it.
+# Prices from the AWS Price List (AmazonBedrockFoundationModels, "Standard"), reviewed 2026-11-05:
+# https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonBedrockFoundationModels/current/index.json
+# Messages API support, limits and retention reviewed 2026-11-03: https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-haiku-5-5.html
+deployments:
+  modelId: claude-haiku-5-5
+  routeIds: [aws-messages]
+  upstream:
+    model: ca.anthropic.claude-haiku-5-5
+    hosting: aws
+    inferenceGeo: ca
+  overrides:
+    dataHandling:
+      processingLocation: CA
+  pricing:
+    input_tokens:
+      per_mill_tokens: '0.11'
+      per_mill_context_gt_100k: '0.55'
+    cached_input_tokens:
+      per_mill_tokens: '0.011'
+      per_mill_context_gt_100k: '0.055'
+    cache_write_5m_input_tokens:
+      per_mill_tokens: '0.1375'
+      per_mill_context_gt_100k: '0.6875'
+    cache_write_1h_input_tokens:
+      per_mill_tokens: '0.22'
+      per_mill_context_gt_100k: '1.1'
+    output_tokens:
+      per_mill_tokens: '0.55'
+      per_mill_context_gt_100k: '2.75'

@@ -47,10 +47,6 @@ var (
 	googleKeyIDPattern        = regexp.MustCompile(`^[0-9a-f]{40}$`)
 )
 
-// awsUSRegions are the source Regions whose US inference profile keeps every
-// destination in the US. A Canadian source adds a Canadian destination.
-var awsUSRegions = map[string]bool{"us-east-1": true, "us-east-2": true, "us-west-1": true, "us-west-2": true}
-
 // vertexHosts are Vertex AI's endpoints for Claude by location: the global
 // endpoint and the us and eu multi-regions.
 var vertexHosts = map[string]string{
@@ -164,8 +160,8 @@ func cloudCredentialTarget(provider schemas.ModelProvider, secret string) (billi
 }
 
 // cloudTargetServes reports whether a target can serve a deployment: it names
-// the deployment's hosting, and Bedrock's US inference profile starts in a US
-// Region.
+// the deployment's hosting, and a Bedrock inference profile other than global
+// starts in a Region that keeps it in its geography.
 func cloudTargetServes(provider schemas.ModelProvider, target *billing.CloudTarget, deployment catalog.Deployment) bool {
 	if target == nil || !slices.Contains(target.Hosting, deployment.Upstream.Hosting) {
 		return false
@@ -175,7 +171,8 @@ func cloudTargetServes(provider schemas.ModelProvider, target *billing.CloudTarg
 		if !awsRegionPattern.MatchString(target.Region) {
 			return false
 		}
-		return deployment.Upstream.Hosting != hostingAWS || deployment.Upstream.InferenceGeo != "us" || awsUSRegions[target.Region]
+		geo := deployment.Upstream.InferenceGeo
+		return deployment.Upstream.Hosting != hostingAWS || geo == "global" || catalog.BedrockSourceRegions[geo][target.Region]
 	case catalog.ProviderGoogleCloud:
 		return target.Region == ""
 	}

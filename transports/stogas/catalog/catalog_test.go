@@ -1237,6 +1237,32 @@ func TestSnapshotValidationRejectsBrokenReferences(t *testing.T) {
 	}
 }
 
+// Bedrock's geographies are its inference profiles: Claude Platform on AWS takes only Anthropic's
+// global and us, and a profile's ID names its geography.
+func TestSnapshotValidationKeepsBedrockGeographiesToTheirProfiles(t *testing.T) {
+	for _, test := range []struct{ deployment, geo, model, want string }{
+		{"aws-claude-haiku-5-5-eu", "fr", "fr.anthropic.claude-haiku-5-5", "invalid aws upstream selector"},
+		{"aws-claude-fable-5-1-anthropic-hosted", "eu", "claude-fable-5-1", "invalid aws upstream selector"},
+		{"aws-claude-haiku-5-5-eu", "eu", "us.anthropic.claude-haiku-5-5", "must name the eu inference profile"},
+		{"aws-claude-haiku-5-5-ca", "jp", "ca.anthropic.claude-haiku-5-5", "must name the jp inference profile"},
+	} {
+		var whole map[string]any
+		if err := json.Unmarshal(testCatalogJSON, &whole); err != nil {
+			t.Fatal(err)
+		}
+		deployment := whole["graph"].(map[string]any)["deployments"].(map[string]any)[test.deployment].(map[string]any)
+		upstream := deployment["upstream"].(map[string]any)
+		upstream["inferenceGeo"], upstream["model"] = test.geo, test.model
+		data, err := json.Marshal(whole)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := snapshotFromCatalogBytes(data); err == nil || !strings.Contains(err.Error(), test.want) {
+			t.Errorf("%s with %s and %s: got %v, want %q", test.deployment, test.geo, test.model, err, test.want)
+		}
+	}
+}
+
 func TestSnapshotValidationRequiresBoundedInputCeiling(t *testing.T) {
 	for _, limit := range []any{nil, 0, -1, 1050001} {
 		t.Run(fmt.Sprint(limit), func(t *testing.T) {

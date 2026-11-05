@@ -98,8 +98,13 @@ func resolveCloudState(t *testing.T, path, deploymentID, extra string) *State {
 // that serves only that deployment.
 func resolveCloudRequest(t *testing.T, path, deploymentID, extra string) (*State, error) {
 	t.Helper()
-	provider, _, _ := strings.Cut(deploymentID, "-claude")
-	body := `{` + extra + `"model":"provider:` + provider + ` claude-fable-5-1"}`
+	provider, rest, _ := strings.Cut(deploymentID, "-claude")
+	// The model is the deployment ID without its provider and its offering or geography.
+	model := "claude" + rest
+	for _, suffix := range []string{"-anthropic-hosted", "-us", "-eu", "-jp", "-au", "-in", "-ca"} {
+		model = strings.TrimSuffix(model, suffix)
+	}
+	body := `{` + extra + `"model":"provider:` + provider + ` ` + model + `"}`
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Body: []byte(body), Method: "POST", Path: path,
 		AvailableCredentials: map[string][]int{provider: {0}},
@@ -200,9 +205,11 @@ func TestCloudCredentialsRejectEveryMalformedSecret(t *testing.T) {
 	}
 }
 
-func TestCloudTargetServesOnlyItsHostingsAndUSRegionsForUSProfiles(t *testing.T) {
+func TestCloudTargetServesOnlyItsHostingsAndTheRegionsThatKeepAProfileInItsGeography(t *testing.T) {
 	global := cloudDeployment(t, "aws-claude-fable-5-1")
 	us := cloudDeployment(t, "aws-claude-fable-5-1-us")
+	eu := cloudDeployment(t, "aws-claude-haiku-5-5-eu")
+	canada := cloudDeployment(t, "aws-claude-haiku-5-5-ca")
 	platform := cloudDeployment(t, "aws-claude-fable-5-1-anthropic-hosted")
 	vertex := cloudDeployment(t, "google-cloud-claude-fable-5-1-eu")
 	managed := cloudDeployment(t, "google-cloud-claude-fable-5-1-anthropic-hosted")
@@ -220,6 +227,11 @@ func TestCloudTargetServesOnlyItsHostingsAndUSRegionsForUSProfiles(t *testing.T)
 		{"Bedrock US from a US Region", catalog.ProviderAWS, aws("us-east-2", "aws"), us, true},
 		{"Bedrock US from Canada", catalog.ProviderAWS, aws("ca-central-1", "aws"), us, false},
 		{"Bedrock US from Europe", catalog.ProviderAWS, aws("eu-west-1", "aws"), us, false},
+		{"Bedrock EU from Ireland", catalog.ProviderAWS, aws("eu-west-1", "aws"), eu, true},
+		{"Bedrock EU from London, which adds the UK", catalog.ProviderAWS, aws("eu-west-2", "aws"), eu, false},
+		{"Bedrock EU from a US Region", catalog.ProviderAWS, aws("us-east-1", "aws"), eu, false},
+		{"Bedrock Canada from Canada (Central)", catalog.ProviderAWS, aws("ca-central-1", "aws"), canada, true},
+		{"Bedrock Canada from Calgary, an opt-in Region", catalog.ProviderAWS, aws("ca-west-1", "aws"), canada, false},
 		{"Claude Platform without the hosting", catalog.ProviderAWS, aws("us-east-1", "aws"), platform, false},
 		{"Claude Platform", catalog.ProviderAWS, aws("eu-west-1", "anthropic"), platform, true},
 		{"Bedrock without the hosting", catalog.ProviderAWS, aws("us-east-1", "anthropic"), global, false},
