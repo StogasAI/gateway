@@ -136,9 +136,9 @@ func azureDiscoveryCaseNamed(t *testing.T, name string) azureDiscoveryCase {
 	return azureDiscoveryCase{}
 }
 
-// TestAzureDiscoveryCases runs the gateway's discovery on the cases that Control's discovery runs
-// (apps/tests/native/azure-discovery-cases.test.ts), so both save the same targets from the same
-// answers, fail with the same messages, and make the same requests.
+// TestAzureDiscoveryCases runs the gateway's discovery on the cases that Control's discovery
+// runs, so both save the same targets from the same answers, fail with the same messages, and
+// make the same requests.
 func TestAzureDiscoveryCases(t *testing.T) {
 	for _, entry := range loadAzureDiscoveryCases(t) {
 		t.Run(entry.Name, func(t *testing.T) {
@@ -354,7 +354,7 @@ func (a *azureDiscoveryAtScale) ServeHTTP(w http.ResponseWriter, r *http.Request
 
 // TestAzureDiscoveryAtItsLimits discovers the most targets that a discovery keeps, 20,000, as an
 // account's deployments and as Instant models in Foundry projects, and one more of each. Control's
-// discovery runs the same cases (apps/tests/native/azure-discovery.test.ts).
+// discovery runs the same cases.
 func TestAzureDiscoveryAtItsLimits(t *testing.T) {
 	type outcome struct {
 		bindings, deployments int

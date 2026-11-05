@@ -19,9 +19,9 @@ import (
 )
 
 // Only a gateway can open a customer-encrypted Azure credential, so a gateway discovers its
-// targets as Control discovers a stored credential's (apps/control/src/lib/azure-byok-discovery.ts):
-// the same reads of Azure Resource Manager, bounds, targets and messages, so the dashboard shows
-// both kinds alike. The cases in testdata/azure-discovery run against both implementations.
+// targets as Control discovers a stored credential's: the same reads of Azure Resource Manager,
+// bounds, targets and messages, so the dashboard shows both kinds alike. The cases in
+// testdata/azure-discovery run against both implementations.
 const (
 	armInstantAPIVersion     = "2026-01-15-preview"
 	armLocationsAPIVersion   = "2022-12-01"

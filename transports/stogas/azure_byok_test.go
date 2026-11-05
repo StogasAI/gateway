@@ -33,7 +33,7 @@ func azureTestBinding() billing.AzureBinding {
 	return billing.AzureBinding{
 		DeploymentName:     "customer-sol",
 		DeploymentType:     "global_standard",
-		Endpoint:           "https://stogas-ai.openai.azure.com",
+		Endpoint:           "https://example.openai.azure.com",
 		Hosting:            "azure",
 		ModelFormat:        "OpenAI",
 		ModelName:          "gpt-5.6-sol",
@@ -299,7 +299,7 @@ func TestAzureUnreportedRepliesUseOnlyTargetsWhoseVersionAzureKeeps(t *testing.T
 	now := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	binding := azureTestBinding()
 	binding.ModelFormat, binding.ModelName, binding.ModelVersion = "DeepSeek", "DeepSeek-V4-Flash", "2026-04-23"
-	binding.Endpoint = "https://stogas-ai.services.ai.azure.com"
+	binding.Endpoint = "https://example.services.ai.azure.com"
 	binding.AutoUpgrade = "new_default"
 	deployment := azureTestResolution().Deployment
 	deployment.Upstream.ModelFormat, deployment.Upstream.Model, deployment.Upstream.ModelVersion = "DeepSeek", "DeepSeek-V4-Flash", "2026-04-23"
@@ -451,11 +451,11 @@ func TestAzureDirectKeyRejectsTargetOrEndpointSubstitution(t *testing.T) {
 			binding.Endpoint = "https://a.b.openai.azure.com"
 		},
 		"userinfo": func(binding *billing.AzureBinding, _ *catalog.ResolvedRequest) {
-			binding.Endpoint = "https://user@stogas-ai.openai.azure.com"
+			binding.Endpoint = "https://user@example.openai.azure.com"
 		},
 		"query": func(binding *billing.AzureBinding, _ *catalog.ResolvedRequest) { binding.Endpoint += "?x=1" },
 		"project on deployment": func(binding *billing.AzureBinding, _ *catalog.ResolvedRequest) {
-			binding.Endpoint = "https://stogas-ai.services.ai.azure.com/api/projects/project"
+			binding.Endpoint = "https://example.services.ai.azure.com/api/projects/project"
 		},
 	}
 	for name, mutate := range tests {
@@ -543,7 +543,7 @@ func TestAzureDirectKeySupportsInstantProjectBinding(t *testing.T) {
 	binding := azureTestBinding()
 	binding.DeploymentName = "gpt-5.6-sol-2026-07-09"
 	binding.DeploymentType = "instant"
-	binding.Endpoint = "https://stogas-ai.services.ai.azure.com/api/projects/Project_1"
+	binding.Endpoint = "https://example.services.ai.azure.com/api/projects/Project_1"
 	resolution := azureTestResolution()
 	resolution.Deployment.ID = "azure-gpt-5.6-sol-instant"
 	resolution.Deployment.Upstream.DeploymentType = "instant"
@@ -557,7 +557,7 @@ func TestAzureDirectKeySupportsInstantProjectBinding(t *testing.T) {
 		t.Fatalf("instant binding = %#v, model=%q, err=%v", key, wireModel, err)
 	}
 
-	binding.Endpoint = "https://stogas-ai.services.ai.azure.com"
+	binding.Endpoint = "https://example.services.ai.azure.com"
 	if _, _, err = azureDirectKey(&billing.Authorization{
 		AzureBinding:       &binding,
 		UpstreamByok:       "00000000-0000-8000-8000-000000000001",
