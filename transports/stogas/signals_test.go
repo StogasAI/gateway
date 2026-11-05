@@ -1169,7 +1169,7 @@ func TestProviderModelRevisionCompatibility(t *testing.T) {
 
 // Customers name their Azure deployments. Azure Chat Completions reports the OpenAI model and
 // version that served, while Azure Responses, and Chat Completions for other model formats, repeat
-// the deployment name, as a staging probe observed on November 2, 2026.
+// the deployment name.
 func TestAzureBoundDeploymentModelReports(t *testing.T) {
 	bound := func(route catalog.Route, format, deployment string) *State {
 		t.Helper()

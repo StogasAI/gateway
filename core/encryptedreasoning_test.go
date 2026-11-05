@@ -1823,15 +1823,15 @@ func TestResponsesFallbackHealsEncryptedContentRefusal(t *testing.T) {
 		refusalBody, encryptedContent string
 	}{
 		{
-			// The logged incident: gpt-5.6-sol pinned to azure with a
-			// bedrock_mantle fallback, Claude Code replaying reasoning every turn.
+			// gpt-5.6-sol pinned to Azure with a Bedrock Mantle fallback, while
+			// the client replays reasoning every turn.
 			name:             "azure primary falls back to mantle",
 			primaryProvider:  schemas.Azure,
 			fallbackProvider: schemas.OpenAI,
 			primaryModel:     "gpt-5.6-sol",
 			fallbackModel:    "openai.gpt-5.6-sol",
-			primaryKeyID:     "azure-hrt",
-			fallbackKeyID:    "AWS Bedrock Mantle us-east-2",
+			primaryKeyID:     "azure-primary",
+			fallbackKeyID:    "mantle-fallback",
 			rateLimitBody:    azureRateLimitBody,
 			refusalBody:      mantleRefusalBody,
 			// Azure-minted: Fernet-shaped, carrying none of the `rsn_`/`smry_`
@@ -1846,8 +1846,8 @@ func TestResponsesFallbackHealsEncryptedContentRefusal(t *testing.T) {
 			fallbackProvider: schemas.Azure,
 			primaryModel:     "openai.gpt-5.6-sol",
 			fallbackModel:    "gpt-5.6-sol",
-			primaryKeyID:     "AWS Bedrock Mantle us-east-2",
-			fallbackKeyID:    "azure-hrt",
+			primaryKeyID:     "mantle-primary",
+			fallbackKeyID:    "azure-fallback",
 			rateLimitBody:    mantleRateLimitBody,
 			refusalBody:      azureRefusalBody,
 			// Mantle-minted: prefixed exactly as Mantle stamps a reasoning body,

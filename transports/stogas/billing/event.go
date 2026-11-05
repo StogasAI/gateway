@@ -431,7 +431,7 @@ func NormalizeUpstreamStatus(bifrostErr *schemas.BifrostError) string {
 //     (https://platform.claude.com/docs/en/api/rate-limits#setting-your-own-spend-limit), a
 //     credit balance too low to start, and an inference_geo that the key's workspace does not
 //     allow (400 "inference_geo 'global' is not allowed for this workspace. Allowed values:
-//     ['us']", November 3, 2026). They read as the account's quota and access errors.
+//     ['us']"). They read as the account's quota and access errors.
 //   - The prompt is longer than the deployment's context window, which another deployment of the
 //     model can have larger: Anthropic's 400 "prompt is too long: 215000 tokens > 200000
 //     maximum", also on Bedrock and Vertex, Bedrock's "Input is too long for requested model.",

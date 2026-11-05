@@ -1,8 +1,7 @@
 name: Fuzz Campaign
 
-# Runs nightly, and Control's hourly gateway-fuzz-campaign task warns in Admin
-# while the newest campaign failed. Tests run every committed seed, and each
-# crash a campaign finds is committed as one.
+# Runs nightly. Tests run every committed seed, and each crash a campaign finds
+# is committed as one.
 on:
   schedule:
     - cron: '17 5 * * *'
