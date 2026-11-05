@@ -382,7 +382,8 @@ func TestModelFieldTerms(t *testing.T) {
 		"gpt-5.5-2026-04-23 provider:open-ai":             {"openai"},
 		"route:openai-responses model:gpt-5.5-2026-04-23": {"openai"},
 		"deployment:openai-gpt-5.5-2026-04-23":            {"openai"},
-		"provider:gcp claude-haiku-4.5":                   {},
+		"provider:gcp claude-haiku-4.5":                   {"google-cloud"},
+		"provider:gcp claude-opus-4.6":                    {},
 		"author:anthropic provider:anthropic":             {"anthropic"},
 	} {
 		if got := providers(field); !slices.Equal(got, want) {
@@ -1258,10 +1259,12 @@ func TestSnapshotValidationRejectsBrokenReferences(t *testing.T) {
 }
 
 // Bedrock's geographies are its inference profiles: Claude Platform on AWS takes only Anthropic's
-// global and us, and a profile's ID names its geography.
+// global and us, or none for models before Claude 4.6, and a profile's ID names its geography.
 func TestSnapshotValidationKeepsBedrockGeographiesToTheirProfiles(t *testing.T) {
 	for _, test := range []struct{ deployment, geo, model, want string }{
 		{"aws-claude-haiku-5-5-eu", "fr", "fr.anthropic.claude-haiku-5-5", "invalid aws upstream selector"},
+		{"aws-claude-haiku-5-5-eu", "", "eu.anthropic.claude-haiku-5-5", "invalid aws upstream selector"},
+		{"google-cloud-claude-fable-5-1", "", "claude-fable-5-1", "invalid google-cloud upstream selector"},
 		{"aws-claude-fable-5-1-anthropic-hosted", "eu", "claude-fable-5-1", "invalid aws upstream selector"},
 		{"aws-claude-haiku-5-5-eu", "eu", "us.anthropic.claude-haiku-5-5", "must name the eu inference profile"},
 		{"aws-claude-haiku-5-5-ca", "jp", "ca.anthropic.claude-haiku-5-5", "must name the jp inference profile"},
@@ -1279,6 +1282,16 @@ func TestSnapshotValidationKeepsBedrockGeographiesToTheirProfiles(t *testing.T) 
 		}
 		if _, err := snapshotFromCatalogBytes(data); err == nil || !strings.Contains(err.Error(), test.want) {
 			t.Errorf("%s with %s and %s: got %v, want %q", test.deployment, test.geo, test.model, err, test.want)
+		}
+	}
+	// Anthropic's own offering on each cloud serves its models before Claude 4.6 with no geography.
+	snapshot, err := snapshotFromCatalogBytes(testCatalogJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"aws-claude-opus-4-5-anthropic-hosted", "google-cloud-claude-haiku-4-5-anthropic-hosted"} {
+		if deployment, ok := snapshot.graph.Deployments[id]; !ok || deployment.Upstream.InferenceGeo != "" || deployment.Upstream.Hosting != "anthropic" {
+			t.Errorf("%s: %#v", id, deployment.Upstream)
 		}
 	}
 }

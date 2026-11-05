@@ -1,0 +1,20 @@
+# Claude Platform on AWS rates usage at Anthropic's standard prices, and US inference at its
+# multiplier. Reviewed 2026-11-05: https://platform.claude.com/docs/en/build-with-claude/claude-platform-on-aws
+# and https://platform.claude.com/docs/en/about-claude/pricing#claude-platform-on-aws-pricing
+deployments:
+  modelId: claude-opus-4-5
+  routeIds: [aws-messages]
+  upstream:
+    model: claude-opus-4-5-20251101
+    hosting: anthropic
+  pricing:
+    input_tokens:
+      per_mill_tokens: '5'
+    cached_input_tokens:
+      per_mill_tokens: '0.5'
+    cache_write_5m_input_tokens:
+      per_mill_tokens: '6.25'
+    cache_write_1h_input_tokens:
+      per_mill_tokens: '10'
+    output_tokens:
+      per_mill_tokens: '25'
