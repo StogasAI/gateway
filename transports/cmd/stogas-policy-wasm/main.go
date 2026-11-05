@@ -24,8 +24,8 @@ const maximumInputBytes = 2*policy.MaxStoredSourceBytes + 16<<10
 var input, output []byte
 var inspector *policy.Inspector
 
-// placesJSON is the locations of the catalog that the gateway embeds as its fallback, which
-// `bun stogas gateway catalog` writes beside this file.
+// placesJSON is the locations of the catalog that the gateway embeds as its fallback, written
+// beside this file whenever that fallback is synced with the catalog.
 //
 //go:embed places.json
 var placesJSON []byte

@@ -1,8 +1,8 @@
 // Package catalogtest holds the catalog that the gateway's tests read. It began as the catalog's
 // source as it stood then, with each retirement date a century later, so a change to the real
 // catalog cannot change what a test checks, and no record retires while the tests run. A test
-// that needs another record adds it to data; `bun stogas gateway catalog` builds data into
-// generated with the catalog's own build.
+// that needs another record adds it to data, which the catalog's own build compiles into
+// generated.
 package catalogtest
 
 import (
