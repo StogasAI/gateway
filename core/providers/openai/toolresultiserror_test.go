@@ -12,8 +12,8 @@ import (
 // TestToolResultIsErrorStrippedFromOpenAIWire verifies that IsError — an
 // Anthropic-family marker with no OpenAI wire equivalent — never serializes
 // into an OpenAI message. OpenAI-compatible providers reject unknown message
-// parameters (see the Responses-path incident with `input[N].error`), so the
-// converter must strip it rather than forward it.
+// parameters, such as `input[N].error` on Responses, so the converter must
+// strip it rather than forward it.
 func TestToolResultIsErrorStrippedFromOpenAIWire(t *testing.T) {
 	original := &schemas.ChatToolMessage{
 		ToolCallID: schemas.Ptr("call_1"),
