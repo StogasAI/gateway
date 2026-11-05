@@ -12,6 +12,7 @@ var testPlaces = func() *location.Places {
 		"CH":            {"europe"},
 		"north-america": {"world"},
 		"US":            {"north-america"},
+		"JP":            {"world"},
 	})
 	if err != nil {
 		panic(err)

@@ -894,6 +894,9 @@ func TestProviderExecutionReportsStayWithinAuthorizedClass(t *testing.T) {
 		{name: "Azure US Data Zone Claude geography", provider: schemas.Azure, processing: "US", reportedGeo: "us"},
 		{name: "Azure US Data Zone Claude rejects a global report", provider: schemas.Azure, processing: "US", reportedGeo: "global", wantError: true},
 		{name: "OpenAI geography report", provider: schemas.OpenAI, processing: "world", reportedGeo: "global"},
+		{name: "a country geography stays in its country", provider: schemas.Anthropic, processing: "JP", reportedGeo: "jp"},
+		{name: "a country geography outside the promised place", provider: schemas.Anthropic, processing: "eu", reportedGeo: "jp", wantError: true},
+		{name: "an unknown geography satisfies only world", provider: schemas.Anthropic, processing: "JP", reportedGeo: "kr", wantError: true},
 	}
 
 	for _, tc := range tests {
