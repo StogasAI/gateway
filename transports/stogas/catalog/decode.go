@@ -92,7 +92,9 @@ type groupSummary struct {
 
 // locationNode is what the gateway reads of a location: the places that directly contain it.
 type locationNode struct {
-	Name shown `json:"name"`
+	Description shown `json:"description"`
+	Kind        shown `json:"kind"`
+	Name        shown `json:"name"`
 
 	ParentIDs []string `json:"parentIds"`
 }

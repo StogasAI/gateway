@@ -242,6 +242,9 @@ type compiledModel struct {
 }
 
 type compiledProvider struct {
+	// AccountLocations are the places where an account's resources can keep data. A credential
+	// narrows storage to its resource's place, which the gateway checks against the catalog's places.
+	AccountLocations     shown    `json:"accountLocations"`
 	RetirementDate       shown    `json:"retirementDate"`
 	Aliases              []string `json:"aliases"`
 	CredentialModes      []string `json:"credentialModes"`
