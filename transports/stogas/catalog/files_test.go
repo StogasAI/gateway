@@ -239,6 +239,107 @@ func TestReleaseLeavesRecordsOutOnceTheyRetire(t *testing.T) {
 	}
 }
 
+// A model field that names what has retired gets model_retired with the day on which it retired,
+// for every kind of term and their combinations, whether the day ended while the release served or
+// before it loaded. What still serves somewhere does not.
+func TestRetiredSelectionsNameTheirDayWheneverTheyRetired(t *testing.T) {
+	root, parts := testFiles(t)
+	noon := func(year int, month time.Month, day int) time.Time {
+		return time.Date(year, month, day, 12, 0, 0, 0, time.UTC)
+	}
+	type check struct {
+		field string
+		want  variant
+		// date is the day that the field names as retired once the instant passes; empty when
+		// something that it selects still serves.
+		date string
+	}
+	for _, retirement := range []struct {
+		ends   time.Time
+		route  Route
+		checks []check
+	}{{
+		// gpt-oss, its one model and both of its Azure deployments retire on 2127-09-15.
+		ends: noon(2127, time.September, 16), route: RouteChat,
+		checks: []check{
+			{field: "gpt-oss", date: "2127-09-15"},
+			{field: "group:gpt-oss", date: "2127-09-15"},
+			{field: "gpt-oss-120b", date: "2127-09-15"},
+			{field: "openai/gpt-oss-120b", date: "2127-09-15"},
+			{field: "azure-gpt-oss-120b-us", date: "2127-09-15"},
+			{field: "provider:azure gpt-oss", date: "2127-09-15"},
+		},
+	}, {
+		// Azure's Claude Opus 5.5 retires on 2127-09-18, and Anthropic's goes on.
+		ends: noon(2127, time.September, 19), route: RouteChat,
+		checks: []check{
+			{field: "provider:azure claude-opus-5-5", date: "2127-09-18"},
+			{field: "route:azure-anthropic-messages claude-opus-5-5", date: "2127-09-18"},
+			{field: "author:anthropic provider:azure"},
+			{field: "azure-claude-opus-5-5-us", date: "2127-09-18"},
+			{field: "claude-opus-5-5"},
+			{field: "group:claude-opus provider:anthropic"},
+		},
+	}, {
+		// Azure's Fast deployments retire before its Standard ones, so a Fast request for the
+		// model finds no Fast deployment on Azure, but the model has not retired there.
+		ends: noon(2127, time.January, 16), route: RouteChat,
+		checks: []check{
+			{field: "azure-claude-opus-5-5-fast", date: "2127-01-15"},
+			{field: "provider:azure claude-opus-5-5", want: variant{tier: TierFast}},
+		},
+	}, {
+		// A route retires before the deployments that another route serves.
+		ends: noon(2128, time.March, 12), route: RouteResponses,
+		checks: []check{
+			{field: "route:azure-responses", date: "2128-03-11"},
+			{field: "route:azure-responses gpt-6-luna", date: "2128-03-11"},
+			// Every Azure deployment of OpenAI's models has retired by then.
+			{field: "author:openai provider:azure", date: "2128-03-11"},
+			{field: "provider:azure gpt-6", date: "2128-03-11"},
+		},
+	}} {
+		loaded := map[string]time.Time{"before": retirement.ends.Add(-time.Hour), "at": retirement.ends}
+		for when, at := range loaded {
+			held := parts
+			if when == "at" {
+				// Once a part's records have all retired, a release comes without it.
+				files, err := PartsInEffect(root, at)
+				if err != nil {
+					t.Fatal(err)
+				}
+				held = make(map[string][]byte, len(files))
+				for _, file := range files {
+					held[file.SHA256] = parts[file.SHA256]
+				}
+			}
+			snap, err := snapshotFromFiles(root, held, Identity{}, at)
+			if err != nil {
+				t.Fatalf("load %s %s: %v", when, retirement.ends, err)
+			}
+			active.Store(snap)
+			for _, check := range retirement.checks {
+				if when == "before" {
+					_, err := routingSelectionsForRequest(retirement.ends.Add(-time.Nanosecond), retirement.route, check.field, check.want, nil, nil)
+					if apiErr, ok := err.(APIError); ok && apiErr.Code == "model_retired" {
+						t.Fatalf("%q retired before %s: %v", check.field, retirement.ends, err)
+					}
+				}
+				_, err := routingSelectionsForRequest(retirement.ends, retirement.route, check.field, check.want, nil, nil)
+				apiErr, retired := err.(APIError)
+				retired = retired && apiErr.Code == "model_retired"
+				switch {
+				case check.date == "" && retired:
+					t.Fatalf("loaded %s %s: %q retired although some of it serves: %v", when, retirement.ends, check.field, err)
+				case check.date != "" && err != modelRetired(check.date):
+					t.Fatalf("loaded %s %s: %q: %v, want it retired on %s", when, retirement.ends, check.field, err, check.date)
+				}
+			}
+		}
+	}
+	loadTestCatalog(t)
+}
+
 // A deployment that two routes serve goes on through the one that stays once the other retires,
 // as the catalog build dates it, and the release still loads.
 func TestDeploymentOutlivesOneOfItsRoutes(t *testing.T) {
