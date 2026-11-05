@@ -55,6 +55,16 @@ func modelRetired(date string) APIError {
 	return APIError{Code: "model_retired", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "The requested model retired on " + date + ". Choose another model."}
 }
 
+// modelUnsupported is the error for a request whose model field names only what the catalog lists
+// but Stogas does not serve, with the catalog's reason. No deployment can serve it, as for an ID
+// that the catalog does not list.
+func modelUnsupported(reason string) APIError {
+	return APIError{
+		StatusCode: http.StatusBadRequest, Code: ErrModelUnavailable.Code, Type: ErrorTypeInvalidRequest, Param: "model",
+		Message: "Stogas does not serve the requested model: " + reason + " Choose another model.",
+	}
+}
+
 type APIError struct {
 	StatusCode int
 	Code       string

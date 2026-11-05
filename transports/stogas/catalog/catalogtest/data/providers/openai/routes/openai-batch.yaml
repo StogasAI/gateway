@@ -1,0 +1,12 @@
+# A route that Stogas does not serve, which the gateway never reads.
+routes:
+  providerId: openai
+  endpoint: https://api.openai.com/v1/batches
+  interfaces: [responses]
+  inputModalities: [text, image]
+  documentFormats:
+    extensions: []
+    mediaTypes: []
+  dataHandling:
+    endToEndEncrypted: false
+  stogasUnsupported: The gateway answers each request as it arrives and has no batch API.

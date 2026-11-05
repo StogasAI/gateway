@@ -79,6 +79,8 @@ type summary struct {
 	ProviderID     string   `json:"providerId"`
 	RetirementDate *string  `json:"retirementDate"`
 	RouteIDs       []string `json:"routeIds"`
+	// Why Stogas does not serve the record, or nothing when it does.
+	StogasUnsupported string `json:"stogasUnsupported"`
 }
 
 // groupSummary is what the gateway reads of a group: the groups that contain it, and the date on
@@ -88,8 +90,9 @@ type groupSummary struct {
 	AuthorID shown `json:"authorId"`
 	Name     shown `json:"name"`
 
-	ParentIDs      []string `json:"parentIds"`
-	RetirementDate *string  `json:"retirementDate"`
+	ParentIDs         []string `json:"parentIds"`
+	RetirementDate    *string  `json:"retirementDate"`
+	StogasUnsupported string   `json:"stogasUnsupported"`
 }
 
 // locationNode is what the gateway reads of a location: the places that directly contain it.
@@ -140,7 +143,9 @@ type compiledCatalog struct {
 	Graph     compiledGraph       `json:"graph"`
 	Schedule  []scheduleEntry     `json:"schedule"`
 	Retired   map[string]string   `json:"retired"`
-	Paths     []servedPath        `json:"-"`
+	// Unsupported holds why Stogas does not serve each selector that names only what it does not.
+	Unsupported map[string]string `json:"unsupported"`
+	Paths       []servedPath      `json:"-"`
 }
 
 // servedPath is a deployment through one of its routes, current or retired, as the root
@@ -150,6 +155,8 @@ type servedPath struct {
 	author, provider, route, model, deployment string
 	groups                                     []string
 	retirementDate                             *string
+	// unsupported says why Stogas does not serve the deployment, or nothing when it does.
+	unsupported string
 }
 
 // A schedule entry lists every node that differs from the base graph from Start until the

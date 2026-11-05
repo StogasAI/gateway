@@ -22,8 +22,8 @@ import (
 )
 
 const (
-	catalogSchema     = "stogas.catalog.v10"
-	catalogPartSchema = "stogas.catalog.part.v10"
+	catalogSchema     = "stogas.catalog.v11"
+	catalogPartSchema = "stogas.catalog.part.v11"
 	// Evidence approves a release by the digest of its root, and the root names each part by
 	// digest and size. The build refuses a larger root, part or catalog, so the gateway refuses
 	// one before it downloads it.
@@ -151,11 +151,13 @@ func loadSnapshot() (*snapshot, error) {
 }
 
 // PartFile names a part by the SHA-256, in hex, and size of its bytes, with the latest date
-// that one of its records retires, or none while one of them never does.
+// that one of its records retires, or none while one of them never does, and whether it holds
+// the records that Stogas does not serve, which the gateway never reads.
 type PartFile struct {
-	SHA256  string  `json:"sha256"`
-	Size    int64   `json:"size"`
-	Through *string `json:"through"`
+	SHA256            string  `json:"sha256"`
+	Size              int64   `json:"size"`
+	Through           *string `json:"through"`
+	StogasUnsupported bool    `json:"stogasUnsupported"`
 }
 
 // partFiles reads the parts that a root names, after checking the root's size and schema, each
@@ -192,14 +194,19 @@ func partFiles(root []byte) ([]PartFile, error) {
 	return listing.Parts, nil
 }
 
-// PartsInEffect lists the parts of a root that hold a record that has not retired at an
-// instant, which is each part whose records do not all retire by then.
+// PartsInEffect lists the parts of a root that the gateway reads at an instant: each part that
+// holds records that Stogas serves, not all of which retire by then.
 func PartsInEffect(root []byte, at time.Time) ([]PartFile, error) {
 	files, err := partFiles(root)
 	if err != nil {
 		return nil, err
 	}
-	return slices.DeleteFunc(files, func(file PartFile) bool { return retiredAt(file.Through, at) }), nil
+	return slices.DeleteFunc(files, func(file PartFile) bool { return !inEffect(file, at) }), nil
+}
+
+// inEffect says whether the gateway reads a part at an instant.
+func inEffect(file PartFile, at time.Time) bool {
+	return !file.StogasUnsupported && !retiredAt(file.Through, at)
 }
 
 // retiredAt says whether a record that retires on a date, or never when there is none, has
@@ -282,6 +289,10 @@ func assemble(rootData []byte, files []PartFile, parts map[string][]byte, at tim
 			if (date != nil && !validDate(*date)) || (through != nil && (date == nil || *date > *through)) {
 				return compiledCatalog{}, fmt.Errorf("%s %s retires after its part", kind.name, id)
 			}
+			// A record that Stogas does not serve sits in a part that the gateway never reads.
+			if (summary.StogasUnsupported != "") != files[summary.Part].StogasUnsupported {
+				return compiledCatalog{}, fmt.Errorf("%s %s and its part differ on whether Stogas serves it", kind.name, id)
+			}
 			records[summary.Part]++
 		}
 	}
@@ -298,7 +309,7 @@ func assemble(rootData []byte, files []PartFile, parts map[string][]byte, at tim
 	}
 	changes := make([]compiledGraph, len(root.Schedule))
 	for index, file := range files {
-		if retiredAt(file.Through, at) {
+		if !inEffect(file, at) {
 			continue
 		}
 		data, ok := parts[file.SHA256]
@@ -401,6 +412,28 @@ func assemble(rootData []byte, files []PartFile, parts map[string][]byte, at tim
 			retired[id] = *group.RetirementDate
 		}
 	}
+	// Each selector of a deployment, model, group or route that Stogas does not serve keeps the
+	// reason, unless it has retired, which a request learns first.
+	unsupported := make(map[string]string)
+	unserved := func(selector, reason string) {
+		if _, gone := retired[selector]; !gone && reason != "" {
+			unsupported[selector] = reason
+		}
+	}
+	for id, summary := range summaries.Deployments {
+		unserved(id, summary.StogasUnsupported)
+	}
+	for id, summary := range summaries.Routes {
+		unserved(routeSelector(id), summary.StogasUnsupported)
+	}
+	for id, summary := range summaries.Models {
+		for _, selector := range append([]string{id}, summary.Aliases...) {
+			unserved(selector, summary.StogasUnsupported)
+		}
+	}
+	for id, group := range summaries.Groups {
+		unserved(id, group.StogasUnsupported)
+	}
 	paths, err := servedPaths(summaries)
 	if err != nil {
 		return compiledCatalog{}, err
@@ -430,7 +463,9 @@ func assemble(rootData []byte, files []PartFile, parts map[string][]byte, at tim
 	for id, node := range root.Locations {
 		locations[id] = node.ParentIDs
 	}
-	return compiledCatalog{Locations: locations, Graph: graph, Schedule: schedule, Retired: retired, Paths: paths}, nil
+	return compiledCatalog{
+		Locations: locations, Graph: graph, Schedule: schedule, Retired: retired, Unsupported: unsupported, Paths: paths,
+	}, nil
 }
 
 // servedPaths lists every deployment of the root through each of its routes, current or retired,
@@ -463,6 +498,7 @@ func servedPaths(summaries rootSummaries) ([]servedPath, error) {
 			paths = append(paths, servedPath{
 				author: model.AuthorID, provider: route.ProviderID, route: routeID, model: deployment.ModelID,
 				deployment: deploymentID, groups: groups[deployment.ModelID], retirementDate: date,
+				unsupported: deployment.StogasUnsupported,
 			})
 		}
 	}
@@ -543,17 +579,33 @@ func servedRoot(root []byte, identity Identity) []byte {
 // as the model field matches IDs.
 func validateRetired(retired map[string]string, base *snapshot) error {
 	for selector, date := range retired {
-		live := false
-		if route, ok := strings.CutPrefix(selector, routeSelector("")); ok {
-			_, live = base.index.routes[normalizedID(route)]
-		} else {
-			_, live = base.index.names[normalizedID(selector)]
-		}
-		if live || !validDate(date) {
+		if base.live(selector) || !validDate(date) {
 			return fmt.Errorf("retired selector %s is invalid", selector)
 		}
 	}
 	return nil
+}
+
+// validateUnsupported checks that no request can reach a selector that Stogas does not serve in
+// the graph, as validateRetired does for those that retired.
+func validateUnsupported(unsupported map[string]string, base *snapshot) error {
+	for selector := range unsupported {
+		if base.live(selector) {
+			return fmt.Errorf("selector %s is in the graph, but Stogas does not serve it", selector)
+		}
+	}
+	return nil
+}
+
+// live says whether a selector matches a route, or a model, alias, group or deployment, of the
+// graph as the model field matches IDs.
+func (base *snapshot) live(selector string) bool {
+	if route, ok := strings.CutPrefix(selector, routeSelector("")); ok {
+		_, live := base.index.routes[normalizedID(route)]
+		return live
+	}
+	_, live := base.index.names[normalizedID(selector)]
+	return live
 }
 
 // snapshotFromCompiled validates a release's base state and each dated state, and indexes them
@@ -570,6 +622,9 @@ func snapshotFromCompiled(catalog compiledCatalog) (*snapshot, error) {
 	if err := validateRetired(catalog.Retired, base); err != nil {
 		return nil, err
 	}
+	if err := validateUnsupported(catalog.Unsupported, base); err != nil {
+		return nil, err
+	}
 	for index, entry := range catalog.Schedule {
 		if entry.Start.IsZero() || (index > 0 && !entry.Start.After(catalog.Schedule[index-1].Start)) {
 			return nil, fmt.Errorf("catalog schedule entry %d does not start after the entry before it", index)
@@ -581,6 +636,7 @@ func snapshotFromCompiled(catalog compiledCatalog) (*snapshot, error) {
 		base.schedule = append(base.schedule, datedState{start: entry.Start, state: state})
 	}
 	base.index.retired = normalizedRetired(catalog.Retired)
+	base.index.unsupported = normalizedRetired(catalog.Unsupported)
 	base.index.paths = catalog.Paths
 	return base, nil
 }

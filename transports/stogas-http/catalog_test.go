@@ -33,7 +33,7 @@ func TestCatalogServesEveryPartThatItsRootNames(t *testing.T) {
 		t.Fatalf("catalog = %d, %v", testResponse(current).Code, err)
 	}
 	identity, _ := catalog.ActiveIdentity()
-	if payload.Digest != identity.Digest || payload.Sequence == nil || *payload.Sequence != identity.Sequence || payload.Schema != "stogas.catalog.v10" {
+	if payload.Digest != identity.Digest || payload.Sequence == nil || *payload.Sequence != identity.Sequence || payload.Schema != "stogas.catalog.v11" {
 		t.Fatalf("catalog names %s %v %s, want the active release", payload.Digest, payload.Sequence, payload.Schema)
 	}
 	files, err := catalog.PartsInEffect(body, time.Time{})
