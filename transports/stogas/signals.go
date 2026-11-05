@@ -195,15 +195,16 @@ func validateActualExecutionReport(state *State, serviceTier *schemas.BifrostSer
 	return nil
 }
 
-// reportedInferenceLocation maps Anthropic's usage.inference_geo to a catalog location.
+// reportedInferenceLocation maps a reported usage.inference_geo to a catalog location: global,
+// the EU, or the country of a geography that the catalog's upstreams name.
 func reportedInferenceLocation(reported string) string {
 	switch reported {
-	case "us":
-		return "US"
-	case "eu":
-		return "eu"
 	case "global":
 		return location.World
+	case "eu":
+		return "eu"
+	case "us", "jp", "au", "in", "ca":
+		return strings.ToUpper(reported)
 	}
 	return location.Unknown
 }
