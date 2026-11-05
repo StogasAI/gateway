@@ -1198,16 +1198,18 @@ func TestDeploymentDataHandlingIsMaterializedForTheSelectedRoute(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	chat, ok := snap.deploymentFromCompiled(
+	chat, ok := snap.deploymentFromCompiledAt(
 		"azure-gpt-5.6-sol",
 		snap.graph.Routes["azure-chat-completions"],
+		time.Now(),
 	)
 	if !ok || chat.DataHandling.StorageLocation != "US" {
 		t.Fatalf("chat route handling = %#v", chat.DataHandling)
 	}
-	responses, ok := snap.deploymentFromCompiled(
+	responses, ok := snap.deploymentFromCompiledAt(
 		"azure-gpt-5.6-sol",
 		snap.graph.Routes["azure-responses"],
+		time.Now(),
 	)
 	if !ok || responses.DataHandling.StorageLocation != "eu" {
 		t.Fatalf("responses route handling = %#v", responses.DataHandling)

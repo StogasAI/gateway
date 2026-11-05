@@ -16,6 +16,9 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 	stogas "github.com/maximhq/bifrost/transports/stogas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
+	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"github.com/maximhq/bifrost/transports/stogas/chutese2ee"
+	"github.com/valyala/fasthttp"
 )
 
 // testRun binds one pair whose provider request is ready.
@@ -621,4 +624,48 @@ func TestFailedCallEndsItsOutputWindow(t *testing.T) {
 			t.Fatal("an expired window ended without a timeout")
 		}
 	})
+}
+
+// A Chutes call goes to the chute of the deployment that the request was routed to, also when
+// the catalog in effect names another one by the time the call starts.
+func TestChutesCallsGoToTheRoutedChute(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.WriteHeader(http.StatusForbidden)
+	}))
+	defer upstream.Close()
+	transport, err := chutese2ee.New(chutese2ee.Options{APIKey: "managed-key", APIBaseURL: upstream.URL, RequestTimeout: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer transport.Close()
+	resolution := mustResolvedRequest(t, "/v1/chat/completions", `{"model":"provider:chutes qwen3.6-27b","messages":[{"role":"user","content":"Hi"}]}`)
+	const routed = "0f9c1d2e-3b4a-4c5d-8e6f-7a8b9c0d1e2f"
+	if resolution.Provider != catalog.ProviderChutes || resolution.Deployment.Upstream.ChuteID == "" || resolution.Deployment.Upstream.ChuteID == routed {
+		t.Fatalf("resolution = %s %+v", resolution.Provider, resolution.Deployment.Upstream)
+	}
+	resolution.Deployment.Upstream.ChuteID = routed
+
+	ctx := &requestContext{writer: &sessionResponse{}, request: httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)}
+	request, cancel := schemas.NewBifrostContextWithCancel(t.Context())
+	defer cancel()
+	run := testRun(&Server{}, ctx, request, &stogas.State{Pair: stogas.Pair{Resolution: resolution}}, cancel)
+	result := <-startProviderCall(run, 0, func(attempt *schemas.BifrostContext, _ *schemas.BifrostRequest) (int, *schemas.BifrostError) {
+		call, reply := fasthttp.AcquireRequest(), fasthttp.AcquireResponse()
+		defer fasthttp.ReleaseRequest(call)
+		defer fasthttp.ReleaseResponse(reply)
+		call.Header.SetMethod(http.MethodPost)
+		call.Header.Set("Authorization", "Bearer managed-key")
+		call.SetRequestURI(upstream.URL + "/v1/chat/completions")
+		call.SetBodyString(`{"model":"` + resolution.Model + `"}`)
+		if err := transport.DoRequestWithContext(attempt, call, reply); err != nil {
+			t.Error(err)
+		}
+		return reply.StatusCode(), nil
+	})
+	if !result.called || result.response != http.StatusServiceUnavailable {
+		t.Fatalf("called = %t, status = %d", result.called, result.response)
+	}
+	if chutes := transport.Diagnostics().Chutes; len(chutes) != 1 || chutes[0].ChuteID != routed {
+		t.Fatalf("chutes = %+v", chutes)
+	}
 }

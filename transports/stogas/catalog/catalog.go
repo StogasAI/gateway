@@ -49,34 +49,6 @@ func (s *snapshot) at(instant time.Time) *snapshot {
 	return state
 }
 
-// DeploymentForUpstreamModel resolves the exact model identifier already placed
-// on a provider request. It is intentionally exact: aliases and public model
-// selectors must be resolved before the provider wire is built.
-func DeploymentForUpstreamModel(provider schemas.ModelProvider, upstreamModel string, route Route) (Deployment, bool) {
-	snap := activeState()
-	if snap == nil || upstreamModel == "" {
-		return Deployment{}, false
-	}
-	var match Deployment
-	found := false
-	now := time.Now()
-	for _, routeNode := range snap.routes(provider, route) {
-		for _, deploymentID := range routeNode.DeploymentIDs {
-			compiled, ok := snap.graph.Deployments[deploymentID]
-			if !ok || !servesAt(compiled, routeNode, now) || compiled.Upstream.Model != upstreamModel {
-				continue
-			}
-			deployment, ok := snap.deploymentFromCompiled(deploymentID, routeNode)
-			if !ok || found {
-				return Deployment{}, false
-			}
-			match = deployment
-			found = true
-		}
-	}
-	return match, found
-}
-
 // deploymentAvailableAt says whether a deployment serves at now: until its retirement date has
 // ended everywhere on Earth.
 func deploymentAvailableAt(deployment *compiledDeployment, now time.Time) bool {
@@ -264,10 +236,6 @@ func stringIn(values []string, expected string) bool {
 		}
 	}
 	return false
-}
-
-func (s *snapshot) deploymentFromCompiled(deploymentID string, route compiledRoute) (Deployment, bool) {
-	return s.deploymentFromCompiledAt(deploymentID, route, time.Now())
 }
 
 // deploymentFromCompiledAt resolves the deployment for a request that started at an instant.
