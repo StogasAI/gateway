@@ -61,7 +61,8 @@ func TestClientHeaderCatalogOmitsRemovedProviderSecrets(t *testing.T) {
 }
 
 // A gateway serves the fallback until it approves a release, so the fallback loads with every
-// record that its root lists, but for models without a deployment.
+// record that its root lists, but for models without a deployment and records that Stogas does
+// not serve.
 func TestFallbackLoadsEveryRecordThatItsRootLists(t *testing.T) {
 	root, _, err := Fallback()
 	if err != nil {
@@ -79,6 +80,25 @@ func TestFallbackLoadsEveryRecordThatItsRootLists(t *testing.T) {
 	}
 	if err := json.Unmarshal(root, &listed); err != nil {
 		t.Fatal(err)
+	}
+	unserved := 0
+	for _, summaries := range listed.Summaries {
+		for id, summary := range summaries {
+			var fields struct {
+				StogasUnsupported string `json:"stogasUnsupported"`
+			}
+			if err := json.Unmarshal(summary, &fields); err != nil {
+				t.Fatal(err)
+			}
+			if fields.StogasUnsupported != "" {
+				delete(summaries, id)
+				unserved++
+			}
+		}
+	}
+	// The fallback lists batch APIs, which Stogas does not serve.
+	if unserved == 0 {
+		t.Fatal("the fallback lists nothing that Stogas does not serve")
 	}
 	deployed := map[string]json.RawMessage{}
 	for _, deployment := range snap.graph.Deployments {
