@@ -152,10 +152,11 @@ type compiledGraph struct {
 	Routes      map[string]compiledRoute       `json:"routes"`
 }
 
-// The root holds each author and provider whole. The gateway tells when records retire from
-// their deployments, so it skips their dates.
+// The root holds each author and provider whole. The gateway tells when records retire, and
+// whether Stogas serves them, from their deployments, so it skips their dates and reasons.
 type compiledAuthor struct {
 	RetirementDate       shown    `json:"retirementDate"`
+	StogasUnsupported    shown    `json:"stogasUnsupported"`
 	Aliases              []string `json:"aliases"`
 	HeadquarteredCountry string   `json:"headquarteredCountry,omitempty"`
 	Name                 string   `json:"name"`
@@ -243,6 +244,7 @@ type compiledProvider struct {
 	// narrows storage to its resource's place, which the gateway checks against the catalog's places.
 	AccountLocations     shown    `json:"accountLocations"`
 	RetirementDate       shown    `json:"retirementDate"`
+	StogasUnsupported    shown    `json:"stogasUnsupported"`
 	Aliases              []string `json:"aliases"`
 	CredentialModes      []string `json:"credentialModes"`
 	HeadquarteredCountry string   `json:"headquarteredCountry,omitempty"`

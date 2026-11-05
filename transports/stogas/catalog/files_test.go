@@ -177,15 +177,20 @@ func TestReleaseLeavesRecordsOutOnceTheyRetire(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dated := files[len(files)-1]
+	// Parts of what Stogas does not serve come last and are never in effect.
+	served := slices.DeleteFunc(slices.Clone(files), func(file PartFile) bool { return file.StogasUnsupported })
+	if len(served) == len(files) || !files[len(files)-1].StogasUnsupported {
+		t.Fatal("the test catalog's last part does not list what Stogas does not serve")
+	}
+	dated := served[len(served)-1]
 	if dated.Through == nil || *dated.Through != "2128-03-11" {
-		t.Fatalf("the test catalog's last part is not the dated one: %#v", dated)
+		t.Fatalf("the test catalog's last part that Stogas serves is not the dated one: %#v", dated)
 	}
 	before := datedPartLeaves.Add(-time.Nanosecond)
-	if inEffect, err := PartsInEffect(root, before); err != nil || len(inEffect) != len(files) {
+	if inEffect, err := PartsInEffect(root, before); err != nil || len(inEffect) != len(served) {
 		t.Fatalf("parts in effect before the dated part leaves: %v, %v", inEffect, err)
 	}
-	if inEffect, err := PartsInEffect(root, datedPartLeaves); err != nil || len(inEffect) != len(files)-1 ||
+	if inEffect, err := PartsInEffect(root, datedPartLeaves); err != nil || len(inEffect) != len(served)-1 ||
 		inEffect[len(inEffect)-1].SHA256 == dated.SHA256 {
 		t.Fatalf("parts in effect once the dated part leaves: %v, %v", inEffect, err)
 	}
@@ -340,6 +345,99 @@ func TestRetiredSelectionsNameTheirDayWheneverTheyRetired(t *testing.T) {
 	loadTestCatalog(t)
 }
 
+// The test catalog's one deployment that Stogas does not serve, through its one route of the same.
+const (
+	unsupportedDeployment = "openai-gpt-5.5-2026-04-23-batch"
+	unsupportedReason     = "The gateway answers each request as it arrives and has no batch API."
+)
+
+// A model field that names only what Stogas does not serve gets model_unavailable with Stogas's
+// reason, while a model that Stogas serves elsewhere goes on. The gateway never reads the part
+// that holds these records, so a release loads without it.
+func TestUnsupportedSelectionsGiveTheReason(t *testing.T) {
+	root, parts := testFiles(t)
+	files, err := partFiles(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	held := maps.Clone(parts)
+	for _, file := range files {
+		if file.StogasUnsupported {
+			delete(held, file.SHA256)
+		}
+	}
+	if len(held) == len(parts) {
+		t.Fatal("the test catalog has no part of what Stogas does not serve")
+	}
+	for when, loaded := range map[string]map[string][]byte{"with every part": parts, "without the unserved part": held} {
+		snap, err := snapshotFromFiles(root, loaded, Identity{}, time.Time{})
+		if err != nil {
+			t.Fatalf("load %s: %v", when, err)
+		}
+		if _, ok := snap.graph.Deployments[unsupportedDeployment]; ok {
+			t.Fatalf("loaded %s: a deployment that Stogas does not serve is in the graph", when)
+		}
+		active.Store(snap)
+		for field, unsupported := range map[string]bool{
+			unsupportedDeployment:                       true,
+			"deployment:" + unsupportedDeployment:       true,
+			"route:openai-batch":                        true,
+			"route:openai-batch gpt-5.5-2026-04-23":     true,
+			"provider:openai route:openai-batch":        true,
+			"gpt-5.5-2026-04-23":                        false,
+			"provider:openai gpt-5.5-2026-04-23":        false,
+			"route:openai-responses gpt-5.5-2026-04-23": false,
+		} {
+			_, err := routingSelectionsForRequest(time.Now(), RouteResponses, field, variant{}, nil, nil)
+			if got := err == modelUnsupported(unsupportedReason); got != unsupported {
+				t.Fatalf("loaded %s: %q: %v, want Stogas's reason: %t", when, field, err, unsupported)
+			}
+		}
+	}
+
+	// A term that retired goes first, whatever the order: Azure's gpt-oss deployments retire on
+	// 2127-09-15.
+	retired := time.Date(2127, time.September, 16, 12, 0, 0, 0, time.UTC)
+	snap, err := snapshotFromFiles(root, held, Identity{}, retired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active.Store(snap)
+	for _, field := range []string{"route:openai-batch azure-gpt-oss-120b-us", "azure-gpt-oss-120b-us route:openai-batch"} {
+		if _, err := routingSelectionsForRequest(retired, RouteResponses, field, variant{}, nil, nil); err != modelRetired("2127-09-15") {
+			t.Fatalf("%q: %v, want it retired on 2127-09-15", field, err)
+		}
+	}
+	loadTestCatalog(t)
+}
+
+// A selection whose paths have all retired or are not served names the day on which the last
+// one retired; one whose paths are all not served gives the reason of the first path by
+// deployment and route; one with a path that serves gets neither.
+func TestUnservedSelectionNamesRetirementBeforeReason(t *testing.T) {
+	retired, now := "2127-01-15", time.Date(2128, time.January, 1, 0, 0, 0, 0, time.UTC)
+	path := func(deployment, route, reason string, date *string) servedPath {
+		return servedPath{model: "m", deployment: deployment, route: route, unsupported: reason, retirementDate: date}
+	}
+	for _, test := range []struct {
+		paths []servedPath
+		want  error
+	}{
+		{[]servedPath{path("b", "r", "Reason B.", nil), path("a", "s", "Reason A2.", nil), path("a", "r", "Reason A.", nil)}, modelUnsupported("Reason A.")},
+		{[]servedPath{path("a", "r", "Reason A.", nil), path("c", "r", "", &retired)}, modelRetired(retired)},
+		{[]servedPath{path("a", "r", "Reason A.", nil), path("c", "r", "", &retired), path("d", "r", "", nil)}, nil},
+		{[]servedPath{path("a", "r", "Reason A.", nil), path("d", "r", "", nil)}, nil},
+	} {
+		snap := &snapshot{index: &selectorIndex{paths: test.paths}}
+		if err := snap.unservedSelection(modelSelection{model: "m"}, now); err != test.want {
+			t.Fatalf("%+v: %v, want %v", test.paths, err, test.want)
+		}
+		if err := snap.unservedSelection(modelSelection{model: "other"}, now); err != nil {
+			t.Fatalf("a selection of no path: %v", err)
+		}
+	}
+}
+
 // A deployment that two routes serve goes on through the one that stays once the other retires,
 // as the catalog build dates it, and the release still loads.
 func TestDeploymentOutlivesOneOfItsRoutes(t *testing.T) {
@@ -464,10 +562,10 @@ func TestPartFilesCheckWhatARootNames(t *testing.T) {
 		return strings.Join(listed, ",")
 	}
 	root := func(parts string) []byte {
-		return []byte(`{"schema":"stogas.catalog.v10","parts":[` + parts + `]}`)
+		return []byte(`{"schema":"stogas.catalog.v11","parts":[` + parts + `]}`)
 	}
 	listed, err := partFiles(root(part(1, 1, "null") + "," + part(2, 3, `"2028-02-29"`)))
-	if want := []PartFile{{name(1), 1, nil}, {name(2), 3, stringPointer("2028-02-29")}}; err != nil || !reflect.DeepEqual(listed, want) {
+	if want := []PartFile{{name(1), 1, nil, false}, {name(2), 3, stringPointer("2028-02-29"), false}}; err != nil || !reflect.DeepEqual(listed, want) {
 		t.Fatalf("listed %v, want %v: %v", listed, want, err)
 	}
 	const mebibyte = 1024 * 1024
@@ -506,7 +604,7 @@ func TestReleaseRefusesFilesThatDifferFromTheRoot(t *testing.T) {
 			delete(r.parts[2]["graph"].(map[string]any)["deployments"].(map[string]any), deployment)
 		}, "omits a record"},
 		"a summary without a part": {func(r testRelease) {
-			r.summary("models", "deepseek-v4-flash-0423")["part"] = 3
+			r.summary("models", "deepseek-v4-flash-0423")["part"] = len(r.parts)
 		}, "names no part"},
 		"a record that retires after its part": {func(r testRelease) {
 			r.summary("deployments", deployment)["retirementDate"] = "2128-03-12"
@@ -518,6 +616,15 @@ func TestReleaseRefusesFilesThatDifferFromTheRoot(t *testing.T) {
 		"a deployment whose date differs from its summary": {func(r testRelease) {
 			r.record("deployments", deployment)["retirementDate"] = "2128-03-10"
 		}, "another date than its summary"},
+		"a summary of what Stogas serves that gives a reason why it does not": {func(r testRelease) {
+			r.summary("models", "deepseek-v4-flash-0423")["stogasUnsupported"] = "Stogas does not serve it."
+		}, "differ on whether Stogas serves it"},
+		"a summary of what Stogas does not serve without the reason": {func(r testRelease) {
+			delete(r.summary("deployments", unsupportedDeployment), "stogasUnsupported")
+		}, "differ on whether Stogas serves it"},
+		"a group in the graph that Stogas does not serve": {func(r testRelease) {
+			r.summary("groups", "gpt-5.5")["stogasUnsupported"] = "Stogas does not serve it."
+		}, "but Stogas does not serve it"},
 		"a change that the root does not list": {func(r testRelease) {
 			r.parts[0]["schedule"] = []any{map[string]any{"start": "2027-01-01T00:00:00Z", "graph": map[string]any{}}}
 		}, "does not list"},

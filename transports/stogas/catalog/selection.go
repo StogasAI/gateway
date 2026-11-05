@@ -75,6 +75,9 @@ type selectorIndex struct {
 	// retired holds the day that each selector that had retired when the release loaded
 	// retired; a route's is under routeSelector.
 	retired map[string]string
+	// unsupported holds why Stogas does not serve each selector that names only what it does
+	// not serve, keyed as retired is.
+	unsupported map[string]string
 	// paths holds every deployment through each of its routes, current or retired.
 	paths []servedPath
 }
@@ -146,6 +149,9 @@ func (s *snapshot) parseModelSelection(field string) (modelSelection, error) {
 	if len(terms) > maxModelTerms {
 		return sel, invalidModel("The model field takes at most %d terms.", maxModelTerms)
 	}
+	// A term that names only what Stogas does not serve fails once every term has parsed, so
+	// that a term that retired, or that the field cannot take, goes first whatever the order.
+	unserved := ""
 	for _, term := range terms {
 		kind, value, typed := strings.Cut(term, ":")
 		if !typed {
@@ -163,8 +169,15 @@ func (s *snapshot) parseModelSelection(field string) (modelSelection, error) {
 			return sel, invalidModel("Write %q as kind:ID, such as provider:azure.", term)
 		}
 		if err := s.selectTerm(&sel, kind, value, term); err != nil {
+			if reason, ok := err.(unservedTerm); ok {
+				unserved = cmp.Or(unserved, string(reason))
+				continue
+			}
 			return sel, err
 		}
+	}
+	if unserved != "" {
+		return sel, modelUnsupported(unserved)
 	}
 	if sel.author != "" {
 		modelID := sel.model
@@ -177,6 +190,11 @@ func (s *snapshot) parseModelSelection(field string) (modelSelection, error) {
 	}
 	return sel, nil
 }
+
+// unservedTerm is the reason why Stogas does not serve what a term names.
+type unservedTerm string
+
+func (reason unservedTerm) Error() string { return string(reason) }
 
 // selectTerm adds one term to a selection. An empty kind names a model, group or deployment.
 func (s *snapshot) selectTerm(sel *modelSelection, kind, value, term string) error {
@@ -194,6 +212,9 @@ func (s *snapshot) selectTerm(sel *modelSelection, kind, value, term string) err
 		if date, retired := index.retired[normalizedID(routeSelector(value))]; id == "" && retired {
 			return modelRetired(date)
 		}
+		if reason, unserved := index.unsupported[normalizedID(routeSelector(value))]; id == "" && unserved {
+			return unservedTerm(reason)
+		}
 	case "", "model", "group", "deployment":
 		target, ok := index.names[normalized]
 		if ok && kind != "" && target.kind != kind {
@@ -202,6 +223,9 @@ func (s *snapshot) selectTerm(sel *modelSelection, kind, value, term string) err
 		if !ok {
 			if date, retired := index.retired[normalized]; retired {
 				return modelRetired(date)
+			}
+			if reason, unserved := index.unsupported[normalized]; unserved {
+				return unservedTerm(reason)
 			}
 			if kind == "" {
 				if _, author := index.authors[normalized]; author {
@@ -253,15 +277,17 @@ func (s *snapshot) selects(sel modelSelection, routeNode compiledRoute, deployme
 		(sel.author == "" || model.AuthorID == sel.author)
 }
 
-// retiredSelection is the day on which what a selection names stopped serving: once every path
-// that it selects, of any deployment through any route, has retired by now, the last day on which
-// one did. A selection of a model, group, deployment, route, provider or author, or of several,
-// names the same day whether the paths retired before the release loaded or after.
-func (s *snapshot) retiredSelection(sel modelSelection, now time.Time) (string, bool) {
+// unservedSelection is the error for a selection that names only paths that do not serve now:
+// every path that it selects, of any deployment through any route, has retired by now or is one
+// that Stogas does not serve. A path that retired names the last day on which one did, whether it
+// retired before the release loaded or after; otherwise the error gives Stogas's reason for the
+// first path by deployment and route. A selection of a model, group, deployment, route, provider
+// or author, or of several, gets the same error. It is nil while a path serves.
+func (s *snapshot) unservedSelection(sel modelSelection, now time.Time) error {
 	if sel == (modelSelection{}) {
-		return "", false
+		return nil
 	}
-	last := ""
+	last, reason, first := "", "", ""
 	for _, path := range s.index.paths {
 		if sel.deployment != "" && path.deployment != sel.deployment ||
 			sel.model != "" && path.model != sel.model ||
@@ -271,12 +297,24 @@ func (s *snapshot) retiredSelection(sel modelSelection, now time.Time) (string, 
 			sel.group != "" && !slices.Contains(path.groups, sel.group) {
 			continue
 		}
-		if !retiredAt(path.retirementDate, now) {
-			return "", false
+		switch key := path.deployment + "\x00" + path.route; {
+		case retiredAt(path.retirementDate, now):
+			last = max(last, *path.retirementDate)
+		case path.unsupported != "":
+			if reason == "" || key < first {
+				reason, first = path.unsupported, key
+			}
+		default:
+			return nil
 		}
-		last = max(last, *path.retirementDate)
 	}
-	return last, last != ""
+	if last != "" {
+		return modelRetired(last)
+	}
+	if reason != "" {
+		return modelUnsupported(reason)
+	}
+	return nil
 }
 
 // routingSelections returns the deployments that a selection reaches on an interface at a

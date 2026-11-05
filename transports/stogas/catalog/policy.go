@@ -97,8 +97,8 @@ func routingSelectionsForRequest(
 	}
 	selections := snap.routingSelections(route, selection, want, availableCredentials, trace, now)
 	if len(selections) == 0 {
-		if date, retired := snap.retiredSelection(selection, now); retired {
-			return nil, modelRetired(date)
+		if err := snap.unservedSelection(selection, now); err != nil {
+			return nil, err
 		}
 	}
 	return selections, nil

@@ -1,0 +1,12 @@
+deployments:
+  modelId: gpt-5.5-2026-04-23
+  routeIds: [openai-batch]
+  upstream:
+    model: gpt-5.5-2026-04-23
+  pricing:
+    input_tokens:
+      per_mill_tokens: '2.5'
+    cached_input_tokens:
+      per_mill_tokens: '0.25'
+    output_tokens:
+      per_mill_tokens: '15'
