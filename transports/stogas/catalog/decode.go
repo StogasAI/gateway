@@ -62,32 +62,34 @@ type rootSummaries struct {
 }
 
 // summary is what the gateway reads of a model, route or deployment in the root: the part that
-// holds it, the date that it retires, and a model's aliases, which still name it once it
-// retires. The rest repeat the record.
+// holds it, the date that it retires, a model's aliases, which still name it once it retires,
+// and what links it to the others: a model's author and groups, a route's provider, and a
+// deployment's model and routes. The rest repeat the record.
 type summary struct {
-	AuthorID    shown `json:"authorId"`
 	DerivedFrom shown `json:"derivedFrom"`
-	GroupIDs    shown `json:"groupIds"`
 	Interfaces  shown `json:"interfaces"`
-	ModelID     shown `json:"modelId"`
 	Name        shown `json:"name"`
-	ProviderID  shown `json:"providerId"`
 	ReleaseDate shown `json:"releaseDate"`
-	RouteIDs    shown `json:"routeIds"`
 
 	Aliases        []string `json:"aliases"`
+	AuthorID       string   `json:"authorId"`
+	GroupIDs       []string `json:"groupIds"`
+	ModelID        string   `json:"modelId"`
 	Part           int      `json:"part"`
+	ProviderID     string   `json:"providerId"`
 	RetirementDate *string  `json:"retirementDate"`
+	RouteIDs       []string `json:"routeIds"`
 }
 
-// groupSummary is what the gateway reads of a group: the groups that contain it. A model is in
-// each group that it names and in every group that contains one of them.
+// groupSummary is what the gateway reads of a group: the groups that contain it, and the date on
+// which it retires with its models. A model is in each group that it names and in every group
+// that contains one of them.
 type groupSummary struct {
-	AuthorID       shown `json:"authorId"`
-	Name           shown `json:"name"`
-	RetirementDate shown `json:"retirementDate"`
+	AuthorID shown `json:"authorId"`
+	Name     shown `json:"name"`
 
-	ParentIDs []string `json:"parentIds"`
+	ParentIDs      []string `json:"parentIds"`
+	RetirementDate *string  `json:"retirementDate"`
 }
 
 // locationNode is what the gateway reads of a location: the places that directly contain it.
@@ -131,13 +133,23 @@ type partGraph struct {
 }
 
 // compiledCatalog is a release as the gateway reads it at an instant: each place with the places
-// that directly contain it, the graph, how each dated state changes it, and the day that each
-// selector of a record that has retired retired.
+// that directly contain it, the graph, how each dated state changes it, the day that each
+// selector of a record that has retired retired, and every path that the root summarizes.
 type compiledCatalog struct {
 	Locations map[string][]string `json:"locations"`
 	Graph     compiledGraph       `json:"graph"`
 	Schedule  []scheduleEntry     `json:"schedule"`
 	Retired   map[string]string   `json:"retired"`
+	Paths     []servedPath        `json:"-"`
+}
+
+// servedPath is a deployment through one of its routes, current or retired, as the root
+// summarizes it: what a model field can name of it, and the date on which it stops serving, the
+// earlier of the deployment's and the route's. Groups hold every group that contains the model.
+type servedPath struct {
+	author, provider, route, model, deployment string
+	groups                                     []string
+	retirementDate                             *string
 }
 
 // A schedule entry lists every node that differs from the base graph from Start until the

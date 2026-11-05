@@ -131,10 +131,7 @@ type snapshot struct {
 	// served is the root with the identity of its release, as readers fetch it.
 	served []byte
 	// parts holds each part of the root that the release came with, by SHA-256 in hex.
-	parts map[string][]byte
-	// retired holds the day that each deployment, model and group that had retired when the
-	// release loaded retired, by each selector that named it. The graph no longer holds them.
-	retired  map[string]string
+	parts    map[string][]byte
 	schedule []datedState
 	// places are the catalog's locations, which every state shares.
 	places *location.Places

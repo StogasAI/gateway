@@ -49,7 +49,8 @@ var (
 	ErrUnsupportedReasoningMode = APIError{Code: "unsupported_reasoning_mode", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "reasoning.mode must be standard or pro"}
 )
 
-// modelRetired is the error for a request that names a deployment or model that has retired.
+// modelRetired is the error for a request whose model field names what has retired: a model, a
+// deployment, or the group, route, provider or author of deployments that have all retired.
 func modelRetired(date string) APIError {
 	return APIError{Code: "model_retired", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "The requested model retired on " + date + ". Choose another model."}
 }

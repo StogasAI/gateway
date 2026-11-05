@@ -73,8 +73,10 @@ type selectorIndex struct {
 	providers map[string]string
 	routes    map[string]string
 	// retired holds the day that each selector that had retired when the release loaded
-	// retired.
+	// retired; a route's is under routeSelector.
 	retired map[string]string
+	// paths holds every deployment through each of its routes, current or retired.
+	paths []servedPath
 }
 
 func newSelectorIndex(graph compiledGraph) *selectorIndex {
@@ -189,6 +191,9 @@ func (s *snapshot) selectTerm(sel *modelSelection, kind, value, term string) err
 		id, slot = index.providers[normalized], &sel.provider
 	case "route":
 		id, slot = index.routes[normalized], &sel.route
+		if date, retired := index.retired[normalizedID(routeSelector(value))]; id == "" && retired {
+			return modelRetired(date)
+		}
 	case "", "model", "group", "deployment":
 		target, ok := index.names[normalized]
 		if ok && kind != "" && target.kind != kind {
@@ -248,27 +253,28 @@ func (s *snapshot) selects(sel modelSelection, routeNode compiledRoute, deployme
 		(sel.author == "" || model.AuthorID == sel.author)
 }
 
-// retiredSelection is the day that the deployment or model a selection names retired: one whose
-// deployments have all retired by now.
+// retiredSelection is the day on which what a selection names stopped serving: once every path
+// that it selects, of any deployment through any route, has retired by now, the last day on which
+// one did. A selection of a model, group, deployment, route, provider or author, or of several,
+// names the same day whether the paths retired before the release loaded or after.
 func (s *snapshot) retiredSelection(sel modelSelection, now time.Time) (string, bool) {
-	if deployment, ok := s.graph.Deployments[sel.deployment]; ok {
-		if deploymentAvailableAt(deployment, now) {
-			return "", false
-		}
-		return *deployment.RetirementDate, true
-	}
-	if sel.model == "" {
+	if sel == (modelSelection{}) {
 		return "", false
 	}
 	last := ""
-	for _, deployment := range s.graph.Deployments {
-		if deployment.ModelID != sel.model {
+	for _, path := range s.index.paths {
+		if sel.deployment != "" && path.deployment != sel.deployment ||
+			sel.model != "" && path.model != sel.model ||
+			sel.route != "" && path.route != sel.route ||
+			sel.provider != "" && path.provider != sel.provider ||
+			sel.author != "" && path.author != sel.author ||
+			sel.group != "" && !slices.Contains(path.groups, sel.group) {
 			continue
 		}
-		if deploymentAvailableAt(deployment, now) {
+		if !retiredAt(path.retirementDate, now) {
 			return "", false
 		}
-		last = max(last, *deployment.RetirementDate)
+		last = max(last, *path.retirementDate)
 	}
 	return last, last != ""
 }

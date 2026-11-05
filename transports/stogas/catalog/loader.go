@@ -256,8 +256,9 @@ func snapshotFromFiles(root []byte, parts map[string][]byte, identity Identity, 
 
 // assemble reads a release at an instant: the authors and providers that the root holds whole,
 // and the records of the parts in effect then that have not retired, of which each model has a
-// deployment, with their changes in each dated state. Each selector of a deployment or model
-// that has retired keeps the day that it retired.
+// deployment, with their changes in each dated state. Each selector of a deployment, model, group
+// or route that has retired keeps the day that it retired, and every path that the root
+// summarizes keeps the day that it stops serving.
 func assemble(rootData []byte, files []PartFile, parts map[string][]byte, at time.Time) (compiledCatalog, error) {
 	prices := sharedJSON[Pricing]()
 	var root catalogRoot
@@ -377,6 +378,7 @@ func assemble(rootData []byte, files []PartFile, parts map[string][]byte, at tim
 		if retiredAt(summary.RetirementDate, at) {
 			delete(graph.Routes, id)
 			retiredRoutes[id] = true
+			retired[routeSelector(id)] = *summary.RetirementDate
 		}
 	}
 	// The build dates a deployment by its last route, so one that another route serves goes on
@@ -392,6 +394,16 @@ func assemble(rootData []byte, files []PartFile, parts map[string][]byte, at tim
 				retired[selector] = *summary.RetirementDate
 			}
 		}
+	}
+	// A group retires once its models have, including those of the groups it contains.
+	for id, group := range summaries.Groups {
+		if retiredAt(group.RetirementDate, at) {
+			retired[id] = *group.RetirementDate
+		}
+	}
+	paths, err := servedPaths(summaries)
+	if err != nil {
+		return compiledCatalog{}, err
 	}
 	// A model serves only through a deployment.
 	deployed := make(map[string]bool, len(graph.Models))
@@ -418,7 +430,49 @@ func assemble(rootData []byte, files []PartFile, parts map[string][]byte, at tim
 	for id, node := range root.Locations {
 		locations[id] = node.ParentIDs
 	}
-	return compiledCatalog{Locations: locations, Graph: graph, Schedule: schedule, Retired: retired}, nil
+	return compiledCatalog{Locations: locations, Graph: graph, Schedule: schedule, Retired: retired, Paths: paths}, nil
+}
+
+// servedPaths lists every deployment of the root through each of its routes, current or retired,
+// so a model field names the day on which what it selects stopped serving, whether that was
+// before the release loaded or after.
+func servedPaths(summaries rootSummaries) ([]servedPath, error) {
+	paths := make([]servedPath, 0, len(summaries.Deployments))
+	groups := make(map[string][]string, len(summaries.Models))
+	for deploymentID, deployment := range summaries.Deployments {
+		model, ok := summaries.Models[deployment.ModelID]
+		if !ok {
+			return nil, fmt.Errorf("deployment %s names model %s, which the root does not summarize", deploymentID, deployment.ModelID)
+		}
+		if _, ok := groups[deployment.ModelID]; !ok {
+			in := map[string]compiledModel{deployment.ModelID: {GroupIDs: model.GroupIDs}}
+			if err := inAncestorGroups(in, summaries.Groups); err != nil {
+				return nil, err
+			}
+			groups[deployment.ModelID] = in[deployment.ModelID].GroupIDs
+		}
+		for _, routeID := range deployment.RouteIDs {
+			route, ok := summaries.Routes[routeID]
+			if !ok {
+				return nil, fmt.Errorf("deployment %s names route %s, which the root does not summarize", deploymentID, routeID)
+			}
+			date := deployment.RetirementDate
+			if route.RetirementDate != nil && (date == nil || *route.RetirementDate < *date) {
+				date = route.RetirementDate
+			}
+			paths = append(paths, servedPath{
+				author: model.AuthorID, provider: route.ProviderID, route: routeID, model: deployment.ModelID,
+				deployment: deploymentID, groups: groups[deployment.ModelID], retirementDate: date,
+			})
+		}
+	}
+	return paths, nil
+}
+
+// routeSelector is the key of a retired route among retired selectors, apart from the models,
+// groups and deployments, which share one namespace.
+func routeSelector(id string) string {
+	return "route:" + id
 }
 
 // inAncestorGroups puts each model in every group that contains a group that it names, so that
@@ -485,11 +539,17 @@ func servedRoot(root []byte, identity Identity) []byte {
 }
 
 // validateRetired checks that each selector that retired has the day it retired, and that no
-// request can reach it in the graph: no model, alias, group or deployment matches it as the model
-// field matches IDs.
+// request can reach it in the graph: no route, or no model, alias, group or deployment, matches it
+// as the model field matches IDs.
 func validateRetired(retired map[string]string, base *snapshot) error {
 	for selector, date := range retired {
-		if _, live := base.index.names[normalizedID(selector)]; live || !validDate(date) {
+		live := false
+		if route, ok := strings.CutPrefix(selector, routeSelector("")); ok {
+			_, live = base.index.routes[normalizedID(route)]
+		} else {
+			_, live = base.index.names[normalizedID(selector)]
+		}
+		if live || !validDate(date) {
 			return fmt.Errorf("retired selector %s is invalid", selector)
 		}
 	}
@@ -520,10 +580,8 @@ func snapshotFromCompiled(catalog compiledCatalog) (*snapshot, error) {
 		}
 		base.schedule = append(base.schedule, datedState{start: entry.Start, state: state})
 	}
-	for _, state := range base.states() {
-		state.retired = catalog.Retired
-	}
 	base.index.retired = normalizedRetired(catalog.Retired)
+	base.index.paths = catalog.Paths
 	return base, nil
 }
 
