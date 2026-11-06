@@ -15,7 +15,7 @@ import (
 func rejectionFixture() RejectionInput {
 	return RejectionInput{
 		Claims:    &APIKeyClaims{KeyID: uuid.Must(uuid.NewV7()).String(), OrganizationID: uuid.Must(uuid.NewV7()).String(), ResponsibleID: uuid.Must(uuid.NewV7()).String()},
-		RequestID: uuid.Must(uuid.NewV7()).String(), RequestType: "chat_completion_request",
+		RequestID: uuid.Must(uuid.NewV7()).String(), RequestType: "chat_completion",
 		Code: "insufficient_balance", StatusCode: 402, CreatedAt: time.Now().UTC().Truncate(time.Second), GatewayVersion: "dev",
 	}
 }
@@ -214,7 +214,7 @@ func TestRejectionLogsFlushWhenTrafficStopsAndRetryTheSameBatchUntilStored(t *te
 func TestRejectionLogsNameResolvedRequestTypes(t *testing.T) {
 	db := newFakeSettlementDatabase(t, settleAll)
 	service := db.service
-	for i, requestType := range []string{"chat_completion", "chat_completion_stream", "responses", "responses_stream", "chat_completion_request", "responses_request"} {
+	for i, requestType := range []string{"chat_completion", "chat_completion_stream", "responses", "responses_stream", "chat_completion_request"} {
 		input := rejectionFixture()
 		input.CreatedAt = time.Now().Add(time.Hour).Truncate(rejectionLogWindow).Add(time.Duration(i) * rejectionLogWindow)
 		input.RequestType = requestType
@@ -226,7 +226,7 @@ func TestRejectionLogsNameResolvedRequestTypes(t *testing.T) {
 		got[row.RequestType]++
 	}
 	service.rejectionLogs.mu.Unlock()
-	want := map[string]int{"chat_completion_request": 2, "chat_completion_stream": 1, "responses_request": 2, "responses_stream": 1}
+	want := map[string]int{"chat_completion": 1, "chat_completion_stream": 1, "responses": 1, "responses_stream": 1, "unknown": 1}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("rejection request types = %v, want %v", got, want)
 	}

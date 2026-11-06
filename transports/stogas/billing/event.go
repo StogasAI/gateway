@@ -151,7 +151,7 @@ func NewRequestEvent(input EventInput) (RequestEvent, error) {
 		GrantID:          authorization.GrantID,
 		MemberID:         authorization.UserID,
 		OrganizationID:   authorization.OrganizationID,
-		RequestType:      normalizeRequestType(input.RequestType),
+		RequestType:      input.RequestType,
 		RequestSettings:  input.RequestSettings,
 		SessionID:        input.SessionID,
 		Metadata:         requestMetadata(input.Metadata),
@@ -496,17 +496,6 @@ func (identifiers errorIdentifierSet) has(values ...string) bool {
 		}
 	}
 	return false
-}
-
-func normalizeRequestType(requestType string) string {
-	switch requestType {
-	case string(schemas.ChatCompletionRequest):
-		return "chat_completion_request"
-	case string(schemas.ResponsesRequest):
-		return "responses_request"
-	default:
-		return requestType
-	}
 }
 
 func finishReason(resp *schemas.BifrostResponse) string {
