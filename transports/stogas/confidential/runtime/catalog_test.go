@@ -277,9 +277,14 @@ func TestNewCatalogDownloadsOnlyThePartsThatChanged(t *testing.T) {
 		if want := append([]string{hexDigest(root)}, changed...); !slices.Equal(requested, want) {
 			t.Fatalf("catalog %d downloaded %v, want %v", release.sequence, requested, want)
 		}
-		for name, data := range parts {
-			if held, ok := catalog.ActiveCatalogPart(name); !ok || !bytes.Equal(held, data) {
-				t.Fatalf("catalog %d does not hold its part %s", release.sequence, name)
+		// A gateway holds only the parts in effect; it never reads one it does not serve.
+		inEffect, err := catalog.PartsInEffect(root, e.now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, file := range inEffect {
+			if held, ok := catalog.ActiveCatalogPart(file.SHA256); !ok || !bytes.Equal(held, parts[file.SHA256]) {
+				t.Fatalf("catalog %d does not hold its part %s", release.sequence, file.SHA256)
 			}
 		}
 	}
