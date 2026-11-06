@@ -1149,7 +1149,7 @@ func ToGeminiResponsesStreamResponse(bifrostResp *schemas.BifrostResponsesStream
 			})
 		}
 
-	case schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta:
+	case schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta, schemas.ResponsesStreamResponseTypeReasoningTextDelta:
 		// A reasoning delta carries text, a replay signature, or both -- Anthropic and
 		// Bedrock send the signature on an event of its own, with no text.
 		signature := thoughtSignatureFromEncryptedContent(bifrostResp.Signature)
@@ -1251,7 +1251,8 @@ func ToGeminiResponsesStreamResponse(bifrostResp *schemas.BifrostResponsesStream
 		return nil
 
 	case schemas.ResponsesStreamResponseTypeReasoningSummaryTextDone,
-		schemas.ResponsesStreamResponseTypeReasoningSummaryPartDone:
+		schemas.ResponsesStreamResponseTypeReasoningSummaryPartDone,
+		schemas.ResponsesStreamResponseTypeReasoningTextDone:
 		// Already handled via deltas, skip
 		return nil
 	case schemas.ResponsesStreamResponseTypeOutputItemAdded:

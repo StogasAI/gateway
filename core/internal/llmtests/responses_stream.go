@@ -626,6 +626,12 @@ func RunResponsesStreamTest(t *testing.T, client *bifrost.Bifrost, ctx context.C
 								t.Logf("🧠 Reasoning summary text chunk: %q", *streamResp.Delta)
 							}
 
+						case schemas.ResponsesStreamResponseTypeReasoningTextDelta:
+							reasoningDetected = true
+							if streamResp.Delta != nil {
+								t.Logf("🧠 Reasoning text chunk: %q", *streamResp.Delta)
+							}
+
 						case schemas.ResponsesStreamResponseTypeOutputItemAdded:
 							if streamResp.Item != nil && streamResp.Item.Type != nil {
 								if *streamResp.Item.Type == schemas.ResponsesMessageTypeReasoning {

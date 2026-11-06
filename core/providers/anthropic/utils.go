@@ -3929,14 +3929,7 @@ func anthropicResponsesStatus(stopReason *string) (*string, *schemas.ResponsesRe
 	if stopReason == nil {
 		return nil, nil
 	}
-	reason := *stopReason
-	switch AnthropicStopReason(reason) {
-	case AnthropicStopReasonRefusal:
-		reason = "content_filter"
-	case AnthropicStopReasonModelContextWindowExceeded:
-		reason = string(schemas.BifrostFinishReasonLength)
-	}
-	status, details, mapped := schemas.ResponsesStatusFromFinishReason(reason)
+	status, details, mapped := schemas.ResponsesStatusFromFinishReason(*stopReason)
 	if !mapped {
 		return nil, nil
 	}

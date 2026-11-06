@@ -374,7 +374,7 @@ func TestMistralContentArray(t *testing.T) {
 								if response.Delta != nil {
 									text.WriteString(*response.Delta)
 								}
-							case schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta:
+							case schemas.ResponsesStreamResponseTypeReasoningTextDelta:
 								if response.Delta != nil {
 									reasoning.WriteString(*response.Delta)
 								}

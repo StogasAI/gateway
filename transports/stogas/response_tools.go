@@ -6,6 +6,7 @@ import (
 	"math"
 	"net"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -412,8 +413,7 @@ func validateProviderResponsesStreamPayload(state *State, response *schemas.Bifr
 		if response.Part == nil || response.SummaryIndex == nil ||
 			!responsesStreamHasItemType(state, response, schemas.ResponsesMessageTypeReasoning) ||
 			responsesStreamUnexpectedPayload(response, responsePayloadOutputIndex|responsePayloadItemID|responsePayloadSummaryIndex|responsePayloadPart) ||
-			validateProviderResponsesContentBlock(state, response.Part) != nil ||
-			response.Part.Type != schemas.ResponsesOutputMessageContentTypeReasoning ||
+			validateProviderResponsesSummaryPart(state, response.Part) != nil ||
 			validateProviderResponsesReasoningPartEvent(state, response) != nil {
 			return ErrProviderResponseMalformed
 		}
@@ -422,7 +422,7 @@ func validateProviderResponsesStreamPayload(state *State, response *schemas.Bifr
 		if (response.Delta == nil) == (response.Signature == nil) || response.SummaryIndex == nil && response.ContentIndex == nil ||
 			!responsesStreamHasItemType(state, response, schemas.ResponsesMessageTypeReasoning) ||
 			responsesStreamUnexpectedPayload(response, responsePayloadOutputIndex|responsePayloadItemID|responsePayloadSummaryIndex|responsePayloadContentIndex|responsePayloadDelta|responsePayloadSignature|responsePayloadObfuscation) ||
-			validateProviderResponsesTextEvent(state, response, schemas.ResponsesOutputMessageContentTypeReasoning) != nil {
+			validateProviderResponsesTextEvent(state, response, summaryPartTypes...) != nil {
 			return ErrProviderResponseMalformed
 		}
 		return nil
@@ -430,6 +430,22 @@ func validateProviderResponsesStreamPayload(state *State, response *schemas.Bifr
 		if response.Text == nil || response.SummaryIndex == nil && response.ContentIndex == nil ||
 			!responsesStreamHasItemType(state, response, schemas.ResponsesMessageTypeReasoning) ||
 			responsesStreamUnexpectedPayload(response, responsePayloadOutputIndex|responsePayloadItemID|responsePayloadSummaryIndex|responsePayloadContentIndex|responsePayloadText) ||
+			validateProviderResponsesTextEvent(state, response, summaryPartTypes...) != nil {
+			return ErrProviderResponseMalformed
+		}
+		return nil
+	case schemas.ResponsesStreamResponseTypeReasoningTextDelta:
+		if (response.Delta == nil) == (response.Signature == nil) || response.ContentIndex == nil ||
+			!responsesStreamHasItemType(state, response, schemas.ResponsesMessageTypeReasoning) ||
+			responsesStreamUnexpectedPayload(response, responsePayloadOutputIndex|responsePayloadItemID|responsePayloadContentIndex|responsePayloadDelta|responsePayloadSignature|responsePayloadObfuscation) ||
+			validateProviderResponsesTextEvent(state, response, schemas.ResponsesOutputMessageContentTypeReasoning) != nil {
+			return ErrProviderResponseMalformed
+		}
+		return nil
+	case schemas.ResponsesStreamResponseTypeReasoningTextDone:
+		if response.Text == nil || response.ContentIndex == nil ||
+			!responsesStreamHasItemType(state, response, schemas.ResponsesMessageTypeReasoning) ||
+			responsesStreamUnexpectedPayload(response, responsePayloadOutputIndex|responsePayloadItemID|responsePayloadContentIndex|responsePayloadText) ||
 			validateProviderResponsesTextEvent(state, response, schemas.ResponsesOutputMessageContentTypeReasoning) != nil {
 			return ErrProviderResponseMalformed
 		}
@@ -1498,9 +1514,33 @@ func validateProviderResponsesReasoningPartEvent(state *State, response *schemas
 	return nil
 }
 
-func validateProviderResponsesTextEvent(state *State, response *schemas.BifrostResponsesStreamResponse, blockType schemas.ResponsesMessageContentBlockType) error {
+// summaryPartTypes are the types of reasoning summary parts: OpenAI's summary text, and the
+// reasoning text in which core's Anthropic conversion streams thinking.
+var summaryPartTypes = []schemas.ResponsesMessageContentBlockType{
+	schemas.ResponsesOutputMessageContentTypeSummaryText, schemas.ResponsesOutputMessageContentTypeReasoning,
+}
+
+// validateProviderResponsesSummaryPart checks a reasoning summary part. A summary text holds only
+// its text.
+func validateProviderResponsesSummaryPart(state *State, part *schemas.ResponsesMessageContentBlock) error {
+	switch part.Type {
+	case schemas.ResponsesOutputMessageContentTypeReasoning:
+		return validateProviderResponsesContentBlock(state, part)
+	case schemas.ResponsesOutputMessageContentTypeSummaryText:
+		if part.Text == nil || part.Signature != nil || part.EncryptedContent != nil {
+			return ErrProviderResponseMalformed
+		}
+		text := *part
+		text.Type = schemas.ResponsesOutputMessageContentTypeReasoning
+		return validateProviderResponsesContentBlock(state, &text)
+	default:
+		return ErrProviderResponseMalformed
+	}
+}
+
+func validateProviderResponsesTextEvent(state *State, response *schemas.BifrostResponsesStreamResponse, blockTypes ...schemas.ResponsesMessageContentBlockType) error {
 	part := providerResponsesPartForEvent(state, response)
-	if part == nil || part.done || part.blockType != blockType {
+	if part == nil || part.done || !slices.Contains(blockTypes, part.blockType) {
 		return ErrProviderResponseMalformed
 	}
 	if !validOptionalProviderText(response.Delta, maxProviderResponseBodySize, true) ||
@@ -1513,7 +1553,8 @@ func validateProviderResponsesTextEvent(state *State, response *schemas.BifrostR
 	switch response.Type {
 	case schemas.ResponsesStreamResponseTypeOutputTextDelta,
 		schemas.ResponsesStreamResponseTypeRefusalDelta,
-		schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta:
+		schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta,
+		schemas.ResponsesStreamResponseTypeReasoningTextDelta:
 		if part.valueDone {
 			return ErrProviderResponseMalformed
 		}
@@ -1532,7 +1573,8 @@ func validateProviderResponsesTextEvent(state *State, response *schemas.BifrostR
 		return nil
 	case schemas.ResponsesStreamResponseTypeOutputTextDone,
 		schemas.ResponsesStreamResponseTypeRefusalDone,
-		schemas.ResponsesStreamResponseTypeReasoningSummaryTextDone:
+		schemas.ResponsesStreamResponseTypeReasoningSummaryTextDone,
+		schemas.ResponsesStreamResponseTypeReasoningTextDone:
 		if part.valueDone {
 			return ErrProviderResponseMalformed
 		}
@@ -1706,7 +1748,8 @@ func providerResponsesBlockValue(block *schemas.ResponsesMessageContentBlock) (s
 		return "", false
 	}
 	switch block.Type {
-	case schemas.ResponsesOutputMessageContentTypeText, schemas.ResponsesOutputMessageContentTypeReasoning:
+	case schemas.ResponsesOutputMessageContentTypeText, schemas.ResponsesOutputMessageContentTypeReasoning,
+		schemas.ResponsesOutputMessageContentTypeSummaryText:
 		if block.Text == nil {
 			return "", false
 		}

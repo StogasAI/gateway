@@ -3946,7 +3946,7 @@ func toAnthropicResponsesStreamEvents(ctx *schemas.BifrostContext, bifrostResp *
 			}
 		}
 
-	case schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta:
+	case schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta, schemas.ResponsesStreamResponseTypeReasoningTextDelta:
 		state := getOrCreateAnthropicToResponsesStreamState(ctx)
 		key := reverseStreamItemKey(bifrostResp)
 		idx := state.blockIndexFor(key)

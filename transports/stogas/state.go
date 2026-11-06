@@ -717,11 +717,13 @@ func responsesEventHasOutput(response *schemas.BifrostResponsesStreamResponse) b
 		schemas.ResponsesStreamResponseTypeRefusalDelta,
 		schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDelta,
 		schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta,
+		schemas.ResponsesStreamResponseTypeReasoningTextDelta,
 		schemas.ResponsesStreamResponseTypeMCPCallArgumentsDelta,
 		schemas.ResponsesStreamResponseTypeCustomToolCallInputDelta:
 		return nonEmptyString(response.Delta)
 	case schemas.ResponsesStreamResponseTypeOutputTextDone,
-		schemas.ResponsesStreamResponseTypeReasoningSummaryTextDone:
+		schemas.ResponsesStreamResponseTypeReasoningSummaryTextDone,
+		schemas.ResponsesStreamResponseTypeReasoningTextDone:
 		return nonEmptyString(response.Text)
 	case schemas.ResponsesStreamResponseTypeRefusalDone:
 		return nonEmptyString(response.Refusal)
@@ -764,11 +766,13 @@ func responsesEventHasToken(response *schemas.BifrostResponsesStreamResponse) bo
 		schemas.ResponsesStreamResponseTypeRefusalDelta,
 		schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDelta,
 		schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta,
+		schemas.ResponsesStreamResponseTypeReasoningTextDelta,
 		schemas.ResponsesStreamResponseTypeMCPCallArgumentsDelta,
 		schemas.ResponsesStreamResponseTypeCustomToolCallInputDelta:
 		return nonEmptyString(response.Delta)
 	case schemas.ResponsesStreamResponseTypeOutputTextDone,
-		schemas.ResponsesStreamResponseTypeReasoningSummaryTextDone:
+		schemas.ResponsesStreamResponseTypeReasoningSummaryTextDone,
+		schemas.ResponsesStreamResponseTypeReasoningTextDone:
 		return nonEmptyString(response.Text)
 	case schemas.ResponsesStreamResponseTypeRefusalDone:
 		return nonEmptyString(response.Refusal)

@@ -369,7 +369,7 @@ func validateAnthropicResponsesPolicy(state *State) error {
 		return nil
 	}
 	raw := state.Resolution.RawBody()
-	if streamOptions, ok := rawObject(raw["stream_options"]); ok && rawJSONValueSet(streamOptions["include_obfuscation"]) {
+	if streamOptions, ok := rawObject(raw["stream_options"]); ok && rawBool(streamOptions["include_obfuscation"]) {
 		return invalidRequest("stream_options.include_obfuscation cannot be preserved on Anthropic-format deployments")
 	}
 	if err := validateAnthropicSamplingIntent(state, raw); err != nil {

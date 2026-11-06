@@ -698,27 +698,31 @@ func TestToBifrostResponsesStreamResponse_MissingDeltaKeyWithFinishReasonStillCo
 }
 
 func TestToBifrostResponsesResponse_MapsLengthToIncomplete(t *testing.T) {
-	length := string(BifrostFinishReasonLength)
-	resp := (&BifrostChatResponse{
-		Choices: []BifrostResponseChoice{
-			{FinishReason: &length},
-		},
-	}).ToBifrostResponsesResponse()
+	// Anthropic's full context window passes through Chat Completions under its own name.
+	for _, length := range []string{string(BifrostFinishReasonLength), "model_context_window_exceeded"} {
+		t.Run(length, func(t *testing.T) {
+			resp := (&BifrostChatResponse{
+				Choices: []BifrostResponseChoice{
+					{FinishReason: &length},
+				},
+			}).ToBifrostResponsesResponse()
 
-	if resp == nil || resp.Status == nil {
-		t.Fatal("expected status to be set")
-	}
-	if *resp.Status != "incomplete" {
-		t.Fatalf("expected status %q, got %q", "incomplete", *resp.Status)
-	}
-	if resp.IncompleteDetails == nil {
-		t.Fatal("expected incomplete_details to be set")
-	}
-	if resp.IncompleteDetails.Reason != "max_output_tokens" {
-		t.Fatalf("expected incomplete_details.reason %q, got %q", "max_output_tokens", resp.IncompleteDetails.Reason)
-	}
-	if resp.StopReason == nil || *resp.StopReason != length {
-		t.Fatalf("expected stop_reason %q, got %v", length, resp.StopReason)
+			if resp == nil || resp.Status == nil {
+				t.Fatal("expected status to be set")
+			}
+			if *resp.Status != "incomplete" {
+				t.Fatalf("expected status %q, got %q", "incomplete", *resp.Status)
+			}
+			if resp.IncompleteDetails == nil {
+				t.Fatal("expected incomplete_details to be set")
+			}
+			if resp.IncompleteDetails.Reason != "max_output_tokens" {
+				t.Fatalf("expected incomplete_details.reason %q, got %q", "max_output_tokens", resp.IncompleteDetails.Reason)
+			}
+			if resp.StopReason == nil || *resp.StopReason != length {
+				t.Fatalf("expected stop_reason %q, got %v", length, resp.StopReason)
+			}
+		})
 	}
 }
 
@@ -744,24 +748,29 @@ func TestToBifrostResponsesResponse_MapsToolCallsToCompleted(t *testing.T) {
 	}
 }
 
-func TestToBifrostResponsesResponse_PrioritizesLengthAcrossChoices(t *testing.T) {
+// A Responses reply has no alternatives, so the first choice is the reply. Converted requests
+// never ask for more than one.
+func TestToBifrostResponsesResponse_TakesFirstChoice(t *testing.T) {
 	stop := string(BifrostFinishReasonStop)
 	length := string(BifrostFinishReasonLength)
+	message := func(text string) *ChatNonStreamResponseChoice {
+		return &ChatNonStreamResponseChoice{Message: &ChatMessage{
+			Role: ChatMessageRoleAssistant, Content: &ChatMessageContent{ContentStr: Ptr(text)},
+		}}
+	}
 	resp := (&BifrostChatResponse{
+		ID: "chatcmpl-1",
 		Choices: []BifrostResponseChoice{
-			{FinishReason: &stop},
-			{FinishReason: &length},
+			{Index: 0, FinishReason: &stop, ChatNonStreamResponseChoice: message("first")},
+			{Index: 1, FinishReason: &length, ChatNonStreamResponseChoice: message("second")},
 		},
 	}).ToBifrostResponsesResponse()
 
-	if resp == nil || resp.Status == nil {
-		t.Fatal("expected status to be set")
+	if resp == nil || resp.Status == nil || *resp.Status != ResponsesResponseStatusCompleted {
+		t.Fatalf("status = %v, want completed", resp.Status)
 	}
-	if *resp.Status != "incomplete" {
-		t.Fatalf("expected status %q, got %q", "incomplete", *resp.Status)
-	}
-	if resp.IncompleteDetails == nil || resp.IncompleteDetails.Reason != "max_output_tokens" {
-		t.Fatal("expected max_output_tokens incomplete_details")
+	if len(resp.Output) != 1 || *resp.Output[0].Content.ContentBlocks[0].Text != "first" {
+		t.Fatalf("output = %+v, want only the first choice's message", resp.Output)
 	}
 }
 
@@ -788,7 +797,8 @@ func TestToBifrostResponsesResponse_UnknownFinishReasonLeavesStatusUnset(t *test
 }
 
 func TestToBifrostResponsesResponse_MapsContentFilterToIncomplete(t *testing.T) {
-	for _, finish := range []string{"content_filter", "guardrail_intervened"} {
+	// Anthropic's refusal is a classifier stopping the reply.
+	for _, finish := range []string{"content_filter", "guardrail_intervened", "refusal"} {
 		t.Run(finish, func(t *testing.T) {
 			fr := finish
 			resp := (&BifrostChatResponse{
@@ -1058,9 +1068,8 @@ func TestToBifrostResponsesStreamResponse_ToolCallsOnlyInCompletedOutput(t *test
 }
 
 // TestToBifrostResponsesStreamResponse_ContentAfterToolStartNotEmittedPastDone pins the
-// /v1/responses side of text -> tool_call -> text: once the tool call closes the text
-// item (output_item.done), a trailing delta.content must not emit an output_text.delta
-// on that finished item, and must not leak into the completed output text.
+// /v1/responses side of text -> tool_call -> text: no item takes a delta after its
+// output_item.done, and the trailing delta.content reaches the message.
 func TestToBifrostResponsesStreamResponse_ContentAfterToolStartNotEmittedPastDone(t *testing.T) {
 	state := AcquireChatToResponsesStreamState()
 	defer ReleaseChatToResponsesStreamState(state)
@@ -1099,29 +1108,26 @@ func TestToBifrostResponsesStreamResponse_ContentAfterToolStartNotEmittedPastDon
 		switch evt.Type {
 		case ResponsesStreamResponseTypeOutputItemDone:
 			doneIndices[*evt.OutputIndex] = true
-		case ResponsesStreamResponseTypeOutputTextDelta:
+		case ResponsesStreamResponseTypeOutputTextDelta, ResponsesStreamResponseTypeFunctionCallArgumentsDelta:
 			if doneIndices[*evt.OutputIndex] {
-				t.Fatalf("output_text.delta %q emitted for output_index %d after its output_item.done", *evt.Delta, *evt.OutputIndex)
+				t.Fatalf("%s %q emitted for output_index %d after its output_item.done", evt.Type, *evt.Delta, *evt.OutputIndex)
 			}
 		case ResponsesStreamResponseTypeCompleted:
 			completed = evt
 		}
 	}
 
-	if completed == nil || completed.Response == nil {
-		t.Fatal("expected response.completed event")
+	// The newline that arrived between the call's deltas joins the message, which the call
+	// follows, as in a unary reply.
+	if completed == nil || completed.Response == nil || len(completed.Response.Output) != 2 {
+		t.Fatalf("expected response.completed with two items, got %+v", completed)
 	}
-	for _, item := range completed.Response.Output {
-		if item.Type != nil && *item.Type == ResponsesMessageTypeMessage {
-			if got := *item.Content.ContentBlocks[0].Text; got != text {
-				t.Fatalf("completed text = %q, want %q", got, text)
-			}
-		}
-		if item.Type != nil && *item.Type == ResponsesMessageTypeFunctionCall {
-			if item.Arguments == nil || *item.Arguments != `{"command":"echo hi"}` {
-				t.Fatalf("function_call arguments = %v, want %q", item.Arguments, `{"command":"echo hi"}`)
-			}
-		}
+	output := completed.Response.Output
+	if got := *output[0].Content.ContentBlocks[0].Text; got != text+newline {
+		t.Fatalf("message text = %q, want %q", got, text+newline)
+	}
+	if output[1].Arguments == nil || *output[1].Arguments != `{"command":"echo hi"}` {
+		t.Fatalf("function_call arguments = %v, want %q", output[1].Arguments, `{"command":"echo hi"}`)
 	}
 }
 
@@ -1590,7 +1596,7 @@ func TestToBifrostResponsesStreamResponse_ReasoningOpensThinkingBlock(t *testing
 					textOutputIndex = *e.OutputIndex
 				}
 			}
-		case ResponsesStreamResponseTypeReasoningSummaryTextDelta:
+		case ResponsesStreamResponseTypeReasoningTextDelta:
 			if firstReasoningDeltaIdx == -1 {
 				firstReasoningDeltaIdx = i
 			}

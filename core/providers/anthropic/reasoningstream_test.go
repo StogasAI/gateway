@@ -324,7 +324,7 @@ func TestToAnthropicResponsesResponse_ChatBridgeOmitsSyntheticSignature(t *testi
 // TestReasoningStream_ResumedReasoningNotEmittedPastStop guards the
 // reasoning -> text -> reasoning ordering: once text closes the thinking block,
 // a resumed reasoning chunk must not emit a thinking delta past its
-// content_block_stop. The late reasoning is dropped; the stream stays well-formed.
+// content_block_stop. The late reasoning opens a thinking block of its own.
 func TestReasoningStream_ResumedReasoningNotEmittedPastStop(t *testing.T) {
 	ctx, cancel := schemas.NewBifrostContextWithCancel(context.Background())
 	defer cancel()
@@ -367,10 +367,10 @@ func TestReasoningStream_ResumedReasoningNotEmittedPastStop(t *testing.T) {
 
 // TestTextStream_ContentAfterToolStartNotEmittedPastStop guards the
 // text -> tool_call -> text ordering on the Chat -> Responses -> Anthropic SSE path.
-// Once a tool call closes the text block, a later delta.content (SGLang's
-// qwen3_coder parser emits "\n" next to the closing tool-call arguments) must not
-// emit a text_delta on the stopped text index while the tool_use block is open.
-// Claude Code rejects that with "The response stream was malformed".
+// A delta.content that arrives after a tool call starts (SGLang's qwen3_coder parser
+// emits "\n" next to the closing tool-call arguments) must not emit a text_delta on a
+// stopped text index. Claude Code rejects that with "The response stream was malformed".
+// The text joins the open text block, and the tool_use block follows it whole.
 func TestTextStream_ContentAfterToolStartNotEmittedPastStop(t *testing.T) {
 	ctx, cancel := schemas.NewBifrostContextWithCancel(context.Background())
 	defer cancel()
@@ -405,7 +405,7 @@ func TestTextStream_ContentAfterToolStartNotEmittedPastStop(t *testing.T) {
 					if !openBlocks[*e.Index] {
 						t.Fatalf("content_block_delta for index %d with no open block (delta past stop): %+v", *e.Index, e.Delta)
 					}
-					if e.Delta != nil && e.Delta.Type == AnthropicStreamDeltaTypeInputJSON && e.Delta.PartialJSON != nil && *e.Delta.PartialJSON == `"echo hi"}` {
+					if e.Delta != nil && e.Delta.Type == AnthropicStreamDeltaTypeInputJSON && e.Delta.PartialJSON != nil && *e.Delta.PartialJSON == `{"command":"echo hi"}` {
 						sawToolArgs = true
 					}
 				case AnthropicStreamEventTypeContentBlockStop:
@@ -415,7 +415,7 @@ func TestTextStream_ContentAfterToolStartNotEmittedPastStop(t *testing.T) {
 		}
 	}
 	if !sawToolArgs {
-		t.Fatal("tool arguments carried alongside the trailing content were not emitted")
+		t.Fatal("the tool arguments were not emitted whole")
 	}
 	if len(openBlocks) != 0 {
 		t.Fatalf("blocks left open: %v", openBlocks)

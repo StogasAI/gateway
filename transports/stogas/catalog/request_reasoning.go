@@ -304,8 +304,12 @@ func requestReasoningValidation(raw map[string]json.RawMessage, route Route) (fu
 		parameters.Reasoning.Effort = &effort
 	}
 	return func(deployment Deployment, outputLimit int) error {
-		if parameters.Reasoning == nil {
+		switch {
+		case parameters.Reasoning == nil:
 			return nil
+		case deployment.bridges(RouteResponses):
+			// TranslateToChat gives the deployment the controls as Chat Completions take them.
+			return normalizeChatReasoning(chatReasoning(parameters.Reasoning), deployment, outputLimit)
 		}
 		reasoning := *parameters.Reasoning
 		return normalizeResponsesReasoning(&reasoning, deployment, outputLimit)

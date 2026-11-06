@@ -110,8 +110,8 @@ func TestWriteSSEStreamSendsBridgedChatAsResponsesEvents(t *testing.T) {
 		}
 		names = append(names, strings.TrimPrefix(event.name, "response."))
 	}
-	want := "created in_progress output_item.added content_part.added reasoning_summary_text.delta " +
-		"reasoning_summary_text.done content_part.done output_item.done " +
+	want := "created in_progress output_item.added content_part.added reasoning_text.delta " +
+		"reasoning_text.done content_part.done output_item.done " +
 		"output_item.added content_part.added output_text.delta output_text.done content_part.done output_item.done completed"
 	if got := strings.Join(names, " "); got != want {
 		t.Fatalf("events =\n%s\nwant\n%s", got, want)

@@ -1659,7 +1659,7 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 		{"responses text format missing schema", `{"model":"provider:openai gpt-5.5","input":"hi","text":{"format":{"type":"json_schema","name":"answer"}}}`, "schema must be an object"},
 		{"anthropic responses verbosity", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","text":{"verbosity":"medium"}}`, "cannot be preserved on Anthropic-format"},
 		{"anthropic responses json object format", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","text":{"format":{"type":"json_object"}}}`, "must be json_schema for Anthropic-format"},
-		{"anthropic responses stream obfuscation", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","stream":true,"stream_options":{"include_obfuscation":false}}`, "cannot be preserved on Anthropic-format"},
+		{"anthropic responses stream obfuscation", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","stream":true,"stream_options":{"include_obfuscation":true}}`, "cannot be preserved on Anthropic-format"},
 		{"anthropic detailed reasoning summary", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","reasoning":{"summary":"detailed"}}`, "must be auto or none for Anthropic-format"},
 		{"anthropic truncation", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","truncation":"auto"}`, "truncation is not supported for Anthropic-format"},
 		{"anthropic prompt cache key", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","prompt_cache_key":"tenant-a"}`, "prompt caching is not supported for the selected deployment"},

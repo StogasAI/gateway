@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -1087,16 +1088,16 @@ func filterRequestParameters(selections []routingSelection, raw map[string]json.
 	if err != nil {
 		return nil, nil, err
 	}
-	validateBridged := bridgedRequestValidation(raw)
+	// A bridged deployment serves a request only when Chat Completions carry it whole.
+	bridgeGap := sync.OnceValue(func() error { return rawChatCompletionsGap(raw) })
 	kept := selections[:0]
 	var removed []ruledOut
 	for _, selection := range selections {
 		outputLimit, err := effectiveOutputTokenLimit(requested, selection.deployment.MaxOutputTokens)
-		switch {
-		case err != nil:
-		case selection.deployment.bridges(route):
-			err = validateBridged(selection.provider, selection.deployment, outputLimit)
-		case validateReasoning != nil:
+		if err == nil && selection.deployment.bridges(route) {
+			err = bridgeGap()
+		}
+		if err == nil && validateReasoning != nil {
 			err = validateReasoning(selection.deployment, outputLimit)
 		}
 		if err != nil {

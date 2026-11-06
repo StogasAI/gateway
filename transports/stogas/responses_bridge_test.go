@@ -143,10 +143,13 @@ func TestDeploymentsWithResponsesKeepResponses(t *testing.T) {
 
 func TestBridgedRequestsRefuseWhatChatCompletionsLacks(t *testing.T) {
 	for _, test := range []struct{ name, body, want string }{
-		{"include", `"include":["message.output_text.logprobs"]`, "include is not supported for Chat Completions deployments"},
-		{"verbosity", `"text":{"verbosity":"low"}`, "verbosity"},
+		// Chat Completions carry log probabilities and verbosity, which Chutes does not take.
+		{"log probabilities", `"include":["message.output_text.logprobs"]`, "logprobs is not supported for Chutes deployments"},
+		{"verbosity", `"text":{"verbosity":"low"}`, "verbosity is not supported for Chutes deployments"},
+		{"encrypted reasoning", `"include":["reasoning.encrypted_content"]`, "include[0]: Chat Completions deployments do not support the reasoning.encrypted_content output"},
+		{"truncation", `"truncation":"auto"`, "truncation: Chat Completions deployments do not support automatic truncation"},
 		{"hosted tool", `"tools":[{"type":"web_search"}]`, "web_search"},
-		{"reasoning summary", `"reasoning":{"summary":"detailed"}`, "reasoning.summary must be auto or none"},
+		{"reasoning summary", `"reasoning":{"summary":"detailed"}`, "reasoning.summary: Chat Completions deployments do not support reasoning summaries"},
 		{"file URL", `"input":[{"role":"user","content":[{"type":"input_file","file_url":"https://example.com/a.pdf"}]}]`, "file URLs are not supported"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -263,30 +266,6 @@ func TestBridgedReplyRefusal(t *testing.T) {
 	}
 }
 
-func TestBridgedReplyRefusesReasoningThatCannotGoBack(t *testing.T) {
-	text, signature, data := "Thinking.", "sig_1", "ciphertext"
-	for name, detail := range map[string]schemas.ChatReasoningDetails{
-		"signed":    {Type: schemas.BifrostReasoningDetailsTypeText, Text: &text, Signature: &signature},
-		"encrypted": {Type: schemas.BifrostReasoningDetailsTypeEncrypted, Data: &data},
-		"summary":   {Type: schemas.BifrostReasoningDetailsTypeSummary, Summary: &text},
-	} {
-		t.Run(name, func(t *testing.T) {
-			state := bridgedState(t, `{"model":"chutes-glm-5.2","input":"Think."}`)
-			response := bridgedChatReply(state, "stop", &schemas.ChatMessage{
-				Role:                 schemas.ChatMessageRoleAssistant,
-				Content:              &schemas.ChatMessageContent{ContentStr: schemas.Ptr("Done.")},
-				ChatAssistantMessage: &schemas.ChatAssistantMessage{ReasoningDetails: []schemas.ChatReasoningDetails{detail}},
-			})
-			if err := state.Adapter.IngestResponse(state, response, nil); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := BridgedResponse(state, response); !errors.Is(err, ErrProviderResponseMalformed) {
-				t.Fatalf("error = %v, want a malformed reply", err)
-			}
-		})
-	}
-}
-
 func TestBridgedRequestRefusesResponsesReplies(t *testing.T) {
 	state := bridgedState(t, `{"model":"chutes-glm-5.2","input":"hi"}`)
 	if err := state.Adapter.IngestResponse(state, &schemas.BifrostResponse{
@@ -397,14 +376,14 @@ func TestBridgedStreamBecomesResponsesEvents(t *testing.T) {
 	if !ProviderStreamTerminal(s.state) {
 		t.Fatal("the stream did not end with its usage")
 	}
+	// The calls follow whole, at the finish reason, as text may come until then.
 	want := "created in_progress " +
-		"output_item.added content_part.added reasoning_summary_text.delta reasoning_summary_text.delta " +
-		"reasoning_summary_text.done content_part.done output_item.done " +
+		"output_item.added content_part.added reasoning_text.delta reasoning_text.delta " +
+		"reasoning_text.done content_part.done output_item.done " +
 		"output_item.added content_part.added output_text.delta output_text.delta " +
-		"output_item.added function_call_arguments.delta function_call_arguments.delta " +
-		"output_item.added function_call_arguments.delta " +
 		"output_text.done content_part.done output_item.done " +
-		"function_call_arguments.done output_item.done function_call_arguments.done output_item.done completed"
+		"output_item.added function_call_arguments.delta function_call_arguments.done output_item.done " +
+		"output_item.added function_call_arguments.delta function_call_arguments.done output_item.done completed"
 	if got := s.types(); got != want {
 		t.Fatalf("events =\n%s\nwant\n%s", got, want)
 	}
@@ -474,20 +453,19 @@ func TestBridgedStreamTextAcrossCallsJoinsTheMessage(t *testing.T) {
 	s.send(callDelta(1, "call_2", "lookup", `{"id":"b2"}`), "", false)
 	s.send(schemas.ChatStreamResponseChoiceDelta{Content: schemas.Ptr(" Twice.")}, "", false)
 	s.send(schemas.ChatStreamResponseChoiceDelta{}, "tool_calls", true)
-	want := "created in_progress output_item.added content_part.added reasoning_summary_text.delta " +
-		"output_item.added function_call_arguments.delta reasoning_summary_text.delta " +
-		"reasoning_summary_text.done content_part.done output_item.done " +
-		"output_item.added content_part.added output_text.delta " +
-		"output_item.added function_call_arguments.delta output_text.delta " +
-		"function_call_arguments.done output_item.done output_text.done content_part.done output_item.done " +
-		"function_call_arguments.done output_item.done completed"
+	want := "created in_progress output_item.added content_part.added reasoning_text.delta reasoning_text.delta " +
+		"reasoning_text.done content_part.done output_item.done " +
+		"output_item.added content_part.added output_text.delta output_text.delta " +
+		"output_text.done content_part.done output_item.done " +
+		"output_item.added function_call_arguments.delta function_call_arguments.done output_item.done " +
+		"output_item.added function_call_arguments.delta function_call_arguments.done output_item.done completed"
 	if got := s.types(); got != want {
 		t.Fatalf("events =\n%s\nwant\n%s", got, want)
 	}
 	output := s.events[len(s.events)-1].Response.Output
 	if len(output) != 4 || *output[0].Content.ContentBlocks[0].Text != "Need the tool." ||
-		*output[1].Type != schemas.ResponsesMessageTypeFunctionCall ||
-		*output[2].Content.ContentBlocks[0].Text != "Asked. Twice." || *output[3].ResponsesToolMessage.CallID != "call_2" {
+		*output[1].Content.ContentBlocks[0].Text != "Asked. Twice." ||
+		*output[2].ResponsesToolMessage.CallID != "call_1" || *output[3].ResponsesToolMessage.CallID != "call_2" {
 		t.Fatalf("output = %s", replayed(t, output))
 	}
 }

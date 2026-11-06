@@ -317,6 +317,8 @@ func validResponsesStreamType(value schemas.ResponsesStreamResponseType) bool {
 		schemas.ResponsesStreamResponseTypeReasoningSummaryPartDone,
 		schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta,
 		schemas.ResponsesStreamResponseTypeReasoningSummaryTextDone,
+		schemas.ResponsesStreamResponseTypeReasoningTextDelta,
+		schemas.ResponsesStreamResponseTypeReasoningTextDone,
 		schemas.ResponsesStreamResponseTypeOutputTextAnnotationAdded,
 		schemas.ResponsesStreamResponseTypeOutputTextAnnotationDone,
 		schemas.ResponsesStreamResponseTypeCustomToolCallInputDelta,

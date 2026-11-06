@@ -4528,6 +4528,8 @@ const (
 	ResponsesStreamResponseTypeReasoningSummaryPartDone  ResponsesStreamResponseType = "response.reasoning_summary_part.done"
 	ResponsesStreamResponseTypeReasoningSummaryTextDelta ResponsesStreamResponseType = "response.reasoning_summary_text.delta"
 	ResponsesStreamResponseTypeReasoningSummaryTextDone  ResponsesStreamResponseType = "response.reasoning_summary_text.done"
+	ResponsesStreamResponseTypeReasoningTextDelta        ResponsesStreamResponseType = "response.reasoning_text.delta"
+	ResponsesStreamResponseTypeReasoningTextDone         ResponsesStreamResponseType = "response.reasoning_text.done"
 
 	ResponsesStreamResponseTypeImageGenerationCallCompleted    ResponsesStreamResponseType = "response.image_generation_call.completed"
 	ResponsesStreamResponseTypeImageGenerationCallGenerating   ResponsesStreamResponseType = "response.image_generation_call.generating"
@@ -4656,7 +4658,7 @@ type ResponsesShellCallOutputDelta struct {
 func (resp BifrostResponsesStreamResponse) MarshalJSON() ([]byte, error) {
 	type alias BifrostResponsesStreamResponse
 	// Anthropic/Bedrock carry the thinking signature on a text-less delta; delta is required on the wire.
-	if resp.Type == ResponsesStreamResponseTypeReasoningSummaryTextDelta && resp.Delta == nil {
+	if (resp.Type == ResponsesStreamResponseTypeReasoningSummaryTextDelta || resp.Type == ResponsesStreamResponseTypeReasoningTextDelta) && resp.Delta == nil {
 		resp.Delta = new("")
 	}
 	encoded, err := Marshal(alias(resp))

@@ -1936,7 +1936,7 @@ func ToBedrockConverseStreamResponse(bifrostResp *schemas.BifrostResponsesStream
 			}
 		}
 
-	case schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta:
+	case schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta, schemas.ResponsesStreamResponseTypeReasoningTextDelta:
 		// Reasoning content delta
 		contentBlockIndex := 0
 		if bifrostResp.ContentIndex != nil {
@@ -1966,7 +1966,8 @@ func ToBedrockConverseStreamResponse(bifrostResp *schemas.BifrostResponsesStream
 
 	case schemas.ResponsesStreamResponseTypeOutputTextDone,
 		schemas.ResponsesStreamResponseTypeContentPartDone,
-		schemas.ResponsesStreamResponseTypeReasoningSummaryTextDone:
+		schemas.ResponsesStreamResponseTypeReasoningSummaryTextDone,
+		schemas.ResponsesStreamResponseTypeReasoningTextDone:
 		// Content block done - the contentBlockStop is emitted on OutputItemDone,
 		// matching the invoke path
 		return nil, nil
