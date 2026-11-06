@@ -295,12 +295,12 @@ func TestServiceTierErrorNeedsAnotherTierThatServes(t *testing.T) {
 		deployment  string
 		err         error
 	}{
-		{model: "claude", tier: "standard", credentials: openAI, err: ErrModelUnavailable},
-		{model: "claude", tier: "fast", credentials: openAI, err: ErrModelUnavailable},
-		{model: "claude", tier: "flex", credentials: anthropic, err: ErrServiceTierUnavailable},
-		{model: "claude", tier: "standard", config: allowing("openai-gpt-5.6-sol"), err: ErrModelUnavailable},
-		{model: "claude", tier: "standard", config: allowing("anthropic-claude-opus-5-5-fast"), err: ErrServiceTierUnavailable},
-		{model: "claude-opus", tier: "fast", config: allowing("anthropic-claude-opus-5-5-fast"), deployment: "anthropic-claude-opus-5-5-fast"},
+		{model: "group:claude", tier: "standard", credentials: openAI, err: ErrModelUnavailable},
+		{model: "group:claude", tier: "fast", credentials: openAI, err: ErrModelUnavailable},
+		{model: "group:claude", tier: "flex", credentials: anthropic, err: ErrServiceTierUnavailable},
+		{model: "group:claude", tier: "standard", config: allowing("openai-gpt-5.6-sol"), err: ErrModelUnavailable},
+		{model: "group:claude", tier: "standard", config: allowing("anthropic-claude-opus-5-5-fast"), err: ErrServiceTierUnavailable},
+		{model: "group:claude-opus", tier: "fast", config: allowing("anthropic-claude-opus-5-5-fast"), deployment: "anthropic-claude-opus-5-5-fast"},
 		{model: "provider:anthropic claude-opus-5-5", tier: "fast", credentials: openAI, err: ErrModelUnavailable},
 		{model: "claude-opus-5-5", tier: "flex", credentials: anthropic, err: ErrServiceTierUnavailable},
 		{model: "claude-opus-5-5", tier: "flex", config: allowing("openai-gpt-5.6-sol"), err: ErrModelUnavailable},
@@ -418,6 +418,8 @@ func TestResolvedPolicyValuesExposeTypedRegisteredCatalogAndRequestData(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Planning gives each candidate the selection that the model field names.
+	resolution.policyModel = "model:gpt-5.6-sol"
 	values, ok := newResolvedPolicyValues(resolution)
 	if !ok {
 		t.Fatal("newResolvedPolicyValues() rejected a catalog-backed resolution")
@@ -439,7 +441,7 @@ func TestResolvedPolicyValuesExposeTypedRegisteredCatalogAndRequestData(t *testi
 		{path: "provider.headquarteredCountry", fieldType: "string", value: "US"},
 		{path: "route.id", fieldType: "string", value: "openai-chat-completions"},
 		{path: "route.providerId", fieldType: "string", value: "openai"},
-		{path: "request.model", fieldType: "string", value: "gpt-5.6-sol"},
+		{path: "request.model", fieldType: "string", value: "model:gpt-5.6-sol"},
 		{path: "request.interface", fieldType: "string", value: "chat_completions"},
 		{path: "deployment.capabilities.streaming", fieldType: "boolean", value: "true"},
 	}

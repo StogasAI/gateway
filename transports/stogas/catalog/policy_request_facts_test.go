@@ -25,7 +25,7 @@ func TestRoutingQueryUsesFactsAvailableBeforeInputProcessing(t *testing.T) {
 			source  string
 			allowed bool
 		}{
-			{"request.model == 'gpt-5.6-sol'", true},
+			{"request.model == 'model:gpt-5.6-sol'", true},
 			{"!has(request.model)", false},
 			{fmt.Sprintf("request.interface == '%s'", base.Route.Interface()), true},
 			{fmt.Sprintf("request.bodyBytes == %d", len(body)), true},

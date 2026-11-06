@@ -38,7 +38,7 @@ func BenchmarkRoutingCredentialAlternatives(b *testing.B) {
 				for b.Loop() {
 					variants := &requestVariants{base: RequestPolicy{Config: config}, selections: selections}
 					input := RequestInput{now: time.Now(), policyBudget: policy.NewCELBudget(), Policy: config, AvailableCredentials: map[string][]int{"openai": indexes}}
-					if err := planFirstPair(input, base.RequestedModel, variants); err != nil {
+					if err := planFirstPair(input, base.policyModel, variants); err != nil {
 						b.Fatalf("unexpected routing result: %v", err)
 					}
 				}
@@ -85,7 +85,7 @@ func BenchmarkRoutingDistinctCredentialPolicies(b *testing.B) {
 			return RequestPolicy{Config: configs[index]}, nil
 		}}
 		input := RequestInput{now: time.Now(), policyBudget: policy.NewCELBudget(), AvailableCredentials: map[string][]int{"openai": indexes}}
-		if err := planFirstPair(input, base.RequestedModel, variants); err != nil {
+		if err := planFirstPair(input, base.policyModel, variants); err != nil {
 			b.Fatalf("unexpected routing result: %v", err)
 		}
 	}

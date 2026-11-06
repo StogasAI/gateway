@@ -53,9 +53,10 @@ func meantPlace(value string) (string, bool) {
 }
 
 var (
-	catalogID   = patternDomain(`^[a-z0-9][a-z0-9._:-]*$`, "a catalog ID, which uses lowercase letters, digits, '.', '_', ':' and '-'")
-	catalogSlug = patternDomain(`^[a-z0-9][a-z0-9._:+-]*$`, "an alias, which uses lowercase letters, digits, '.', '_', ':', '+' and '-'")
-	country     = fieldDomain{func(value string) bool {
+	catalogID = patternDomain(`^[a-z0-9][a-z0-9._:-]*$`, "a catalog ID, which uses lowercase letters, digits, '.', '_', ':' and '-'")
+	selection = fieldDomain{validSelection, "kind:ID terms with the catalog's IDs, each kind once and in the order " +
+		strings.Join(SelectionKinds[:], ", ") + ", such as 'model:gpt-5.6-sol' or 'provider:azure group:gpt-6'", nil}
+	country = fieldDomain{func(value string) bool {
 		return location.Country(value) && (places == nil || places.Place(value))
 	}, "an uppercase ISO country code that the catalog lists, such as 'US'", meantPlace}
 	processingLocation = fieldDomain{func(value string) bool { return validLocation(value, false) },
@@ -74,10 +75,8 @@ var (
 
 var fieldDomains = map[string]fieldDomain{
 	"author.id":                                  catalogID,
-	"author.aliases":                             catalogSlug,
 	"author.headquarteredCountry":                country,
 	"model.id":                                   catalogID,
-	"model.aliases":                              catalogSlug,
 	"model.authorId":                             catalogID,
 	"model.groupIds":                             catalogID,
 	"model.reasoning":                            reasoning,
@@ -110,11 +109,36 @@ var fieldDomains = map[string]fieldDomain{
 	"route.documentFormats.extensions":  patternDomain(`^\.[a-z0-9][a-z0-9._+-]*$`, "a lowercase extension with its dot, such as '.pdf'"),
 	"route.documentFormats.mediaTypes":  patternDomain(`^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$`, "a lowercase media type, such as 'application/pdf'"),
 	"provider.id":                       catalogID,
-	"provider.aliases":                  catalogSlug,
 	"provider.credentialModes":          oneOf("managed", "byok"),
 	"provider.headquarteredCountry":     country,
 	"request.hostedTools":               oneOf("web_search", "web_fetch", "mcp"),
 	"request.interface":                 interfaces,
+	"request.model":                     selection,
+}
+
+// SelectionKinds are the kinds of terms in a request's model field, in the order in which
+// request.model writes them.
+var SelectionKinds = [...]string{"author", "provider", "route", "model", "group", "deployment"}
+
+// validSelection says whether a string is a model field as request.model writes it: kind:ID terms
+// with each kind once and in order, and at most one model, group or deployment.
+func validSelection(value string) bool {
+	next, named := 0, false
+	for term := range strings.SplitSeq(value, " ") {
+		kind, id, ok := strings.Cut(term, ":")
+		position := slices.Index(SelectionKinds[next:], kind)
+		if !ok || position < 0 || !catalogID.valid(id) || strings.Contains(id, ":") {
+			return false
+		}
+		next += position + 1
+		if kind == "model" || kind == "group" || kind == "deployment" {
+			if named {
+				return false
+			}
+			named = true
+		}
+	}
+	return true
 }
 
 func oneOf(values ...string) fieldDomain {

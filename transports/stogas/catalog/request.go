@@ -173,11 +173,12 @@ type ResolvedRequest struct {
 	policyBodyBytes int
 	policyTime      time.Time
 	policyBudget    *policy.CELBudget
+	// policyModel is what the request's model field selects, as request.model reads it.
+	policyModel     string
 	Route           Route
 	RequestType     schemas.RequestType
 	Provider        schemas.ModelProvider
 	CredentialIndex int
-	RequestedModel  string
 	Model           string
 	Deployment      Deployment
 	ExportConfig    *exportconfig.Config
@@ -575,7 +576,6 @@ func (r *ResolvedRequest) ReleaseInput() {
 		r.pricing.ToolTypes[i] = strings.Clone(kind)
 	}
 	r.pricing.SearchContextSize = strings.Clone(r.pricing.SearchContextSize)
-	r.RequestedModel = strings.Clone(r.RequestedModel)
 }
 
 func (r *ResolvedRequest) RawTools() []map[string]json.RawMessage {
@@ -874,7 +874,7 @@ func planRoutes(input RequestInput, route Route, rawData map[string]json.RawMess
 	if err != nil {
 		return nil, err
 	}
-	selections, err := routingSelectionsForRequest(input.now, route, base.Model, base.variant, input.AvailableCredentials, input.trace)
+	selections, requested, err := routingSelectionsForRequest(input.now, route, base.Model, base.variant, input.AvailableCredentials, input.trace)
 	if err != nil {
 		return nil, err
 	}
@@ -883,7 +883,7 @@ func planRoutes(input RequestInput, route Route, rawData map[string]json.RawMess
 		// The variant, a credential or the key's allowed nodes left no deployment. Try the
 		// model's other variants to find which field to name.
 		return nil, base.variant.unavailable(func(other variant) bool {
-			inVariant, err := routingSelectionsForRequest(input.now, route, base.Model, other, input.AvailableCredentials, nil)
+			inVariant, _, err := routingSelectionsForRequest(input.now, route, base.Model, other, input.AvailableCredentials, nil)
 			return err == nil && len(filterRoutingSelectionsByPolicy(inVariant, input.Policy, nil)) > 0
 		})
 	}
@@ -908,7 +908,7 @@ func planRoutes(input RequestInput, route Route, rawData map[string]json.RawMess
 		load: input.CredentialPolicy, requestPolicy: requestPolicy, fields: rawData, route: route, selections: selections, reserveBody: input.ReserveBody, inputBytes: len(input.Body),
 		attachments: requestAttachments(rawData, route), hostedTools: hostedTools.enabled, ruledOut: append(ruledOut, withoutTools...),
 	}
-	return planRequest(input, route, base.Model, providerPreference, variants)
+	return planRequest(input, route, requested, providerPreference, variants)
 }
 
 func resolveChatRequests(input RequestInput, route Route) (*ResolvedRequest, error) {
@@ -937,7 +937,6 @@ func resolveChatRequests(input RequestInput, route Route) (*ResolvedRequest, err
 			candidateRaw,
 			route,
 			requestType,
-			request.Model,
 			&request.Model,
 			&request.ChatParameters.ServiceTier,
 			func() { applyChatAliases(&request) },
@@ -1011,7 +1010,6 @@ func resolveResponsesRequests(input RequestInput, route Route) (*ResolvedRequest
 			candidateRaw,
 			route,
 			requestType,
-			request.Model,
 			&request.Model,
 			&request.ResponsesParameters.ServiceTier,
 			func() { applyResponsesAliases(candidateRaw, &request) },
@@ -1137,7 +1135,6 @@ func resolveOpenAIRequest(
 	rawData map[string]json.RawMessage,
 	route Route,
 	requestType schemas.RequestType,
-	requestedModel string,
 	modelField *string,
 	serviceTier **schemas.BifrostServiceTier,
 	applyRequestAliases func(),
@@ -1154,7 +1151,6 @@ func resolveOpenAIRequest(
 	if node, ok := deployment.snapshot.graph.Routes[deployment.RouteID]; !ok || !routeServes(node, route) {
 		return nil, ErrRouteUnavailable
 	}
-	model := requestedModel
 	*modelField = deployment.Upstream.Model
 	*serviceTier = upstreamServiceTier(provider, deployment.Upstream)
 	if applyRequestAliases != nil {
@@ -1165,7 +1161,7 @@ func resolveOpenAIRequest(
 		return nil, err
 	}
 
-	filtered, err := filterRequestExtraParams(rawData, provider, model, route)
+	filtered, err := filterRequestExtraParams(rawData, provider, route)
 	if err != nil {
 		return nil, err
 	}
@@ -1177,7 +1173,7 @@ func resolveOpenAIRequest(
 	if err != nil {
 		return nil, err
 	}
-	resolved := resolvedRequest(route, requestType, provider, requestedModel, *modelField, deployment, filtered, outputTokenLimit, inputTokenEstimate, pricing)
+	resolved := resolvedRequest(route, requestType, provider, *modelField, deployment, filtered, outputTokenLimit, inputTokenEstimate, pricing)
 	resolved.CredentialIndex = selection.credential
 	resolved.inputTokenEstimate = &inputTokenEstimate
 	return resolved, nil
@@ -1253,7 +1249,6 @@ func resolvedRequest(
 	route Route,
 	requestType schemas.RequestType,
 	provider schemas.ModelProvider,
-	requestedModel string,
 	model string,
 	deployment Deployment,
 	extraParams map[string]interface{},
@@ -1265,7 +1260,6 @@ func resolvedRequest(
 		Route:            route,
 		RequestType:      requestType,
 		Provider:         provider,
-		RequestedModel:   requestedModel,
 		Model:            model,
 		Deployment:       deployment,
 		inputTokenLimit:  inputTokenLimit,
@@ -1399,7 +1393,7 @@ func routeForInput(input RequestInput) (Route, bool, bool) {
 	return route, true, strings.ToUpper(spec.Method) == normalizedMethod
 }
 
-func filterRequestExtraParams(rawData map[string]json.RawMessage, provider schemas.ModelProvider, model string, route Route) (map[string]interface{}, error) {
+func filterRequestExtraParams(rawData map[string]json.RawMessage, provider schemas.ModelProvider, route Route) (map[string]interface{}, error) {
 	typedFields := typedOpenAIRequestFields(provider, route)
 	if len(typedFields) == 0 {
 		return nil, ErrCatalogUnavailable
@@ -1409,7 +1403,7 @@ func filterRequestExtraParams(rawData map[string]json.RawMessage, provider schem
 	// provider-specific allowlist below. A client extension must never become an
 	// upstream parameter merely because Bifrost learns it later.
 	extraParams := extractExtraParams(rawData, typedFields)
-	return FilterExtraParams(provider, model, route, extraParams), nil
+	return FilterExtraParams(provider, route, extraParams), nil
 }
 
 // rejectUnknownTopLevelFields refuses a field outside the route's contract, as

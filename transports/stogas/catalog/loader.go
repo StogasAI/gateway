@@ -409,7 +409,7 @@ func assemble(rootData []byte, files []PartFile, parts map[string][]byte, at tim
 	// A group retires once its models have, including those of the groups it contains.
 	for id, group := range summaries.Groups {
 		if retiredAt(group.RetirementDate, at) {
-			retired[id] = *group.RetirementDate
+			retired[groupSelector(id)] = *group.RetirementDate
 		}
 	}
 	// Each selector of a deployment, model, group or route that Stogas does not serve keeps the
@@ -432,7 +432,7 @@ func assemble(rootData []byte, files []PartFile, parts map[string][]byte, at tim
 		}
 	}
 	for id, group := range summaries.Groups {
-		unserved(id, group.StogasUnsupported)
+		unserved(groupSelector(id), group.StogasUnsupported)
 	}
 	paths, err := servedPaths(summaries)
 	if err != nil {
@@ -506,9 +506,14 @@ func servedPaths(summaries rootSummaries) ([]servedPath, error) {
 }
 
 // routeSelector is the key of a retired route among retired selectors, apart from the models,
-// groups and deployments, which share one namespace.
+// their aliases and the deployments, which share one namespace.
 func routeSelector(id string) string {
 	return "route:" + id
+}
+
+// groupSelector is the key of a group among retired selectors, as routeSelector is a route's.
+func groupSelector(id string) string {
+	return "group:" + id
 }
 
 // inAncestorGroups puts each model in every group that contains a group that it names, so that
@@ -575,7 +580,7 @@ func servedRoot(root []byte, identity Identity) []byte {
 }
 
 // validateRetired checks that each selector that retired has the day it retired, and that no
-// request can reach it in the graph: no route, or no model, alias, group or deployment, matches it
+// request can reach it in the graph: no route, group, or model, alias or deployment, matches it
 // as the model field matches IDs.
 func validateRetired(retired map[string]string, base *snapshot) error {
 	for selector, date := range retired {
@@ -597,14 +602,17 @@ func validateUnsupported(unsupported map[string]string, base *snapshot) error {
 	return nil
 }
 
-// live says whether a selector matches a route, or a model, alias, group or deployment, of the
+// live says whether a selector matches a route, a group, or a model, alias or deployment, of the
 // graph as the model field matches IDs.
 func (base *snapshot) live(selector string) bool {
+	var live bool
 	if route, ok := strings.CutPrefix(selector, routeSelector("")); ok {
-		_, live := base.index.routes[normalizedID(route)]
-		return live
+		_, live = base.index.routes[normalizedID(route)]
+	} else if group, ok := strings.CutPrefix(selector, groupSelector("")); ok {
+		_, live = base.index.groups[normalizedID(group)]
+	} else {
+		_, live = base.index.names[normalizedID(selector)]
 	}
-	_, live := base.index.names[normalizedID(selector)]
 	return live
 }
 
@@ -823,9 +831,9 @@ func validateCompiledGraph(graph compiledGraph) error {
 	return validateCompiledDeployments(graph, selectors)
 }
 
-// selectorRegistry holds the owner of each selector by its normalized form, since the model
-// field matches IDs that way. Selectors that differ only by case, dots or underscores must name
-// the same node.
+// selectorRegistry holds the owner of each selector of one namespace by its normalized form,
+// since the model field matches IDs that way. Selectors that differ only by case, dots or
+// underscores must name the same node.
 type selectorRegistry map[string]string
 
 func (selectors selectorRegistry) add(selector, owner string) error {
@@ -870,8 +878,10 @@ func validateCompiledProvider(providerID string, provider compiledProvider) erro
 	return nil
 }
 
+// validateCompiledModels registers the models, by ID and alias, among selectors, which also hold
+// the deployments. Groups are a namespace apart, so an alias may share a group's ID.
 func validateCompiledModels(graph compiledGraph, selectors selectorRegistry) error {
-	groups := make(map[string]bool)
+	groups := make(selectorRegistry)
 	for modelID, model := range graph.Models {
 		if len(model.Aliases) > maxAliasesPerNode {
 			return fmt.Errorf("model %s has too many aliases", modelID)
@@ -891,12 +901,9 @@ func validateCompiledModels(graph compiledGraph, selectors selectorRegistry) err
 			}
 		}
 		for _, groupID := range model.GroupIDs {
-			groups[groupID] = true
-		}
-	}
-	for groupID := range groups {
-		if err := selectors.add(groupID, "group:"+groupID); err != nil {
-			return err
+			if err := groups.add(groupID, "group:"+groupID); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

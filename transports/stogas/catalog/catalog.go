@@ -160,7 +160,7 @@ func InferencePaths() []string {
 	return stableStrings(paths)
 }
 
-func FilterExtraParams(provider schemas.ModelProvider, _ string, route Route, params map[string]interface{}) map[string]interface{} {
+func FilterExtraParams(provider schemas.ModelProvider, route Route, params map[string]interface{}) map[string]interface{} {
 	if len(params) == 0 {
 		return nil
 	}

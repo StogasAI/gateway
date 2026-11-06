@@ -1,6 +1,7 @@
 models:
   authorId: openai
   name: GPT-5.5
+  aliases: [gpt-5.5]
   groupIds: [gpt-5.5]
   contextWindowTokens: 1050000
   maxOutputTokens: 128000

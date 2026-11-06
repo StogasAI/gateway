@@ -10,27 +10,45 @@ import (
 	"time"
 
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/transports/stogas/policy"
 )
 
 // A request's model field names what serves the request and, if the client wants, where. It
 // holds terms separated by spaces:
 //
-//   - an ID, which names a model by its ID or an alias, a group or a deployment;
+//   - an ID, which names a model by its ID or an alias, or a deployment, as the model field of an
+//     OpenAI or Anthropic client does;
 //   - author/ID, OpenRouter's form, which also names the author of the model;
 //   - kind:ID, where kind is author, provider, route, model, group or deployment.
 //
-// Each term narrows the deployments that the field selects, each kind appears once, and the field
-// names at most one model, group or deployment. A field that names none selects among every
-// model, like an omitted field. IDs ignore case, and a dot or an underscore matches a hyphen, so
-// claude-opus-4.5 names claude-opus-4-5; the catalog keeps the IDs of each kind distinct under
-// that rule.
+// Groups have a namespace of their own, so a group needs group:, and an alias may share a group's
+// ID: gpt-5.6 names GPT-5.6 Sol, as at OpenAI, and group:gpt-5.6 every GPT-5.6 model. Each term
+// narrows the deployments that the field selects, each kind appears once, and the field names at
+// most one model, group or deployment. A field that names none selects among every model, like an
+// omitted field. Kinds and IDs ignore case, and a dot or an underscore in an ID matches a hyphen,
+// so claude-opus-4.5 names claude-opus-4-5; the catalog keeps the IDs of each namespace distinct
+// under that rule.
 type modelSelection struct {
 	author, provider, route  string
 	model, group, deployment string
 }
 
-// maxModelTerms bounds the field: six kinds, each once.
-const maxModelTerms = 6
+// String writes the selection as request.model reads it: kind:ID terms in the order of
+// policy.SelectionKinds with the catalog's IDs, so that policies read what a request names,
+// however the client spelled it.
+func (sel modelSelection) String() string {
+	ids := [len(policy.SelectionKinds)]string{sel.author, sel.provider, sel.route, sel.model, sel.group, sel.deployment}
+	terms := make([]string, 0, len(ids))
+	for index, id := range ids {
+		if id != "" {
+			terms = append(terms, policy.SelectionKinds[index]+":"+id)
+		}
+	}
+	return strings.Join(terms, " ")
+}
+
+// maxModelTerms bounds the field: each kind once.
+const maxModelTerms = len(policy.SelectionKinds)
 
 // maxModelFieldBytes bounds the text that errors repeat: six terms of a kind and a 128-character
 // ID, the longest that policies accept, fit with room to spare.
@@ -67,13 +85,14 @@ type catalogSelector struct {
 // selectorIndex finds catalog IDs by their normalized form. Dated states share their base's
 // index, since they keep every ID and alias.
 type selectorIndex struct {
-	// names holds the models, by ID and alias, the groups and the deployments.
+	// names holds the models, by ID and alias, and the deployments.
 	names     map[string]catalogSelector
+	groups    map[string]string
 	authors   map[string]string
 	providers map[string]string
 	routes    map[string]string
 	// retired holds the day that each selector that had retired when the release loaded
-	// retired; a route's is under routeSelector.
+	// retired; a group's is under groupSelector and a route's under routeSelector.
 	retired map[string]string
 	// unsupported holds why Stogas does not serve each selector that names only what it does
 	// not serve, keyed as retired is.
@@ -85,6 +104,7 @@ type selectorIndex struct {
 func newSelectorIndex(graph compiledGraph) *selectorIndex {
 	index := &selectorIndex{
 		names:     make(map[string]catalogSelector),
+		groups:    make(map[string]string),
 		authors:   make(map[string]string),
 		providers: make(map[string]string),
 		routes:    make(map[string]string),
@@ -110,7 +130,7 @@ func newSelectorIndex(graph compiledGraph) *selectorIndex {
 			index.names[normalizedID(alias)] = catalogSelector{kind: "model", id: modelID}
 		}
 		for _, groupID := range model.GroupIDs {
-			index.names[normalizedID(groupID)] = catalogSelector{kind: "group", id: groupID}
+			index.groups[normalizedID(groupID)] = groupID
 		}
 	}
 	for deploymentID := range graph.Deployments {
@@ -165,9 +185,10 @@ func (s *snapshot) parseModelSelection(field string) (modelSelection, error) {
 				}
 				value = rest
 			}
-		} else if value == "" || strings.Contains(value, ":") {
-			return sel, invalidModel("Write %q as kind:ID, such as provider:azure.", term)
+		} else if kind == "" || value == "" || strings.ContainsAny(value, ":/") {
+			return sel, invalidModel("Write %q as kind:ID, such as provider:azure, or author/model alone.", term)
 		}
+		kind = strings.ToLower(kind)
 		if err := s.selectTerm(&sel, kind, value, term); err != nil {
 			if reason, ok := err.(unservedTerm); ok {
 				unserved = cmp.Or(unserved, string(reason))
@@ -196,7 +217,7 @@ type unservedTerm string
 
 func (reason unservedTerm) Error() string { return string(reason) }
 
-// selectTerm adds one term to a selection. An empty kind names a model, group or deployment.
+// selectTerm adds one term to a selection. An empty kind names a model or a deployment.
 func (s *snapshot) selectTerm(sel *modelSelection, kind, value, term string) error {
 	index := s.index
 	normalized := normalizedID(value)
@@ -209,40 +230,49 @@ func (s *snapshot) selectTerm(sel *modelSelection, kind, value, term string) err
 		id, slot = index.providers[normalized], &sel.provider
 	case "route":
 		id, slot = index.routes[normalized], &sel.route
-		if date, retired := index.retired[normalizedID(routeSelector(value))]; id == "" && retired {
-			return modelRetired(date)
+		if id == "" {
+			if err := index.gone(routeSelector(normalized)); err != nil {
+				return err
+			}
 		}
-		if reason, unserved := index.unsupported[normalizedID(routeSelector(value))]; id == "" && unserved {
-			return unservedTerm(reason)
+	case "group":
+		id, slot = index.groups[normalized], &sel.group
+		if id == "" {
+			if err := index.gone(groupSelector(normalized)); err != nil {
+				return err
+			}
+			if target, ok := index.names[normalized]; ok {
+				return invalidModel("%s is a %s. Write %s alone.", value, target.kind, value)
+			}
 		}
-	case "", "model", "group", "deployment":
+	case "", "model", "deployment":
 		target, ok := index.names[normalized]
 		if ok && kind != "" && target.kind != kind {
-			return invalidModel("%s is a %s. Write %s:%s, or the ID alone.", value, target.kind, target.kind, value)
+			return invalidModel("%s is a %s. Write %s alone.", value, target.kind, value)
 		}
 		if !ok {
-			if date, retired := index.retired[normalized]; retired {
-				return modelRetired(date)
+			if err := index.gone(normalized); err != nil {
+				return err
 			}
-			if reason, unserved := index.unsupported[normalized]; unserved {
-				return unservedTerm(reason)
+			if _, group := index.groups[normalized]; group {
+				return invalidModel("%s is a group. Write group:%s to select among its models.", value, value)
 			}
-			if kind == "" {
-				if _, author := index.authors[normalized]; author {
-					return invalidModel("%s is an author. Write author:%s to select among its models.", value, value)
-				}
-				if _, provider := index.providers[normalized]; provider {
-					return invalidModel("%s is a provider. Write provider:%s to select among its deployments.", value, value)
-				}
-				return unknownModel("model, group or deployment", value)
+			if kind != "" {
+				return unknownModel(kind, value)
 			}
-			return unknownModel(kind, value)
+			if err := index.gone(groupSelector(normalized)); err != nil {
+				return err
+			}
+			if _, author := index.authors[normalized]; author {
+				return invalidModel("%s is an author. Write author:%s to select among its models.", value, value)
+			}
+			if _, provider := index.providers[normalized]; provider {
+				return invalidModel("%s is a provider. Write provider:%s to select among its deployments.", value, value)
+			}
+			return unknownModel("model or deployment", value)
 		}
 		kind, id = target.kind, target.id
-		if sel.names() {
-			return invalidModel("The model field names more than one model, group or deployment.")
-		}
-		slot = map[string]*string{"model": &sel.model, "group": &sel.group, "deployment": &sel.deployment}[kind]
+		slot = map[string]*string{"model": &sel.model, "deployment": &sel.deployment}[kind]
 	default:
 		return invalidModel("Unknown term %q. Terms are IDs, author/model, or author:, provider:, route:, model:, group: or deployment: followed by an ID.", term)
 	}
@@ -254,10 +284,25 @@ func (s *snapshot) selectTerm(sel *modelSelection, kind, value, term string) err
 		}
 		return unknownModel(kind, value)
 	}
+	if (kind == "model" || kind == "group" || kind == "deployment") && sel.names() {
+		return invalidModel("The model field names more than one model, group or deployment.")
+	}
 	if *slot != "" {
 		return invalidModel("The model field names more than one %s.", kind)
 	}
 	*slot = id
+	return nil
+}
+
+// gone returns the error for a selector, keyed as retired is, that names only what has retired or
+// what Stogas does not serve, and nil for any other.
+func (index *selectorIndex) gone(key string) error {
+	if date, retired := index.retired[key]; retired {
+		return modelRetired(date)
+	}
+	if reason, unserved := index.unsupported[key]; unserved {
+		return unservedTerm(reason)
+	}
 	return nil
 }
 

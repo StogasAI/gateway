@@ -36,8 +36,9 @@ func ActiveIdentity() (Identity, bool) {
 	return snap.identity, true
 }
 
-// PublicModelsPayload lists the selectors that reach an available deployment. Each entry shows
-// the release date and author of the model it names; a group shows its newest model's, because
+// PublicModelsPayload lists the selectors that reach an available deployment: model IDs, aliases
+// and deployment IDs, and groups as group:<id>, the form that selects them. Each entry shows the
+// release date and author of the model it names; a group shows its newest model's, because
 // policies, not the list, decide which of its models serves a request.
 func PublicModelsPayload() (PublicModelsResponse, bool) {
 	snap := activeState()
@@ -46,7 +47,7 @@ func PublicModelsPayload() (PublicModelsResponse, bool) {
 	}
 	modelIDsBySelector := make(map[string]string)
 	available := make(map[string]bool)
-	// groups maps each group to its newest model, the first by ID on a tie.
+	// groups maps each group's selector to its newest model, the first by ID on a tie.
 	groups := make(map[string]string)
 	now := time.Now()
 	for deploymentID, deployment := range snap.graph.Deployments {
@@ -60,9 +61,10 @@ func PublicModelsPayload() (PublicModelsResponse, bool) {
 		}
 		released := snap.graph.Models[deployment.ModelID].ReleaseDate
 		for _, groupID := range snap.graph.Models[deployment.ModelID].GroupIDs {
-			newest, listed := groups[groupID]
+			selector := groupSelector(groupID)
+			newest, listed := groups[selector]
 			if !listed || snap.graph.Models[newest].ReleaseDate < released || snap.graph.Models[newest].ReleaseDate == released && deployment.ModelID < newest {
-				groups[groupID] = deployment.ModelID
+				groups[selector] = deployment.ModelID
 			}
 		}
 	}

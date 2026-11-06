@@ -385,14 +385,19 @@ func TestModelFieldTerms(t *testing.T) {
 		"provider:gcp claude-haiku-4.5":                   {"google-cloud"},
 		"provider:gcp claude-opus-4.6":                    {},
 		"author:anthropic provider:anthropic":             {"anthropic"},
+		"gpt-5.6 provider:openai":                         {"openai"},
+		"Group:GPT-5.6 Provider:OpenAI":                   {"openai"},
 	} {
 		if got := providers(field); !slices.Equal(got, want) {
 			t.Errorf("%s: providers %v, want %v", field, got, want)
 		}
 	}
-	// A dot or an underscore matches a hyphen, so the dotted alias and the deployment ID with a
-	// dot name the same nodes.
-	for _, field := range []string{"claude-haiku-4-5", "claude-haiku-4.5", "anthropic/claude-haiku-4.5", "anthropic-claude-haiku-4.5-20251001"} {
+	// A dot or an underscore matches a hyphen, so the dotted ID and the deployment ID with a dot
+	// name the same nodes as the aliases: Anthropic's dated ID and the version-first spelling.
+	for _, field := range []string{
+		"claude-haiku-4-5", "claude-haiku-4.5", "anthropic/claude-haiku-4.5", "anthropic-claude-haiku-4.5-20251001",
+		"claude-haiku-4-5-20251001", "claude-4.5-haiku", "model:Claude_4.5_Haiku",
+	} {
 		deployment, ok := testDeploymentForRoute(schemas.Anthropic, field, RouteChat)
 		if !ok || deployment.ID != "anthropic-claude-haiku-4-5-20251001" || deployment.Upstream.Model != "claude-haiku-4-5-20251001" {
 			t.Fatalf("%s did not select Claude Haiku 4.5: %#v", field, deployment)
@@ -403,19 +408,51 @@ func TestModelFieldTerms(t *testing.T) {
 		"openai/openai/gpt-5.5-2026-04-23":             `Write "openai/openai/gpt-5.5-2026-04-23" as author/model`,
 		"chutes/glm-5.2":                               "chutes is not an author. To choose a provider, write provider:chutes glm-5.2.",
 		"azure":                                        "azure is a provider. Write provider:azure",
-		"gpt-5.5-latest":                               "The catalog has no model, group or deployment gpt-5.5-latest.",
+		"gpt-5.5-latest":                               "The catalog has no model or deployment gpt-5.5-latest.",
 		"vendor:openai":                                `Unknown term "vendor:openai"`,
 		"provider:":                                    `Write "provider:" as kind:ID`,
+		":gpt-5.6-sol":                                 `Write ":gpt-5.6-sol" as kind:ID`,
 		"provider:azure provider:openai":               "names more than one provider",
 		"gpt-5.5-2026-04-23 claude-haiku-4-5":          "names more than one model, group or deployment",
-		"model:claude":                                 "claude is a group. Write group:claude",
-		"anthropic-claude-opus-4-8-us-fast":            "The catalog has no model, group or deployment",
+		"model:claude":                                 "claude is a group. Write group:claude to select among its models.",
+		"claude":                                       "claude is a group. Write group:claude to select among its models.",
+		"provider:openai gpt-6":                        "gpt-6 is a group. Write group:gpt-6",
+		"group:gpt-5.6-sol":                            "gpt-5.6-sol is a model. Write gpt-5.6-sol alone.",
+		"model:openai-gpt-5.6-sol":                     "openai-gpt-5.6-sol is a deployment. Write openai-gpt-5.6-sol alone.",
+		"model:openai/gpt-5.6-sol":                     `Write "model:openai/gpt-5.6-sol" as kind:ID, such as provider:azure, or author/model alone.`,
+		"group:gpt-5.7":                                "The catalog has no group gpt-5.7.",
+		"gpt-5.6 group:gpt-6":                          "names more than one model, group or deployment",
+		"anthropic-claude-opus-4-8-us-fast":            "The catalog has no model or deployment",
 		"author:openai author:anthropic gpt-5 a b c d": "at most 6 terms",
 		strings.Repeat("a", maxModelFieldBytes+1):      "at most 1024 bytes",
 	} {
 		_, err := snap.parseModelSelection(field)
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s: %v, want %q", field, err, want)
+		}
+	}
+}
+
+// Policies read request.model in one spelling: each kind once, in a fixed order, with the
+// catalog's IDs, so no spelling of the same selection escapes a rule.
+func TestModelSelectionReadsAsCanonicalTerms(t *testing.T) {
+	loadTestCatalog(t)
+	snap := active.Load()
+	for field, want := range map[string]string{
+		"":                              "",
+		"GPT-5.5":                       "model:gpt-5.5-2026-04-23",
+		"provider:Azure openai/gpt_5.5": "author:openai provider:azure model:gpt-5.5-2026-04-23",
+		"claude-4.5-haiku":              "model:claude-haiku-4-5",
+		"Group:GPT-5.6 provider:openai": "provider:openai group:gpt-5.6",
+		"openai-gpt-5.6-sol":            "deployment:openai-gpt-5.6-sol",
+		"route:openai-responses author:anthropic": "author:anthropic route:openai-responses",
+	} {
+		selection, err := snap.parseModelSelection(field)
+		if err != nil {
+			t.Fatalf("%q: %v", field, err)
+		}
+		if got := selection.String(); got != want {
+			t.Errorf("%q reads as %q, want %q", field, got, want)
 		}
 	}
 }
@@ -615,11 +652,11 @@ func TestReasoningModeSelectsDeployments(t *testing.T) {
 		{fields: `"model":"provider:azure gpt-6-astra","reasoning":{"mode":"pro"}`, deployment: "azure-gpt-6-astra-pro"},
 		{fields: `"model":"openai-gpt-5.6-sol-pro","reasoning":{"mode":"pro"}`, deployment: "openai-gpt-5.6-sol-pro"},
 		// A group selects its newest model in the mode.
-		{fields: `"model":"provider:openai gpt-6","reasoning":{"mode":"pro"}`, deployment: "openai-gpt-6.1-sol-pro"},
+		{fields: `"model":"provider:openai group:gpt-6","reasoning":{"mode":"pro"}`, deployment: "openai-gpt-6.1-sol-pro"},
 		{fields: `"model":"openai-gpt-5.6-sol-pro","reasoning":{"mode":"standard"}`, err: ErrReasoningModeUnavailable},
 		{fields: `"model":"openai-gpt-5.6-sol","reasoning":{"mode":"pro"}`, err: ErrReasoningModeUnavailable},
 		{fields: `"model":"provider:openai gpt-5.5","reasoning":{"mode":"pro"}`, err: ErrReasoningModeUnavailable},
-		{fields: `"model":"claude","reasoning":{"mode":"pro"}`, err: ErrReasoningModeUnavailable},
+		{fields: `"model":"group:claude","reasoning":{"mode":"pro"}`, err: ErrReasoningModeUnavailable},
 		// The mode applies before the tier.
 		{fields: `"model":"provider:openai gpt-5.5","reasoning":{"mode":"pro"},"service_tier":"ultrafast"`, err: ErrReasoningModeUnavailable},
 		{fields: `"model":"provider:openai gpt-6-astra","reasoning":{"mode":"pro"},"service_tier":"ultrafast"`, err: ErrServiceTierUnavailable},
@@ -634,7 +671,7 @@ func TestReasoningModeSelectsDeployments(t *testing.T) {
 		{fields: `"model":"provider:openai gpt-5.6-sol","reasoning":{"mode":"pro"}`, config: allowing("openai-gpt-5.6-sol-pro-flex"), err: ErrModelUnavailable},
 		{fields: `"model":"provider:openai gpt-5.6-sol","reasoning":{"mode":"pro"},"service_tier":"fast"`, config: allowing("openai-gpt-5.6-sol-pro-flex"), err: ErrServiceTierUnavailable},
 		// A key that can use no Claude model gets no mode named.
-		{fields: `"model":"claude","reasoning":{"mode":"pro"}`, config: allowing("openai-gpt-5.6-sol"), err: ErrModelUnavailable},
+		{fields: `"model":"group:claude","reasoning":{"mode":"pro"}`, config: allowing("openai-gpt-5.6-sol"), err: ErrModelUnavailable},
 	} {
 		config := test.config
 		if config == nil {
@@ -907,32 +944,36 @@ func TestGroupsFollowThePolicyOrder(t *testing.T) {
 		deployment  string
 		code        string
 	}{
+		// gpt-5.5 is OpenAI's alias of its snapshot, and the group needs group:.
 		{body: `{"model":"gpt-5.5","input":"hello"}`, credentials: openAI, deployment: "openai-gpt-5.5-2026-04-23"},
-		{body: `{"model":"gpt-6","input":"hello"}`, credentials: openAI, deployment: "openai-gpt-6.1-sol"},
-		{body: `{"model":"provider:openai gpt-6","input":"hello"}`, credentials: openAI, deployment: "openai-gpt-6.1-sol"},
-		{body: `{"model":"gpt-6","input":"hello","service_tier":"flex"}`, credentials: openAI, deployment: "openai-gpt-6.1-sol-flex"},
-		{body: `{"model":"provider:anthropic gpt-6","input":"hello"}`, code: ErrModelUnavailable.Code},
+		{body: `{"model":"group:gpt-6","input":"hello"}`, credentials: openAI, deployment: "openai-gpt-6.1-sol"},
+		{body: `{"model":"provider:openai group:gpt-6","input":"hello"}`, credentials: openAI, deployment: "openai-gpt-6.1-sol"},
+		{body: `{"model":"group:gpt-6","input":"hello","service_tier":"flex"}`, credentials: openAI, deployment: "openai-gpt-6.1-sol-flex"},
+		{body: `{"model":"provider:anthropic group:gpt-6","input":"hello"}`, code: ErrModelUnavailable.Code},
+		{body: `{"model":"gpt-6","input":"hello"}`, credentials: openAI, code: "invalid_request"},
 		// Every Claude Mythos deployment needs approval, which only an exact selector requests.
-		{body: `{"model":"claude-mythos","input":"hello"}`, code: ErrModelUnavailable.Code},
+		{body: `{"model":"group:claude-mythos","input":"hello"}`, code: ErrModelUnavailable.Code},
 		// Without a sort, the models of a group tie.
-		{body: `{"model":"gpt-5.6","input":"hello"}`, credentials: openAI, policy: `{}`, code: ErrModelAmbiguous.Code},
-		// GPT-5.6 Luna, Sol and Terra share a release date, so price decides.
-		{body: `{"model":"gpt-5.6","input":"hello"}`, credentials: openAI, deployment: "openai-gpt-5.6-luna"},
+		{body: `{"model":"group:gpt-5.6","input":"hello"}`, credentials: openAI, policy: `{}`, code: ErrModelAmbiguous.Code},
+		// GPT-5.6 Luna, Sol and Terra share a release date, so price decides for the group, while
+		// gpt-5.6 alone names GPT-5.6 Sol, as at OpenAI.
+		{body: `{"model":"group:gpt-5.6","input":"hello"}`, credentials: openAI, deployment: "openai-gpt-5.6-luna"},
+		{body: `{"model":"gpt-5.6","input":"hello"}`, credentials: openAI, policy: `{}`, deployment: "openai-gpt-5.6-sol"},
 		{
-			body:        `{"model":"gpt-5.6","input":"hello"}`,
+			body:        `{"model":"group:gpt-5.6","input":"hello"}`,
 			credentials: openAI,
 			policy:      `{"routing":{"sort":[{"by":"blended_price(3, 1)","direction":"asc"}]}}`,
 			deployment:  "openai-gpt-5.6-luna",
 		},
 		// A price sort alone picks the cheapest Claude, whatever its age.
 		{
-			body:        `{"model":"claude","input":"hello"}`,
+			body:        `{"model":"group:claude","input":"hello"}`,
 			credentials: anthropic,
 			policy:      `{"routing":{"sort":[{"by":"blended_price(3, 1)"},{"by":"deployment.id"}]}}`,
 			deployment:  "anthropic-claude-haiku-5-5",
 		},
 		{
-			body:        `{"model":"claude","input":"hello"}`,
+			body:        `{"model":"group:claude","input":"hello"}`,
 			credentials: anthropic,
 			policy:      `{"routing":{"filter":"'claude-opus' in model.groupIds","sort":[{"by":"model.releaseDate","direction":"desc"},{"by":"blended_price(3, 1)"},{"by":"deployment.id"}]}}`,
 			deployment:  "anthropic-claude-opus-5-5",
@@ -974,9 +1015,13 @@ func TestGroupsFollowThePolicyOrder(t *testing.T) {
 	for _, model := range models.Data {
 		listed[model.ID] = true
 	}
-	// Every group with a deployment that needs no approval is listed, even
-	// one whose newest models share a release date: policies choose.
-	for selector, want := range map[string]bool{"gpt-5.5": true, "gpt-6": true, "gpt-5.6": true, "claude-mythos": false} {
+	// Every group with a deployment that needs no approval is listed as group:<id>, even one whose
+	// newest models share a release date: policies choose. An alias that shares a group's ID is
+	// listed as itself as well.
+	for selector, want := range map[string]bool{
+		"gpt-5.5": true, "group:gpt-5.5": true, "group:gpt-6": true, "gpt-6": false, "gpt-5.6": true,
+		"group:gpt-5.6": true, "group:claude-mythos": false, "claude-4.5-haiku": true,
+	} {
 		if listed[selector] != want {
 			t.Fatalf("/v1/models lists %s: %t, want %t", selector, listed[selector], want)
 		}
@@ -1370,10 +1415,14 @@ func TestSnapshotValidationRefusesSelectorsThatCollideWhenNormalized(t *testing.
 		{"a model alias spells another model", func(graph map[string]any) {
 			graph["models"].(map[string]any)["claude-haiku-4-5"].(map[string]any)["aliases"] = []any{"claude-opus-4.8"}
 		}, []string{"model:claude-haiku-4-5", "model:claude-opus-4-8"}},
-		{"a group spells a deployment", func(graph map[string]any) {
+		{"a model alias spells a deployment", func(graph map[string]any) {
+			graph["models"].(map[string]any)["claude-haiku-4-5"].(map[string]any)["aliases"] = []any{"openai_gpt-5.6-sol"}
+		}, []string{"model:claude-haiku-4-5", "deployment:openai-gpt-5.6-sol"}},
+		// Groups are a namespace apart, where the same rule holds.
+		{"a group spells another group", func(graph map[string]any) {
 			model := graph["models"].(map[string]any)["claude-haiku-4-5"].(map[string]any)
-			model["groupIds"] = append(model["groupIds"].([]any), "OpenAI_GPT_5.6_Sol")
-		}, []string{"group:OpenAI_GPT_5.6_Sol", "deployment:openai-gpt-5.6-sol"}},
+			model["groupIds"] = append(model["groupIds"].([]any), "claude.haiku")
+		}, []string{"group:claude.haiku", "group:claude-haiku"}},
 		{"a provider alias spells another provider", func(graph map[string]any) {
 			graph["providers"].(map[string]any)["openai"].(map[string]any)["aliases"] = []any{"Google_Cloud"}
 		}, []string{"openai", "google-cloud"}},

@@ -77,8 +77,8 @@ type policyNode struct {
 }
 
 // routingSelectionsForRequest returns the deployments that the request's model field selects at
-// the variant. It returns none when the variant, a credential or the interface leaves no
-// deployment, and the caller names the field.
+// the variant, and the selection as policies read it. It returns no deployment when the variant,
+// a credential or the interface leaves none, and the caller names the field.
 func routingSelectionsForRequest(
 	now time.Time,
 	route Route,
@@ -86,22 +86,22 @@ func routingSelectionsForRequest(
 	want variant,
 	availableCredentials map[string][]int,
 	trace *routingTrace,
-) ([]routingSelection, error) {
+) ([]routingSelection, string, error) {
 	snap := stateAt(now)
 	if snap == nil {
-		return nil, ErrCatalogUnavailable
+		return nil, "", ErrCatalogUnavailable
 	}
 	selection, err := snap.parseModelSelection(requestedModel)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	selections := snap.routingSelections(route, selection, want, availableCredentials, trace, now)
 	if len(selections) == 0 {
 		if err := snap.unservedSelection(selection, now); err != nil {
-			return nil, err
+			return nil, "", err
 		}
 	}
-	return selections, nil
+	return selections, selection.String(), nil
 }
 
 // Strict provider choices are eligibility filters. Ordering is applied after
@@ -425,7 +425,7 @@ func newResolvedPolicyValues(candidate *ResolvedRequest) (*resolvedPolicyValues,
 			BodyBytes:   candidate.policyBodyBytes,
 			HostedTools: hostedTools,
 			Interface:   candidate.Route.Interface(),
-			Model:       candidate.RequestedModel,
+			Model:       candidate.policyModel,
 		}},
 		"route": {id: ids.route, fields: route},
 	}}, true

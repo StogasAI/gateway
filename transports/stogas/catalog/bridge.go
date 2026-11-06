@@ -132,7 +132,7 @@ func (r *ResolvedRequest) TranslateToChat() error {
 	if err := request.UnmarshalJSON(body); err != nil {
 		return ErrInvalidJSON
 	}
-	extraParams, err := filterRequestExtraParams(fields, r.Provider, r.RequestedModel, RouteChat)
+	extraParams, err := filterRequestExtraParams(fields, r.Provider, RouteChat)
 	if err != nil {
 		return err
 	}

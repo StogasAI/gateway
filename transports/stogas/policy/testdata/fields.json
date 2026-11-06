@@ -1,5 +1,4 @@
 {
-	"author.aliases": "string_list",
 	"author.headquarteredCountry": "string",
 	"author.id": "string",
 	"author.name": "string",
@@ -52,7 +51,6 @@
 	"deployment.upstream.reasoningMode": "string",
 	"deployment.upstream.serviceTier": "string",
 	"deployment.weightPrecision": "string",
-	"model.aliases": "string_list",
 	"model.authorId": "string",
 	"model.groupIds": "string_list",
 	"model.id": "string",
@@ -63,7 +61,6 @@
 	"model.reasoningMaxTokens.maximum": "integer",
 	"model.reasoningMaxTokens.minimum": "integer",
 	"model.releaseDate": "string",
-	"provider.aliases": "string_list",
 	"provider.credentialModes": "string_list",
 	"provider.headquarteredCountry": "string",
 	"provider.id": "string",

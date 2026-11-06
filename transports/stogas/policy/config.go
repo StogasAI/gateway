@@ -699,7 +699,7 @@ func configError(format string, arguments ...any) error {
 }
 
 var exactFieldTypes = map[string]string{
-	"author.aliases": "string_list", "author.headquarteredCountry": "string", "author.name": "string", "author.id": "string",
+	"author.headquarteredCountry": "string", "author.name": "string", "author.id": "string",
 	"deployment.approvalRequired": "boolean", "deployment.contextWindowTokens": "integer", "deployment.maxInputTokens": "integer",
 	"deployment.dataHandling.endToEndEncrypted": "boolean", "deployment.dataHandling.processingLocation": "string",
 	"deployment.dataHandling.processingWithin": "string_list", "deployment.dataHandling.retentionDays": "integer",
@@ -716,11 +716,11 @@ var exactFieldTypes = map[string]string{
 	"deployment.upstream.model": "string", "deployment.upstream.modelFormat": "string",
 	"deployment.upstream.modelVersion": "string", "deployment.upstream.reasoningMode": "string",
 	"deployment.upstream.serviceTier": "string", "deployment.weightPrecision": "string",
-	"deployment.id": "string", "model.aliases": "string_list", "model.authorId": "string", "model.groupIds": "string_list",
+	"deployment.id": "string", "model.authorId": "string", "model.groupIds": "string_list",
 	"model.maxOutputTokens": "integer", "model.name": "string", "model.reasoning": "string",
 	"model.reasoningEfforts": "string_list", "model.reasoningMaxTokens.maximum": "integer",
 	"model.reasoningMaxTokens.minimum": "integer", "model.releaseDate": "string", "model.id": "string",
-	"provider.aliases": "string_list", "provider.credentialModes": "string_list", "provider.headquarteredCountry": "string",
+	"provider.credentialModes": "string_list", "provider.headquarteredCountry": "string",
 	"provider.name": "string", "provider.id": "string",
 	"request.bodyBytes": "integer", "request.hostedTools": "string_list", "request.interface": "string",
 	"request.model": "string", "request.time": "timestamp",

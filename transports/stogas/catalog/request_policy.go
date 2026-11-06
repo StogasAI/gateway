@@ -173,7 +173,7 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 	}
 	for _, selection := range variants.selections {
 		template := ResolvedRequest{
-			Route: route, RequestedModel: model, Provider: selection.provider, Deployment: selection.deployment,
+			Route: route, policyModel: model, Provider: selection.provider, Deployment: selection.deployment,
 			policyTime: input.now, policyBudget: input.policyBudget, policyBodyBytes: len(input.Body),
 			hostedTools: variants.hostedTools,
 		}

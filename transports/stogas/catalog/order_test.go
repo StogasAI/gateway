@@ -271,7 +271,7 @@ func TestPolicyCriteriaDecideEveryTriedTie(t *testing.T) {
 		},
 		{
 			name:        "a group follows the sort to its oldest model",
-			body:        `{"model":"claude-sonnet","input":"hello"}`,
+			body:        `{"model":"group:claude-sonnet","input":"hello"}`,
 			credentials: anthropic,
 			policy:      `{"routing":{"sort":[{"by":"model.releaseDate"},` + tiebreak + `]}}`,
 			deployment:  "anthropic-claude-sonnet-4-6",
@@ -285,7 +285,7 @@ func TestPolicyCriteriaDecideEveryTriedTie(t *testing.T) {
 		},
 		{
 			name:        "an order picks any model of a group",
-			body:        `{"model":"claude-opus","input":"hello"}`,
+			body:        `{"model":"group:claude-opus","input":"hello"}`,
 			credentials: anthropic,
 			policy:      `{"routing":{"sort":[{"deployments":["anthropic-claude-opus-4-8"]},` + tiebreak + `]}}`,
 			deployment:  "anthropic-claude-opus-4-8",

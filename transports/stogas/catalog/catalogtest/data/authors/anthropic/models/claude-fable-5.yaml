@@ -1,6 +1,7 @@
 models:
   authorId: anthropic
   name: Claude Fable 5
+  aliases: [claude-5-fable]
   groupIds: [claude-fable]
   contextWindowTokens: 1000000
   maxOutputTokens: 128000

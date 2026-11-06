@@ -27,11 +27,11 @@
     "valid": true
   },
   {
-    "filter": "request.model == \"a'b\\\\c\"",
+    "filter": "model.name == \"a'b\\\\c\"",
     "valid": true
   },
   {
-    "filter": "request.model == \"🌍\"",
+    "filter": "model.name == \"🌍\"",
     "valid": true
   },
   {
@@ -39,12 +39,24 @@
     "valid": true
   },
   {
-    "filter": "request.model == \"a\\\"b\"",
+    "filter": "model.name == \"a\\\"b\"",
     "valid": true
   },
   {
     "filter": "!(!(has(provider.id)))",
     "valid": true
+  },
+  {
+    "filter": "request.model == \"provider:azure group:gpt-6\"",
+    "valid": true
+  },
+  {
+    "filter": "request.model == \"gpt-6\"",
+    "valid": false
+  },
+  {
+    "filter": "request.model == \"group:gpt-6 provider:azure\"",
+    "valid": false
   },
   {
     "filter": "",
@@ -79,15 +91,15 @@
     "valid": false
   },
   {
-    "filter": "where request.model == 'a\\nb'",
+    "filter": "where model.name == 'a\\nb'",
     "valid": false
   },
   {
-    "filter": "where request.model == 'a\u0001b'",
+    "filter": "where model.name == 'a\u0001b'",
     "valid": false
   },
   {
-    "filter": "where request.model == 'unclosed",
+    "filter": "where model.name == 'unclosed",
     "valid": false
   },
   {

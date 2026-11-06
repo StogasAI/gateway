@@ -75,7 +75,7 @@ func TestRoutingSimulationNamesWhatRemovedEachCandidate(t *testing.T) {
 			removed: []string{"no_credential openai"}, pairs: 4, tried: 3},
 		{name: "any model in a reasoning mode", route: RouteResponses, mode: "pro", credentials: map[string][]int{"openai": {0}}, base: unsorted,
 			removed: []string{"no_credential azure"}, code: "model_ambiguous"},
-		{name: "approval and ambiguity", route: RouteResponses, model: "gpt-5.6", credentials: map[string][]int{"openai": {0}}, base: unsorted,
+		{name: "approval and ambiguity", route: RouteResponses, model: "group:gpt-5.6", credentials: map[string][]int{"openai": {0}}, base: unsorted,
 			removed: []string{"approval openai/openai-gpt-5.6-cyber", "no_credential azure"}, code: "model_ambiguous",
 			ambiguous: []string{"gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"}},
 		{name: "deployments of one model tie", model: "gpt-5.6-sol", credentials: map[string][]int{"azure": {0}}, base: unsorted,
@@ -83,7 +83,7 @@ func TestRoutingSimulationNamesWhatRemovedEachCandidate(t *testing.T) {
 			ambiguous: []string{"azure-gpt-5.6-sol", "azure-gpt-5.6-sol-apac", "azure-gpt-5.6-sol-eu", "azure-gpt-5.6-sol-instant", "azure-gpt-5.6-sol-us"}},
 		// The test default sorts by release date, so the newest model of a
 		// group leads and the older ones follow.
-		{name: "every model of a group", model: "gpt-6", credentials: map[string][]int{"openai": {0}},
+		{name: "every model of a group", model: "group:gpt-6", credentials: map[string][]int{"openai": {0}},
 			removed: []string{"no_credential azure"}, pairs: 4, tried: 3},
 		{name: "allowed nodes of the key", model: "gpt-5.6-sol", credentials: map[string][]int{"azure": {0}, "openai": {0}},
 			base: compose(`{}`, `{"routing":{"allowedCatalogNodes":{"deployments":["azure-gpt-5.6-sol-eu"]}}}`),
