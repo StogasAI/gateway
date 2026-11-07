@@ -484,6 +484,30 @@ func TestProviderAttemptStatusUsesCanonicalResponseTerminal(t *testing.T) {
 	}
 }
 
+func TestFinishReasonReadsResponsesIncompleteDetails(t *testing.T) {
+	truncated := &schemas.BifrostResponsesResponse{
+		IncompleteDetails: &schemas.ResponsesResponseIncompleteDetails{Reason: schemas.ResponsesResponseIncompleteReasonMaxOutputTokens},
+	}
+	for name, response := range map[string]*schemas.BifrostResponse{
+		"response": {ResponsesResponse: truncated},
+		"stream":   {ResponsesStreamResponse: &schemas.BifrostResponsesStreamResponse{Response: truncated}},
+	} {
+		if got := finishReason(response); got != "max_output_tokens" {
+			t.Fatalf("%s: finishReason = %q, want max_output_tokens", name, got)
+		}
+	}
+	stopped := &schemas.BifrostResponse{ResponsesResponse: &schemas.BifrostResponsesResponse{
+		StopReason:        schemas.Ptr("max_tokens"),
+		IncompleteDetails: truncated.IncompleteDetails,
+	}}
+	if got := finishReason(stopped); got != "max_tokens" {
+		t.Fatalf("a provider's stop reason must win over incomplete details, got %q", got)
+	}
+	if got := finishReason(&schemas.BifrostResponse{ResponsesResponse: &schemas.BifrostResponsesResponse{}}); got != "" {
+		t.Fatalf("a complete OpenAI response names no reason, got %q", got)
+	}
+}
+
 func TestProviderTelemetryCannotExpandTheRequestLog(t *testing.T) {
 	requestID := strings.Repeat("r", maxProviderResponseIDBytes+1)
 	finishReason := strings.Repeat("f", maxProviderReasonBytes+1)

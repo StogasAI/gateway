@@ -534,11 +534,19 @@ func finishReason(resp *schemas.BifrostResponse) string {
 			return boundedTelemetryValue(*choice.FinishReason, maxProviderReasonBytes)
 		}
 	}
-	if resp.ResponsesResponse != nil && resp.ResponsesResponse.StopReason != nil {
-		return boundedTelemetryValue(*resp.ResponsesResponse.StopReason, maxProviderReasonBytes)
+	responses := resp.ResponsesResponse
+	if responses == nil && resp.ResponsesStreamResponse != nil {
+		responses = resp.ResponsesStreamResponse.Response
 	}
-	if resp.ResponsesStreamResponse != nil && resp.ResponsesStreamResponse.Response != nil && resp.ResponsesStreamResponse.Response.StopReason != nil {
-		return boundedTelemetryValue(*resp.ResponsesStreamResponse.Response.StopReason, maxProviderReasonBytes)
+	switch {
+	case responses == nil:
+		return ""
+	case responses.StopReason != nil:
+		return boundedTelemetryValue(*responses.StopReason, maxProviderReasonBytes)
+	case responses.IncompleteDetails != nil:
+		// OpenAI's Responses API says why a response stopped early, such as max_output_tokens,
+		// only in its incomplete details.
+		return boundedTelemetryValue(responses.IncompleteDetails.Reason, maxProviderReasonBytes)
 	}
 	return ""
 }
