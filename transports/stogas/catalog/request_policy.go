@@ -58,6 +58,8 @@ type requestVariants struct {
 	// hostedTools are the hosted tools that the request lets the model call, whose data
 	// handling joins each candidate's.
 	hostedTools []HostedTool
+	// facts are what policies read about the request's tools and messages.
+	facts *requestFacts
 	// ruledOut are the deployments that the request's parameters or hosted tools ruled out.
 	ruledOut []ruledOut
 }
@@ -176,7 +178,7 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 		template := ResolvedRequest{
 			Route: route, policyModel: model, Provider: selection.provider, Deployment: selection.deployment,
 			policyTime: input.now, policyBudget: input.policyBudget, policyBodyBytes: len(input.Body),
-			hostedTools: variants.hostedTools,
+			hostedTools: variants.hostedTools, policyFacts: variants.facts,
 		}
 		values, ok := newResolvedPolicyValues(&template)
 		if !ok {

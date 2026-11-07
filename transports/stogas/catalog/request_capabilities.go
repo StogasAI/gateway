@@ -80,25 +80,9 @@ func requestCapabilities(raw map[string]json.RawMessage, route Route, shared Cap
 	if shared.SystemMessages {
 		return required, nil
 	}
-	messageField := "messages"
-	if route == RouteResponses {
-		messageField = "input"
-		instructions := bytes.TrimSpace(raw["instructions"])
-		required.SystemMessages = len(instructions) != 0 && !bytes.Equal(instructions, []byte("null")) && !bytes.Equal(instructions, []byte(`""`))
-	}
-	if value := bytes.TrimSpace(raw[messageField]); len(value) > 0 && value[0] == '[' {
-		var messages []struct{ Role string }
-		if err := json.Unmarshal(value, &messages); err != nil {
-			return required, ErrInvalidJSON
-		}
-		for _, message := range messages {
-			if message.Role == "system" || message.Role == "developer" {
-				required.SystemMessages = true
-				break
-			}
-		}
-	}
-	return required, nil
+	var err error
+	required.SystemMessages, err = requestSendsSystemMessages(route, raw)
+	return required, err
 }
 
 // Features supported by every candidate cannot narrow the selection. Avoid

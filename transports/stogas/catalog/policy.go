@@ -52,9 +52,14 @@ type policyDataHandling struct {
 
 type policyRequestData struct {
 	BodyBytes   int      `json:"bodyBytes"`
+	ClientTools []string `json:"clientTools"`
 	HostedTools []string `json:"hostedTools"`
 	Interface   string   `json:"interface"`
+	MCPServers  []string `json:"mcpServers"`
+	MCPTools    []string `json:"mcpTools"`
 	Model       string   `json:"model"`
+	// SystemMessages reads the request's messages only when a policy asks.
+	SystemMessages func() bool `json:"systemMessages"`
 }
 
 type resolvedPolicyValues struct {
@@ -427,14 +432,19 @@ func newResolvedPolicyValues(candidate *ResolvedRequest) (*resolvedPolicyValues,
 		},
 		"model":    {id: ids.model, fields: model},
 		"provider": {id: ids.provider, fields: provider},
-		"request": {fields: policyRequestData{
-			BodyBytes:   candidate.policyBodyBytes,
-			HostedTools: hostedTools,
-			Interface:   candidate.Route.Interface(),
-			Model:       candidate.policyModel,
-		}},
-		"route": {id: ids.route, fields: route},
+		"request":  {fields: candidate.policyRequestData(hostedTools)},
+		"route":    {id: ids.route, fields: route},
 	}}, true
+}
+
+// policyRequestData is the request as policies read it. A candidate without a request, as when
+// the catalog checks its values, reads no request facts.
+func (r *ResolvedRequest) policyRequestData(hostedTools []string) policyRequestData {
+	data := policyRequestData{BodyBytes: r.policyBodyBytes, HostedTools: hostedTools, Interface: r.Route.Interface(), Model: r.policyModel}
+	if facts := r.policyFacts; facts != nil {
+		data.ClientTools, data.MCPServers, data.MCPTools, data.SystemMessages = facts.clientTools, facts.mcpServers, facts.mcpTools, facts.systemMessages
+	}
+	return data
 }
 
 func (v *resolvedPolicyValues) PolicyTime() time.Time              { return v.now }
@@ -555,9 +565,14 @@ func policyFields(shape reflect.Type) map[string][]int {
 }
 
 func typedPolicyValue(value reflect.Value, fieldType string, path string) (policy.Value, bool) {
-	for value.IsValid() && (value.Kind() == reflect.Interface || value.Kind() == reflect.Pointer) {
+	for value.IsValid() && (value.Kind() == reflect.Interface || value.Kind() == reflect.Pointer || value.Kind() == reflect.Func) {
 		if value.IsNil() {
 			return policy.Value{}, false
+		}
+		// A function field computes its value when a policy reads it.
+		if value.Kind() == reflect.Func {
+			value = value.Call(nil)[0]
+			continue
 		}
 		value = value.Elem()
 	}

@@ -100,10 +100,10 @@ type RequestInput struct {
 	now          time.Time
 	policyBudget *policy.CELBudget
 	trace        *routingTrace
-	// hostedTools, set by a simulation, are the hosted tools that its request lists and lets the
-	// model call. A simulated request has no body to read them from.
-	hostedTools *hostedToolUse
-	Body        []byte
+	// tools, set by a simulation, are the tools that its request lists. A simulated request has
+	// no body to read them from.
+	tools *requestTools
+	Body  []byte
 	// Fields, when supplied, must come from DecodeRequestBody for this Body.
 	Fields              map[string]json.RawMessage
 	Method              string
@@ -176,7 +176,9 @@ type ResolvedRequest struct {
 	policyTime      time.Time
 	policyBudget    *policy.CELBudget
 	// policyModel is what the request's model field selects, as request.model reads it.
-	policyModel     string
+	policyModel string
+	// policyFacts are what policies read about the request's tools and messages.
+	policyFacts     *requestFacts
 	Route           Route
 	RequestType     schemas.RequestType
 	Provider        schemas.ModelProvider
@@ -908,18 +910,18 @@ func planRoutes(input RequestInput, route Route, rawData map[string]json.RawMess
 	if err != nil {
 		return nil, err
 	}
-	hostedTools := requestHostedTools(route, rawData)
-	if input.hostedTools != nil {
-		hostedTools = *input.hostedTools
+	tools := readRequestTools(route, rawData)
+	if input.tools != nil {
+		tools = *input.tools
 	}
-	selections, withoutTools, err := filterHostedTools(selections, hostedTools.listed, input.trace)
+	selections, withoutTools, err := filterHostedTools(selections, tools.hosted.listed, input.trace)
 	if err != nil {
 		return nil, err
 	}
 	variants := &requestVariants{
 		base: RequestPolicy{Config: input.Policy, RedactionPolicy: input.RedactionPolicy, LoadRedactionPolicy: input.LoadRedactionPolicy},
 		load: input.CredentialPolicy, requestPolicy: requestPolicy, fields: rawData, route: route, selections: selections, reserveBody: input.ReserveBody, inputBytes: len(input.Body),
-		attachments: requestAttachments(rawData, route), hostedTools: hostedTools.enabled, ruledOut: append(ruledOut, withoutTools...),
+		attachments: requestAttachments(rawData, route), hostedTools: tools.hosted.enabled, facts: tools.facts, ruledOut: append(ruledOut, withoutTools...),
 	}
 	return planRequest(input, route, requested, providerPreference, variants)
 }

@@ -133,8 +133,12 @@ func SimulateRouting(input RequestInput, route Route, model, tier, mode string, 
 		if len(toolChoice) == 0 {
 			delete(body, "tool_choice")
 		}
-		use := requestHostedTools(route, body)
-		input.hostedTools = &use
+		// The types name no tool or server, so the simulated request lists no client tool or MCP
+		// server for policies, as it sends no system message.
+		tools := readRequestTools(route, body)
+		tools.facts = &requestFacts{clientTools: []string{}, mcpServers: []string{}, mcpTools: []string{},
+			systemMessages: func() bool { return false }}
+		input.tools = &tools
 	}
 	plan, err := planRoutes(input, route, fields)
 	result := &RoutingSimulation{Removed: trace.removed, Truncated: trace.truncated, Ambiguous: trace.ambiguous, Err: err}

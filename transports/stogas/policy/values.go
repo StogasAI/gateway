@@ -68,6 +68,11 @@ var (
 		return err == nil
 	}, "a date such as '2027-01-31'", nil}
 	interfaces = oneOf("chat_completions", "responses")
+	// A remote MCP server reads as its URL's lowercase host or its lowercase connector or tunnel ID,
+	// and each of its tools as the server, a slash and the tool's name, or * for every tool.
+	mcpServer = patternDomain(`^[a-z0-9:][a-z0-9._:-]*$`, "a lowercase host, such as 'mcp.example.com', or a connector or tunnel ID")
+	mcpTool   = patternDomain(`^[a-z0-9:][a-z0-9._:-]*/.+$`,
+		"a server and one of its tools, such as 'mcp.example.com/search', or 'mcp.example.com/*' for every tool")
 	reasoning  = oneOf("unsupported", "optional", "required")
 	modalities = oneOf("text", "image", "audio", "video")
 	efforts    = oneOf(ReasoningEfforts...)
@@ -113,6 +118,8 @@ var fieldDomains = map[string]fieldDomain{
 	"provider.headquarteredCountry":     country,
 	"request.hostedTools":               oneOf("web_search", "web_fetch", "mcp"),
 	"request.interface":                 interfaces,
+	"request.mcpServers":                mcpServer,
+	"request.mcpTools":                  mcpTool,
 	"request.model":                     selection,
 }
 

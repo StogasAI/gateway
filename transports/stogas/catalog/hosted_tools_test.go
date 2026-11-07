@@ -42,7 +42,7 @@ func TestRequestHostedToolsFollowToolChoice(t *testing.T) {
 			if err := json.Unmarshal([]byte(test.body), &raw); err != nil {
 				t.Fatal(err)
 			}
-			use := requestHostedTools(test.route, raw)
+			use := readRequestTools(test.route, raw).hosted
 			if !slices.Equal(use.listed, test.listed) || !slices.Equal(use.enabled, test.enabled) {
 				t.Fatalf("listed %v and enabled %v, want %v and %v", use.listed, use.enabled, test.listed, test.enabled)
 			}

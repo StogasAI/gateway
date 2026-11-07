@@ -161,35 +161,6 @@ func webSearchMeters(claudeWire bool) (required, foreign []string) {
 	return openai, anthropic
 }
 
-// hostedToolUse is the hosted tools that a request lists, and those of them that its tool_choice
-// lets the model call. A deployment must take every listed tool's declaration, and only the
-// callable ones can send request content anywhere.
-type hostedToolUse struct {
-	listed, enabled []HostedTool
-}
-
-// requestHostedTools reads a request's hosted tools in canonical order. Only Responses requests
-// list them; Chat Completions takes function tools alone.
-func requestHostedTools(route Route, raw map[string]json.RawMessage) hostedToolUse {
-	rawTools, ok := raw["tools"]
-	if route != RouteResponses || !ok {
-		return hostedToolUse{}
-	}
-	tools, err := rawjson.Array(rawTools)
-	if err != nil {
-		return hostedToolUse{}
-	}
-	declared := make([]string, 0, len(tools))
-	for _, rawTool := range tools {
-		if tool, err := rawjson.Object(rawTool); err == nil {
-			if kind := rawStringValue(tool["type"]); kind != "" {
-				declared = append(declared, kind)
-			}
-		}
-	}
-	return hostedToolUse{listed: hostedToolsOf(declared), enabled: hostedToolsOf(EffectiveResponsesToolTypes(raw, declared))}
-}
-
 func hostedToolsOf(kinds []string) []HostedTool {
 	var tools []HostedTool
 	for _, kind := range kinds {
