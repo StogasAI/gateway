@@ -54,7 +54,8 @@ func TestChatPolicyRejectsUnsupportedFields(t *testing.T) {
 		{"empty assistant", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":null}]}`, "must contain content, refusal, reasoning history, annotations, or tool calls"},
 		{"empty annotations", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","annotations":[]}]}`, "annotations must be a non-empty array"},
 		{"citation reversed range", `{"model":"provider:openai gpt-5.5","messages":[{"role":"assistant","content":"answer","annotations":[{"type":"url_citation","url_citation":{"start_index":5,"end_index":2,"title":"source","url":"https://example.com"}}]},{"role":"user","content":"continue"}]}`, "end_index must be an integer at or after start_index"},
-		{"reasoning details on OpenAI", `{"model":"provider:openai gpt-5.5","messages":[{"role":"assistant","content":"answer","reasoning_details":[{"index":0,"type":"reasoning.text","text":"thought","signature":"sig"}]},{"role":"user","content":"continue"}]}`, "reasoning_details history is not supported for the selected deployment"},
+		{"signed reasoning on OpenAI", `{"model":"provider:openai gpt-5.5","messages":[{"role":"assistant","content":"answer","reasoning_details":[{"index":0,"type":"reasoning.text","text":"thought","signature":"sig"}]},{"role":"user","content":"continue"}]}`, "reasoning_details[0].type is not supported for the selected deployment"},
+		{"reasoning details on OpenAI Chat Completions", `{"model":"route:openai-chat-completions gpt-5.5","messages":[{"role":"assistant","content":"answer","reasoning_details":[{"index":0,"type":"reasoning.encrypted","data":"opaque"}]},{"role":"user","content":"continue"}]}`, "reasoning_details history is not supported for the selected deployment"},
 		{"unsigned Anthropic reasoning", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"assistant","content":"answer","reasoning":"thought"},{"role":"user","content":"continue"}]}`, "requires signed reasoning_details"},
 		{"Anthropic reasoning detail index gap", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"assistant","content":"answer","reasoning_details":[{"index":1,"type":"reasoning.text","text":"thought","signature":"sig"}]},{"role":"user","content":"continue"}]}`, "must match its array position"},
 		{"Anthropic reasoning detail missing signature", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"assistant","content":"answer","reasoning_details":[{"index":0,"type":"reasoning.text","text":"thought"}]},{"role":"user","content":"continue"}]}`, "signature is required"},
@@ -568,8 +569,10 @@ func TestChatClientToolContinuationReachesEveryProviderWireLosslessly(t *testing
 		model         string
 		name          string
 	}{
-		{name: "OpenAI", model: "provider:openai gpt-5.5"},
-		{name: "Azure OpenAI", model: "azure-gpt-5.6-sol"},
+		// The route keeps Chat Completions, which the deployment leaves for Responses when a request
+		// declares tools.
+		{name: "OpenAI", model: "route:openai-chat-completions gpt-5.5"},
+		{name: "Azure OpenAI", model: "azure-gpt-5.6-sol route:azure-chat-completions"},
 		{name: "Anthropic", model: "anthropic-claude-sonnet-4-6", anthropicWire: true},
 		{name: "Azure Claude", model: "azure-claude-opus-4-8-anthropic-hosted", anthropicWire: true},
 		{name: "Chutes", model: "chutes-glm-5.2"},

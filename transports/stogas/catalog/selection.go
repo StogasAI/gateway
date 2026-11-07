@@ -365,14 +365,15 @@ func (s *snapshot) unservedSelection(sel modelSelection, now time.Time) error {
 // routingSelections returns the deployments that a selection reaches on an interface at a
 // variant. A named deployment keeps its own tier and reasoning mode unless the request sets one;
 // other selections use the Standard tier, or the request's. Deployments that need approval join
-// only when the selection names their model or the deployment. A deployment joins through the
-// translation only when no route that the selection allows takes the interface itself for it.
+// only when the selection names their model or the deployment. A deployment joins on one route
+// (servedElsewhere). throughResponses, which may be nil, reports a Chat Completions request that
+// deployments with both interfaces serve through Responses (chatThroughResponses).
 //
 // A trace names providers without a credential or the interface, deployments that need approval,
 // and, for a selection that names a model, group or deployment, providers that serve it only at
 // another tier or reasoning mode. A selection without a name leaves out providers without the
 // interface, since every provider would show.
-func (s *snapshot) routingSelections(route Route, sel modelSelection, want variant, availableCredentials map[string][]int, trace *routingTrace, now time.Time) []routingSelection {
+func (s *snapshot) routingSelections(route Route, sel modelSelection, want variant, throughResponses func() bool, availableCredentials map[string][]int, trace *routingTrace, now time.Time) []routingSelection {
 	pinned := sel.deployment != ""
 	tier, mode := cmp.Or(want.tier, TierStandard), want.upstreamMode()
 	selections := make([]routingSelection, 0)
@@ -394,7 +395,7 @@ func (s *snapshot) routingSelections(route Route, sel modelSelection, want varia
 		for _, id := range routeNode.DeploymentIDs {
 			compiled := s.graph.Deployments[id]
 			if !servesAt(compiled, routeNode, now) || !s.selects(sel, routeNode, id, compiled) ||
-				bridging && s.takesItself(sel, route, id, compiled, now) {
+				s.servedElsewhere(sel, route, bridging, id, compiled, throughResponses, now) {
 				continue
 			}
 			inMode := compiled.Upstream.ReasoningMode == mode

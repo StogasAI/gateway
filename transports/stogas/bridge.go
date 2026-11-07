@@ -5,12 +5,12 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
 
-// A bridged request reaches a deployment that takes only the other one of Chat Completions and
-// Responses, whose provider replies on that interface. Its client gets the reply on the interface
-// that it called, which Bifrost converts. The converted reply must then pass the checks of a
-// provider's reply on the client's interface, which read the request as the client sent it. Those
-// checks run on a state of their own: the request's state keeps the provider's reply, from which
-// the gateway bills and logs.
+// A bridged request reaches its deployment on the other one of Chat Completions and Responses,
+// whose provider replies on that interface. Its client gets the reply on the interface that it
+// called, which Bifrost converts. The converted reply must then pass the checks of a provider's
+// reply on the client's interface, which read the request as the client sent it. Those checks run
+// on a state of their own: the request's state keeps the provider's reply, from which the gateway
+// bills and logs.
 //
 // Bifrost names why a reply converted to Responses ended in its stop reason too, which a Responses
 // reply carries only from Anthropic's interface. Its status and incomplete details say the same.

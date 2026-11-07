@@ -150,7 +150,7 @@ func TestRequestLogKeepsWholeResponsesUntimed(t *testing.T) {
 }
 
 func TestRequestLogTimesChatToolCallsFromTheirDeltas(t *testing.T) {
-	state := resolvedChatValidationState(t, `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}}]}`)
+	state := resolvedChatValidationState(t, `{"model":"route:openai-chat-completions gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}}]}`)
 	role := string(schemas.ChatMessageRoleAssistant)
 	for index, arguments := range []string{`{"q":`, `"x"}`} {
 		chunk := validChatProviderChunk("chatcmpl_tool", false)

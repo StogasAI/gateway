@@ -20,13 +20,14 @@ import (
 // reply on the interface that the client called. The request log keeps the client's interface, and
 // the deployment's route names the interface on which the gateway called the provider. A deployment
 // that takes the client's interface itself gets it, unless the model field names its route for the
-// other interface.
+// other interface or the request is a Chat Completions request with tools or reasoning history
+// (chatThroughResponses).
 //
 // bridgedProviders names, for each interface, the providers whose deployments serve it through the
 // other. Chutes and Azure serve Responses through Chat Completions. OpenAI's only deployment without
 // Responses is its search model, whose searches only Chat Completions' web_search_options prices.
 // OpenAI and Azure serve Chat Completions through Responses, for the deployments that take only
-// Responses, such as Pro.
+// Responses, such as Pro, and for requests with tools or reasoning history.
 var bridgedProviders = map[Route]map[schemas.ModelProvider]bool{
 	RouteChat:      {schemas.OpenAI: true, schemas.Azure: true},
 	RouteResponses: {ProviderChutes: true, schemas.Azure: true},
@@ -220,8 +221,8 @@ func (r *ResolvedRequest) translateToChat() error {
 }
 
 // translateToResponses gives a Chat Completions request the Responses body of a deployment that
-// takes only Responses. The request's checks normalized its reasoning controls, and the deployment
-// gives the reasoning mode.
+// serves it through Responses. The request's checks normalized its reasoning controls, and the
+// deployment gives the reasoning mode.
 func (r *ResolvedRequest) translateToResponses() error {
 	if r.chat == nil {
 		return ErrUnsupportedRequest
@@ -495,13 +496,51 @@ func newChatWireMessage(message *schemas.ChatMessage) chatWireMessage {
 	return wire
 }
 
-// takesItself reports whether a route of the deployment that the selection allows takes requests
-// on route itself. The selection decides before any policy, so that a policy only removes
-// deployments and never changes the interface on which the gateway calls one.
-func (s *snapshot) takesItself(sel modelSelection, route Route, id string, deployment *compiledDeployment, now time.Time) bool {
+// servedElsewhere reports whether another route of the deployment that the selection allows
+// serves the request instead of the one that routing visits, which bridges the interface or takes
+// it itself. A deployment serves a request on a route that takes its interface itself, unless the
+// request is one that the deployment serves through Responses (chatThroughResponses). The selection
+// decides before any policy, so that a policy only removes deployments and never changes the
+// interface on which the gateway calls one.
+func (s *snapshot) servedElsewhere(sel modelSelection, route Route, bridging bool, id string, deployment *compiledDeployment, throughResponses func() bool, now time.Time) bool {
+	other := false
 	for routeID := range deployment.Routes {
 		node, ok := s.graph.Routes[routeID]
-		if ok && routeSupportsInterface(node, route) && servesAt(deployment, node, now) && s.selects(sel, node, id, deployment) {
+		if ok && routeBridges(node, route) != bridging && (routeBridges(node, route) || routeSupportsInterface(node, route)) &&
+			servesAt(deployment, node, now) && s.selects(sel, node, id, deployment) {
+			other = true
+			break
+		}
+	}
+	if !other {
+		return false
+	}
+	translated := route == RouteChat && throughResponses != nil && throughResponses()
+	return bridging != translated
+}
+
+// chatThroughResponses reports whether the OpenAI and Azure deployments that take both interfaces
+// serve a Chat Completions request through Responses: one that declares tools or carries reasoning
+// history, when Responses carry it whole. From GPT-5.4 on, OpenAI's Chat Completions refuse
+// function tools while the model reasons, and OpenAI documents tool calling for its newest models
+// only on Responses. Only Responses take back the encrypted reasoning of a reply that came through
+// Responses. A request that Responses cannot carry whole keeps Chat Completions, and its provider
+// decides.
+func chatThroughResponses(raw map[string]json.RawMessage, gap func() error) bool {
+	tools := len(raw["tools"]) > 0 && !rawJSONNullOrEmptyArray(raw["tools"])
+	return (tools || chatReasoningHistory(raw["messages"])) && gap() == nil
+}
+
+// chatReasoningHistory reports whether a message of a Chat Completions request carries reasoning
+// details.
+func chatReasoningHistory(raw json.RawMessage) bool {
+	messages, err := rawjson.Array(raw)
+	if err != nil {
+		return false
+	}
+	for _, message := range messages {
+		object, err := rawjson.Object(message)
+		if details := object["reasoning_details"]; err == nil && len(details) > 0 && !rawJSONNullOrEmptyArray(details) {
 			return true
 		}
 	}

@@ -325,7 +325,7 @@ func (r *ResolvedRequest) ToBifrost(ctx *schemas.BifrostContext) (*schemas.Bifro
 	}
 	switch {
 	case r.Bridged() && r.wire == nil:
-		// Translate has not run, and the deployment takes only the other interface.
+		// Translate has not run on a request that its deployment serves on the other interface.
 		return nil, ErrUnsupportedRequest
 	case r.chat != nil:
 		body := r.chat.ToBifrostChatRequest(ctx)
@@ -881,7 +881,13 @@ func planRoutes(input RequestInput, route Route, rawData map[string]json.RawMess
 	if err != nil {
 		return nil, err
 	}
-	selections, requested, err := routingSelectionsForRequest(input.now, route, base.Model, base.variant, input.AvailableCredentials, input.trace)
+	// A bridged deployment serves a request only when the other interface carries it whole.
+	bridgeGap := sync.OnceValue(func() error { return rawConversionGap(rawData, route) })
+	var throughResponses func() bool
+	if route == RouteChat {
+		throughResponses = sync.OnceValue(func() bool { return chatThroughResponses(rawData, bridgeGap) })
+	}
+	selections, requested, err := routingSelectionsForRequest(input.now, route, base.Model, base.variant, throughResponses, input.AvailableCredentials, input.trace)
 	if err != nil {
 		return nil, err
 	}
@@ -890,7 +896,7 @@ func planRoutes(input RequestInput, route Route, rawData map[string]json.RawMess
 		// The variant, a credential or the key's allowed nodes left no deployment. Try the
 		// model's other variants to find which field to name.
 		return nil, base.variant.unavailable(func(other variant) bool {
-			inVariant, _, err := routingSelectionsForRequest(input.now, route, base.Model, other, input.AvailableCredentials, nil)
+			inVariant, _, err := routingSelectionsForRequest(input.now, route, base.Model, other, throughResponses, input.AvailableCredentials, nil)
 			return err == nil && len(filterRoutingSelectionsByPolicy(inVariant, input.Policy, nil)) > 0
 		})
 	}
@@ -898,7 +904,7 @@ func planRoutes(input RequestInput, route Route, rawData map[string]json.RawMess
 	if err != nil {
 		return nil, err
 	}
-	selections, ruledOut, err := filterRequestParameters(selections, rawData, route, tokenFields...)
+	selections, ruledOut, err := filterRequestParameters(selections, rawData, route, bridgeGap, tokenFields...)
 	if err != nil {
 		return nil, err
 	}
@@ -1063,7 +1069,7 @@ type ruledOut struct {
 
 // Apply catalog-known parameter constraints before credential checks, redaction,
 // typed message decoding or tokenization.
-func filterRequestParameters(selections []routingSelection, raw map[string]json.RawMessage, route Route, fields ...string) ([]routingSelection, []ruledOut, error) {
+func filterRequestParameters(selections []routingSelection, raw map[string]json.RawMessage, route Route, bridgeGap func() error, fields ...string) ([]routingSelection, []ruledOut, error) {
 	var requested *int
 	for _, field := range fields {
 		if value, ok := raw[field]; ok {
@@ -1079,8 +1085,6 @@ func filterRequestParameters(selections []routingSelection, raw map[string]json.
 	if err != nil {
 		return nil, nil, err
 	}
-	// A bridged deployment serves a request only when the other interface carries it whole.
-	bridgeGap := sync.OnceValue(func() error { return rawConversionGap(raw, route) })
 	kept := selections[:0]
 	var removed []ruledOut
 	for _, selection := range selections {

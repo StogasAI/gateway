@@ -164,8 +164,8 @@ func normalizeChatReasoning(reasoning *schemas.ChatReasoning, deployment Deploym
 }
 
 // withoutChatReasoningMode is a copy of a Chat Completions reasoning control without its mode, which
-// only selects the deployment: Translate gives a deployment that takes only Responses its own mode,
-// and Bifrost would call any other deployment's Responses for a mode. A control without any setting
+// only selects the deployment: Translate gives a bridged request its deployment's own mode, and
+// Bifrost would call any other deployment's Responses for a mode. A control without any setting
 // is none.
 func withoutChatReasoningMode(reasoning *schemas.ChatReasoning) *schemas.ChatReasoning {
 	if reasoning == nil {

@@ -12,7 +12,7 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
 
-const checkedToolsRequest = `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[` +
+const checkedToolsRequest = `{"model":"route:openai-chat-completions gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[` +
 	`{"type":"function","function":{"name":"lookup","parameters":{"type":"object","properties":{"q":{"type":"string"},"limit":{"type":"integer","minimum":1}},"required":["q"],"additionalProperties":false}}},` +
 	`{"type":"function","function":{"name":"free"}}]}`
 

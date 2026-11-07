@@ -11,7 +11,8 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
 
-// These tests cover Chat Completions clients of deployments that take only Responses, such as Pro.
+// These tests cover Chat Completions clients of deployments that serve them through Responses: those
+// that take only Responses, such as Pro, and those that take both, for requests with tools.
 
 const chatBridgeTools = `"tools":[{"type":"function","function":{"name":"lookup","description":"Look up a value","parameters":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}}}]`
 
@@ -23,14 +24,14 @@ func chatBridgeValidation(t *testing.T, body string) (*State, error) {
 		return nil, err
 	}
 	if !resolution.Bridged() {
-		t.Fatalf("deployment %s takes Chat Completions itself", resolution.Deployment.ID)
+		t.Fatalf("deployment %s serves the request on Chat Completions", resolution.Deployment.ID)
 	}
 	state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
 	return state, state.Adapter.ValidateRequest(state)
 }
 
-// chatBridgeState prepares a Chat Completions request that reaches a deployment that takes only
-// Responses, as a pair does.
+// chatBridgeState prepares a Chat Completions request that reaches its deployment through Responses,
+// as a pair does.
 func chatBridgeState(t *testing.T, body string) *State {
 	t.Helper()
 	state, err := chatBridgeValidation(t, body)
@@ -110,15 +111,30 @@ func TestChatReachesResponsesOnlyDeploymentsThroughResponses(t *testing.T) {
 	}
 }
 
-func TestChatKeepsDeploymentsThatTakeChatCompletions(t *testing.T) {
-	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
-		Method: "POST", Path: "/v1/chat/completions", Body: []byte(`{"model":"provider:openai gpt-5.6-sol","messages":[{"role":"user","content":"hi"}]}`),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resolution.Bridged() || resolution.WireRoute() != catalog.RouteChat || resolution.WireRequestType() != schemas.ChatCompletionRequest {
-		t.Fatalf("deployment %s with Chat Completions was bridged", resolution.Deployment.ID)
+func TestChatReachesDeploymentsThatTakeBothInterfacesOnOne(t *testing.T) {
+	const (
+		user    = `"messages":[{"role":"user","content":"hi"}]`
+		history = `"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"Hi.","reasoning_details":[{"index":0,"type":"reasoning.encrypted","data":"opaque"}]},{"role":"user","content":"Go on."}]`
+	)
+	for name, test := range map[string]struct{ body, route string }{
+		"plain request":           {`"model":"provider:openai gpt-6-luna",` + user, "openai-chat-completions"},
+		"tools":                   {`"model":"provider:openai gpt-6-luna",` + user + `,` + chatBridgeTools, "openai-responses"},
+		"tools without reasoning": {`"model":"provider:openai gpt-6-luna",` + user + `,` + chatBridgeTools + `,"reasoning_effort":"none"`, "openai-responses"},
+		"tools on Azure":          {`"model":"azure-gpt-5.6-sol",` + user + `,` + chatBridgeTools, "azure-responses"},
+		"reasoning history":       {`"model":"provider:openai gpt-6-luna",` + history, "openai-responses"},
+		"empty tools":             {`"model":"provider:openai gpt-6-luna",` + user + `,"tools":[]`, "openai-chat-completions"},
+		"tools with a seed":       {`"model":"provider:openai gpt-6-luna",` + user + `,` + chatBridgeTools + `,"seed":1`, "openai-chat-completions"},
+		"tools on the Chat route": {`"model":"route:openai-chat-completions gpt-6-luna",` + user + `,` + chatBridgeTools, "openai-chat-completions"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/chat/completions", Body: []byte("{" + test.body + "}")})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resolution.Deployment.RouteID != test.route {
+				t.Fatalf("route = %s, want %s", resolution.Deployment.RouteID, test.route)
+			}
+		})
 	}
 }
 

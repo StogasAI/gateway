@@ -1042,7 +1042,7 @@ const (
 	// Anthropic's format does.
 	signedChatReasoningReplay
 	// encryptedChatReasoningReplay takes only encrypted reasoning, as OpenAI's Responses do, which
-	// a deployment that takes only Responses gets through the translation.
+	// a request that its deployment serves through Responses gets through the translation.
 	encryptedChatReasoningReplay
 )
 

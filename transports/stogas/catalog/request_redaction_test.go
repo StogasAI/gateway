@@ -162,48 +162,58 @@ func TestOmittedRedactionPreservesTextThroughProviderConversion(t *testing.T) {
 
 func TestResolveRequestRedactsBeforeTokenHoldAndProviderConversion(t *testing.T) {
 	loadTestCatalog(t)
-	resolution, err := ResolveRequest(RequestInput{
-		RedactionPolicy: testEmailRedactionPolicy(t),
-		Method:          "POST",
-		Path:            "/v1/chat/completions",
-		Body: []byte(`{
-			"model":"provider:openai gpt-5.5",
-			"messages":[{"role":"user","content":"Contact alice@corp.io"}],
-			"tools":[{"type":"function","function":{"name":"lookup","description":"Owner tools@corp.io","parameters":{"type":"object"}}}]
-		}`),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if summary := resolution.StructuredPIIRedactionSummary(); summary.ItemsRedacted != 2 {
-		t.Fatalf("redaction summary = %#v, want 2 items", summary)
-	}
+	// The deployment serves a request with tools through Responses, unless the route keeps Chat
+	// Completions.
+	for model, bridged := range map[string]bool{"provider:openai gpt-5.5": true, "route:openai-chat-completions gpt-5.5": false} {
+		resolution, err := ResolveRequest(RequestInput{
+			RedactionPolicy: testEmailRedactionPolicy(t),
+			Method:          "POST",
+			Path:            "/v1/chat/completions",
+			Body: []byte(`{
+				"model":"` + model + `",
+				"messages":[{"role":"user","content":"Contact alice@corp.io"}],
+				"tools":[{"type":"function","function":{"name":"lookup","description":"Owner tools@corp.io","parameters":{"type":"object"}}}]
+			}`),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resolution.Bridged() != bridged {
+			t.Fatalf("%s: bridged = %t, want %t", model, resolution.Bridged(), bridged)
+		}
+		if summary := resolution.StructuredPIIRedactionSummary(); summary.ItemsRedacted != 2 {
+			t.Fatalf("%s: redaction summary = %#v, want 2 items", model, summary)
+		}
 
-	rawBody, err := sonic.Marshal(resolution.RawBody())
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertRedactedProviderData(t, rawBody)
-	expectedHold := inputTokenHoldEstimate(
-		t,
-		resolution.RawBody(),
-		resolution.Deployment.snapshot.graph.Models[resolution.Deployment.ModelID].AuthorID,
-		resolution.Route,
-		resolution.Deployment.MaxInputTokens,
-	)
-	if resolution.InputTokenLimit() != expectedHold {
-		t.Fatalf("input hold = %d, want redacted hold %d", resolution.InputTokenLimit(), expectedHold)
-	}
+		rawBody, err := sonic.Marshal(resolution.RawBody())
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertRedactedProviderData(t, rawBody)
+		expectedHold := inputTokenHoldEstimate(
+			t,
+			resolution.RawBody(),
+			resolution.Deployment.snapshot.graph.Models[resolution.Deployment.ModelID].AuthorID,
+			resolution.Route,
+			resolution.Deployment.MaxInputTokens,
+		)
+		if resolution.InputTokenLimit() != expectedHold {
+			t.Fatalf("%s: input hold = %d, want redacted hold %d", model, resolution.InputTokenLimit(), expectedHold)
+		}
 
-	request, err := resolution.ToBifrost(schemas.NewBifrostContext(t.Context(), schemas.NoDeadline))
-	if err != nil {
-		t.Fatal(err)
+		if err := resolution.Translate(); err != nil {
+			t.Fatal(err)
+		}
+		request, err := resolution.ToBifrost(schemas.NewBifrostContext(t.Context(), schemas.NoDeadline))
+		if err != nil {
+			t.Fatal(err)
+		}
+		providerRequest, err := json.Marshal(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertRedactedProviderData(t, providerRequest)
 	}
-	providerRequest, err := json.Marshal(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertRedactedProviderData(t, providerRequest)
 }
 
 func TestResolveResponsesPreservesEncryptedReasoning(t *testing.T) {

@@ -84,6 +84,7 @@ func routingSelectionsForRequest(
 	route Route,
 	requestedModel string,
 	want variant,
+	throughResponses func() bool,
 	availableCredentials map[string][]int,
 	trace *routingTrace,
 ) ([]routingSelection, string, error) {
@@ -95,7 +96,7 @@ func routingSelectionsForRequest(
 	if err != nil {
 		return nil, "", err
 	}
-	selections := snap.routingSelections(route, selection, want, availableCredentials, trace, now)
+	selections := snap.routingSelections(route, selection, want, throughResponses, availableCredentials, trace, now)
 	if len(selections) == 0 {
 		if err := snap.unservedSelection(selection, now); err != nil {
 			return nil, "", err

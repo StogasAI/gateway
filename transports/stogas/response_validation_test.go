@@ -372,7 +372,7 @@ func TestProviderStreamsAllowBoundedTopLevelMetadataDrift(t *testing.T) {
 }
 
 func TestProviderChatToolCallsMustMatchAuthorizedRequest(t *testing.T) {
-	request := `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}]}`
+	request := `{"model":"route:openai-chat-completions gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}]}`
 	valid := func(name string) *schemas.BifrostChatResponse {
 		response := validUnaryChatProviderResponse()
 		response.Choices[0].FinishReason = schemas.Ptr("tool_calls")
@@ -472,7 +472,7 @@ func TestProviderChatStreamRejectsOrphanToolFragments(t *testing.T) {
 }
 
 func TestProviderChatStreamRequiresCompleteToolArguments(t *testing.T) {
-	request := `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}}]}`
+	request := `{"model":"route:openai-chat-completions gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}}]}`
 	run := func(fragments ...string) error {
 		state := resolvedChatValidationState(t, request)
 		role := string(schemas.ChatMessageRoleAssistant)
@@ -1945,13 +1945,13 @@ func TestToolAndLogprobScaleIsProviderOwned(t *testing.T) {
 	for index := range 200 {
 		parallel = append(parallel, fmt.Sprintf("tool_%d", 299-index))
 	}
-	if err := validateProviderChatResponse(resolvedChatValidationState(t, chatRequest("provider:openai gpt-5.6-luna", "")), chatCalls(parallel...), false); err != nil {
+	if err := validateProviderChatResponse(resolvedChatValidationState(t, chatRequest("route:openai-chat-completions gpt-5.6-luna", "")), chatCalls(parallel...), false); err != nil {
 		t.Fatalf("200 parallel calls to declared tools rejected: %v", err)
 	}
-	if err := validateProviderChatResponse(resolvedChatValidationState(t, chatRequest("provider:openai gpt-5.6-luna", "")), chatCalls("tool_300"), false); !errors.Is(err, ErrProviderResponseMalformed) {
+	if err := validateProviderChatResponse(resolvedChatValidationState(t, chatRequest("route:openai-chat-completions gpt-5.6-luna", "")), chatCalls("tool_300"), false); !errors.Is(err, ErrProviderResponseMalformed) {
 		t.Fatalf("undeclared Chat tool error = %v, want malformed provider response", err)
 	}
-	named := chatRequest("provider:openai gpt-5.6-luna", `,"tool_choice":{"type":"function","function":{"name":"tool_250"}}`)
+	named := chatRequest("route:openai-chat-completions gpt-5.6-luna", `,"tool_choice":{"type":"function","function":{"name":"tool_250"}}`)
 	if err := validateProviderChatResponse(resolvedChatValidationState(t, named), chatCalls("tool_250"), false); err != nil {
 		t.Fatalf("selected Chat tool rejected: %v", err)
 	}

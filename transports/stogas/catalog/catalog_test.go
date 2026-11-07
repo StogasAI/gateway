@@ -30,7 +30,7 @@ func testDeploymentAt(provider schemas.ModelProvider, model string, route Route,
 		return Deployment{}, false
 	}
 	var found Deployment
-	for _, candidate := range snap.routingSelections(route, selection, want, nil, nil, time.Now()) {
+	for _, candidate := range snap.routingSelections(route, selection, want, nil, nil, nil, time.Now()) {
 		if candidate.provider == provider && (found.ID == "" || len(candidate.deployment.ID) < len(found.ID)) {
 			found = candidate.deployment
 		}
@@ -474,7 +474,7 @@ func TestModelFieldTerms(t *testing.T) {
 			t.Fatalf("%s: %v", field, err)
 		}
 		seen := map[string]bool{}
-		for _, candidate := range snap.routingSelections(RouteResponses, selection, variant{}, nil, nil, time.Now()) {
+		for _, candidate := range snap.routingSelections(RouteResponses, selection, variant{}, nil, nil, nil, time.Now()) {
 			seen[string(candidate.provider)] = true
 		}
 		return slices.Sorted(maps.Keys(seen))

@@ -324,12 +324,12 @@ func TestRetiredSelectionsNameTheirDayWheneverTheyRetired(t *testing.T) {
 			active.Store(snap)
 			for _, check := range retirement.checks {
 				if when == "before" {
-					_, _, err := routingSelectionsForRequest(retirement.ends.Add(-time.Nanosecond), retirement.route, check.field, check.want, nil, nil)
+					_, _, err := routingSelectionsForRequest(retirement.ends.Add(-time.Nanosecond), retirement.route, check.field, check.want, nil, nil, nil)
 					if apiErr, ok := err.(APIError); ok && apiErr.Code == "model_retired" {
 						t.Fatalf("%q retired before %s: %v", check.field, retirement.ends, err)
 					}
 				}
-				_, _, err := routingSelectionsForRequest(retirement.ends, retirement.route, check.field, check.want, nil, nil)
+				_, _, err := routingSelectionsForRequest(retirement.ends, retirement.route, check.field, check.want, nil, nil, nil)
 				apiErr, retired := err.(APIError)
 				retired = retired && apiErr.Code == "model_retired"
 				switch {
@@ -387,7 +387,7 @@ func TestUnsupportedSelectionsGiveTheReason(t *testing.T) {
 			"provider:openai gpt-5.5-2026-04-23":        false,
 			"route:openai-responses gpt-5.5-2026-04-23": false,
 		} {
-			_, _, err := routingSelectionsForRequest(time.Now(), RouteResponses, field, variant{}, nil, nil)
+			_, _, err := routingSelectionsForRequest(time.Now(), RouteResponses, field, variant{}, nil, nil, nil)
 			if got := err == modelUnsupported(unsupportedReason); got != unsupported {
 				t.Fatalf("loaded %s: %q: %v, want Stogas's reason: %t", when, field, err, unsupported)
 			}
@@ -403,7 +403,7 @@ func TestUnsupportedSelectionsGiveTheReason(t *testing.T) {
 	}
 	active.Store(snap)
 	for _, field := range []string{"route:openai-batch azure-gpt-oss-120b-us", "azure-gpt-oss-120b-us route:openai-batch"} {
-		if _, _, err := routingSelectionsForRequest(retired, RouteResponses, field, variant{}, nil, nil); err != modelRetired("2127-09-15") {
+		if _, _, err := routingSelectionsForRequest(retired, RouteResponses, field, variant{}, nil, nil, nil); err != modelRetired("2127-09-15") {
 			t.Fatalf("%q: %v, want it retired on 2127-09-15", field, err)
 		}
 	}
