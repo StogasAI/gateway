@@ -37,9 +37,20 @@ func validateCommonResponsesPolicy(state *State) error {
 			return unsupportedParameterError(name)
 		}
 	}
-	// Chat Completions takes them as stop, which Responses lacks.
 	if state.Resolution.Bridged() {
+		// Chat Completions takes them as stop, which Responses lacks.
 		if err := validateStopSequenceArray(raw["stop_sequences"], "stop_sequences", maxPortableStopSequences); err != nil {
+			return err
+		}
+		// The Chat Completions body keeps only the function tools that tool_choice allows, so its
+		// checks cannot tell what tool_choice asked, and the reply checks hold the reply to it.
+		var tools []schemas.ResponsesTool
+		if rawJSONValueSet(raw["tools"]) {
+			if err := sonic.Unmarshal(raw["tools"], &tools); err != nil {
+				return invalidRequest("tools must be an array")
+			}
+		}
+		if err := validateResponsesToolChoice(state, raw["tool_choice"], tools); err != nil {
 			return err
 		}
 	}

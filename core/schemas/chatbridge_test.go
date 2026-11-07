@@ -26,8 +26,8 @@ func TestChatCompletionsGapNamesWhatChatCompletionsCannotCarry(t *testing.T) {
 		{"stored response", BifrostResponsesRequest{Params: &ResponsesParameters{PreviousResponseID: Ptr("resp_1")}}, "previous_response_id", "stored responses"},
 		{"tool call limit", BifrostResponsesRequest{Params: &ResponsesParameters{MaxToolCalls: Ptr(2)}}, "max_tool_calls", "a limit on tool calls"},
 		{"automatic truncation", BifrostResponsesRequest{Params: &ResponsesParameters{Truncation: Ptr("auto")}}, "truncation", "automatic truncation"},
-		{"include", BifrostResponsesRequest{Params: &ResponsesParameters{Include: []string{responsesIncludeLogProbs, "reasoning.encrypted_content"}}},
-			"include[1]", "the reasoning.encrypted_content output"},
+		{"include", BifrostResponsesRequest{Params: &ResponsesParameters{Include: []string{responsesIncludeLogProbs, responsesIncludeEncryptedReasoning, "web_search_call.results"}}},
+			"include[2]", "the web_search_call.results output"},
 		{"reasoning summary", BifrostResponsesRequest{Params: &ResponsesParameters{Reasoning: &ResponsesParametersReasoning{Summary: Ptr("detailed")}}},
 			"reasoning.summary", "reasoning summaries"},
 		{"reasoning context", BifrostResponsesRequest{Params: &ResponsesParameters{Reasoning: &ResponsesParametersReasoning{Context: Ptr("all")}}},
@@ -79,7 +79,7 @@ func TestChatCompletionsGapNamesWhatChatCompletionsCannotCarry(t *testing.T) {
 func TestChatCompletionsGapAcceptsWhatChatCompletionsCarry(t *testing.T) {
 	request := BifrostResponsesRequest{
 		Params: &ResponsesParameters{
-			Include:    []string{responsesIncludeLogProbs},
+			Include:    []string{responsesIncludeLogProbs, responsesIncludeEncryptedReasoning},
 			Truncation: Ptr("disabled"),
 			Reasoning:  &ResponsesParametersReasoning{Effort: Ptr("high"), Summary: Ptr("auto"), Context: Ptr("auto")},
 			Tools:      []ResponsesTool{{Type: ResponsesToolTypeFunction, Name: Ptr("lookup")}},
@@ -347,6 +347,81 @@ func TestToBifrostResponsesResponseCarriesLogProbsAndCitations(t *testing.T) {
 	}
 }
 
+// A provider that lists the tokens of the reasoning and the tool calls with the text's, as vLLM
+// does, gives the text only the run of tokens that spells it.
+func TestReplyTextTakesOnlyItsOwnLogProbs(t *testing.T) {
+	tokens := func(texts ...string) []ContentLogProb {
+		out := make([]ContentLogProb, len(texts))
+		for i, text := range texts {
+			out[i] = ContentLogProb{Token: text, LogProb: -float64(i)}
+		}
+		return out
+	}
+	calls := []ChatAssistantMessageToolCall{{ID: Ptr("c1"), Function: ChatAssistantMessageToolCallFunction{Name: Ptr("f"), Arguments: "{}"}}}
+	tests := []struct {
+		name      string
+		text      string
+		reasoning *string
+		calls     []ChatAssistantMessageToolCall
+		tokens    []ContentLogProb
+		want      []string
+	}{
+		{"only text", "Hi \u00e9", nil, nil, tokens("Hi", " \ufffd", "\ufffd"), []string{"Hi", " \ufffd", "\ufffd"}},
+		{"reasoning first", "4", Ptr("So: 4"), nil, tokens("So", ":", " ", "4", "</think>", "\n\n", "", "4", "", "<|im_end|>"), []string{"4"}},
+		{"calls after", "Checking.", nil, calls, tokens("Checking", ".", "<tool_call>", `{"q":"x"}`, "</tool_call>"), []string{"Checking", "."}},
+		{"calls that repeat the text", "x", nil, calls, tokens("x", "<tool_call>", `{"q":"`, "x", `"}`), []string{"x"}},
+		{"reasoning that repeats the text before calls", "I'll check.", Ptr("I'll check."), calls,
+			tokens("I'll", " check", ".", "</think>", "I'll", " check", ".", "<tool_call>", `{"q":1}`, "</tool_call>"), []string{"I'll", " check", "."}},
+		{"calls after reasoning that the tokens do not spell", "x", Ptr("r"), calls, tokens("x", "<tool_call>", `{"q":"`, "x", `"}`), nil},
+		{"split character", "\u00e9", Ptr("r"), nil, tokens("r", "</think>", "\ufffd", "\ufffd"), nil},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			reply := &BifrostChatResponse{ID: "c", Choices: []BifrostResponseChoice{{
+				FinishReason: Ptr("stop"),
+				LogProbs:     &BifrostLogProbs{Content: test.tokens},
+				ChatNonStreamResponseChoice: &ChatNonStreamResponseChoice{Message: &ChatMessage{
+					Role:                 ChatMessageRoleAssistant,
+					Content:              &ChatMessageContent{ContentStr: Ptr(test.text)},
+					ChatAssistantMessage: &ChatAssistantMessage{Reasoning: test.reasoning, ToolCalls: test.calls},
+				}},
+			}}}
+			var got []string
+			for _, item := range reply.ToBifrostResponsesResponse().Output {
+				if *item.Type == ResponsesMessageTypeMessage {
+					for _, token := range item.Content.ContentBlocks[0].LogProbs {
+						got = append(got, token.Token)
+					}
+				}
+			}
+			if !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("text tokens = %q, want %q", got, test.want)
+			}
+		})
+	}
+
+	// A stream chunk that holds the end of the reasoning and the start of the text gives the text
+	// the text's tokens.
+	state := AcquireChatToResponsesStreamState()
+	defer ReleaseChatToResponsesStreamState(state)
+	chunk := &BifrostChatResponse{ID: "c", Choices: []BifrostResponseChoice{{
+		LogProbs:                 &BifrostLogProbs{Content: tokens("done", "</think>", "Hi")},
+		ChatStreamResponseChoice: &ChatStreamResponseChoice{Delta: &ChatStreamResponseChoiceDelta{Reasoning: Ptr("done"), Content: Ptr("Hi")}},
+	}}}
+	var deltas int
+	for _, event := range chunk.ToBifrostResponsesStreamResponse(state) {
+		if event.Type == ResponsesStreamResponseTypeOutputTextDelta {
+			deltas++
+			if len(event.LogProbs) != 1 || event.LogProbs[0].Token != "Hi" {
+				t.Fatalf("text delta tokens = %+v", event.LogProbs)
+			}
+		}
+	}
+	if deltas != 1 {
+		t.Fatalf("%d text deltas", deltas)
+	}
+}
+
 // streamOf streams a reply as a provider would: reasoning, text and the tool calls, each in
 // pieces, with the second tool call's arguments split around more text, then the finish reason
 // and a chunk with only the usage.
@@ -512,11 +587,68 @@ func TestStreamToolCallQuirks(t *testing.T) {
 		"call without a name": {chunk(call(Ptr("a"), nil, "{}"), nil), chunk(ChatStreamResponseChoiceDelta{}, Ptr("tool_calls"))},
 		"second choice":       {{ID: "c", Choices: []BifrostResponseChoice{{Index: 1, ChatStreamResponseChoice: &ChatStreamResponseChoice{Delta: &ChatStreamResponseChoiceDelta{Content: Ptr("x")}}}}}},
 		"text after finish":   {chunk(ChatStreamResponseChoiceDelta{Content: Ptr("x")}, Ptr("stop")), chunk(ChatStreamResponseChoiceDelta{Content: Ptr("y")}, nil)},
+		// vLLM ends an aborted request with abort, which a reply leaves without a status.
+		"unknown finish reason": {chunk(ChatStreamResponseChoiceDelta{Content: Ptr("x")}, Ptr("abort"))},
 	} {
 		events := run(chunks...)
 		if last := events[len(events)-1]; last.Type != ResponsesStreamResponseTypeError || last.Message == nil {
 			t.Fatalf("%s: last event = %+v", name, last)
 		}
+	}
+}
+
+// A reply and its stream give each reasoning ID its own item, as OpenAI pairs encrypted reasoning
+// with the ID of its item, and leave a finish reason that Responses has no status for to the
+// caller.
+func TestReplyAndStreamAgree(t *testing.T) {
+	details := []ChatReasoningDetails{
+		{ID: Ptr("rs_a"), Type: BifrostReasoningDetailsTypeText, Text: Ptr("one")},
+		{ID: Ptr("rs_b"), Type: BifrostReasoningDetailsTypeEncrypted, Data: Ptr("ENC_B")},
+	}
+	want := []string{"rs_a one ", "rs_b  ENC_B"}
+	reasoning := func(output []ResponsesMessage) []string {
+		var items []string
+		for _, item := range output {
+			text, encrypted := "", ""
+			if item.Content != nil {
+				text = *item.Content.ContentBlocks[0].Text
+			}
+			if item.EncryptedContent != nil {
+				encrypted = *item.EncryptedContent
+			}
+			items = append(items, *item.ID+" "+text+" "+encrypted)
+		}
+		return items
+	}
+	reply := &BifrostChatResponse{ID: "c", Choices: []BifrostResponseChoice{{
+		FinishReason: Ptr("stop"),
+		ChatNonStreamResponseChoice: &ChatNonStreamResponseChoice{Message: &ChatMessage{
+			Role: ChatMessageRoleAssistant, ChatAssistantMessage: &ChatAssistantMessage{ReasoningDetails: details},
+		}},
+	}}}
+	if got := reasoning(reply.ToBifrostResponsesResponse().Output); !reflect.DeepEqual(got, want) {
+		t.Fatalf("reply reasoning items = %q", got)
+	}
+	for _, chunks := range [][][]ChatReasoningDetails{{details[:1], details[1:]}, {details}} {
+		state := AcquireChatToResponsesStreamState()
+		var events []*BifrostResponsesStreamResponse
+		for _, chunk := range chunks {
+			events = append(events, (&BifrostChatResponse{ID: "c", Choices: []BifrostResponseChoice{{ChatStreamResponseChoice: &ChatStreamResponseChoice{
+				Delta: &ChatStreamResponseChoiceDelta{ReasoningDetails: chunk},
+			}}}}).ToBifrostResponsesStreamResponse(state)...)
+		}
+		events = append(events, (&BifrostChatResponse{ID: "c", Choices: []BifrostResponseChoice{{FinishReason: Ptr("stop"),
+			ChatStreamResponseChoice: &ChatStreamResponseChoice{Delta: &ChatStreamResponseChoiceDelta{}}}}}).ToBifrostResponsesStreamResponse(state)...)
+		ReleaseChatToResponsesStreamState(state)
+		contiguous(t, events)
+		if got := reasoning(events[len(events)-1].Response.Output); !reflect.DeepEqual(got, want) {
+			t.Fatalf("stream of %d chunks: reasoning items = %q", len(chunks), got)
+		}
+	}
+
+	reply.Choices[0].FinishReason = Ptr("abort")
+	if status := reply.ToBifrostResponsesResponse().Status; status != nil {
+		t.Fatalf("reply with an unknown finish reason has status %s", *status)
 	}
 }
 

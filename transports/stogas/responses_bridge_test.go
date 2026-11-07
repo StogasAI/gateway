@@ -146,7 +146,6 @@ func TestBridgedRequestsRefuseWhatChatCompletionsLacks(t *testing.T) {
 		// Chat Completions carry log probabilities and verbosity, which Chutes does not take.
 		{"log probabilities", `"include":["message.output_text.logprobs"]`, "logprobs is not supported for Chutes deployments"},
 		{"verbosity", `"text":{"verbosity":"low"}`, "verbosity is not supported for Chutes deployments"},
-		{"encrypted reasoning", `"include":["reasoning.encrypted_content"]`, "include[0]: Chat Completions deployments do not support the reasoning.encrypted_content output"},
 		{"truncation", `"truncation":"auto"`, "truncation: Chat Completions deployments do not support automatic truncation"},
 		{"hosted tool", `"tools":[{"type":"web_search"}]`, "web_search"},
 		{"reasoning summary", `"reasoning":{"summary":"detailed"}`, "reasoning.summary: Chat Completions deployments do not support reasoning summaries"},
@@ -162,6 +161,46 @@ func TestBridgedRequestsRefuseWhatChatCompletionsLacks(t *testing.T) {
 				t.Fatalf("error = %v, want %q", err, test.want)
 			}
 		})
+	}
+}
+
+// A client that asks for reasoning it can send back, as Codex does in every request, gets it as
+// text from a bridged deployment and sends it back as text.
+func TestBridgedRequestsTakeTheEncryptedReasoningInclude(t *testing.T) {
+	state := bridgedState(t, `{"model":"chutes-glm-5.2","instructions":"You are a coding agent.","input":[`+
+		`{"type":"message","role":"user","content":[{"type":"input_text","text":"Find a1."}]},`+
+		`{"type":"reasoning","summary":[],"content":[{"type":"reasoning_text","text":"Look it up."}]},`+
+		`{"type":"function_call","name":"lookup","arguments":"{\"id\":\"a1\"}","call_id":"call_1"},`+
+		`{"type":"function_call_output","call_id":"call_1","output":"42"}],`+
+		bridgedTestTools+`,"tool_choice":"auto","reasoning":{"effort":"medium","summary":"auto"},`+
+		`"store":false,"stream":true,"include":["reasoning.encrypted_content"]}`)
+	wire := state.Resolution.WireView().RawBody()
+	if _, exists := wire["include"]; exists {
+		t.Fatalf("include reached the Chat Completions body: %s", wire["include"])
+	}
+	messages := wireMessages(t, state)
+	if len(messages) != 4 || string(messages[2]["reasoning"]) != `"Look it up."` {
+		t.Fatalf("messages = %s", messagesText(messages))
+	}
+}
+
+// A tool choice that the declared tools cannot meet is refused before any provider call, as a
+// deployment that takes Responses refuses it, rather than after the provider replied.
+func TestBridgedRequestsRefuseToolChoicesThatTheToolsCannotMeet(t *testing.T) {
+	for _, test := range []struct{ name, body, want string }{
+		{"required without tools", `"tool_choice":"required"`, "tool_choice requires supported tools"},
+		{"an undeclared function", bridgedTestTools + `,"tool_choice":{"type":"function","name":"missing"}`, "tool_choice selects an unknown function tool"},
+		{"an undeclared allowed function", bridgedTestTools + `,"tool_choice":{"type":"allowed_tools","mode":"required","tools":[{"type":"function","name":"missing"}]}`, "tool_choice selects an unknown function tool"},
+		{"an allowed function beside an undeclared one", bridgedTestTools + `,"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"function","name":"lookup"},{"type":"function","name":"missing"}]}`, "tool_choice selects an unknown function tool"},
+	} {
+		for _, model := range []string{"chutes-glm-5.2", "azure-gpt-oss-120b"} {
+			t.Run(test.name+" on "+model, func(t *testing.T) {
+				err := bridgedValidationError(t, `{"model":"`+model+`","input":"hi",`+test.body+`}`)
+				if err == nil || !strings.Contains(err.Error(), test.want) {
+					t.Fatalf("error = %v, want %q", err, test.want)
+				}
+			})
+		}
 	}
 }
 

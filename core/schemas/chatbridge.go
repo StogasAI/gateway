@@ -20,6 +20,12 @@ import (
 // text, which Chat Completions returns as logprobs.
 const responsesIncludeLogProbs = "message.output_text.logprobs"
 
+// responsesIncludeEncryptedReasoning is the include value that asks for reasoning in a form that
+// the client can send back. Chat Completions gives reasoning as text, which the reply carries
+// whole, or encrypted, which the reply carries as encrypted content, so a client that asks for
+// it, as Codex always does, gets reasoning that it can send back either way.
+const responsesIncludeEncryptedReasoning = "reasoning.encrypted_content"
+
 // ConversionGap names a part of a request that Chat Completions cannot carry.
 type ConversionGap struct {
 	// Param is the part's path in the request body, such as "tools[2].type".
@@ -66,7 +72,7 @@ func responsesParamsChatGap(p *ResponsesParameters) *ConversionGap {
 		return &ConversionGap{"truncation", "automatic truncation"}
 	}
 	for i, value := range p.Include {
-		if value != responsesIncludeLogProbs {
+		if value != responsesIncludeLogProbs && value != responsesIncludeEncryptedReasoning {
 			return &ConversionGap{"include[" + strconv.Itoa(i) + "]", "the " + value + " output"}
 		}
 	}
@@ -723,7 +729,7 @@ func (r *replyReasoning) add(text *string, details []ChatReasoningDetails) {
 		return
 	}
 	for _, detail := range details {
-		if detail.ID != nil && *detail.ID != "" {
+		if r.id == nil && detail.ID != nil && *detail.ID != "" {
 			r.id = detail.ID
 		}
 		switch detail.Type {
@@ -744,6 +750,25 @@ func (r *replyReasoning) add(text *string, details []ChatReasoningDetails) {
 			}
 		}
 	}
+}
+
+// reasoningRuns splits reasoning details into the runs that make one reasoning item each, as OpenAI
+// pairs encrypted reasoning with the ID of its item: a detail with an ID other than that of its
+// run's first detail starts the next run. A stream opens its reasoning item with the ID of the
+// first detail, so a run without an ID at its start also ends at the next ID.
+func reasoningRuns(details []ChatReasoningDetails) [][]ChatReasoningDetails {
+	var runs [][]ChatReasoningDetails
+	start := 0
+	for i := 1; i < len(details); i++ {
+		if id := details[i].ID; id != nil && *id != "" && (details[start].ID == nil || *details[start].ID != *id) {
+			runs = append(runs, details[start:i])
+			start = i
+		}
+	}
+	if len(details) > 0 {
+		runs = append(runs, details[start:])
+	}
+	return runs
 }
 
 func (r *replyReasoning) empty() bool {
@@ -882,10 +907,16 @@ func (cr *BifrostChatResponse) ToBifrostResponsesResponse() *BifrostResponsesRes
 		assistant = &ChatAssistantMessage{}
 	}
 	output := make([]ResponsesMessage, 0, 2+len(assistant.ToolCalls))
-	var reasoning replyReasoning
-	reasoning.add(assistant.Reasoning, assistant.ReasoningDetails)
-	if !reasoning.empty() {
-		output = append(output, reasoning.item(ids, len(output), itemStatus))
+	runs := reasoningRuns(assistant.ReasoningDetails)
+	if len(runs) == 0 {
+		runs = [][]ChatReasoningDetails{nil}
+	}
+	for _, run := range runs {
+		var reasoning replyReasoning
+		reasoning.add(assistant.Reasoning, run)
+		if !reasoning.empty() {
+			output = append(output, reasoning.item(ids, len(output), itemStatus))
+		}
 	}
 	if texts := chatReplyTexts(message.Content, assistant, choice.LogProbs); len(texts) > 0 {
 		output = append(output, replyMessageItem(ids, len(output), itemStatus, texts))
@@ -908,8 +939,8 @@ func (cr *BifrostChatResponse) ToBifrostResponsesResponse() *BifrostResponsesRes
 }
 
 // chatReplyTexts are the parts of a reply's message: its text and refusal, with adjacent text of
-// one kind joined and empty text left out. The text takes the message's citations and log
-// probabilities.
+// one kind joined and empty text left out. The text takes the message's citations and the log
+// probabilities of its tokens.
 func chatReplyTexts(content *ChatMessageContent, assistant *ChatAssistantMessage, logProbs *BifrostLogProbs) []replyText {
 	var texts []replyText
 	add := func(refusal bool, text string) {
@@ -941,23 +972,81 @@ func chatReplyTexts(content *ChatMessageContent, assistant *ChatAssistantMessage
 	for i := range texts {
 		if !texts[i].refusal {
 			texts[i].annotations = responsesAnnotations(assistant.Annotations)
-			texts[i].logProbs = responsesLogProbs(logProbs)
+			texts[i].logProbs = textLogProbs(responsesLogProbs(logProbs), texts[i].text, assistant.Reasoning, assistant.ReasoningDetails, len(assistant.ToolCalls) > 0)
 			break
 		}
 	}
 	return texts
 }
 
+// textLogProbs returns the log probabilities of a text's tokens. Some providers, such as those
+// that run vLLM, list them among the tokens of the reasoning before the text and of the tool
+// calls after it. With reasoning or tool calls, the text thus takes a run of tokens that spells
+// it, after the reasoning text when the tokens spell that too: the last run, as the text follows
+// the reasoning, or the first when tool calls may follow the text. When tool calls follow
+// reasoning that the tokens do not spell, a run may lie in the reasoning, so only a sole run
+// counts. When no run spells the text, which happens when a provider splits a character across
+// tokens, the text takes none, as its tokens cannot be told apart.
+func textLogProbs(logProbs []ResponsesOutputMessageContentTextLogProb, text string, reasoning *string, details []ChatReasoningDetails, calls bool) []ResponsesOutputMessageContentTextLogProb {
+	reasoned := (reasoning != nil && *reasoning != "") || len(details) > 0
+	if (!reasoned && !calls) || len(logProbs) == 0 {
+		return logProbs
+	}
+	// offsets[i] is where token i starts in the joined tokens, and offsets[len] is their length.
+	offsets := make([]int, len(logProbs)+1)
+	var joined strings.Builder
+	for i, token := range logProbs {
+		offsets[i] = joined.Len()
+		joined.WriteString(token.Token)
+	}
+	offsets[len(logProbs)] = joined.Len()
+	tokens := joined.String()
+	from, placed := 0, !reasoned
+	if reasoning != nil && *reasoning != "" {
+		if at := strings.Index(tokens, *reasoning); at >= 0 {
+			from, placed = at+len(*reasoning), true
+		}
+	}
+	var runs [][2]int
+	for from+len(text) <= len(tokens) {
+		at := strings.Index(tokens[from:], text)
+		if at < 0 {
+			break
+		}
+		start, end := from+at, from+at+len(text)
+		from = start + 1
+		// The run leaves out the empty tokens at its edges.
+		first, _ := slices.BinarySearch(offsets[:len(logProbs)], start+1)
+		last, found := slices.BinarySearch(offsets, end)
+		if first--; first >= 0 && offsets[first] == start && found && last > first {
+			runs = append(runs, [2]int{first, last})
+		}
+	}
+	var run [2]int
+	switch {
+	case len(runs) == 0:
+		return nil
+	case !calls:
+		run = runs[len(runs)-1]
+	case placed || len(runs) == 1:
+		run = runs[0]
+	default:
+		return nil
+	}
+	return logProbs[run[0]:run[1]]
+}
+
 // ChatToResponsesStreamState converts the stream of a Chat Completions reply into Responses
-// events. A Chat Completions message keeps no order between its text and its tool calls, which
-// some providers interleave, so a stream ends as a reply does: the reasoning and the message,
-// then a function call for each tool call. Reasoning and text stream as they come, and a change
-// between them completes the open item and opens the next, so that each item's events are
-// contiguous for a consumer that maps items to blocks, as Anthropic's interface does. The tool
-// calls follow, whole, when the provider gives the finish reason, as text may still come before
-// then. The chunk that gives the finish reason also yields response.completed or
-// response.incomplete, to which the caller adds the usage that later chunks bring. A chunk that
-// the conversion cannot represent yields an error event.
+// events. Reasoning and text stream as they come, and a change between them completes the open
+// item and opens the next, so that each item's events are contiguous for a consumer that maps
+// items to blocks, as Anthropic's interface does. A stream whose reasoning and text alternate
+// thus has more items than its reply, whose message holds all its reasoning in one field and all
+// its text in another, and a stream whose text and refusal alternate has more parts. A Chat
+// Completions message keeps no order between its text and its tool calls, which some providers
+// interleave, so the calls follow, whole, as a reply's do, when the provider gives the finish
+// reason, as text may still come before then. The chunk that gives the finish reason also yields
+// response.completed or response.incomplete, to which the caller adds the usage that later chunks
+// bring. A chunk that the conversion cannot represent yields an error event.
 type ChatToResponsesStreamState struct {
 	ids          chatReplyIDs
 	started      bool
@@ -1081,7 +1170,8 @@ func (cr *BifrostChatResponse) ToBifrostResponsesStreamResponse(state *ChatToRes
 				state.writeReasoning(delta.Reasoning, delta.ReasoningDetails, emit)
 			}
 			if delta.Content != nil && *delta.Content != "" {
-				state.writeText(false, *delta.Content, responsesLogProbs(choice.LogProbs), emit)
+				logProbs := textLogProbs(responsesLogProbs(choice.LogProbs), *delta.Content, delta.Reasoning, delta.ReasoningDetails, len(delta.ToolCalls) > 0)
+				state.writeText(false, *delta.Content, logProbs, emit)
 			}
 			if delta.Refusal != nil && *delta.Refusal != "" {
 				state.writeText(true, *delta.Refusal, nil, emit)
@@ -1159,10 +1249,22 @@ func (item *streamItem) event(kind ResponsesStreamResponseType) *BifrostResponse
 // item. A signature comes as a reasoning text delta whose signature field holds it, as the
 // Anthropic stream converters expect.
 func (s *ChatToResponsesStreamState) writeReasoning(text *string, details []ChatReasoningDetails, emit func(*BifrostResponsesStreamResponse)) {
+	if len(details) == 0 {
+		s.writeReasoningRun(text, nil, emit)
+		return
+	}
+	for _, run := range reasoningRuns(details) {
+		s.writeReasoningRun(nil, run, emit)
+	}
+}
+
+// writeReasoningRun adds reasoning that belongs to one item: the open reasoning item, unless the
+// reasoning names another, as a run of details with another ID does.
+func (s *ChatToResponsesStreamState) writeReasoningRun(text *string, details []ChatReasoningDetails, emit func(*BifrostResponsesStreamResponse)) {
 	var added replyReasoning
 	added.add(text, details)
 	item := s.open
-	if item == nil || item.kind != ResponsesMessageTypeReasoning {
+	if item == nil || item.kind != ResponsesMessageTypeReasoning || (added.id != nil && *added.id != item.id) {
 		id := ""
 		if added.id != nil {
 			id = *added.id
@@ -1362,9 +1464,8 @@ func (s *ChatToResponsesStreamState) finish(reason *string, usage *BifrostLLMUsa
 	}
 	status, incomplete, mapped := chatReplyStatus(reason)
 	if !mapped {
-		// A stream ends with a terminal event, so a reason that Responses has no status for
-		// completes it.
-		status = ResponsesResponseStatusCompleted
+		// A reply with such a reason has no status either, for the caller to judge.
+		return "the finish reason " + *reason + " has no Responses status"
 	}
 	openStatus := status
 	if len(s.calls) > 0 {
@@ -1390,10 +1491,7 @@ func (s *ChatToResponsesStreamState) finish(reason *string, usage *BifrostLLMUsa
 		s.end(call, callStatus, emit)
 	}
 	response := s.response(status)
-	response.IncompleteDetails = incomplete
-	if mapped {
-		response.StopReason = Ptr(*reason)
-	}
+	response.IncompleteDetails, response.StopReason = incomplete, Ptr(*reason)
 	if status == ResponsesResponseStatusCompleted {
 		response.CompletedAt = completedAt(s.createdAt)
 	}
