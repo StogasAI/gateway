@@ -2,6 +2,7 @@ package stogashttp
 
 import (
 	"errors"
+	"net/http"
 	"sync"
 	"time"
 
@@ -27,7 +28,7 @@ type pairKey struct{ credential, deployment string }
 
 type pairWait struct {
 	until  time.Time
-	answer catalog.APIError // the provider failure as its caller got it
+	answer catalog.APIError // what a request that the pair would serve gets
 }
 
 // maxPairWaits bounds the memory. A full table records no new wait until an
@@ -89,9 +90,11 @@ func (w *pairWaits) refusal(key pairKey) error {
 }
 
 // recordWait records the bound pair's failed call when its provider asked for
-// a wait longer than a retry waits, after which the pair can serve again.
-func (r *providerRun) recordWait(f *runFailure) {
-	if r.action != retryPair || f.until.Sub(f.at) <= retryMaxWait {
+// a wait longer than a retry waits, after which the pair can serve again. A
+// request that the pair would serve meanwhile gets the refusal that its rate
+// limit or lack of capacity calls for, since the provider never sees it.
+func (r *providerRun) recordWait(f *runFailure, failure *schemas.BifrostError) {
+	if f.until.Sub(f.at) <= retryMaxWait {
 		return
 	}
 	resolution := r.pair.Resolution
@@ -99,11 +102,13 @@ func (r *providerRun) recordWait(f *runFailure) {
 	if !ok {
 		return
 	}
-	detail, _ := f.response.payload["error"].(map[string]any)
-	message, _ := detail["message"].(string)
-	kind, _ := detail["type"].(string)
+	code := "upstream_capacity_unavailable"
+	if status, _ := publicBifrostError(failure); status == http.StatusTooManyRequests {
+		code = "upstream_rate_limit_error"
+	}
+	status, errorType, code, message, _ := publicStableGatewayError(&schemas.BifrostError{Error: &schemas.ErrorField{Code: &code}})
 	r.server.pairWaits.set(key, pairWait{until: f.until, answer: catalog.APIError{
-		Code: f.response.code(), StatusCode: f.response.status, Type: kind, Message: message,
+		Code: code, StatusCode: status, Type: errorType, Message: message,
 	}})
 }
 

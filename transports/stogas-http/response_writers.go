@@ -44,6 +44,31 @@ func providerErrorResponse(bifrostErr *schemas.BifrostError, bifrostCtx *schemas
 	return response
 }
 
+// unsentResponse answers a request whose provider call failed before the
+// provider received the request, which therefore cannot run twice.
+func unsentResponse(call int, deployment string) errorResponse {
+	return errorResponse{status: http.StatusServiceUnavailable, payload: map[string]any{"error": map[string]any{
+		"message": "Provider attempt " + strconv.Itoa(call) + " (deployment " + deployment +
+			") failed before the provider received the request, so you can safely send it again.",
+		"type": "gateway_error", "code": "upstream_unreachable", "param": nil,
+	}}}
+}
+
+// outcomeUnknownResponse answers a request whose provider call failed after the
+// gateway sent the request, without showing whether the provider ran it. It
+// tells clients not to retry by themselves, since a second run can bill twice.
+func outcomeUnknownResponse(failure *schemas.BifrostError, call int, deployment string) errorResponse {
+	status, errorType, failed := http.StatusBadGateway, "gateway_error", "failed"
+	if stogasbilling.NormalizeUpstreamStatus(failure) == "timeout" {
+		status, errorType, failed = http.StatusGatewayTimeout, schemas.RequestTimedOut, "timed out"
+	}
+	return errorResponse{status: status, final: true, payload: map[string]any{"error": map[string]any{
+		"message": "Provider attempt " + strconv.Itoa(call) + " (deployment " + deployment + ") " + failed +
+			" after the gateway sent the request, so the provider may have run it. Send the request again only if a second run is acceptable.",
+		"type": errorType, "code": "upstream_outcome_unknown", "param": nil,
+	}}}
+}
+
 // providerErrorWait is the provider's wait that a response with statusCode
 // passes on, or zero.
 func providerErrorWait(statusCode int, bifrostCtx *schemas.BifrostContext) time.Duration {
@@ -465,8 +490,9 @@ func (s *Server) writeError(ctx *requestContext, statusCode int, payload any) {
 			}
 		}
 	}
-	if providerAccountFailure(code) && ctx.writer.Header().Get("X-Should-Retry") == "" {
-		// A retry cannot fix the provider account.
+	if ctx.providerRan.Load() || providerAccountFailure(code) && ctx.writer.Header().Get("X-Should-Retry") == "" {
+		// A retry of a request that a provider may have run could run it twice,
+		// and a retry cannot fix the provider account.
 		ctx.writer.Header().Set("X-Should-Retry", "false")
 	}
 	if len(ctx.writer.Header().Get("X-Request-ID")) == 0 {

@@ -3,6 +3,7 @@ package stogashttp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"maps"
 	"math"
 	"math/rand/v2"
@@ -13,6 +14,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/maximhq/bifrost/core/network"
 	"github.com/maximhq/bifrost/core/schemas"
 	stogas "github.com/maximhq/bifrost/transports/stogas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
@@ -48,6 +50,19 @@ func TestFailureActionFor(t *testing.T) {
 	timedOut.Type = schemas.Ptr(schemas.RequestTimedOut)
 	unreachable := failure(0, "")
 	unreachable.Type = schemas.Ptr(schemas.ProviderConnectionFailed)
+	unsent := failure(http.StatusBadGateway, "")
+	unsent.Type = schemas.Ptr(schemas.ProviderConnectionFailed)
+	unsent.Error.Error = &network.NotSentError{Err: errors.New("dial tcp: connection refused")}
+	unsentTimeout := failure(http.StatusGatewayTimeout, "")
+	unsentTimeout.Type, unsentTimeout.AllowFallbacks = schemas.Ptr(schemas.RequestTimedOut), schemas.Ptr(false)
+	unsentTimeout.Error.Error = &network.NotSentError{Err: fasthttp.ErrTimeout}
+	overloadRefusal := failure(http.StatusTooManyRequests, "")
+	overloadRefusal.Error.Type = schemas.Ptr("overloaded_error")
+	billedUnsent := failure(http.StatusBadGateway, "")
+	billedUnsent.Type = schemas.Ptr(schemas.ProviderConnectionFailed)
+	billedUnsent.Error.Error = &network.NotSentError{Err: errors.New("dial tcp: connection refused")}
+	billedUnsent.ExtraFields.BilledUsage = &schemas.BifrostLLMUsage{PromptTokens: 3}
+	answered := map[string]string{"content-type": "application/json"}
 	failedResponse := &requestMemoryLease{}
 	failedResponse.responseFailed.Store(true)
 	for _, test := range []struct {
@@ -59,12 +74,20 @@ func TestFailureActionFor(t *testing.T) {
 	}{
 		{name: "rate limit", failure: failure(http.StatusTooManyRequests, ""), want: retryPair},
 		{name: "conflict", failure: failure(http.StatusConflict, ""), want: retryPair},
-		{name: "server error", failure: failure(http.StatusInternalServerError, ""), want: retryPair},
-		{name: "unavailable", failure: failure(http.StatusServiceUnavailable, ""), want: retryPair},
-		{name: "overloaded", failure: failure(529, ""), want: retryPair},
-		{name: "timeout", failure: timedOut, want: retryPair},
-		{name: "connection", failure: unreachable, want: retryPair},
-		{name: "invalid response", failure: failure(http.StatusBadGateway, "upstream_protocol_error"), want: retryPair},
+		{name: "overload that a 429 refuses", failure: overloadRefusal, want: retryPair},
+		{name: "never sent", failure: unsent, want: retryPair},
+		{name: "write timeout", failure: unsentTimeout, want: retryPair},
+		{name: "failure before the call", failure: failure(0, ""), want: retryPair},
+		// The provider may have run these.
+		{name: "server error", failure: failure(http.StatusInternalServerError, ""), want: stopRun},
+		{name: "unavailable", failure: failure(http.StatusServiceUnavailable, ""), want: stopRun},
+		{name: "overloaded", failure: failure(529, ""), want: stopRun},
+		{name: "request timeout", failure: failure(http.StatusRequestTimeout, ""), want: stopRun},
+		{name: "timeout", failure: timedOut, want: stopRun},
+		{name: "connection", failure: unreachable, want: stopRun},
+		{name: "invalid response", failure: failure(http.StatusBadGateway, "upstream_protocol_error"), want: stopRun},
+		{name: "answer that core cannot read", failure: failure(0, ""), headers: answered, want: stopRun},
+		{name: "provider asks to retry a server error", failure: failure(http.StatusInternalServerError, ""), headers: map[string]string{"x-should-retry": "true"}, want: stopRun},
 		{name: "quota", failure: failure(http.StatusTooManyRequests, "insufficient_quota"), want: nextPair},
 		{name: "authentication", failure: failure(http.StatusUnauthorized, ""), want: nextPair},
 		{name: "permission", failure: failure(http.StatusForbidden, ""), want: nextPair},
@@ -83,18 +106,95 @@ func TestFailureActionFor(t *testing.T) {
 		{name: "cancelled", failure: cancelled, want: stopRun},
 		{name: "our failure", failure: ours, want: stopRun},
 		{name: "billed usage", failure: billed, want: stopRun},
+		{name: "billed usage before a call that never reached its provider", failure: billedUnsent, want: stopRun},
 		{name: "response memory", failure: failure(http.StatusServiceUnavailable, ""), memory: failedResponse, want: stopRun},
 		{name: "provider asks for a retry", failure: failure(http.StatusBadRequest, ""), headers: map[string]string{"x-should-retry": "true"}, want: retryPair},
-		{name: "provider refuses a retry", failure: failure(http.StatusInternalServerError, ""), headers: map[string]string{"X-Should-Retry": "false"}, want: nextPair},
+		{name: "provider refuses a retry", failure: failure(http.StatusTooManyRequests, ""), headers: map[string]string{"X-Should-Retry": "false"}, want: nextPair},
 		{name: "provider refuses a retry of a credential", failure: failure(http.StatusUnauthorized, ""), headers: map[string]string{"x-should-retry": "false"}, want: nextPair},
 		{name: "provider asks to retry billed usage", failure: billed, headers: map[string]string{"x-should-retry": "true"}, want: stopRun},
 		{name: "provider asks to retry our failure", failure: ours, headers: map[string]string{"x-should-retry": "true"}, want: stopRun},
-		{name: "another model version served", failure: servedModelChangedError(), want: nextPair},
-		{name: "provider asks to retry another model version", failure: servedModelChangedError(), headers: map[string]string{"x-should-retry": "true"}, want: nextPair},
+		{name: "another model version served", failure: servedModelChangedError(), want: stopRun},
+		{name: "provider asks to retry another model version", failure: servedModelChangedError(), headers: map[string]string{"x-should-retry": "true"}, want: stopRun},
 	} {
 		if got := failureActionFor(test.failure, retryAfterContext(test.headers), test.memory); got != test.want {
 			t.Errorf("%s: action = %d, want %d", test.name, got, test.want)
 		}
+	}
+}
+
+// A call that never reached its provider leaves the request safe to send
+// again, even when core reports it as a timeout; one that the provider may
+// have run, or ran part of, does not.
+func TestProviderMayHaveRun(t *testing.T) {
+	failure := func(status int) *schemas.BifrostError {
+		return &schemas.BifrostError{StatusCode: schemas.Ptr(status), Error: &schemas.ErrorField{Message: "provider failure"}}
+	}
+	unsentTimeout := failure(http.StatusGatewayTimeout)
+	unsentTimeout.Type = schemas.Ptr(schemas.RequestTimedOut)
+	unsentTimeout.Error.Error = &network.NotSentError{Err: context.DeadlineExceeded}
+	billedRefusal := failure(http.StatusTooManyRequests)
+	billedRefusal.ExtraFields.BilledUsage = &schemas.BifrostLLMUsage{PromptTokens: 3}
+	billedUnsent := failure(http.StatusBadGateway)
+	billedUnsent.Error.Error = &network.NotSentError{Err: errors.New("write: broken pipe")}
+	billedUnsent.ExtraFields.BilledUsage = &schemas.BifrostLLMUsage{PromptTokens: 3}
+	noStatus := &schemas.BifrostError{Error: &schemas.ErrorField{Message: "provider failure"}}
+	for _, test := range []struct {
+		name    string
+		failure *schemas.BifrostError
+		headers map[string]string
+		want    bool
+	}{
+		{"a timeout that never reached the provider", unsentTimeout, nil, false},
+		{"a refusal", failure(http.StatusTooManyRequests), nil, false},
+		{"an invalid request", failure(http.StatusBadRequest), nil, false},
+		{"a server error", failure(http.StatusInternalServerError), nil, true},
+		{"a refusal after billed usage", billedRefusal, nil, true},
+		{"billed usage before a call that never reached the provider", billedUnsent, nil, true},
+		{"an Azure reply from another model version", servedModelChangedError(), nil, true},
+		{"an answer that core cannot read", noStatus, map[string]string{"content-type": "application/json"}, true},
+		{"a failure before the call", noStatus, nil, false},
+	} {
+		if got := providerMayHaveRun(test.failure, retryAfterContext(test.headers)); got != test.want {
+			t.Errorf("%s: providerMayHaveRun = %v, want %v", test.name, got, test.want)
+		}
+	}
+}
+
+// A caller that stops waiting marks the request as one that a provider may
+// have run only while a call is in flight, since a call that has not started
+// then never does.
+func TestStoppedWaitMarksOnlyACallInFlight(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		rate time.Duration // how long the call waits for its rate
+		ran  bool
+	}{
+		{name: "a call in flight", ran: true},
+		// The deadline also ends the wait for the rate, so the run can see
+		// either that the caller stopped waiting or that the call never started.
+		{name: "a call that waits for its rate", rate: time.Minute},
+	} {
+		synctest.Test(t, func(t *testing.T) {
+			ctx := &requestContext{writer: &testResponseWriter{httptest.NewRecorder()}, request: httptest.NewRequest(http.MethodPost, "/v1/responses", nil)}
+			ctx.responseWait = newResponseDeadline(time.Now(), time.Second)
+			defer ctx.responseWait.stop()
+			request, cancel := schemas.NewBifrostContextWithCancel(t.Context())
+			defer cancel()
+			state := &stogas.State{Pair: stogas.Pair{Resolution: testResolution(), Authorization: &billing.Authorization{StartAt: time.Now().Add(test.rate)}}}
+			release := make(chan struct{})
+			_, pending := runProvider(ctx, testRun(nil, ctx, request, state, cancel), func(*schemas.BifrostContext, *schemas.BifrostRequest) (string, *schemas.BifrostError) {
+				<-release
+				return "", nil
+			}, false)
+			if ctx.providerRan.Load() != test.ran || test.ran && pending == nil {
+				t.Fatalf("%s: pending = %v, provider ran = %v", test.name, pending != nil, ctx.providerRan.Load())
+			}
+			close(release)
+			cancel()
+			if pending != nil {
+				<-pending
+			}
+		})
 	}
 }
 
@@ -127,7 +227,7 @@ func TestAzureReplyThatNamesAnotherVersionFailsItsCall(t *testing.T) {
 	}
 	changed := retryAfterContext(map[string]string{"x-ms-served-model": "gpt-5.6-sol-2026-10-28"})
 	failure := server.checkAzureReply(changed, authorization, nil, discard)
-	if failure == nil || discarded != 1 || failureActionFor(failure, changed, nil) != nextPair {
+	if failure == nil || discarded != 1 || failureActionFor(failure, changed, nil) != stopRun {
 		t.Fatalf("a reply from another version: failure = %v, discarded %d", failure, discarded)
 	}
 	status, payload := publicBifrostError(failure)
@@ -428,6 +528,8 @@ func TestRunReportsTheFailureThatPassesSoonest(t *testing.T) {
 		after   time.Duration // since the previous failure
 		local   error         // a failure before a provider call
 		unsent  bool          // the provider failure came before the call was sent
+		notSent bool          // the call failed before the provider received the request
+		billed  bool          // the provider ran part of the request before it failed
 	}
 	wait := func(seconds string) map[string]string { return map[string]string{"retry-after": seconds} }
 	noRetry := map[string]string{"x-should-retry": "false"}
@@ -444,16 +546,30 @@ func TestRunReportsTheFailureThatPassesSoonest(t *testing.T) {
 			status: 429, code: "upstream_rate_limit_error", retryAfter: []string{"30", "31"}},
 		{name: "a later wait passes an earlier credential failure", failures: []failure{{status: 401}, {pair: 1, status: 429, headers: wait("30")}},
 			status: 429, code: "upstream_rate_limit_error", retryAfter: []string{"30", "31"}},
-		{name: "an overload passes a retired model", failures: []failure{{status: 503}, {pair: 1, status: 410}}, status: 503},
-		{name: "a dropped connection passes a missing deployment", failures: []failure{{code: schemas.ProviderConnectionFailed}, {pair: 1, status: 404}}, status: 502},
-		{name: "a server error passes before a long wait", failures: []failure{{status: 500}, {pair: 1, status: 429, headers: wait("30")}}, status: 500},
+		{name: "an overload refusal passes a retired model", failures: []failure{{status: 429, code: "overloaded_error"}, {pair: 1, status: 410}}, status: 429},
+		{name: "an unreachable provider passes a missing deployment", failures: []failure{{status: 502, notSent: true}, {pair: 1, status: 404}},
+			status: 503, code: "upstream_unreachable"},
+		{name: "an unreachable provider passes before a long wait", failures: []failure{{status: 502, notSent: true}, {pair: 1, status: 429, headers: wait("30")}},
+			status: 503, code: "upstream_unreachable"},
+		{name: "a dropped connection ends the run", failures: []failure{{status: 404}, {pair: 1, code: schemas.ProviderConnectionFailed}},
+			status: 502, code: "upstream_outcome_unknown", shouldRetry: "false"},
+		{name: "a server error ends the run", failures: []failure{{status: 429, headers: wait("30")}, {pair: 1, status: 500}},
+			status: 502, code: "upstream_outcome_unknown", shouldRetry: "false"},
+		{name: "a timeout ends the run", failures: []failure{{status: 401}, {pair: 1, status: 504}},
+			status: 504, code: "upstream_outcome_unknown", shouldRetry: "false"},
+		{name: "an overload ends the run with its wait", failures: []failure{{status: 429, headers: wait("2")}, {pair: 1, status: 529, headers: wait("30")}},
+			status: 502, code: "upstream_outcome_unknown", retryAfter: []string{"30", "31"}, shouldRetry: "false"},
+		{name: "an overload after billed usage ends the run", failures: []failure{{status: 529, billed: true}},
+			status: 502, code: "upstream_outcome_unknown", shouldRetry: "false"},
+		{name: "a refusal after billed usage ends the run", failures: []failure{{status: 429, headers: wait("2"), billed: true}},
+			status: 429, code: "upstream_rate_limit_error", retryAfter: []string{"2", "3"}, shouldRetry: "false"},
 		{name: "the shorter wait", failures: []failure{{status: 429, headers: wait("30")}, {pair: 1, status: 429, headers: wait("2")}},
 			status: 429, code: "upstream_rate_limit_error", retryAfter: []string{"2", "3"}},
-		{name: "the shorter wait first", failures: []failure{{status: 429, headers: wait("2")}, {pair: 1, status: 529, headers: wait("30")}},
+		{name: "the shorter wait first", failures: []failure{{status: 429, headers: wait("2")}, {pair: 1, status: 429, headers: wait("30")}},
 			status: 429, code: "upstream_rate_limit_error", retryAfter: []string{"2", "3"}},
 		{name: "time on later pairs shortens the wait", failures: []failure{{status: 429, headers: wait("20")}, {pair: 1, status: 401, after: 8 * time.Second}},
 			status: 429, code: "upstream_rate_limit_error", retryAfter: []string{"12", "13"}},
-		{name: "a wait that ended passes now", failures: []failure{{status: 429, headers: wait("2")}, {pair: 1, status: 500, after: 5 * time.Second}},
+		{name: "a wait that ended passes now", failures: []failure{{status: 429, headers: wait("2")}, {pair: 1, status: 401, after: 5 * time.Second}},
 			status: 429, code: "upstream_rate_limit_error"},
 		{name: "the first of two credential failures", failures: []failure{{status: 401}, {pair: 1, status: 403}},
 			status: 424, code: "upstream_authentication_failed", shouldRetry: "false"},
@@ -472,9 +588,10 @@ func TestRunReportsTheFailureThatPassesSoonest(t *testing.T) {
 		{name: "a content filter ends the run", failures: []failure{{status: 429, headers: wait("30")}, {pair: 1, status: 400, code: "content_filter"}}, status: 400, code: "content_filter"},
 		{name: "every window too small", failures: []failure{{status: 400, code: "context_length_exceeded"}, {pair: 1, status: 413}},
 			status: 400, code: "context_length_exceeded", shouldRetry: "false"},
-		{name: "a pair's latest failure", failures: []failure{{status: 503}, {status: 429, headers: wait("30"), after: time.Second}, {pair: 1, status: 401}},
+		{name: "a pair's latest failure", failures: []failure{{status: 502, notSent: true}, {status: 429, headers: wait("30"), after: time.Second}, {pair: 1, status: 401}},
 			status: 429, code: "upstream_rate_limit_error", retryAfter: []string{"30", "31"}},
-		{name: "a provider that refuses retries", failures: []failure{{status: 500, headers: noRetry}, {pair: 1, status: 401}}, status: 500, shouldRetry: "false"},
+		{name: "a provider that refuses retries", failures: []failure{{status: 429, headers: noRetry}, {pair: 1, status: 401}},
+			status: 429, code: "upstream_rate_limit_error", shouldRetry: "false"},
 		{name: "a wait over a minute", failures: []failure{{status: 429, headers: wait("300")}},
 			status: 429, code: "upstream_rate_limit_error", retryAfter: []string{"300"}, shouldRetry: "false"},
 		{name: "a provider that asks for a retry", failures: []failure{{status: 400, headers: map[string]string{"x-should-retry": "true"}}}, status: 400, shouldRetry: "true"},
@@ -513,8 +630,14 @@ func TestRunReportsTheFailureThatPassesSoonest(t *testing.T) {
 						run.noteLocal(run.local, f.pair)
 						continue
 					}
+					if f.notSent {
+						failure.Error.Error = &network.NotSentError{Err: errors.New("dial tcp: connection refused")}
+					}
+					if f.billed {
+						failure.ExtraFields.BilledUsage = &schemas.BifrostLLMUsage{PromptTokens: 3}
+					}
 					run.last, run.lastCtx = failure, attempt
-					run.note(callFailure(failure, attempt, failureActionFor(failure, attempt, nil), f.pair))
+					run.note(callFailure(failure, attempt, failureActionFor(failure, attempt, nil), f.pair, 1+f.pair, "deployment"))
 				}
 				if run.reportsLocal() != test.gateway {
 					t.Fatalf("gateway error = %v", run.reportsLocal())

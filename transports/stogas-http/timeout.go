@@ -19,6 +19,7 @@ type responseDeadline struct {
 	cancel   context.CancelFunc
 	stopped  bool
 	expired  bool
+	calling  bool // a provider call started and has not returned
 }
 
 func newResponseDeadline(startedAt time.Time, total time.Duration) *responseDeadline {
@@ -49,7 +50,7 @@ func (wait *responseDeadline) startOutput(idle time.Duration) bool {
 		wait.expire()
 		return false
 	}
-	wait.idle = idle
+	wait.idle, wait.calling = idle, true
 	next := now.Add(idle)
 	if next.After(wait.total) {
 		next = wait.total
@@ -68,6 +69,7 @@ func (wait *responseDeadline) endOutput() {
 	}
 	wait.mu.Lock()
 	defer wait.mu.Unlock()
+	wait.calling = false
 	if wait.stopped {
 		return
 	}
@@ -78,6 +80,17 @@ func (wait *responseDeadline) endOutput() {
 	}
 	wait.deadline = wait.total
 	wait.timer.Reset(wait.total.Sub(now))
+}
+
+// callInFlight reports whether a provider call started and has not returned.
+// Without a deadline, every call may be in flight.
+func (wait *responseDeadline) callInFlight() bool {
+	if wait == nil {
+		return true
+	}
+	wait.mu.Lock()
+	defer wait.mu.Unlock()
+	return wait.calling
 }
 
 // remaining reports how long the caller still waits for output.

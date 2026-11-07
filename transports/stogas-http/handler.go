@@ -2,6 +2,7 @@ package stogashttp
 
 import (
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/maximhq/bifrost/transports/stogas/billing"
@@ -28,6 +29,9 @@ type requestContext struct {
 	deliveryDeadline      time.Time
 	responseWait          *responseDeadline
 	stopClientObservation func()
+	// providerRan reports that a provider ran the request or may still be
+	// running it, so that a retry by the client could run it twice.
+	providerRan atomic.Bool
 	// finalize settles a finished inference after its response is complete.
 	finalize func()
 }

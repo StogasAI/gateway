@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/maximhq/bifrost/core/network"
 	"github.com/valyala/fasthttp"
 )
 
@@ -113,7 +114,10 @@ var testHookBeforeConnRelease func()
 // (network.StaleConnectionRetryIfErr) walks past such sockets. The same failure
 // on a socket dialed for this request is the upstream failing, so it is
 // reported without a fasthttp-level retry and counts against Bifrost's own
-// max_retries (maximhq/bifrost#7035). ErrBodyTooLarge never retries.
+// max_retries (maximhq/bifrost#7035). ErrBodyTooLarge never retries. A failure
+// before the whole request was written is a network.NotSentError, which
+// RetryIfErr retries whatever the method, and which tells callers that the
+// upstream cannot have run the request.
 func (t *contextTransport) RoundTrip(hc *fasthttp.HostClient, req *fasthttp.Request, resp *fasthttp.Response) (retry bool, err error) {
 	ctx := RequestContext(req)
 	if ctxErr := ctx.Err(); ctxErr != nil {
@@ -129,8 +133,16 @@ func (t *contextTransport) RoundTrip(hc *fasthttp.HostClient, req *fasthttp.Requ
 	customSkipBody := resp.SkipBody
 
 	cc, err := hc.AcquireConn(0, req.ConnectionClose())
+	// fasthttp hands out a pooled connection without checking it. A request
+	// written to one that the upstream closed while it sat idle fails only
+	// when the response is read, and then nothing tells whether the upstream
+	// read the request, so the request passes over such connections first.
+	for err == nil && !cc.LastUseTime().IsZero() && connClosed(cc.Conn()) {
+		hc.CloseConn(cc)
+		cc, err = hc.AcquireConn(0, req.ConnectionClose())
+	}
 	if err != nil {
-		return false, err
+		return false, notSent(ctx, err)
 	}
 	conn := cc.Conn()
 	resp.ParseNetConn(conn)
@@ -146,7 +158,7 @@ func (t *contextTransport) RoundTrip(hc *fasthttp.HostClient, req *fasthttp.Requ
 
 	if err = conn.SetWriteDeadline(deadlineFor(hc.WriteTimeout, ctx)); err != nil {
 		hc.CloseConn(cc)
-		return retryOn(err), watcher.classify(err)
+		return retryOn(err), notSent(ctx, watcher.classify(err))
 	}
 
 	resetConnection := false
@@ -165,8 +177,9 @@ func (t *contextTransport) RoundTrip(hc *fasthttp.HostClient, req *fasthttp.Requ
 	}
 	hc.ReleaseWriter(bw)
 	if err != nil {
+		// The upstream got at most part of the request, which it cannot run.
 		hc.CloseConn(cc)
-		return retryOn(err), watcher.classify(err)
+		return retryOn(err), notSent(ctx, watcher.classify(err))
 	}
 
 	// Setting a deadline fails with "use of closed network connection" when the
@@ -268,6 +281,18 @@ func (t *contextTransport) RoundTrip(hc *fasthttp.HostClient, req *fasthttp.Requ
 	}
 	resp.SetBodyStream(body, resp.Header.ContentLength())
 	return false, nil
+}
+
+// notSent marks a failure before the upstream received the whole request. A
+// failure after the request's own context ended, or its first-token deadline
+// passed, stays as it is, so that the caller learns why the request stopped.
+// Go reports a dial that timed out as a deadline too, but that is the
+// transport's own failure, which notSent marks.
+func notSent(ctx context.Context, err error) error {
+	if ctx.Err() != nil || errors.Is(err, ErrStreamFirstTokenTimeout) {
+		return err
+	}
+	return &network.NotSentError{Err: err}
 }
 
 // deadlineFor returns now+timeout, tightened by ctx's deadline when that comes

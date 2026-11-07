@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/maximhq/bifrost/core/network"
 	"github.com/maximhq/bifrost/core/schemas"
 	stogas "github.com/maximhq/bifrost/transports/stogas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
@@ -278,8 +279,11 @@ func (r *providerRun) failed(failure *schemas.BifrostError, attempt *schemas.Bif
 	r.called, r.last, r.lastCtx = r.pair, failure, attempt
 	r.retire(previous)
 	r.action = failureActionFor(failure, attempt, r.client.memory)
-	f := callFailure(failure, attempt, r.action, r.pair.number)
-	r.recordWait(f)
+	if providerMayHaveRun(failure, attempt) {
+		r.client.providerRan.Store(true)
+	}
+	f := callFailure(failure, attempt, r.action, r.pair.number, count, r.pair.Resolution.Deployment.ID)
+	r.recordWait(f, failure)
 	r.note(f)
 	return true
 }
@@ -339,22 +343,24 @@ const (
 	retryPair // or the next pair when the bound one cannot retry
 )
 
-// failureActionFor classifies a provider failure as the OpenAI and Anthropic
-// SDKs do: the provider's x-should-retry decides whether the call may run
-// again, and without it a timeout, a 409, a 429 or a server error can. A
-// credential or deployment failure can pass on another pair, as can a request
-// beyond the deployment's own limits on context, size or images. Billed usage,
-// content filters, other invalid requests and failures of our own end the
-// request.
+// failureActionFor decides what may follow a failed provider call. Only a call
+// that proves the provider did not run the request may be followed by another:
+// one that never reached the provider, or a refusal. RFC 9110 (section 9.2.2)
+// lets a client repeat a POST automatically only when it can tell that the
+// first was never applied, and a second call could run and bill the request
+// twice. A 409 or a 429 may run again, and the provider's x-should-retry
+// decides for any refusal. A credential or deployment failure can pass on
+// another pair, as can a request beyond the deployment's own limits on
+// context, size or images. Content filters, other invalid requests and
+// failures of our own end the request.
 func failureActionFor(failure *schemas.BifrostError, attempt *schemas.BifrostContext, memory *requestMemoryLease) failureAction {
-	if failure == nil || failure.AllowFallbacks != nil && !*failure.AllowFallbacks || failure.ExtraFields.BilledUsage != nil ||
-		memory != nil && memory.responseFailed.Load() {
+	switch {
+	case failure == nil, memory != nil && memory.responseFailed.Load():
 		return stopRun
-	}
-	// The reply came from another model version than the pair's target, which a retry of the same
-	// target repeats, whatever the provider's x-should-retry says about its call.
-	if bifrostErrorCode(failure) == billing.ErrByokTargetChanged.Code {
-		return nextPair
+	case requestNotSent(failure):
+		return retryPair
+	case failure.AllowFallbacks != nil && !*failure.AllowFallbacks, providerMayHaveRun(failure, attempt):
+		return stopRun
 	}
 	action := statusFailureAction(failure)
 	switch providerResponseHeader(attempt, "x-should-retry") {
@@ -369,10 +375,54 @@ func failureActionFor(failure *schemas.BifrostError, attempt *schemas.BifrostCon
 	return action
 }
 
+// requestNotSent reports a call whose transport failed before the provider
+// received the whole request, which the provider cannot have run. A failure
+// with billed usage follows work that the provider ran for the request.
+func requestNotSent(failure *schemas.BifrostError) bool {
+	return failure.ExtraFields.BilledUsage == nil && failure.Error != nil && network.RequestNotSent(failure.Error.Error)
+}
+
+// outcomeUnknown reports a failure after the gateway sent the request that does
+// not show whether the provider ran it: a lost connection, a timeout, a 408 or a
+// 5xx, or a response that the gateway cannot read. No provider documents a 5xx
+// as proof that nothing ran. Any other 4xx refuses the request, whatever error
+// type it names.
+func outcomeUnknown(failure *schemas.BifrostError, attempt *schemas.BifrostContext) bool {
+	if status := failure.StatusCode; status != nil && *status >= http.StatusBadRequest {
+		return *status == http.StatusRequestTimeout || *status >= http.StatusInternalServerError
+	}
+	switch billing.NormalizeUpstreamStatus(failure) {
+	case "connection_error", "timeout", "provider_unavailable", "provider_overloaded", "invalid_response":
+		return true
+	case "provider_error":
+		// A failure without a status came before the call, unless the provider
+		// answered, as with a body that core cannot decode.
+		return providerAnswered(attempt)
+	}
+	return false
+}
+
+// providerMayHaveRun reports a failed call after which the provider may have
+// run the request, or part of it, so that another call could run it twice: a
+// failure with billed usage, an Azure reply from another model version than
+// the pair's target, or a failure that does not show whether the provider ran
+// the request.
+func providerMayHaveRun(failure *schemas.BifrostError, attempt *schemas.BifrostContext) bool {
+	return !requestNotSent(failure) && (failure.ExtraFields.BilledUsage != nil ||
+		bifrostErrorCode(failure) == billing.ErrByokTargetChanged.Code || outcomeUnknown(failure, attempt))
+}
+
+// providerAnswered reports a call that got a response from its provider.
+func providerAnswered(attempt *schemas.BifrostContext) bool {
+	headers, _ := attempt.Value(schemas.BifrostContextKeyProviderResponseHeaders).(map[string]string)
+	return len(headers) > 0
+}
+
 func statusFailureAction(failure *schemas.BifrostError) failureAction {
 	if failure.StatusCode != nil && *failure.StatusCode == http.StatusConflict {
 		return retryPair
 	}
+	// Failures of these kinds that the provider may have run never get here.
 	switch billing.NormalizeUpstreamStatus(failure) {
 	case "connection_error", "timeout", "rate_limited", "provider_unavailable", "provider_overloaded", "provider_error", "invalid_response":
 		return retryPair
@@ -507,9 +557,9 @@ func startProviderCall[T any](r *providerRun, wait time.Duration, call providerC
 }
 
 // checkAzureReply checks a call on an Azure target before anything of its reply is used. A reply
-// that names another model version than the target's fails the call, so the request moves on to
-// its next pair, and stops the target for the fleet. A deployment that is gone or retired asks for
-// a check of its account at once. discard drops a reply that failed.
+// that names another model version than the target's fails the call and the request, since the
+// provider ran it, and stops the target for the fleet. A deployment that is gone or retired asks
+// for a check of its account at once. discard drops a reply that failed.
 func (s *Server) checkAzureReply(attempt *schemas.BifrostContext, authorization *billing.Authorization, failure *schemas.BifrostError, discard func()) *schemas.BifrostError {
 	if failure != nil {
 		if status := billing.NormalizeUpstreamStatus(failure); status == "model_unavailable" || status == "model_retired" {
@@ -565,7 +615,15 @@ func runProvider[T any](ctx *requestContext, r *providerRun, call providerCall[T
 	for {
 		result, pending := awaitProviderResult(ctx, r.state.MarkClientStopped, ready, keepalive)
 		switch {
-		case pending != nil, result.called && result.failure == nil:
+		case pending != nil:
+			// No call starts once the caller stops waiting, so only a call in
+			// flight can still run the request.
+			if ctx.responseWait.callInFlight() {
+				ctx.providerRan.Store(true)
+			}
+			return result, pending
+		case result.called && result.failure == nil:
+			ctx.providerRan.Store(true)
 			return result, pending
 		case result.panic != nil:
 			r.failed(result.failure, result.ctx)
@@ -690,17 +748,28 @@ type runFailure struct {
 	local    bool      // no provider call failed with it
 }
 
-// callFailure is a failed provider call. A failure that only another pair
-// avoids tells clients not to retry, as one whose wait is over a minute does
+// callFailure is the failed provider call numbered call among the request's
+// logged calls, on deployment. A failure that only another pair avoids tells
+// clients not to retry, as one whose wait is over a minute does
 // (providerErrorResponse); one that the pair passes by waiting tells them to
-// retry, even when its status is one that they do not retry by themselves.
-func callFailure(failure *schemas.BifrostError, attempt *schemas.BifrostContext, action failureAction, pair int) *runFailure {
+// retry, even when its status is one that they do not retry by themselves. A
+// call that never reached the provider, or one that the provider may have run,
+// answers with what the caller needs to know before sending the request again,
+// and a failure after the provider ran part of the request tells clients not
+// to retry, since a retry runs that part again.
+func callFailure(failure *schemas.BifrostError, attempt *schemas.BifrostContext, action failureAction, pair, call int, deployment string) *runFailure {
 	f := &runFailure{pair: pair, response: providerErrorResponse(failure, attempt), at: time.Now(), ends: action == stopRun}
 	if wait := providerErrorWait(f.response.status, attempt); wait > 0 {
 		f.until = f.at.Add(wait)
 	}
 	switch {
-	case action == nextPair:
+	case requestNotSent(failure):
+		f.response = unsentResponse(call, deployment)
+	case outcomeUnknown(failure, attempt):
+		f.response = outcomeUnknownResponse(failure, call, deployment)
+	}
+	switch {
+	case action == nextPair, failure.ExtraFields.BilledUsage != nil:
 		f.response.final = true
 	case action == retryPair && !f.response.final:
 		f.passes = true

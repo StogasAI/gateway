@@ -707,9 +707,21 @@ func (f *HTTPClientFactory) newFasthttpBaseClient(purpose ClientPurpose) *fastht
 	return client
 }
 
-// StaleConnectionRetryIfErr retries idempotent requests when a pooled connection is stale.
-// It never retries POST because a write or response-read error does not prove that the server
-// did not process the request.
+// NotSentError is a transport failure before the server received the whole request: no
+// connection, a failed TLS handshake, or a failed write. A server that needs the whole body
+// cannot have run such a request, so even a POST may go again.
+type NotSentError struct{ Err error }
+
+func (e *NotSentError) Error() string { return e.Err.Error() }
+
+func (e *NotSentError) Unwrap() error { return e.Err }
+
+// RequestNotSent reports whether err, or an error that it wraps, is a NotSentError.
+func RequestNotSent(err error) bool {
+	var notSent *NotSentError
+	return errors.As(err, &notSent)
+}
+
 // maxStaleConnRetries bounds how many times a single request will redial on a stale
 // pooled connection. With FIFO pooling, the oldest connection is tried first, and when
 // the upstream has a short keep-alive (e.g. vLLM's default 5s) several pooled connections
@@ -719,14 +731,18 @@ func (f *HTTPClientFactory) newFasthttpBaseClient(purpose ClientPurpose) *fastht
 // attempt cap.
 const maxStaleConnRetries = 3
 
+// StaleConnectionRetryIfErr retries a request on another connection when a pooled one is
+// stale. A request that never fully reached the server goes again whatever its method;
+// otherwise only idempotent methods do, because a failure after the request was written does
+// not prove that the server did not process it.
 func StaleConnectionRetryIfErr(request *fasthttp.Request, attempts int, err error) (resetTimeout bool, retry bool) {
-	if request == nil || (!request.Header.IsGet() && !request.Header.IsHead() && !request.Header.IsPut()) {
+	if request == nil || err == nil || attempts > maxStaleConnRetries {
 		return false, false
 	}
-	if attempts > maxStaleConnRetries {
-		return false, false
+	if RequestNotSent(err) {
+		return true, true
 	}
-	if err == nil {
+	if !request.Header.IsGet() && !request.Header.IsHead() && !request.Header.IsPut() {
 		return false, false
 	}
 	errStr := strings.ToLower(err.Error())

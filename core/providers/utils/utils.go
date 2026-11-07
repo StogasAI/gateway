@@ -15,6 +15,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/textproto"
 	"net/url"
 	"regexp"
@@ -555,6 +556,9 @@ func (b *upstreamTimingBody) Close() error { return b.inner.Close() }
 // A stream attempt with a first-token deadline (AttemptAbort on the context)
 // runs on a child context that the abort cancels, so a missed deadline ends
 // both the header wait and the body read without cancelling the request.
+//
+// A failure before net/http finished writing the request is a
+// network.NotSentError, as on the fasthttp path (contextTransport.RoundTrip).
 func DoHTTPRequest(client *http.Client, req *http.Request) (*http.Response, error) {
 	if abort := AttemptAbortFromContext(req.Context()); abort != nil {
 		if abort.Fired() {
@@ -571,9 +575,21 @@ func DoHTTPRequest(client *http.Client, req *http.Request) (*http.Response, erro
 		}()
 		req = req.WithContext(attemptCtx)
 	}
+	// net/http reports each write of the request, and the last report counts.
+	// A report can follow a write to its buffer alone, but net/http sends a POST
+	// again on a fresh connection only when nothing of it reached the first, and
+	// after the server may have read a request only when the request's method or
+	// Idempotency-Key header makes it idempotent.
+	var wrote atomic.Bool
+	req = req.WithContext(httptrace.WithClientTrace(req.Context(), &httptrace.ClientTrace{
+		WroteRequest: func(info httptrace.WroteRequestInfo) { wrote.Store(info.Err == nil) },
+	}))
 	startTime := time.Now()
 	resp, err := client.Do(req)
 	schemas.AddUpstreamLatency(req.Context(), time.Since(startTime))
+	if err != nil && !wrote.Load() {
+		err = notSent(req.Context(), err)
+	}
 	if err == nil && resp != nil && resp.Body != nil {
 		resp.Body = &upstreamTimingBody{inner: resp.Body, ctx: req.Context()}
 	}

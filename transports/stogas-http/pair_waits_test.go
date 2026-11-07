@@ -65,8 +65,10 @@ func TestPairWaitsStayBounded(t *testing.T) {
 	})
 }
 
-// Only a sent call on a customer's credential whose provider asks for longer
-// than a retry waits, and that a wait can pass, records the pair's wait.
+// Only a call on a customer's credential whose provider asks for longer than a
+// retry waits records the pair's wait, even when the call ended its request. A
+// request that the pair would serve meanwhile gets the provider's rate limit,
+// or its lack of capacity.
 func TestFailedCallRecordsItsPairsWait(t *testing.T) {
 	for _, test := range []struct {
 		name    string
@@ -74,13 +76,14 @@ func TestFailedCallRecordsItsPairsWait(t *testing.T) {
 		code    string
 		headers map[string]string
 		mode    string
-		record  bool
+		answer  string // the refusal's code while the pair waits; none when no wait is recorded
 	}{
-		{name: "a long rate limit", status: 429, headers: map[string]string{"retry-after": "30"}, mode: "stored", record: true},
-		{name: "a long overload", status: 529, headers: map[string]string{"retry-after": "30"}, mode: "encrypted", record: true},
+		{name: "a long rate limit", status: 429, headers: map[string]string{"retry-after": "30"}, mode: "stored", answer: "upstream_rate_limit_error"},
+		{name: "a long overload", status: 529, headers: map[string]string{"retry-after": "30"}, mode: "encrypted", answer: "upstream_capacity_unavailable"},
+		{name: "a long unavailability", status: 503, headers: map[string]string{"retry-after": "30"}, mode: "stored", answer: "upstream_capacity_unavailable"},
+		{name: "a provider that refuses retries", status: 429, headers: map[string]string{"retry-after": "30", "x-should-retry": "false"}, mode: "stored", answer: "upstream_rate_limit_error"},
 		{name: "a wait that a retry covers", status: 429, headers: map[string]string{"retry-after": "8"}, mode: "stored"},
 		{name: "no wait", status: 503, mode: "stored"},
-		{name: "a provider that refuses retries", status: 429, headers: map[string]string{"retry-after": "30", "x-should-retry": "false"}, mode: "stored"},
 		{name: "an exhausted quota", status: 429, code: "insufficient_quota", headers: map[string]string{"retry-after": "30"}, mode: "stored"},
 		{name: "Stogas's own credential", status: 429, headers: map[string]string{"retry-after": "30"}, mode: "managed"},
 	} {
@@ -97,10 +100,14 @@ func TestFailedCallRecordsItsPairsWait(t *testing.T) {
 			}
 			attempt := retryAfterContext(test.headers)
 			run.action = failureActionFor(failure, attempt, nil)
-			run.recordWait(callFailure(failure, attempt, run.action, 0))
+			run.recordWait(callFailure(failure, attempt, run.action, 0, 1, "openai-gpt-5.6-sol"), failure)
 			key := pairKey{"byok", "openai-gpt-5.6-sol"}
-			if recorded := server.pairWaits.refusal(key) != nil; recorded != test.record {
-				t.Fatalf("recorded = %v", recorded)
+			answer := ""
+			if refusal := server.pairWaits.refusal(key); refusal != nil {
+				answer = catalogErrorResponse(refusal).code()
+			}
+			if answer != test.answer {
+				t.Fatalf("answer = %q, want %q", answer, test.answer)
 			}
 			run.clearWait()
 			if server.pairWaits.refusal(key) != nil {
@@ -123,7 +130,7 @@ func TestWaitingPairRanksLikeItsCall(t *testing.T) {
 		run.noteLocal(waits.refusal(key), -1)
 		failure := &schemas.BifrostError{StatusCode: schemas.Ptr(401), Error: &schemas.ErrorField{Message: "bad key"}}
 		run.last, run.lastCtx = failure, retryAfterContext(nil)
-		run.note(callFailure(failure, run.lastCtx, nextPair, 1))
+		run.note(callFailure(failure, run.lastCtx, nextPair, 1, 2, "deployment"))
 		response := run.response()
 		var refusal interface{ RetryAfter() time.Duration }
 		if response.status != 429 || response.retryAfter != "25" && response.retryAfter != "26" || response.final ||
