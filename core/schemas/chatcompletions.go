@@ -673,6 +673,8 @@ type ToolFunctionParameters struct {
 	keyOrder JSONKeyOrder `json:"-"`
 	// explicitEmptyObject tracks a client-supplied raw {} schema.
 	explicitEmptyObject bool `json:"-"`
+	// keywords are the schema's keywords that no field names.
+	keywords schemaKeywords `json:"-"`
 }
 
 // MarshalJSON serializes ToolFunctionParameters while preserving the original
@@ -692,7 +694,7 @@ func (t ToolFunctionParameters) MarshalJSON() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return t.keyOrder.Apply(data)
+	return t.keyOrder.Apply(t.keywords.appendTo(data))
 }
 
 // UnmarshalJSON implements custom JSON unmarshalling for ToolFunctionParameters.
@@ -727,6 +729,7 @@ func (t *ToolFunctionParameters) UnmarshalJSON(data []byte) error {
 		t.explicitEmptyObject = false
 	}
 	t.keyOrder.Capture(data)
+	t.keywords = readSchemaKeywords(data, toolFunctionParameterFields)
 	return nil
 }
 
@@ -825,7 +828,7 @@ func (t *ToolFunctionParameters) hasDefinedSchemaFields() bool {
 	if t.Minimum != nil || t.Maximum != nil {
 		return true
 	}
-	return t.Title != nil || t.Default != nil || t.Nullable != nil
+	return t.Title != nil || t.Default != nil || t.Nullable != nil || len(t.keywords) > 0
 }
 
 type AdditionalPropertiesStruct struct {

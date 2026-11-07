@@ -1226,6 +1226,7 @@ func DeepCopyToolFunctionParameters(original *ToolFunctionParameters) *ToolFunct
 		Type:                original.Type,
 		keyOrder:            JSONKeyOrder{keys: append([]string(nil), original.keyOrder.keys...)},
 		explicitEmptyObject: original.explicitEmptyObject,
+		keywords:            slices.Clone(original.keywords),
 	}
 
 	if original.Description != nil {

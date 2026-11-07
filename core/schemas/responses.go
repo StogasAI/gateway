@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"sort"
@@ -653,6 +654,8 @@ type ResponsesTextConfigFormatJSONSchema struct {
 	// schema that reads type/title/description before properties must keep
 	// reading that way after a round-trip through this struct.
 	keyOrder []string
+	// keywords are the schema's keywords that no field names.
+	keywords schemaKeywords
 }
 
 // UnmarshalJSON decodes the schema and remembers its key order.
@@ -664,6 +667,7 @@ func (s *ResponsesTextConfigFormatJSONSchema) UnmarshalJSON(data []byte) error {
 	}
 	*s = ResponsesTextConfigFormatJSONSchema(aux)
 	s.keyOrder = jsonObjectKeyOrder(data)
+	s.keywords = readSchemaKeywords(data, responsesJSONSchemaFields)
 	return nil
 }
 
@@ -676,7 +680,7 @@ func (s ResponsesTextConfigFormatJSONSchema) MarshalJSON() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return reorderJSONObjectKeys(raw, s.keyOrder), nil
+	return reorderJSONObjectKeys(s.keywords.appendTo(raw), s.keyOrder), nil
 }
 
 // KeyOrder returns the schema object's key order as decoded, or nil when the
@@ -887,7 +891,11 @@ func JSONSchemaFromMap(v interface{}) *ResponsesTextConfigFormatJSONSchema {
 	default:
 		return nil
 	}
-	s := &ResponsesTextConfigFormatJSONSchema{keyOrder: keyOrder}
+	names := keyOrder
+	if names == nil {
+		names = slices.Sorted(maps.Keys(m))
+	}
+	s := &ResponsesTextConfigFormatJSONSchema{keyOrder: keyOrder, keywords: mapSchemaKeywords(m, names, responsesJSONSchemaFields)}
 	if t, ok := m["type"].(string); ok {
 		s.Type = Ptr(t)
 	}
@@ -1145,6 +1153,7 @@ func (s *ResponsesTextConfigFormatJSONSchema) ToMap() interface{} {
 	if s.MaxLength != nil {
 		m["maxLength"] = *s.MaxLength
 	}
+	s.keywords.addTo(m)
 	if len(m) == 0 {
 		return nil
 	}
