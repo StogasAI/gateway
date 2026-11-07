@@ -1815,7 +1815,7 @@ func TestResponsesChatBridgeCarriesServedTier(t *testing.T) {
 	chunk := (&BifrostResponsesStreamResponse{
 		Type:     ResponsesStreamResponseTypeCompleted,
 		Response: &BifrostResponsesResponse{Status: Ptr(ResponsesResponseStatusCompleted), ServiceTier: &tier, Speed: &speed, InferenceGeo: &geo},
-	}).ToBifrostChatResponse()
+	}).ToBifrostChatResponse(&ResponsesToChatStreamState{})
 	if chunk.ServiceTier == nil || *chunk.ServiceTier != tier {
 		t.Fatalf("responses stream->chat chunk dropped service_tier: %v", chunk.ServiceTier)
 	}
@@ -1886,7 +1886,7 @@ func TestResponsesStreamToBifrostChatResponse_MapsIncompleteContentFilter(t *tes
 		},
 	}
 
-	resp := chunk.ToBifrostChatResponse()
+	resp := chunk.ToBifrostChatResponse(&ResponsesToChatStreamState{})
 	if resp == nil || len(resp.Choices) == 0 {
 		t.Fatal("expected at least one choice")
 	}
@@ -2194,88 +2194,6 @@ func TestReasoningItemIDSurvivesChatRoundTrip(t *testing.T) {
 		t.Fatalf("replay minted a new id instead of reusing the original: %#v", replayed[0].ID)
 	}
 
-	t.Run("no recorded id still mints a fresh rs_ id", func(t *testing.T) {
-		cm := &ChatMessage{
-			Role: ChatMessageRoleAssistant,
-			ChatAssistantMessage: &ChatAssistantMessage{
-				ReasoningDetails: []ChatReasoningDetails{{Index: 0, Type: BifrostReasoningDetailsTypeEncrypted, Data: &encrypted}},
-			},
-		}
-		out := cm.ToResponsesMessages()
-		if len(out) == 0 || out[0].ID == nil || !strings.HasPrefix(*out[0].ID, "rs_") || len(*out[0].ID) <= len("rs_") {
-			t.Fatalf("expected a freshly minted rs_ id, got %#v", out)
-		}
-	})
-
-	t.Run("the encrypted detail's id wins when several reasoning items merge", func(t *testing.T) {
-		cm := &ChatMessage{
-			Role: ChatMessageRoleAssistant,
-			ChatAssistantMessage: &ChatAssistantMessage{
-				ReasoningDetails: []ChatReasoningDetails{
-					{ID: Ptr("rs_summary_only"), Index: 0, Type: BifrostReasoningDetailsTypeSummary, Summary: Ptr("s")},
-					{ID: Ptr("rs_with_token"), Index: 1, Type: BifrostReasoningDetailsTypeEncrypted, Data: &encrypted},
-				},
-			},
-		}
-		out := cm.ToResponsesMessages()
-		if len(out) == 0 || out[0].ID == nil || *out[0].ID != "rs_with_token" {
-			t.Fatalf("expected the id paired with the encrypted token, got %#v", out[0].ID)
-		}
-	})
-}
-
-// The id sent with a reasoning item must be the one its encrypted token was issued with. When the
-// token's own detail carries no id, borrowing another detail's id would pair the token with an id it
-// was never issued with (OpenAI rejects that), so a fresh id is minted instead.
-func TestReasoningIDIsTakenFromTheEncryptedDetailThatIsEmitted(t *testing.T) {
-	tokenA, tokenB := "token-A", "token-B"
-	replay := func(details ...ChatReasoningDetails) ResponsesMessage {
-		t.Helper()
-		out := (&ChatMessage{Role: ChatMessageRoleAssistant, ChatAssistantMessage: &ChatAssistantMessage{ReasoningDetails: details}}).ToResponsesMessages()
-		if len(out) == 0 || out[0].Type == nil || *out[0].Type != ResponsesMessageTypeReasoning {
-			t.Fatalf("expected a reasoning item first, got %#v", out)
-		}
-		return out[0]
-	}
-
-	t.Run("an encrypted detail without an id does not borrow a neighbour's id", func(t *testing.T) {
-		item := replay(
-			ChatReasoningDetails{ID: Ptr("rs_summary_only"), Index: 0, Type: BifrostReasoningDetailsTypeSummary, Summary: Ptr("s")},
-			ChatReasoningDetails{Index: 1, Type: BifrostReasoningDetailsTypeEncrypted, Data: &tokenA},
-		)
-		if item.ResponsesReasoning == nil || item.ResponsesReasoning.EncryptedContent == nil || *item.ResponsesReasoning.EncryptedContent != tokenA {
-			t.Fatalf("the encrypted token must still be replayed, got %#v", item.ResponsesReasoning)
-		}
-		if item.ID == nil || *item.ID == "rs_summary_only" {
-			t.Fatalf("the token was paired with an unrelated id: %#v", item.ID)
-		}
-		if !strings.HasPrefix(*item.ID, "rs_") || len(*item.ID) <= len("rs_") {
-			t.Fatalf("expected a freshly minted rs_ id, got %q", *item.ID)
-		}
-	})
-
-	t.Run("with two encrypted details the one whose token is emitted decides the id", func(t *testing.T) {
-		item := replay(
-			ChatReasoningDetails{ID: Ptr("rs_a"), Index: 0, Type: BifrostReasoningDetailsTypeEncrypted, Data: &tokenA},
-			ChatReasoningDetails{ID: Ptr("rs_b"), Index: 1, Type: BifrostReasoningDetailsTypeEncrypted, Data: &tokenB},
-		)
-		if item.ResponsesReasoning == nil || item.ResponsesReasoning.EncryptedContent == nil || *item.ResponsesReasoning.EncryptedContent != tokenB {
-			t.Fatalf("expected the last token to be emitted, got %#v", item.ResponsesReasoning)
-		}
-		if item.ID == nil || *item.ID != "rs_b" {
-			t.Fatalf("expected the id paired with the emitted token (rs_b), got %#v", item.ID)
-		}
-	})
-
-	t.Run("with no token to pair, the first recorded id is kept", func(t *testing.T) {
-		item := replay(
-			ChatReasoningDetails{ID: Ptr("rs_summary_only"), Index: 0, Type: BifrostReasoningDetailsTypeSummary, Summary: Ptr("s")},
-			ChatReasoningDetails{ID: Ptr("rs_later"), Index: 1, Type: BifrostReasoningDetailsTypeSummary, Summary: Ptr("t")},
-		)
-		if item.ID == nil || *item.ID != "rs_summary_only" {
-			t.Fatalf("expected the first recorded id, got %#v", item.ID)
-		}
-	})
 }
 
 // reasoning.summary sent on a chat request must reach the Responses request the

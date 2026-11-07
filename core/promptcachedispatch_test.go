@@ -1082,29 +1082,27 @@ func TestChatReasoningModeDispatch(t *testing.T) {
 			require.NotNil(t, bifrostErr, "mode with n=2 must be rejected, not served as one choice")
 			require.NotNil(t, bifrostErr.StatusCode)
 			assert.Equal(t, 400, *bifrostErr.StatusCode)
-			assert.Contains(t, bifrostErr.Error.Message, "n > 1")
+			assert.Equal(t, "n", bifrostErr.Error.Param)
+			assert.Contains(t, bifrostErr.Error.Message, "several choices")
 			assert.Nil(t, provider.responses)
 			assert.Nil(t, provider.chat)
 		})
 	}
 
-	// Chat parameters with no Responses equivalent would be dropped silently by the
-	// conversion, so a mode request that sets any of them is rejected, naming each one.
+	// The conversion cannot carry these chat parameters to Responses, so a mode request
+	// that sets one is rejected, naming the first, instead of losing it.
 	unsupported := []struct {
 		name   string
-		want   []string
+		param  string
 		params schemas.ChatParameters
 	}{
-		{name: "stop", want: []string{"stop"}, params: schemas.ChatParameters{Stop: []string{"END"}}},
-		{name: "seed", want: []string{"seed"}, params: schemas.ChatParameters{Seed: new(7)}},
-		{name: "logit_bias", want: []string{"logit_bias"}, params: schemas.ChatParameters{LogitBias: &map[string]float64{"50256": -100}}},
-		{name: "presence_penalty", want: []string{"presence_penalty"}, params: schemas.ChatParameters{PresencePenalty: new(0.5)}},
-		{name: "frequency_penalty", want: []string{"frequency_penalty"}, params: schemas.ChatParameters{FrequencyPenalty: new(0.5)}},
-		{name: "logprobs", want: []string{"logprobs"}, params: schemas.ChatParameters{LogProbs: new(true)}},
-		{name: "audio modality", want: []string{"audio"}, params: schemas.ChatParameters{Modalities: []string{"text", "audio"}}},
-		{name: "prediction", want: []string{"prediction"}, params: schemas.ChatParameters{Prediction: &schemas.ChatPrediction{Type: "content", Content: "x"}}},
-		{name: "web_search_options", want: []string{"web_search_options"}, params: schemas.ChatParameters{WebSearchOptions: &schemas.ChatWebSearchOptions{}}},
-		{name: "several at once", want: []string{"n > 1", "stop", "seed"}, params: schemas.ChatParameters{N: new(3), Stop: []string{"END"}, Seed: new(1)}},
+		{name: "stop", param: "stop", params: schemas.ChatParameters{Stop: []string{"END"}}},
+		{name: "seed", param: "seed", params: schemas.ChatParameters{Seed: new(7)}},
+		{name: "logit_bias", param: "logit_bias", params: schemas.ChatParameters{LogitBias: &map[string]float64{"50256": -100}}},
+		{name: "audio modality", param: "modalities[1]", params: schemas.ChatParameters{Modalities: []string{"text", "audio"}}},
+		{name: "prediction", param: "prediction", params: schemas.ChatParameters{Prediction: &schemas.ChatPrediction{Type: "content", Content: "x"}}},
+		{name: "web_search_options", param: "web_search_options", params: schemas.ChatParameters{WebSearchOptions: &schemas.ChatWebSearchOptions{}}},
+		{name: "several at once", param: "n", params: schemas.ChatParameters{N: new(3), Stop: []string{"END"}, Seed: new(1)}},
 	}
 	for _, tc := range unsupported {
 		t.Run("openai with mode and "+tc.name, func(t *testing.T) {
@@ -1123,15 +1121,14 @@ func TestChatReasoningModeDispatch(t *testing.T) {
 			require.NotNil(t, bifrostErr, "%s must be rejected, not dropped by the Responses conversion", tc.name)
 			require.NotNil(t, bifrostErr.StatusCode)
 			assert.Equal(t, 400, *bifrostErr.StatusCode)
-			for _, field := range tc.want {
-				assert.Contains(t, bifrostErr.Error.Message, field)
-			}
+			assert.Equal(t, tc.param, bifrostErr.Error.Param)
 			assert.Nil(t, provider.responses)
 			assert.Nil(t, provider.chat)
 		})
 	}
 
-	// Values the conversion keeps or that ask for nothing must still route.
+	// Values the conversion carries or that ask for nothing must still route, and the
+	// carried ones reach the Responses request.
 	t.Run("openai with mode and harmless chat params", func(t *testing.T) {
 		ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 		req := &schemas.BifrostChatRequest{
@@ -1139,7 +1136,8 @@ func TestChatReasoningModeDispatch(t *testing.T) {
 			Model:    "gpt-6-luna",
 			Input:    []schemas.ChatMessage{{Role: schemas.ChatMessageRoleUser, Content: &schemas.ChatMessageContent{ContentStr: new("Reply with OK.")}}},
 			Params: &schemas.ChatParameters{
-				N: new(1), LogProbs: new(false), Modalities: []string{"text"}, Stop: []string{},
+				N: new(1), Modalities: []string{"text"}, Stop: []string{}, LogitBias: &map[string]float64{},
+				PresencePenalty: new(0.5), FrequencyPenalty: new(0.25), LogProbs: new(true), TopLogProbs: new(2),
 				Reasoning: &schemas.ChatReasoning{Mode: new("pro")},
 			},
 		}
@@ -1148,6 +1146,14 @@ func TestChatReasoningModeDispatch(t *testing.T) {
 		_, bifrostErr := (&Bifrost{}).handleProviderRequest(provider, nil, message, schemas.Key{}, nil)
 		require.Nil(t, bifrostErr)
 		require.NotNil(t, provider.responses)
+		params := provider.responses.Params
+		require.NotNil(t, params.PresencePenalty)
+		require.NotNil(t, params.FrequencyPenalty)
+		require.NotNil(t, params.TopLogProbs)
+		assert.Equal(t, 0.5, *params.PresencePenalty)
+		assert.Equal(t, 0.25, *params.FrequencyPenalty)
+		assert.Equal(t, 2, *params.TopLogProbs)
+		assert.Equal(t, []string{"message.output_text.logprobs"}, params.Include)
 	})
 
 	// A raw-body request is sent upstream byte for byte, so it is never converted (the

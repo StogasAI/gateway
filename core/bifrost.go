@@ -8933,16 +8933,17 @@ func routeChatReasoningMode(ctx *schemas.BifrostContext, provider schemas.Provid
 		return nil
 	}
 	if schemas.ChatReasoningModeRequiresResponses(schemas.ResolveBaseProvider(ctx, provider.GetProviderKey())) {
-		// The Responses API has no equivalent for these chat parameters, so the conversion
-		// would drop them silently and serve a weaker contract than the caller asked for.
-		if unsupported := chatParamsWithoutResponsesEquivalent(req.Params); len(unsupported) > 0 {
+		// The conversion cannot carry every part of a chat request, and serving one without a
+		// part would serve a weaker contract than the caller asked for.
+		if gap := req.ResponsesGap(); gap != nil {
 			sc := fasthttp.StatusBadRequest
 			return &schemas.BifrostError{
 				IsBifrostError: false,
 				StatusCode:     &sc,
 				Error: &schemas.ErrorField{
 					Type:    new("invalid_request_error"),
-					Message: "reasoning.mode is served by the Responses API, which does not support: " + strings.Join(unsupported, ", ") + "; remove them or drop reasoning.mode",
+					Param:   gap.Param,
+					Message: "reasoning.mode is served by the Responses API, which cannot carry " + gap.Feature + " (" + gap.Param + "); remove it or drop reasoning.mode",
 				},
 			}
 		}
@@ -8954,44 +8955,6 @@ func routeChatReasoningMode(ctx *schemas.BifrostContext, provider schemas.Provid
 		ctx.SetValue(schemas.BifrostContextKeyCompatDroppedParams, append(slices.Clip(prior), "reasoning.mode"))
 	}
 	return nil
-}
-
-// chatParamsWithoutResponsesEquivalent lists the set chat parameters that
-// ToResponsesRequest cannot carry to the Responses API. user is left out: it only
-// buckets caching and abuse detection and does not change the output contract.
-func chatParamsWithoutResponsesEquivalent(p *schemas.ChatParameters) []string {
-	var out []string
-	if p.N != nil && *p.N > 1 {
-		out = append(out, "n > 1")
-	}
-	if len(p.Stop) > 0 {
-		out = append(out, "stop")
-	}
-	if p.Seed != nil {
-		out = append(out, "seed")
-	}
-	if p.LogitBias != nil && len(*p.LogitBias) > 0 {
-		out = append(out, "logit_bias")
-	}
-	if p.PresencePenalty != nil {
-		out = append(out, "presence_penalty")
-	}
-	if p.FrequencyPenalty != nil {
-		out = append(out, "frequency_penalty")
-	}
-	if p.LogProbs != nil && *p.LogProbs {
-		out = append(out, "logprobs")
-	}
-	if p.Audio != nil || slices.Contains(p.Modalities, "audio") {
-		out = append(out, "audio")
-	}
-	if p.Prediction != nil {
-		out = append(out, "prediction")
-	}
-	if p.WebSearchOptions != nil {
-		out = append(out, "web_search_options")
-	}
-	return out
 }
 
 func prepareResponsesRequest(ctx *schemas.BifrostContext, config *schemas.ProviderConfig, provider schemas.Provider, key schemas.Key, r *schemas.BifrostResponsesRequest) (*schemas.BifrostResponsesRequest, *schemas.BifrostError) {

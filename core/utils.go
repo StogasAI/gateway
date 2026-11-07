@@ -899,8 +899,7 @@ func isPromptOptionalVideoEditType(t *string) bool {
 // marked with ConvertedRequestType: its RawResponse is still the target API's
 // bytes, which integrations must not echo to a client of the original API.
 func wrapConvertedStreamPostHookRunner(postHookRunner schemas.PostHookRunner, targetType schemas.RequestType) schemas.PostHookRunner {
-	roleSent := false
-	var identity chatStreamIdentity
+	var state schemas.ResponsesToChatStreamState
 	return func(ctx *schemas.BifrostContext, result *schemas.BifrostResponse, bifrostErr *schemas.BifrostError) (*schemas.BifrostResponse, *schemas.BifrostError) {
 		if result != nil {
 			switch targetType {
@@ -913,63 +912,14 @@ func wrapConvertedStreamPostHookRunner(postHookRunner schemas.PostHookRunner, ta
 					}
 				}
 			case schemas.ResponsesRequest:
-				// chat→responses: convert responses stream chunk back to chat
+				// chat→responses: convert each Responses event back to a chat chunk
 				if result.ResponsesStreamResponse != nil {
-					if converted := result.ResponsesStreamResponse.ToBifrostChatResponse(); converted != nil {
-						roleSent = setAssistantRoleOnce(converted, roleSent)
-						identity.apply(converted)
-						converted.ExtraFields.ConvertedRequestType = targetType
-						result = &schemas.BifrostResponse{ChatResponse: converted}
-					}
+					converted := result.ResponsesStreamResponse.ToBifrostChatResponse(&state)
+					converted.ExtraFields.ConvertedRequestType = targetType
+					result = &schemas.BifrostResponse{ChatResponse: converted}
 				}
 			}
 		}
 		return postHookRunner(ctx, result, bifrostErr)
 	}
-}
-
-// chatStreamIdentity holds the id, model and created of a converted chat stream.
-// Only the response.created, in_progress and completed events carry the Response
-// object, so the deltas between them convert without these fields. OpenAI SDK
-// stream accumulators drop a chunk whose id differs from the stream's.
-type chatStreamIdentity struct {
-	id      string
-	model   string
-	created int
-}
-
-// apply records each field a chunk carries and fills in each one it lacks.
-func (s *chatStreamIdentity) apply(resp *schemas.BifrostChatResponse) {
-	if resp.ID == "" {
-		resp.ID = s.id
-	} else {
-		s.id = resp.ID
-	}
-	if resp.Model == "" {
-		resp.Model = s.model
-	} else {
-		s.model = resp.Model
-	}
-	if resp.Created == 0 {
-		resp.Created = s.created
-	} else {
-		s.created = resp.Created
-	}
-}
-
-// setAssistantRoleOnce puts the assistant role on the first delta of a
-// converted chat stream and clears it from later deltas. OpenAI-compatible
-// clients read the role from the first chunk only, and some concatenate a
-// repeated one. The stream converter emits a single choice per event. It
-// reports whether the role has been sent.
-func setAssistantRoleOnce(resp *schemas.BifrostChatResponse, roleSent bool) bool {
-	if len(resp.Choices) == 0 || resp.Choices[0].ChatStreamResponseChoice == nil || resp.Choices[0].Delta == nil {
-		return roleSent
-	}
-	if roleSent {
-		resp.Choices[0].Delta.Role = nil
-	} else {
-		resp.Choices[0].Delta.Role = schemas.Ptr(string(schemas.ChatMessageRoleAssistant))
-	}
-	return true
 }

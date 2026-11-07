@@ -26,7 +26,7 @@ const responsesIncludeLogProbs = "message.output_text.logprobs"
 // it, as Codex always does, gets reasoning that it can send back either way.
 const responsesIncludeEncryptedReasoning = "reasoning.encrypted_content"
 
-// ConversionGap names a part of a request that Chat Completions cannot carry.
+// ConversionGap names a part of a request that the other interface cannot carry.
 type ConversionGap struct {
 	// Param is the part's path in the request body, such as "tools[2].type".
 	Param string
@@ -35,7 +35,7 @@ type ConversionGap struct {
 }
 
 func (g *ConversionGap) Error() string {
-	return g.Param + ": Chat Completions cannot carry " + g.Feature
+	return g.Param + ": the conversion cannot carry " + g.Feature
 }
 
 // ChatCompletionsGap returns the first part of the request that ToChatRequest cannot carry, in the
@@ -128,9 +128,9 @@ func responsesParamsChatGap(p *ResponsesParameters) *ConversionGap {
 func responsesItemChatGap(item *ResponsesMessage, path string) *ConversionGap {
 	switch kind := responsesItemType(item); kind {
 	case ResponsesMessageTypeMessage, ResponsesMessageTypeRefusal:
-		place := chatInputParts
+		place := inputParts
 		if kind == ResponsesMessageTypeRefusal || (item.Role != nil && *item.Role == ResponsesInputMessageRoleAssistant) {
-			place = chatAssistantParts
+			place = assistantParts
 		}
 		return responsesContentChatGap(item.Content, path+".content", place)
 	case ResponsesMessageTypeReasoning:
@@ -152,12 +152,12 @@ func responsesItemChatGap(item *ResponsesMessage, path string) *ConversionGap {
 			}
 		}
 	case ResponsesMessageTypeFunctionCallOutput:
-		if gap := responsesContentChatGap(item.Content, path+".content", chatToolParts); gap != nil {
+		if gap := responsesContentChatGap(item.Content, path+".content", toolParts); gap != nil {
 			return gap
 		}
 		if call := item.ResponsesToolMessage; call != nil && call.Output != nil {
 			for j := range call.Output.ResponsesFunctionToolCallOutputBlocks {
-				if gap := responsesBlockChatGap(&call.Output.ResponsesFunctionToolCallOutputBlocks[j], path+".output["+strconv.Itoa(j)+"]", chatToolParts); gap != nil {
+				if gap := responsesBlockChatGap(&call.Output.ResponsesFunctionToolCallOutputBlocks[j], path+".output["+strconv.Itoa(j)+"]", toolParts); gap != nil {
 					return gap
 				}
 			}
@@ -168,16 +168,16 @@ func responsesItemChatGap(item *ResponsesMessage, path string) *ConversionGap {
 	return nil
 }
 
-// chatPartPlace is where a content part sits, which decides the parts that Chat Completions takes.
-type chatPartPlace string
+// partPlace is where a content part sits, which decides the parts that the other interface takes.
+type partPlace string
 
 const (
-	chatInputParts     chatPartPlace = "input messages"
-	chatAssistantParts chatPartPlace = "assistant messages"
-	chatToolParts      chatPartPlace = "tool outputs"
+	inputParts     partPlace = "input messages"
+	assistantParts partPlace = "assistant messages"
+	toolParts      partPlace = "tool outputs"
 )
 
-func responsesContentChatGap(content *ResponsesMessageContent, path string, place chatPartPlace) *ConversionGap {
+func responsesContentChatGap(content *ResponsesMessageContent, path string, place partPlace) *ConversionGap {
 	if content == nil {
 		return nil
 	}
@@ -189,7 +189,7 @@ func responsesContentChatGap(content *ResponsesMessageContent, path string, plac
 	return nil
 }
 
-func responsesBlockChatGap(block *ResponsesMessageContentBlock, path string, place chatPartPlace) *ConversionGap {
+func responsesBlockChatGap(block *ResponsesMessageContentBlock, path string, place partPlace) *ConversionGap {
 	if block.MediaResolution != nil {
 		return &ConversionGap{path + ".media_resolution", "media resolution settings"}
 	}
@@ -197,12 +197,12 @@ func responsesBlockChatGap(block *ResponsesMessageContentBlock, path string, pla
 	case ResponsesInputMessageContentBlockTypeText:
 		return nil
 	case ResponsesOutputMessageContentTypeText, ResponsesOutputMessageContentTypeRefusal:
-		if place == chatAssistantParts {
+		if place == assistantParts {
 			return nil
 		}
 	case ResponsesInputMessageContentBlockTypeImage, ResponsesInputMessageContentBlockTypeFile,
 		ResponsesInputMessageContentBlockTypeAudio:
-		if place != chatAssistantParts {
+		if place != assistantParts {
 			return nil
 		}
 	}
@@ -451,34 +451,47 @@ func (t *chatTurn) addContent(content *ResponsesMessageContent, refusal bool) {
 }
 
 func (t *chatTurn) addReasoning(item *ResponsesMessage) {
+	var signed bool
+	t.details, signed = appendChatReasoning(&t.reasoning, t.details, item)
+	t.signed = t.signed || signed
+}
+
+// appendChatReasoning converts a reasoning item: its text parts to reasoning text, which it writes
+// to text, and to text details with the signature that Claude models give them, its summaries to
+// summary details, and its encrypted content to an encrypted detail, which it appends to details.
+// signed reports whether the item holds what only details carry: a signature, a summary or
+// encrypted content.
+func appendChatReasoning(text *strings.Builder, details []ChatReasoningDetails, item *ResponsesMessage) ([]ChatReasoningDetails, bool) {
+	signed := false
 	if item.Content != nil {
 		for _, block := range item.Content.ContentBlocks {
 			if block.Type != ResponsesOutputMessageContentTypeReasoning || block.Text == nil {
 				continue
 			}
-			t.reasoning.WriteString(*block.Text)
-			t.signed = t.signed || block.Signature != nil
-			t.details = append(t.details, ChatReasoningDetails{
-				ID: item.ID, Index: len(t.details), Type: BifrostReasoningDetailsTypeText,
+			text.WriteString(*block.Text)
+			signed = signed || block.Signature != nil
+			details = append(details, ChatReasoningDetails{
+				ID: item.ID, Index: len(details), Type: BifrostReasoningDetailsTypeText,
 				Text: block.Text, Signature: block.Signature,
 			})
 		}
 	}
 	if item.ResponsesReasoning == nil {
-		return
+		return details, signed
 	}
 	for _, summary := range item.ResponsesReasoning.Summary {
-		t.signed = true
-		t.details = append(t.details, ChatReasoningDetails{
-			ID: item.ID, Index: len(t.details), Type: BifrostReasoningDetailsTypeSummary, Summary: Ptr(summary.Text),
+		signed = true
+		details = append(details, ChatReasoningDetails{
+			ID: item.ID, Index: len(details), Type: BifrostReasoningDetailsTypeSummary, Summary: Ptr(summary.Text),
 		})
 	}
 	if item.ResponsesReasoning.EncryptedContent != nil {
-		t.signed = true
-		t.details = append(t.details, ChatReasoningDetails{
-			ID: item.ID, Index: len(t.details), Type: BifrostReasoningDetailsTypeEncrypted, Data: item.ResponsesReasoning.EncryptedContent,
+		signed = true
+		details = append(details, ChatReasoningDetails{
+			ID: item.ID, Index: len(details), Type: BifrostReasoningDetailsTypeEncrypted, Data: item.ResponsesReasoning.EncryptedContent,
 		})
 	}
+	return details, signed
 }
 
 func (t *chatTurn) addCall(item *ResponsesMessage) {
@@ -835,6 +848,7 @@ func responsesAnnotations(annotations []ChatAssistantMessageAnnotation) []Respon
 			EndIndex:   Ptr(citation.EndIndex),
 			Title:      Ptr(citation.Title),
 			URL:        citation.URL,
+			Text:       citation.Text,
 		})
 	}
 	return converted

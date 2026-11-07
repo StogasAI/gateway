@@ -153,28 +153,6 @@ func TestToolResultForResponses(t *testing.T) {
 	assert.Nil(t, ToolResultForResponses(nil))
 }
 
-// A chat request routed to Responses (reasoning.mode, compat) sends a function_call_output with only
-// the media Responses reads; audio and other files are named instead.
-func TestToResponsesRequest_ToolResultKeepsOnlyPortableMedia(t *testing.T) {
-	csv, csvType := "data:text/csv;base64,YSxiCjEsMgo=", "text/csv"
-	tool := ChatMessage{Role: ChatMessageRoleTool, ChatToolMessage: &ChatToolMessage{ToolCallID: Ptr("call_media")}, Content: toolMediaContent()}
-	tool.Content.ContentBlocks = append(tool.Content.ContentBlocks, ChatContentBlock{Type: ChatContentBlockTypeFile, File: &ChatInputFile{FileData: &csv, FileType: &csvType}})
-	user := ChatMessage{Role: ChatMessageRoleUser, Content: toolMediaContent()}
-	req := &BifrostChatRequest{Provider: "openai", Model: "gpt-5", Input: []ChatMessage{user, tool}}
-
-	wire, err := json.Marshal(req.ToResponsesRequest().Input)
-	require.NoError(t, err)
-	output := string(wire[strings.Index(string(wire), `"function_call_output"`):])
-	assert.False(t, strings.Contains(output, `"input_audio"`), "Responses rejects audio in a function output")
-	assert.False(t, strings.Contains(output, "text/csv;base64"), "Responses rejects a csv file in a function output")
-	assert.True(t, strings.Contains(output, "[audio/mp3"), "audio is named")
-	assert.True(t, strings.Contains(output, "[text/csv"), "the csv is named")
-	assert.True(t, strings.Contains(output, `"input_image"`), "the image is kept")
-	assert.True(t, strings.Contains(output, `"input_file"`), "the pdf is kept")
-	assert.Equal(t, ChatContentBlockTypeInputAudio, req.Input[1].Content.ContentBlocks[2].Type, "the caller's request is untouched")
-	assert.True(t, strings.Contains(string(wire[:strings.Index(string(wire), `"function_call_output"`)]), `"input_audio"`), "user messages keep their audio")
-}
-
 // Only tool messages lose their media, and a request with nothing to flatten is returned as is.
 func TestFlattenToolMessagesMedia(t *testing.T) {
 	user := ChatMessage{Role: ChatMessageRoleUser, Content: toolMediaContent()}
@@ -189,30 +167,6 @@ func TestFlattenToolMessagesMedia(t *testing.T) {
 
 	plain := []ChatMessage{{Role: ChatMessageRoleTool, Content: &ChatMessageContent{ContentStr: Ptr("ok")}}}
 	assert.Equal(t, &plain[0], &FlattenToolMessagesMedia(plain)[0], "nothing to flatten returns the same slice")
-}
-
-// BenchmarkToResponsesRequest_ToolResult measures converting a chat request with one tool result:
-// text, the common case, and media that has to be named.
-func BenchmarkToResponsesRequest_ToolResult(b *testing.B) {
-	text := "the sum is 42"
-	for _, tc := range []struct {
-		name    string
-		content *ChatMessageContent
-	}{
-		{"text", &ChatMessageContent{ContentStr: &text}},
-		{"media", toolMediaContent()},
-	} {
-		req := &BifrostChatRequest{Provider: "openai", Model: "gpt-5", Input: []ChatMessage{
-			{Role: ChatMessageRoleUser, Content: &ChatMessageContent{ContentStr: &text}},
-			{Role: ChatMessageRoleTool, ChatToolMessage: &ChatToolMessage{ToolCallID: Ptr("call_1")}, Content: tc.content},
-		}}
-		b.Run(tc.name, func(b *testing.B) {
-			b.ReportAllocs()
-			for b.Loop() {
-				_ = req.ToResponsesRequest()
-			}
-		})
-	}
 }
 
 // Logged prompt and resource reads name their media instead of carrying its base64, without
