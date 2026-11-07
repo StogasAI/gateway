@@ -2154,16 +2154,19 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 								t.Fatalf("wire speed = %q, want %q", wire.Speed, wantSpeed)
 							}
 						case catalog.ProviderAWS, catalog.ProviderGoogleCloud:
-							wantInferenceGeo, wantVersion := "", ""
+							wantInferenceGeo, wantVersion, wantSpeed := "", "", ""
 							switch source.Upstream.Hosting {
 							case hostingAnthropic:
 								wantInferenceGeo = source.Upstream.InferenceGeo
 							case hostingGoogle:
 								wantVersion = "vertex-2023-10-16"
 							}
-							if wire.ServiceTier != "" || wire.Speed != "" || wire.InferenceGeo != wantInferenceGeo || wire.AnthropicVersion != wantVersion {
-								t.Fatalf("wire cloud Claude axes = tier:%q speed:%q geo:%q version:%q, want geo:%q version:%q",
-									wire.ServiceTier, wire.Speed, wire.InferenceGeo, wire.AnthropicVersion, wantInferenceGeo, wantVersion)
+							if source.Upstream.ServiceTier == "fast" {
+								wantSpeed = "fast"
+							}
+							if wire.ServiceTier != "" || wire.Speed != wantSpeed || wire.InferenceGeo != wantInferenceGeo || wire.AnthropicVersion != wantVersion {
+								t.Fatalf("wire cloud Claude axes = tier:%q speed:%q geo:%q version:%q, want speed:%q geo:%q version:%q",
+									wire.ServiceTier, wire.Speed, wire.InferenceGeo, wire.AnthropicVersion, wantSpeed, wantInferenceGeo, wantVersion)
 							}
 						case catalog.ProviderChutes:
 							if wire.MaxCompletionTokens != 2048 || wire.MaxTokens != 0 || wire.ServiceTier != "" || wire.InferenceGeo != "" || wire.Speed != "" {

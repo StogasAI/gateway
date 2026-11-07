@@ -37,14 +37,18 @@ func (a CloudClaudeAdapter) ValidateRequest(state *State) error {
 	return a.AnthropicAdapter.ValidateRequest(state)
 }
 
-// SanitizeRequest sends no speed: neither cloud offers fast mode for a cataloged
-// deployment. Where the cloud runs Claude, the profile or endpoint fixes the
-// geography; Anthropic takes inference_geo as on its own API.
+// SanitizeRequest sends speed only for Fast, which only Anthropic's hosting on
+// Google Cloud offers, so other requests keep the default the clouds share.
+// Where the cloud runs Claude, the profile or endpoint fixes the geography;
+// Anthropic takes inference_geo as on its own API.
 func (a CloudClaudeAdapter) SanitizeRequest(state *State) error {
 	if err := a.DefaultAdapter.SanitizeRequest(state); err != nil {
 		return err
 	}
 	state.Resolution.ApplyProviderSamplingParameters()
+	if state.Resolution.Deployment.Upstream.ServiceTier == catalog.TierFast {
+		state.Resolution.SetSpeed("fast")
+	}
 	if !cloudRunsClaude(state) {
 		switch geo := state.Resolution.Deployment.Upstream.InferenceGeo; geo {
 		case "us", "global":

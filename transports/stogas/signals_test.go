@@ -859,6 +859,7 @@ func TestProviderExecutionReportsStayWithinAuthorizedClass(t *testing.T) {
 		name          string
 		provider      schemas.ModelProvider
 		modelFormat   string
+		hosting       string
 		selectedTier  string
 		processing    string
 		currentTier   string
@@ -880,6 +881,9 @@ func TestProviderExecutionReportsStayWithinAuthorizedClass(t *testing.T) {
 		{name: "Azure Claude Fast can fall back to Standard", provider: schemas.Azure, modelFormat: "Anthropic", selectedTier: catalog.TierFast, reportedSpeed: "standard"},
 		{name: "Azure Claude Standard cannot become Fast", provider: schemas.Azure, modelFormat: "Anthropic", reportedSpeed: "fast", wantError: true},
 		{name: "Azure Claude Priority Tier capacity is not Fast", provider: schemas.Azure, modelFormat: "Anthropic", reportedTier: "priority"},
+		{name: "Anthropic-managed Google Claude Fast can fall back to Standard", provider: catalog.ProviderGoogleCloud, hosting: "anthropic", selectedTier: catalog.TierFast, reportedSpeed: "standard"},
+		{name: "Anthropic-managed Google Claude Standard cannot become Fast", provider: catalog.ProviderGoogleCloud, hosting: "anthropic", reportedSpeed: "fast", wantError: true},
+		{name: "Google-run Claude speed is ignored", provider: catalog.ProviderGoogleCloud, hosting: "google", reportedSpeed: "fast"},
 		{name: "unknown OpenAI tier is ignored", provider: schemas.OpenAI, reportedTier: "scale"},
 		{name: "OpenAI speed is ignored", provider: schemas.OpenAI, reportedSpeed: "fast"},
 		{name: "Chutes tier is ignored", provider: catalog.ProviderChutes, reportedTier: "priority"},
@@ -910,7 +914,7 @@ func TestProviderExecutionReportsStayWithinAuthorizedClass(t *testing.T) {
 					Resolution: &catalog.ResolvedRequest{
 						Provider: tc.provider,
 						Deployment: catalog.Deployment{
-							Upstream:     catalog.Upstream{ServiceTier: selectedTier, ModelFormat: tc.modelFormat},
+							Upstream:     catalog.Upstream{ServiceTier: selectedTier, ModelFormat: tc.modelFormat, Hosting: tc.hosting},
 							DataHandling: catalog.DataHandling{ProcessingLocation: tc.processing},
 							Locations:    testPlaces,
 						},

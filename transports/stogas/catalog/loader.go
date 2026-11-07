@@ -1065,7 +1065,7 @@ func sortedRouteIDs(deployment *compiledDeployment) []string {
 
 func validateDeploymentUpstreamSelector(deploymentID, providerID string, deployment *compiledDeployment) error {
 	selector := deployment.Upstream
-	if _, offered := offeredTiers(schemas.ModelProvider(providerID), selector.ModelFormat)[selector.ServiceTier]; !offered {
+	if _, offered := offeredTiers(schemas.ModelProvider(providerID), selector.ModelFormat, selector.Hosting)[selector.ServiceTier]; !offered {
 		return fmt.Errorf("deployment %s has a service tier that its provider does not offer", deploymentID)
 	}
 	switch providerID {

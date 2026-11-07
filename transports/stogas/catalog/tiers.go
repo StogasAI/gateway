@@ -43,13 +43,14 @@ var providerServiceTiers = map[schemas.ModelProvider]map[string]schemas.BifrostS
 // service_tier.
 var standardOnly = map[string]schemas.BifrostServiceTier{TierStandard: ""}
 
-// claudeOnAzure sends no tier either: Azure sells Claude Fast as its own model, which runs every
-// request at Fast, and rejects speed.
-var claudeOnAzure = map[string]schemas.BifrostServiceTier{TierStandard: "", TierFast: ""}
+// claudeOutsideAnthropic sends no tier either. Anthropic-managed Claude on Google Cloud takes
+// Fast as the speed field, which its adapter sets, and Azure sells Claude Fast as its own model,
+// which runs every request at Fast and rejects speed.
+var claudeOutsideAnthropic = map[string]schemas.BifrostServiceTier{TierStandard: "", TierFast: ""}
 
-func offeredTiers(provider schemas.ModelProvider, modelFormat string) map[string]schemas.BifrostServiceTier {
-	if provider == schemas.Azure && modelFormat == "Anthropic" {
-		return claudeOnAzure
+func offeredTiers(provider schemas.ModelProvider, modelFormat, hosting string) map[string]schemas.BifrostServiceTier {
+	if provider == schemas.Azure && modelFormat == "Anthropic" || provider == ProviderGoogleCloud && hosting == "anthropic" {
+		return claudeOutsideAnthropic
 	}
 	if tiers, ok := providerServiceTiers[provider]; ok && (provider != schemas.Azure || modelFormat == "OpenAI") {
 		return tiers
@@ -70,20 +71,24 @@ func requestedTier(value *schemas.BifrostServiceTier) (string, error) {
 }
 
 // ReportedTier returns the tier that a provider response reports, or "" when it reports none.
-// Claude, on Anthropic or Azure, reports Fast mode in speed; its service_tier describes Priority
-// Tier capacity instead. Providers without tiers can report nothing that Stogas bills.
-func ReportedTier(provider schemas.ModelProvider, modelFormat string, serviceTier *schemas.BifrostServiceTier, speed *string) string {
-	if provider == schemas.Anthropic || provider == schemas.Azure && modelFormat == "Anthropic" {
+// Claude reports Fast mode in speed wherever it can run at Fast: on Anthropic, on Azure and on
+// Anthropic-managed Google Cloud. Its service_tier describes Priority Tier capacity instead.
+// Providers without tiers can report nothing that Stogas bills.
+func ReportedTier(provider schemas.ModelProvider, upstream Upstream, serviceTier *schemas.BifrostServiceTier, speed *string) string {
+	if provider == schemas.Anthropic || provider == schemas.Azure && upstream.ModelFormat == "Anthropic" ||
+		provider == ProviderGoogleCloud && upstream.Hosting == "anthropic" {
 		serviceTier = (*schemas.BifrostServiceTier)(speed)
+	} else if _, tiered := providerServiceTiers[provider]; !tiered {
+		return ""
 	}
-	if _, tiered := providerServiceTiers[provider]; !tiered || serviceTier == nil {
+	if serviceTier == nil {
 		return ""
 	}
 	return serviceTierNames[*serviceTier]
 }
 
 func upstreamServiceTier(provider schemas.ModelProvider, upstream Upstream) *schemas.BifrostServiceTier {
-	value := offeredTiers(provider, upstream.ModelFormat)[upstream.ServiceTier]
+	value := offeredTiers(provider, upstream.ModelFormat, upstream.Hosting)[upstream.ServiceTier]
 	if value == "" {
 		return nil
 	}
