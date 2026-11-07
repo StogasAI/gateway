@@ -10,6 +10,7 @@ import (
 	stogas "github.com/maximhq/bifrost/transports/stogas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"github.com/maximhq/bifrost/transports/stogas/customerkey"
 	"github.com/maximhq/bifrost/transports/stogas/policy"
 )
 
@@ -69,6 +70,9 @@ func (s *Server) startRun(ctx *requestContext, startedAt time.Time, preparation 
 		return nil
 	}
 	var candidateBudget policy.SourceBudget
+	// The plan's root check covers every pair the request may try, so its
+	// roots are the ones the request needs.
+	var roots []string
 	bodyCapacity := cap(ctx.body)
 	run.finishPreprocessing = s.preprocessing.begin(len(ctx.body))
 	first, err := catalog.ResolveRequest(catalog.RequestInput{
@@ -93,10 +97,13 @@ func (s *Server) startRun(ctx *requestContext, startedAt time.Time, preparation 
 		CompileRequestPolicy: func(raw []byte) (*policy.Request, error) {
 			return policy.CompileRequest(raw, keyConfig.Claims.OrganizationID, credential.EncryptionKeys)
 		},
-		CheckRoots: func(pairs []catalog.PlannedPair) error {
+		CheckRoots: func(pairs []catalog.PlannedPair, plan bool) error {
 			var ids []string
 			for _, pair := range pairs {
 				ids = append(ids, keyConfig.RequiredRoots(string(pair.Provider), pair.Credential, pair.Policy)...)
+			}
+			if plan {
+				roots = ids
 			}
 			if err := credential.EncryptionKeys.Missing(keyConfig.EncryptionKeys, ids...); err != nil {
 				public := stogas.PublicBillingErrorFor(err)
@@ -151,6 +158,13 @@ func (s *Server) startRun(ctx *requestContext, startedAt time.Time, preparation 
 	})
 	if err == nil {
 		err = run.accountPolicyMemory()
+	}
+	// The log names the roots that the plan needs, also when the request
+	// fails after planning. Planning that fails earlier names none, and a
+	// request refused for missing roots names those.
+	ctx.encryptionKeyIDs = customerkey.SortedIDs(roots)
+	if missing := (*customerkey.MissingError)(nil); errors.As(err, &missing) {
+		ctx.encryptionKeyIDs = missing.IDs
 	}
 	if err != nil {
 		run.finishPreprocessing()

@@ -70,6 +70,8 @@ func newRequestContext(ctx *requestContext, startedAt time.Time, resolution *cat
 		cancel()
 		return nil, nil, nil, err
 	}
+	state.TraceID = stogas.RequestTraceID(ctx.request.Header)
+	state.EncryptionKeyIDs = ctx.encryptionKeyIDs
 	state.Transport = ctx.transport()
 	state.StartedAt = startedAt
 	state.RequestLifetime = billing.GatewayRequestLifetime

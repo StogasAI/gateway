@@ -93,8 +93,9 @@ func TestNewRequestContextDoesNotExposeClientHeadersToBifrost(t *testing.T) {
 	ctx := newTestRequest(t)
 	ctx.request.Header.Set("Authorization", "Bearer sk-secret")
 	ctx.request.Header.Set("X-OpenAI-Agents-SDK", "client-controlled")
+	ctx.request.Header.Set("traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
 
-	bifrostCtx, _, cancel, err := newRequestContext(ctx, time.Now(), testResolution(), apiCredential{Raw: "sk-test"}, "")
+	bifrostCtx, state, cancel, err := newRequestContext(ctx, time.Now(), testResolution(), apiCredential{Raw: "sk-test"}, "")
 	if err != nil {
 		t.Fatalf("newRequestContext returned error: %v", err)
 	}
@@ -102,6 +103,14 @@ func TestNewRequestContextDoesNotExposeClientHeadersToBifrost(t *testing.T) {
 
 	if headers, ok := bifrostCtx.Value(schemas.BifrostContextKeyRequestHeaders).(map[string]string); ok && len(headers) > 0 {
 		t.Fatalf("Stogas inference context must not expose raw client headers to Bifrost, got %#v", headers)
+	}
+	// Core keys each request's stream buffers by its trace ID, which requests
+	// of one client trace share, so the client's trace only reaches the log.
+	if trace := bifrostCtx.Value(schemas.BifrostContextKeyTraceID); trace != nil {
+		t.Fatalf("client trace reached Bifrost's tracer: %#v", trace)
+	}
+	if state.TraceID != "4bf92f3577b34da6a3ce929d0e0e4736" {
+		t.Fatalf("state trace ID = %q", state.TraceID)
 	}
 }
 

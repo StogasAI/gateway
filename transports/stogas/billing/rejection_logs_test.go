@@ -35,14 +35,20 @@ func TestRejectionLogsCountConcurrentRequestsAndKeepKeysReasonsAndWindowsSeparat
 	input := rejectionFixture()
 	// A future minute stays open until the drain, whenever the sender ticks.
 	input.CreatedAt = input.CreatedAt.Add(time.Hour).Truncate(rejectionLogWindow)
+	// Each request has its own trace, which only its own row keeps, so traces
+	// never split a group.
+	requests := make([]RejectionInput, 100)
+	traces := make(map[string]string, len(requests))
+	for i := range requests {
+		request := input
+		request.RequestID = uuid.Must(uuid.NewV7()).String()
+		request.CreatedAt = input.CreatedAt.Add(time.Duration(i) * time.Millisecond)
+		request.TraceID = fmt.Sprintf("%032x", i+1)
+		requests[i], traces[request.RequestID] = request, request.TraceID
+	}
 	var callers sync.WaitGroup
-	for i := range 100 {
-		callers.Go(func() {
-			copy := input
-			copy.RequestID = uuid.Must(uuid.NewV7()).String()
-			copy.CreatedAt = input.CreatedAt.Add(time.Duration(i) * time.Millisecond)
-			service.RecordRejection(copy, nil)
-		})
+	for _, request := range requests {
+		callers.Go(func() { service.RecordRejection(request, nil) })
 	}
 	callers.Wait()
 	other := input
@@ -54,16 +60,33 @@ func TestRejectionLogsCountConcurrentRequestsAndKeepKeysReasonsAndWindowsSeparat
 	other.CreatedAt = input.CreatedAt.Add(rejectionLogWindow)
 	other.RequestID = uuid.Must(uuid.NewV7()).String()
 	service.RecordRejection(other, nil)
+	// A request that lacked encryption keys groups apart, so each group names the keys it lacked.
+	missing := input
+	missing.RequestID = uuid.Must(uuid.NewV7()).String()
+	missing.EncryptionKeyIDs = []string{strings.Repeat("a", 64)}
+	service.RecordRejection(missing, nil)
 	drainSettlements(t, service)
 	rows := rejectionRows(db)
-	if len(rows) != rejectionLogIndividualLimit+4 {
-		t.Fatalf("stored %d rows, want first individual rejections, repeats, and three other groups", len(rows))
+	if len(rows) != rejectionLogIndividualLimit+5 {
+		t.Fatalf("stored %d rows, want first individual rejections, repeats, and four other groups", len(rows))
 	}
 	var total uint32
 	for _, raw := range rows {
 		var row RequestEvent
 		if err := json.Unmarshal(raw, &row); err != nil {
 			t.Fatal(err)
+		}
+		// A count names no trace, and a stored row always holds a key list.
+		wantTrace := `"trace_id":""`
+		if row.RequestCount == 1 && traces[row.RequestID] != "" {
+			wantTrace = `"trace_id":"` + traces[row.RequestID] + `"`
+		}
+		wantKeys := `"encryption_key_ids":[]`
+		if row.RequestID == missing.RequestID {
+			wantKeys = `"encryption_key_ids":["` + strings.Repeat("a", 64) + `"]`
+		}
+		if !strings.Contains(string(raw), wantTrace) || !strings.Contains(string(raw), wantKeys) {
+			t.Fatalf("rejection row %s lacks %s or %s", raw, wantTrace, wantKeys)
 		}
 		total += row.RequestCount
 		if row.RequestCount == 100-rejectionLogIndividualLimit {
@@ -75,10 +98,10 @@ func TestRejectionLogsCountConcurrentRequestsAndKeepKeysReasonsAndWindowsSeparat
 			t.Fatalf("rejection became billable: %+v", row)
 		}
 	}
-	if total != 103 {
-		t.Fatalf("count = %d, want 103", total)
+	if total != 104 {
+		t.Fatalf("count = %d, want 104", total)
 	}
-	if got := service.Diagnostics().RejectionLogs; got.RecordedRequests != 103 || got.StoredRequests != 103 || got.PendingGroups != 0 || got.DroppedRequests != 0 || got.OldestPendingAt != nil {
+	if got := service.Diagnostics().RejectionLogs; got.RecordedRequests != 104 || got.StoredRequests != 104 || got.PendingGroups != 0 || got.DroppedRequests != 0 || got.OldestPendingAt != nil {
 		t.Fatalf("diagnostics: %+v", got)
 	}
 }

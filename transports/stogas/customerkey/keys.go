@@ -81,8 +81,8 @@ func (keys Keys) Validate(registered map[string]string) error {
 }
 
 // MissingError names registered roots that content a request may use needs
-// and the request did not supply. It is an ErrKey.
-type MissingError struct{ Labels []string }
+// and the request did not supply, by label and by sorted ID. It is an ErrKey.
+type MissingError struct{ Labels, IDs []string }
 
 func (e *MissingError) Error() string {
 	return "Supply the registered encryption keys labeled " + strings.Join(e.Labels, ", ")
@@ -110,11 +110,12 @@ func MissingLabels(registered map[string]string, labels []string, ids ...string)
 }
 
 func missing(registered map[string]string, sent func(string) bool, ids []string) error {
-	var labels []string
+	var labels, lacking []string
 	for _, id := range ids {
 		if id == "" || sent(id) {
 			continue
 		}
+		lacking = append(lacking, id)
 		label := id
 		for name, current := range registered {
 			if current == id {
@@ -130,7 +131,15 @@ func missing(registered map[string]string, sent func(string) bool, ids []string)
 		return nil
 	}
 	slices.Sort(labels)
-	return &MissingError{Labels: labels}
+	return &MissingError{Labels: labels, IDs: SortedIDs(lacking)}
+}
+
+// SortedIDs returns the distinct root IDs in ids, sorted, leaving out empty
+// ones.
+func SortedIDs(ids []string) []string {
+	sorted := slices.DeleteFunc(slices.Clone(ids), func(id string) bool { return id == "" })
+	slices.Sort(sorted)
+	return slices.Compact(sorted)
 }
 
 func Registered(registered map[string]string, id string) bool {

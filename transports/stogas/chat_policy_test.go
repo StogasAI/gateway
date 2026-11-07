@@ -1467,6 +1467,42 @@ func TestRequestSessionIDPrefersTheBodyThenXSessionID(t *testing.T) {
 	}
 }
 
+func TestRequestTraceIDFollowsW3CTraceContext(t *testing.T) {
+	trace := "4bf92f3577b34da6a3ce929d0e0e4736"
+	valid := "00-" + trace + "-00f067aa0ba902b7-01"
+	for _, tc := range []struct {
+		name   string
+		values []string
+		want   string
+	}{
+		{name: "none"},
+		{name: "version 00", values: []string{valid}, want: trace},
+		{name: "later version with more fields", values: []string{"cc-" + trace + "-00f067aa0ba902b7-01-what-the-future-holds"}, want: trace},
+		{name: "later version", values: []string{"cc-" + trace + "-00f067aa0ba902b7-01"}, want: trace},
+		{name: "version 00 with more fields", values: []string{valid + "-extra"}},
+		{name: "version 00 with a trailing character", values: []string{valid + "."}},
+		{name: "later version without a dash after the flags", values: []string{"cc-" + trace + "-00f067aa0ba902b7-01.extra"}},
+		{name: "version ff", values: []string{"ff-" + trace + "-00f067aa0ba902b7-01"}},
+		{name: "uppercase", values: []string{"00-" + strings.ToUpper(trace) + "-00f067aa0ba902b7-01"}},
+		{name: "zero trace", values: []string{"00-" + strings.Repeat("0", 32) + "-00f067aa0ba902b7-01"}},
+		{name: "zero parent", values: []string{"00-" + trace + "-0000000000000000-01"}},
+		{name: "short", values: []string{valid[:54]}},
+		{name: "wrong separator", values: []string{"00_" + trace + "-00f067aa0ba902b7-01"}},
+		{name: "invalid flags", values: []string{"00-" + trace + "-00f067aa0ba902b7-0g"}},
+		{name: "repeated", values: []string{valid, valid}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			header := http.Header{}
+			for _, value := range tc.values {
+				header.Add("traceparent", value)
+			}
+			if got := RequestTraceID(header); got != tc.want {
+				t.Fatalf("RequestTraceID(%q) = %q, want %q", tc.values, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestSessionIDNeverReachesProviders(t *testing.T) {
 	for _, tc := range []struct{ path, body string }{
 		{"/v1/chat/completions", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"session_id":"conv-1"}`},

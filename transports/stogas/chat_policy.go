@@ -449,6 +449,37 @@ func validSessionID(id string) bool {
 	return len(id) <= billing.MaxSessionIDBytes && metadataText(id)
 }
 
+// RequestTraceID reads the trace ID from the request's W3C traceparent
+// header, which OpenTelemetry clients send, so a log can be found from the
+// client's trace. A missing or invalid header names no trace and, as the W3C
+// Trace Context specification asks, never fails the request. A repeated
+// header names none either: HTTP would combine its values into one, which is
+// not a valid traceparent. Providers never receive the header.
+func RequestTraceID(header http.Header) string {
+	values := header.Values("Traceparent")
+	if len(values) != 1 {
+		return ""
+	}
+	value := values[0]
+	// Version 00 has exactly four fields. A later version starts with the
+	// same four and may add more after a dash; version ff is invalid.
+	if len(value) < 55 || !lowerHex(value[:2]) || value[:2] == "ff" ||
+		(len(value) > 55 && (value[:2] == "00" || value[55] != '-')) {
+		return ""
+	}
+	trace, parent, flags := value[3:35], value[36:52], value[53:55]
+	if value[2] != '-' || value[35] != '-' || value[52] != '-' ||
+		!lowerHex(trace) || !lowerHex(parent) || !lowerHex(flags) ||
+		strings.Trim(trace, "0") == "" || strings.Trim(parent, "0") == "" {
+		return ""
+	}
+	return trace
+}
+
+func lowerHex(text string) bool {
+	return !strings.ContainsFunc(text, func(r rune) bool { return (r < '0' || r > '9') && (r < 'a' || r > 'f') })
+}
+
 func validateModalities(raw json.RawMessage) error {
 	if len(raw) == 0 {
 		return nil

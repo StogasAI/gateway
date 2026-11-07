@@ -46,11 +46,15 @@ type State struct {
 	RequestLifetime     time.Duration
 	// KeepMemory keeps the request's memory charge after the request ends,
 	// until the returned function runs.
-	KeepMemory              func() (release func())
-	RequestID               string
-	StartedAt               time.Time
-	RequestType             string
-	SessionID               string
+	KeepMemory  func() (release func())
+	RequestID   string
+	StartedAt   time.Time
+	RequestType string
+	SessionID   string
+	TraceID     string
+	// EncryptionKeyIDs are the roots the request needs, sorted: those of
+	// every pair it may try.
+	EncryptionKeyIDs        []string
 	Metadata                map[string]string
 	Transport               string
 	Response                *schemas.BifrostResponse

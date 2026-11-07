@@ -11,19 +11,22 @@ import (
 // Request state belongs to one handler. Provider work receives its own state
 // before it can outlive the handler; it must never retain the response writer.
 type requestContext struct {
-	request               *http.Request
-	writer                http.ResponseWriter
-	body                  []byte
-	requestDigest         *[64]byte
-	memory                *requestMemoryLease
-	response              *publicResponse
-	credential            *apiCredential
-	claims                *billing.APIKeyClaims
-	policyVersions        *billing.LoggedPolicyVersions
-	dashboard             *billing.DashboardCredential
-	encrypted             bool
-	requestID             string
-	requestType           string
+	request        *http.Request
+	writer         http.ResponseWriter
+	body           []byte
+	requestDigest  *[64]byte
+	memory         *requestMemoryLease
+	response       *publicResponse
+	credential     *apiCredential
+	claims         *billing.APIKeyClaims
+	policyVersions *billing.LoggedPolicyVersions
+	dashboard      *billing.DashboardCredential
+	encrypted      bool
+	requestID      string
+	requestType    string
+	// encryptionKeyIDs are the roots the request needs, or, when it lacks one,
+	// those it lacks.
+	encryptionKeyIDs      []string
 	admissionCounted      bool
 	startedAt             time.Time
 	deliveryDeadline      time.Time

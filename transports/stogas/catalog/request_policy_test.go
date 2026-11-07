@@ -517,7 +517,7 @@ func TestMissingRootsFailBeforeAnyPairIsPrepared(t *testing.T) {
 			Body:   []byte(`{"model":"openai-gpt-5.6-sol","messages":[{"role":"user","content":"hello"}]}`),
 			Method: "POST", Path: "/v1/chat/completions", Policy: policyConfig(test.limit),
 			AvailableCredentials: map[string][]int{"openai": {0, 1, 2}},
-			CheckRoots: func(pairs []PlannedPair) error {
+			CheckRoots: func(pairs []PlannedPair, _ bool) error {
 				for _, pair := range pairs {
 					if pair.Provider != schemas.OpenAI || pair.Policy == nil {
 						t.Fatalf("planned pair %+v lost its provider or policy", pair)
@@ -547,6 +547,7 @@ func TestMissingRootsFailBeforeAnyPairIsPrepared(t *testing.T) {
 // slot, whether it shares its policy with later credentials or has its own.
 // Without that policy, the first tried pair that lacks a root fails the
 // request; with every pair skipped, the request names every missing label.
+// Only the check of the tried pairs is the plan's, which the gateway logs.
 func TestMissingRootsSkipOnlyPairsWhosePolicySkips(t *testing.T) {
 	loadTestCatalog(t)
 	config := func(mode string) *policy.Config {
@@ -561,19 +562,21 @@ func TestMissingRootsSkipOnlyPairsWhosePolicySkips(t *testing.T) {
 		missing  map[int]string
 		want     int
 		prepared []int
+		planned  []int
 		labels   []string
 		removed  []int
 	}{
-		{name: "shared policy skips the first credential", mode: policy.MissingKeysSkip, shared: true, missing: map[int]string{0: "billing"}, want: 1, prepared: []int{1}, removed: []int{0}},
-		{name: "own policies skip the first credential", mode: policy.MissingKeysSkip, missing: map[int]string{0: "billing"}, want: 1, prepared: []int{1}, removed: []int{0}},
-		{name: "skipped credentials take no slot", mode: policy.MissingKeysSkip, shared: true, missing: map[int]string{0: "billing", 1: "audit"}, want: 2, prepared: []int{2}, removed: []int{0, 1}},
+		{name: "shared policy skips the first credential", mode: policy.MissingKeysSkip, shared: true, missing: map[int]string{0: "billing"}, want: 1, prepared: []int{1}, planned: []int{1}, removed: []int{0}},
+		{name: "own policies skip the first credential", mode: policy.MissingKeysSkip, missing: map[int]string{0: "billing"}, want: 1, prepared: []int{1}, planned: []int{1}, removed: []int{0}},
+		{name: "skipped credentials take no slot", mode: policy.MissingKeysSkip, shared: true, missing: map[int]string{0: "billing", 1: "audit"}, want: 2, prepared: []int{2}, planned: []int{2}, removed: []int{0, 1}},
 		{name: "every credential skipped", mode: policy.MissingKeysSkip, shared: true, missing: map[int]string{0: "billing", 1: "audit", 2: "audit"}, want: -1, labels: []string{"audit", "billing"}, removed: []int{0, 1, 2}},
-		{name: "fail is the default", mode: "", shared: true, missing: map[int]string{0: "billing"}, want: -1, labels: []string{"billing"}},
-		{name: "explicit fail", mode: policy.MissingKeysFail, missing: map[int]string{0: "billing"}, want: -1, labels: []string{"billing"}},
-		{name: "nothing missing", mode: policy.MissingKeysSkip, shared: true, want: 0, prepared: []int{0}},
+		{name: "fail is the default", mode: "", shared: true, missing: map[int]string{0: "billing"}, want: -1, planned: []int{0}, labels: []string{"billing"}},
+		{name: "explicit fail", mode: policy.MissingKeysFail, missing: map[int]string{0: "billing"}, want: -1, planned: []int{0}, labels: []string{"billing"}},
+		{name: "nothing missing", mode: policy.MissingKeysSkip, shared: true, want: 0, prepared: []int{0}, planned: []int{0}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			shared := config(test.mode)
+			var planned []int
 			input := RequestInput{
 				Body:   []byte(`{"model":"openai-gpt-5.6-sol","messages":[{"role":"user","content":"hello"}]}`),
 				Method: "POST", Path: "/v1/chat/completions", Policy: shared,
@@ -584,9 +587,12 @@ func TestMissingRootsSkipOnlyPairsWhosePolicySkips(t *testing.T) {
 					}
 					return RequestPolicy{Config: config(test.mode)}, nil
 				},
-				CheckRoots: func(pairs []PlannedPair) error {
+				CheckRoots: func(pairs []PlannedPair, plan bool) error {
 					var labels []string
 					for _, pair := range pairs {
+						if plan {
+							planned = append(planned, pair.Credential)
+						}
 						if label := test.missing[pair.Credential]; label != "" && !slices.Contains(labels, label) {
 							labels = append(labels, label)
 						}
@@ -612,6 +618,8 @@ func TestMissingRootsSkipOnlyPairsWhosePolicySkips(t *testing.T) {
 				t.Fatalf("resolved %v, %v; want labels %v", resolved, err, test.labels)
 			case !slices.Equal(prepared, test.prepared):
 				t.Fatalf("prepared %v, want %v", prepared, test.prepared)
+			case !slices.Equal(planned, test.planned):
+				t.Fatalf("plan check covered %v, want %v", planned, test.planned)
 			}
 			input.CheckCandidate = nil
 			simulation := SimulateRouting(input, RouteChat, "openai-gpt-5.6-sol", "", "", nil, nil)

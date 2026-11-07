@@ -3,6 +3,7 @@ package billing
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"strings"
 	"sync"
 	"time"
 
@@ -40,13 +41,18 @@ type RejectionInput struct {
 	NodeID         string
 	GatewayVersion string
 	Transport      string
+	// EncryptionKeyIDs are the registered roots that the request lacked.
+	EncryptionKeyIDs []string
+	// TraceID goes only to the rejection's own row, never to a count, so
+	// groups never split by trace.
+	TraceID string
 }
 
 type rejectionLogKey struct {
 	keyID, requestType, code, transport string
 	status                              int
 	window                              int64
-	versions                            [32]byte
+	versions, roots                     [32]byte
 }
 
 type RejectionLogDiagnostics struct {
@@ -59,7 +65,7 @@ type RejectionLogDiagnostics struct {
 }
 
 type rejectionLogRequest struct {
-	id, at string
+	id, at, trace string
 	// The row's place in the signed log, given when the rejection arrived.
 	place *LogPosition
 }
@@ -98,7 +104,8 @@ type rejectionLogBuffer struct {
 
 // NewRejectionEvent gives authenticated pre-authorization failures the same
 // customer-visible representation in telemetry and optional content exports.
-// Rejections share records, so none keeps a request's session ID or metadata.
+// Rejections share records, so none keeps a request's session ID or metadata,
+// and only a rejection's own row keeps its trace ID.
 func NewRejectionEvent(input RejectionInput) RequestEvent {
 	at := input.CreatedAt.UTC()
 	if at.IsZero() {
@@ -113,6 +120,7 @@ func NewRejectionEvent(input RejectionInput) RequestEvent {
 		APIKeyID:       input.Claims.KeyID, OrganizationID: input.Claims.OrganizationID,
 		MemberID: input.Claims.ResponsibleID, GrantID: input.Claims.GrantID,
 		RequestType: input.RequestType, Metadata: map[string]string{}, Transport: input.Transport,
+		EncryptionKeyIDs: encryptionKeyIDs(input.EncryptionKeyIDs),
 		GatewayError:     &EventError{Code: NormalizeStogasErrorCode(input.Code, input.StatusCode), Status: input.StatusCode},
 		ProviderAttempts: []ProviderAttempt{},
 		Usage: RequestUsage{Meters: EventMeters{}, UpstreamCostUSD: ZeroChargeUSD, BilledCostUSD: ZeroChargeUSD,
@@ -188,7 +196,11 @@ func (s *Service) recordRejection(input RejectionInput, export *RejectionExport)
 		raw, _ := json.Marshal(input.PolicyVersions)
 		versions = sha256.Sum256(raw)
 	}
-	key := rejectionLogKey{input.Claims.KeyID, input.RequestType, input.Code, input.Transport, input.StatusCode, at.Truncate(rejectionLogWindow).Unix(), versions}
+	var roots [32]byte
+	if len(input.EncryptionKeyIDs) > 0 {
+		roots = sha256.Sum256([]byte(strings.Join(input.EncryptionKeyIDs, ",")))
+	}
+	key := rejectionLogKey{input.Claims.KeyID, input.RequestType, input.Code, input.Transport, input.StatusCode, at.Truncate(rejectionLogWindow).Unix(), versions, roots}
 	stamp := at.Format("2006-01-02T15:04:05.000Z")
 	group := b.groups[key]
 	if group == nil {
@@ -214,9 +226,11 @@ func (s *Service) recordRejection(input RejectionInput, export *RejectionExport)
 		}
 		// The row that nextBatch sends takes its place in the signed log now, so
 		// its export carries the row that analytics stores.
-		row := group.individualRow(rejectionLogRequest{id: input.RequestID, at: stamp})
+		request := rejectionLogRequest{id: input.RequestID, at: stamp, trace: input.TraceID}
+		row := group.individualRow(request)
 		s.placeRow(&row)
-		group.individual = append(group.individual, rejectionLogRequest{input.RequestID, stamp, row.LogBatch})
+		request.place = row.LogBatch
+		group.individual = append(group.individual, request)
 		if *export == nil {
 			return true, nil
 		}
@@ -282,7 +296,7 @@ func (g *rejectionLogGroup) readyAt(key rejectionLogKey, now time.Time) time.Tim
 func (g *rejectionLogGroup) individualRow(request rejectionLogRequest) RequestEvent {
 	row := g.RequestEvent
 	row.RequestID, row.CreatedAt, row.LastRequestAt, row.RequestCount = request.id, request.at, request.at, 1
-	row.LogBatch = request.place
+	row.TraceID, row.LogBatch = request.trace, request.place
 	return row
 }
 

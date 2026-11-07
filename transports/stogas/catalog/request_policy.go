@@ -155,7 +155,7 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 			return false
 		}
 		pair := PlannedPair{Provider: selection.provider, Credential: index, Policy: config}
-		err := input.CheckRoots([]PlannedPair{pair})
+		err := input.CheckRoots([]PlannedPair{pair}, false)
 		if err == nil {
 			return false
 		}
@@ -310,7 +310,7 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 	// Sending the keys would let a skipped pair serve, so the request names
 	// them when nothing else remains.
 	if len(candidates.filtered) == 0 && len(skipped) > 0 {
-		return nil, input.CheckRoots(skipped)
+		return nil, input.CheckRoots(skipped, false)
 	}
 	if len(candidates.filtered) == 0 && firstErr != nil {
 		return nil, firstErr
@@ -402,10 +402,10 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 		for i, choice := range tried {
 			pairs[i] = PlannedPair{Provider: choice.candidate.Provider, Credential: choice.index, Policy: choice.candidate.policy}
 		}
-		if err := input.CheckRoots(pairs); err != nil {
+		if err := input.CheckRoots(pairs, true); err != nil {
 			// A simulation names the policy that keeps the first such pair.
 			for _, pair := range pairs {
-				if trace == nil || pair.Policy == nil || input.CheckRoots([]PlannedPair{pair}) == nil {
+				if trace == nil || pair.Policy == nil || input.CheckRoots([]PlannedPair{pair}, false) == nil {
 					continue
 				}
 				if origin, ok := pair.Policy.MissingKeysOrigin(); ok {

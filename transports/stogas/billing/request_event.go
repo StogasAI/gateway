@@ -81,6 +81,8 @@ type RequestEvent struct {
 	RequestType      string                `json:"request_type"`
 	RequestSettings  RequestSettings       `json:"request_settings"`
 	SessionID        string                `json:"session_id"`
+	TraceID          string                `json:"trace_id"`
+	EncryptionKeyIDs []string              `json:"encryption_key_ids"`
 	Metadata         map[string]string     `json:"metadata"`
 	Transport        string                `json:"transport"`
 	Cancelled        bool                  `json:"cancelled"`

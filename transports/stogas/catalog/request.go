@@ -146,8 +146,9 @@ type RequestInput struct {
 	// CheckRoots receives pairs before any is prepared and fails, naming the
 	// labels, when one needs a root the request did not send. Planning leaves
 	// out each pair whose policy skips missing roots, and then passes it every
-	// pair that the request may try.
-	CheckRoots func([]PlannedPair) error
+	// pair that the request may try, with plan set. Only that check covers the
+	// whole plan; planning that fails earlier never makes it.
+	CheckRoots func(pairs []PlannedPair, plan bool) error
 	// ReserveBody accounts for the transformed JSON before typed decoding and
 	// tokenization. The transport keeps this reservation until the request ends.
 	ReserveBody func(int) error

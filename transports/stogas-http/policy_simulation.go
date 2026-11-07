@@ -301,7 +301,7 @@ func (s *Server) simulatePolicy(ctx *requestContext) {
 			chains[simulationCandidate{provider, index}] = selected.Versions
 			return catalog.RequestPolicy{Config: selected.Config}, nil
 		},
-		CheckRoots: func(pairs []catalog.PlannedPair) error {
+		CheckRoots: func(pairs []catalog.PlannedPair, _ bool) error {
 			if input.EncryptionKeys == nil {
 				return nil
 			}

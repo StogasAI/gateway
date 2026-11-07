@@ -44,6 +44,8 @@ type EventInput struct {
 	RequestType           string
 	RequestSettings       RequestSettings
 	SessionID             string
+	TraceID               string
+	EncryptionKeyIDs      []string
 	Metadata              map[string]string
 	Transport             string
 	StartedAt             time.Time
@@ -154,6 +156,8 @@ func NewRequestEvent(input EventInput) (RequestEvent, error) {
 		RequestType:      input.RequestType,
 		RequestSettings:  input.RequestSettings,
 		SessionID:        input.SessionID,
+		TraceID:          input.TraceID,
+		EncryptionKeyIDs: encryptionKeyIDs(input.EncryptionKeyIDs),
 		Metadata:         requestMetadata(input.Metadata),
 		Transport:        input.Transport,
 		Cancelled:        input.Cancelled,
@@ -190,6 +194,15 @@ func requestMetadata(metadata map[string]string) map[string]string {
 		return map[string]string{}
 	}
 	return metadata
+}
+
+// encryptionKeyIDs keeps a log's roots a list, which JSON writes as [] when
+// the request needs none.
+func encryptionKeyIDs(ids []string) []string {
+	if ids == nil {
+		return []string{}
+	}
+	return ids
 }
 
 func requestFirstOutput(input EventInput, startedAt time.Time, providerStartMS *uint32, providerMS uint32) *uint32 {
