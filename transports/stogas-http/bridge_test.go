@@ -276,9 +276,12 @@ func responsesTextPart(text string) *schemas.ResponsesMessageContentBlock {
 	}
 }
 
-// sendResponsesEvents streams a Responses reply with one message, as OpenAI sends it.
+// sendResponsesEvents streams a Responses reply with one message, as OpenAI's Pro models send it:
+// they finish the message before they stream it, so it starts as completed.
 func sendResponsesEvents(stream chan<- *schemas.BifrostStreamChunk, text string) {
 	sequence, output, content, id := 0, 0, 0, "msg_1"
+	added := responsesTextItem("in_progress", "")
+	added.Status = schemas.Ptr("completed")
 	send := func(event *schemas.BifrostResponsesStreamResponse) {
 		event.SequenceNumber = sequence
 		sequence++
@@ -286,7 +289,7 @@ func sendResponsesEvents(stream chan<- *schemas.BifrostStreamChunk, text string)
 	}
 	send(&schemas.BifrostResponsesStreamResponse{Type: schemas.ResponsesStreamResponseTypeCreated, Response: responsesReply("in_progress")})
 	send(&schemas.BifrostResponsesStreamResponse{Type: schemas.ResponsesStreamResponseTypeInProgress, Response: responsesReply("in_progress")})
-	send(&schemas.BifrostResponsesStreamResponse{Type: schemas.ResponsesStreamResponseTypeOutputItemAdded, OutputIndex: &output, Item: responsesTextItem("in_progress", "")})
+	send(&schemas.BifrostResponsesStreamResponse{Type: schemas.ResponsesStreamResponseTypeOutputItemAdded, OutputIndex: &output, Item: added})
 	send(&schemas.BifrostResponsesStreamResponse{Type: schemas.ResponsesStreamResponseTypeContentPartAdded, OutputIndex: &output, ContentIndex: &content, ItemID: &id, Part: responsesTextPart("")})
 	send(&schemas.BifrostResponsesStreamResponse{Type: schemas.ResponsesStreamResponseTypeOutputTextDelta, OutputIndex: &output, ContentIndex: &content, ItemID: &id, Delta: &text})
 	send(&schemas.BifrostResponsesStreamResponse{Type: schemas.ResponsesStreamResponseTypeOutputTextDone, OutputIndex: &output, ContentIndex: &content, ItemID: &id, Text: &text})

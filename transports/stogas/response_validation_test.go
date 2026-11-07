@@ -1101,75 +1101,80 @@ func TestProviderResponsesStreamAcceptsCompletedAndIncompleteTerminals(t *testin
 }
 
 func TestProviderResponsesStreamAcceptsExactTextItemLifecycle(t *testing.T) {
-	state := responsesValidationState()
-	if err := validateProviderResponsesStream(state, validResponsesProviderEvent(schemas.ResponsesStreamResponseTypeCreated, 0, "resp_stream")); err != nil {
-		t.Fatal(err)
-	}
-	itemID := "msg_stream"
-	inProgress := "in_progress"
-	itemType := schemas.ResponsesMessageTypeMessage
-	role := schemas.ResponsesInputMessageRoleAssistant
-	addedItem := &schemas.ResponsesMessage{
-		ID: itemIDPtr(itemID), Type: &itemType, Role: &role, Status: &inProgress,
-		Content: &schemas.ResponsesMessageContent{ContentBlocks: []schemas.ResponsesMessageContentBlock{}},
-	}
-	outputIndex := 0
-	contentIndex := 0
-	if err := validateProviderResponsesStream(state, &schemas.BifrostResponsesStreamResponse{
-		Type: schemas.ResponsesStreamResponseTypeOutputItemAdded, SequenceNumber: 1,
-		OutputIndex: &outputIndex, Item: addedItem,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	empty := ""
-	part := &schemas.ResponsesMessageContentBlock{Type: schemas.ResponsesOutputMessageContentTypeText, Text: &empty}
-	if err := validateProviderResponsesStream(state, &schemas.BifrostResponsesStreamResponse{
-		Type: schemas.ResponsesStreamResponseTypeContentPartAdded, SequenceNumber: 2,
-		OutputIndex: &outputIndex, ContentIndex: &contentIndex, ItemID: &itemID, Part: part,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	delta := "hello"
-	if err := validateProviderResponsesStream(state, &schemas.BifrostResponsesStreamResponse{
-		Type: schemas.ResponsesStreamResponseTypeOutputTextDelta, SequenceNumber: 3,
-		OutputIndex: &outputIndex, ContentIndex: &contentIndex, ItemID: &itemID, Delta: &delta,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	completed := "completed"
-	text := "hello"
-	if err := validateProviderResponsesStream(state, &schemas.BifrostResponsesStreamResponse{
-		Type: schemas.ResponsesStreamResponseTypeOutputTextDone, SequenceNumber: 4,
-		OutputIndex: &outputIndex, ContentIndex: &contentIndex, ItemID: &itemID, Text: &text,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	donePart := &schemas.ResponsesMessageContentBlock{Type: schemas.ResponsesOutputMessageContentTypeText, Text: &text}
-	if err := validateProviderResponsesStream(state, &schemas.BifrostResponsesStreamResponse{
-		Type: schemas.ResponsesStreamResponseTypeContentPartDone, SequenceNumber: 5,
-		OutputIndex: &outputIndex, ContentIndex: &contentIndex, ItemID: &itemID, Part: donePart,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	doneItem := &schemas.ResponsesMessage{
-		ID: itemIDPtr(itemID), Type: &itemType, Role: &role, Status: &completed,
-		Content: &schemas.ResponsesMessageContent{ContentBlocks: []schemas.ResponsesMessageContentBlock{{
-			Type: schemas.ResponsesOutputMessageContentTypeText, Text: &text,
-		}}},
-	}
-	if err := validateProviderResponsesStream(state, &schemas.BifrostResponsesStreamResponse{
-		Type: schemas.ResponsesStreamResponseTypeOutputItemDone, SequenceNumber: 6,
-		OutputIndex: &outputIndex, Item: doneItem,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	terminal := validResponsesProviderEvent(schemas.ResponsesStreamResponseTypeCompleted, 7, "resp_stream")
-	terminal.Response.Output = []schemas.ResponsesMessage{*doneItem}
-	if err := validateProviderResponsesStream(state, terminal); err != nil {
-		t.Fatal(err)
-	}
-	if err := validateProviderStreamCompleted(state); err != nil {
-		t.Fatal(err)
+	// Pro models finish a message before they stream it, so it starts as completed. OpenAI pads
+	// short deltas, and a delta that needs no padding carries empty padding.
+	for _, status := range []string{"in_progress", "completed"} {
+		t.Run(status, func(t *testing.T) {
+			state := responsesValidationState()
+			if err := validateProviderResponsesStream(state, validResponsesProviderEvent(schemas.ResponsesStreamResponseTypeCreated, 0, "resp_stream")); err != nil {
+				t.Fatal(err)
+			}
+			itemID := "msg_stream"
+			itemType := schemas.ResponsesMessageTypeMessage
+			role := schemas.ResponsesInputMessageRoleAssistant
+			addedItem := &schemas.ResponsesMessage{
+				ID: itemIDPtr(itemID), Type: &itemType, Role: &role, Status: &status,
+				Content: &schemas.ResponsesMessageContent{ContentBlocks: []schemas.ResponsesMessageContentBlock{}},
+			}
+			outputIndex := 0
+			contentIndex := 0
+			if err := validateProviderResponsesStream(state, &schemas.BifrostResponsesStreamResponse{
+				Type: schemas.ResponsesStreamResponseTypeOutputItemAdded, SequenceNumber: 1,
+				OutputIndex: &outputIndex, Item: addedItem,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			empty := ""
+			part := &schemas.ResponsesMessageContentBlock{Type: schemas.ResponsesOutputMessageContentTypeText, Text: &empty}
+			if err := validateProviderResponsesStream(state, &schemas.BifrostResponsesStreamResponse{
+				Type: schemas.ResponsesStreamResponseTypeContentPartAdded, SequenceNumber: 2,
+				OutputIndex: &outputIndex, ContentIndex: &contentIndex, ItemID: &itemID, Part: part,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			delta := "hello"
+			if err := validateProviderResponsesStream(state, &schemas.BifrostResponsesStreamResponse{
+				Type: schemas.ResponsesStreamResponseTypeOutputTextDelta, SequenceNumber: 3,
+				OutputIndex: &outputIndex, ContentIndex: &contentIndex, ItemID: &itemID, Delta: &delta, Obfuscation: &empty,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			completed := "completed"
+			text := "hello"
+			if err := validateProviderResponsesStream(state, &schemas.BifrostResponsesStreamResponse{
+				Type: schemas.ResponsesStreamResponseTypeOutputTextDone, SequenceNumber: 4,
+				OutputIndex: &outputIndex, ContentIndex: &contentIndex, ItemID: &itemID, Text: &text,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			donePart := &schemas.ResponsesMessageContentBlock{Type: schemas.ResponsesOutputMessageContentTypeText, Text: &text}
+			if err := validateProviderResponsesStream(state, &schemas.BifrostResponsesStreamResponse{
+				Type: schemas.ResponsesStreamResponseTypeContentPartDone, SequenceNumber: 5,
+				OutputIndex: &outputIndex, ContentIndex: &contentIndex, ItemID: &itemID, Part: donePart,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			doneItem := &schemas.ResponsesMessage{
+				ID: itemIDPtr(itemID), Type: &itemType, Role: &role, Status: &completed,
+				Content: &schemas.ResponsesMessageContent{ContentBlocks: []schemas.ResponsesMessageContentBlock{{
+					Type: schemas.ResponsesOutputMessageContentTypeText, Text: &text,
+				}}},
+			}
+			if err := validateProviderResponsesStream(state, &schemas.BifrostResponsesStreamResponse{
+				Type: schemas.ResponsesStreamResponseTypeOutputItemDone, SequenceNumber: 6,
+				OutputIndex: &outputIndex, Item: doneItem,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			terminal := validResponsesProviderEvent(schemas.ResponsesStreamResponseTypeCompleted, 7, "resp_stream")
+			terminal.Response.Output = []schemas.ResponsesMessage{*doneItem}
+			if err := validateProviderResponsesStream(state, terminal); err != nil {
+				t.Fatal(err)
+			}
+			if err := validateProviderStreamCompleted(state); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 
@@ -1198,9 +1203,10 @@ func TestProviderResponsesStreamRequiresCompleteFunctionArguments(t *testing.T) 
 		}
 		sequence := 2
 		for _, fragment := range fragments {
+			// A delta that needs no padding carries empty padding, as OpenAI sends whole arguments.
 			if err := validateProviderResponsesStream(state, &schemas.BifrostResponsesStreamResponse{
 				Type: schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDelta, SequenceNumber: sequence,
-				OutputIndex: &outputIndex, ItemID: &itemID, Delta: &fragment,
+				OutputIndex: &outputIndex, ItemID: &itemID, Delta: &fragment, Obfuscation: schemas.Ptr(""),
 			}); err != nil {
 				return err
 			}
@@ -1485,37 +1491,6 @@ func TestProviderResponsesStreamRejectsMalformedTransitions(t *testing.T) {
 			}
 			return validateProviderResponsesStream(state, &schemas.BifrostResponsesStreamResponse{
 				Type: schemas.ResponsesStreamResponseTypeOutputItemAdded, SequenceNumber: 1, OutputIndex: schemas.Ptr(-1),
-			})
-		},
-		"completed item at added": func(state *State) error {
-			if err := validateProviderResponsesStream(state, validResponsesProviderEvent(schemas.ResponsesStreamResponseTypeCreated, 0, "resp_stream")); err != nil {
-				return err
-			}
-			outputIndex := 0
-			itemType := schemas.ResponsesMessageTypeMessage
-			role := schemas.ResponsesInputMessageRoleAssistant
-			completed := "completed"
-			return validateProviderResponsesStream(state, &schemas.BifrostResponsesStreamResponse{
-				Type: schemas.ResponsesStreamResponseTypeOutputItemAdded, SequenceNumber: 1, OutputIndex: &outputIndex,
-				Item: &schemas.ResponsesMessage{
-					ID: schemas.Ptr("msg_1"), Type: &itemType, Role: &role, Status: &completed,
-					Content: &schemas.ResponsesMessageContent{ContentBlocks: []schemas.ResponsesMessageContentBlock{}},
-				},
-			})
-		},
-		"missing item status at added": func(state *State) error {
-			if err := validateProviderResponsesStream(state, validResponsesProviderEvent(schemas.ResponsesStreamResponseTypeCreated, 0, "resp_stream")); err != nil {
-				return err
-			}
-			outputIndex := 0
-			itemType := schemas.ResponsesMessageTypeMessage
-			role := schemas.ResponsesInputMessageRoleAssistant
-			return validateProviderResponsesStream(state, &schemas.BifrostResponsesStreamResponse{
-				Type: schemas.ResponsesStreamResponseTypeOutputItemAdded, SequenceNumber: 1, OutputIndex: &outputIndex,
-				Item: &schemas.ResponsesMessage{
-					ID: schemas.Ptr("msg_1"), Type: &itemType, Role: &role,
-					Content: &schemas.ResponsesMessageContent{ContentBlocks: []schemas.ResponsesMessageContentBlock{}},
-				},
 			})
 		},
 		"untracked text in added item": func(state *State) error {

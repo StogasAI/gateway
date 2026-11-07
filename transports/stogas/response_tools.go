@@ -486,7 +486,6 @@ func validateProviderResponsesOutputItemEvent(state *State, response *schemas.Bi
 	prior, exists := state.responsesItems[index]
 	if response.Type == schemas.ResponsesStreamResponseTypeOutputItemAdded {
 		if exists || index != len(state.responsesItems) || providerResponsesInitialToolValue(response.Item) != "" ||
-			!providerResponsesAddedStatusAllowed(item.itemType, response.Item.Status) ||
 			!providerResponsesInitialPayloadAllowed(response.Item, item.compactionPayload) {
 			return ErrProviderResponseMalformed
 		}
@@ -1548,7 +1547,7 @@ func validateProviderResponsesTextEvent(state *State, response *schemas.BifrostR
 		!validOptionalProviderText(response.Signature, maxProviderResponseBodySize, false) ||
 		!validOptionalProviderText(response.Text, maxProviderResponseBodySize, true) ||
 		!validOptionalProviderText(response.Refusal, maxProviderResponseBodySize, true) ||
-		!validOptionalProviderText(response.Obfuscation, maxProviderResponseBodySize, false) {
+		!validOptionalProviderText(response.Obfuscation, maxProviderResponseBodySize, true) {
 		return ErrProviderResponseMalformed
 	}
 	switch response.Type {
@@ -1615,7 +1614,7 @@ func validateProviderResponsesToolValueEvent(state *State, response *schemas.Bif
 			return ErrProviderResponseMalformed
 		}
 		if !validProviderText(*response.Delta, maxProviderResponseBodySize, true) ||
-			!validOptionalProviderText(response.Obfuscation, maxProviderResponseBodySize, false) {
+			!validOptionalProviderText(response.Obfuscation, maxProviderResponseBodySize, true) {
 			return ErrProviderResponseMalformed
 		}
 		if !appendProviderBuffer(item.value, *response.Delta) {
@@ -2014,19 +2013,6 @@ func selectedProviderToolName(selector map[string]json.RawMessage) providerToolN
 		return providerToolName{kind, rawString(selector["server_label"])}
 	}
 	return providerToolName{kind, rawString(selector["name"])}
-}
-
-// providerResponsesAddedStatusAllowed checks the status of an item as it starts. Reasoning,
-// MCP listings and approval requests can start without one.
-func providerResponsesAddedStatusAllowed(itemType schemas.ResponsesMessageType, status *string) bool {
-	switch itemType {
-	case schemas.ResponsesMessageTypeReasoning, schemas.ResponsesMessageTypeMCPListTools, schemas.ResponsesMessageTypeMCPApprovalRequest:
-		return status == nil || *status == "in_progress"
-	case schemas.ResponsesMessageTypeMCPCall:
-		return status == nil || *status == "in_progress" || *status == "calling"
-	default:
-		return status != nil && *status == "in_progress"
-	}
 }
 
 func providerResponsesToolTypeAllowed(state *State, wanted schemas.ResponsesToolType) bool {

@@ -492,7 +492,7 @@ func validateProviderResponsesMCPArgumentsEvent(state *State, response *schemas.
 	switch response.Type {
 	case schemas.ResponsesStreamResponseTypeMCPCallArgumentsDelta:
 		if response.Delta == nil || !validProviderText(*response.Delta, maxProviderResponseBodySize, true) ||
-			!validOptionalProviderText(response.Obfuscation, maxProviderResponseBodySize, false) {
+			!validOptionalProviderText(response.Obfuscation, maxProviderResponseBodySize, true) {
 			return ErrProviderResponseMalformed
 		}
 		if item.value == nil {
