@@ -211,6 +211,8 @@ var (
 		"length":     AnthropicStopReasonMaxTokens,
 		"tool_calls": AnthropicStopReasonToolUse,
 		"compaction": AnthropicStopReasonCompaction,
+		// Anthropic reports a content filter's stop, its own refusal included, as refusal.
+		"content_filter": AnthropicStopReasonRefusal,
 	}
 )
 
@@ -3901,6 +3903,20 @@ func ConvertAnthropicFinishReasonToBifrost(providerReason AnthropicStopReason) s
 		return bifrostReason
 	}
 	return string(providerReason)
+}
+
+// anthropicChatFinishReason converts a stop reason to a Chat Completions finish_reason,
+// which has no refusal or context window reason: a refusal stops as content_filter, as
+// OpenAI's content filters do, and a full context window as length. Clients that accept
+// only OpenAI's values, such as openai-dotnet, fail on any other.
+func anthropicChatFinishReason(providerReason AnthropicStopReason) string {
+	switch providerReason {
+	case AnthropicStopReasonRefusal:
+		return "content_filter"
+	case AnthropicStopReasonModelContextWindowExceeded:
+		return string(schemas.BifrostFinishReasonLength)
+	}
+	return ConvertAnthropicFinishReasonToBifrost(providerReason)
 }
 
 // ConvertBifrostFinishReasonToAnthropic converts Bifrost finish reasons to provider format

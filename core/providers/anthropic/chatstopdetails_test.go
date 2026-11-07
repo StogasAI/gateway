@@ -25,6 +25,9 @@ func TestAnthropicChatResponseKeepsRefusalCategory(t *testing.T) {
 		t.Fatalf("decode response: %v", err)
 	}
 	chat := response.ToBifrostChatResponse(schemas.NewBifrostContext(context.Background(), schemas.NoDeadline))
+	if len(chat.Choices) == 0 || chat.Choices[0].FinishReason == nil || *chat.Choices[0].FinishReason != "content_filter" {
+		t.Fatalf("choices = %#v, want finish reason content_filter", chat.Choices)
+	}
 	if chat.StopDetails == nil || chat.StopDetails.Category == nil || *chat.StopDetails.Category != "bio" {
 		t.Fatalf("stop details = %#v, want category bio", chat.StopDetails)
 	}
@@ -57,8 +60,8 @@ func TestAnthropicChatStreamFinalChunkKeepsRefusalCategory(t *testing.T) {
 		t.Fatalf("expected a final chat chunk, got %d chunks", len(chunks))
 	}
 	final := chunks[len(chunks)-1].BifrostChatResponse
-	if len(final.Choices) == 0 || final.Choices[0].FinishReason == nil || *final.Choices[0].FinishReason != "refusal" {
-		t.Fatalf("final chunk choices = %#v, want finish reason refusal", final.Choices)
+	if len(final.Choices) == 0 || final.Choices[0].FinishReason == nil || *final.Choices[0].FinishReason != "content_filter" {
+		t.Fatalf("final chunk choices = %#v, want finish reason content_filter", final.Choices)
 	}
 	if final.StopDetails == nil || final.StopDetails.Category == nil || *final.StopDetails.Category != "cyber" {
 		t.Fatalf("final chunk stop details = %#v, want category cyber", final.StopDetails)

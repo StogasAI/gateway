@@ -1854,7 +1854,8 @@ func TestProviderExecutionMetadataCannotRetargetUnauthorizedDeployment(t *testin
 }
 
 func TestClaudeRefusalBillingFollowsCategory(t *testing.T) {
-	refusal := "refusal"
+	// Chat Completions reports a Claude refusal as content_filter, and Responses keeps refusal.
+	refusal, contentFilter := "refusal", "content_filter"
 	stop := "stop"
 	category := func(value string) *schemas.ResponsesStopDetails {
 		return &schemas.ResponsesStopDetails{Type: "refusal", Category: &value}
@@ -1875,9 +1876,9 @@ func TestClaudeRefusalBillingFollowsCategory(t *testing.T) {
 		outputEmitted bool
 		wantCost      string
 	}{
-		{name: "refusal before output without a category", response: chat(&refusal, nil), wantCost: billing.ZeroChargeUSD},
-		{name: "cyber refusal before output", response: chat(&refusal, category("cyber")), wantCost: billing.ZeroChargeUSD},
-		{name: "bio refusal before output", response: chat(&refusal, category("bio")), wantCost: "13"},
+		{name: "refusal before output without a category", response: chat(&contentFilter, nil), wantCost: billing.ZeroChargeUSD},
+		{name: "cyber refusal before output", response: chat(&contentFilter, category("cyber")), wantCost: billing.ZeroChargeUSD},
+		{name: "bio refusal before output", response: chat(&contentFilter, category("bio")), wantCost: "13"},
 		{
 			name: "responses general harms refusal before output",
 			response: &schemas.BifrostResponse{ResponsesResponse: &schemas.BifrostResponsesResponse{
@@ -1894,7 +1895,7 @@ func TestClaudeRefusalBillingFollowsCategory(t *testing.T) {
 		},
 		{
 			name:          "refusal after provider output reaches a disconnected caller",
-			response:      chat(&refusal, category("cyber")),
+			response:      chat(&contentFilter, category("cyber")),
 			outputEmitted: true,
 			wantCost:      "13",
 		},

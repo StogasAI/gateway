@@ -201,6 +201,19 @@ func convertBedrockStopReason(stopReason string) string {
 	return stopReason
 }
 
+// bedrockChatFinishReason converts a Converse stop reason to a Chat Completions
+// finish_reason, which has no guardrail or context window reason: a guardrail stops as
+// content_filter and a full context window as length.
+func bedrockChatFinishReason(stopReason string) string {
+	switch stopReason {
+	case bedrockStopReasonGuardrailIntervened:
+		return bedrockStopReasonContentFilter
+	case "model_context_window_exceeded":
+		return string(schemas.BifrostFinishReasonLength)
+	}
+	return convertBedrockStopReason(stopReason)
+}
+
 // bedrockStopReasonFromIncompleteDetails maps a Responses incomplete reason to the
 // Converse stop reason, for terminal events that carry no explicit stop reason. ok is
 // false for a reason with no Converse equivalent, which must not reach messageStop.

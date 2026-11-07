@@ -1244,7 +1244,7 @@ func HandleAnthropicChatCompletionStreaming(
 				stopDetails = stopDetailsToBifrost(event.Delta.StopDetails)
 			}
 			if event.Delta != nil && event.Delta.StopReason != nil {
-				mappedReason := ConvertAnthropicFinishReasonToBifrost(*event.Delta.StopReason)
+				mappedReason := anthropicChatFinishReason(*event.Delta.StopReason)
 				finishReason = &mappedReason
 
 				// Override finish reason for structured output only when the SO tool

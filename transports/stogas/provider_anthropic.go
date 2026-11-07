@@ -721,8 +721,9 @@ func anthropicRefusal(response *schemas.BifrostResponse) (*schemas.ResponsesStop
 		return nil, false
 	}
 	if chat := response.ChatResponse; chat != nil {
+		// Chat Completions reports a refusal as content_filter, Claude's only such stop.
 		for _, choice := range chat.Choices {
-			if choice.FinishReason != nil && *choice.FinishReason == "refusal" {
+			if choice.FinishReason != nil && *choice.FinishReason == "content_filter" {
 				return chat.StopDetails, true
 			}
 		}

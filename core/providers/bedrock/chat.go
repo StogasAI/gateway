@@ -311,7 +311,7 @@ func (response *BedrockConverseResponse) ToBifrostChatResponse(ctx context.Conte
 				},
 			},
 			FinishReason: func() *string {
-				mapped := convertBedrockStopReason(response.StopReason)
+				mapped := bedrockChatFinishReason(response.StopReason)
 				if usedStructuredOutputTool && len(toolCalls) == 0 &&
 					mapped == string(schemas.BifrostFinishReasonToolCalls) {
 					mapped = string(schemas.BifrostFinishReasonStop)

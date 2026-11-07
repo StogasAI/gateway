@@ -1722,7 +1722,7 @@ func (provider *BedrockProvider) ChatCompletionStream(ctx *schemas.BifrostContex
 				}
 
 				if streamEvent.StopReason != nil {
-					finishReason = schemas.Ptr(anthropic.ConvertAnthropicFinishReasonToBifrost(anthropic.AnthropicStopReason(*streamEvent.StopReason)))
+					finishReason = schemas.Ptr(bedrockChatFinishReason(*streamEvent.StopReason))
 
 					// Override finish reason for structured output
 					// When structured output is used, tool_use stop reason should appear as "stop" to the client

@@ -1412,7 +1412,7 @@ func (response *AnthropicMessageResponse) ToBifrostChatResponse(ctx *schemas.Bif
 		},
 		FinishReason: func() *string {
 			if response.StopReason != "" {
-				mapped := ConvertAnthropicFinishReasonToBifrost(response.StopReason)
+				mapped := anthropicChatFinishReason(response.StopReason)
 				// When the structured output tool was folded back into text content, the
 				// stop reason should be "stop", not "tool_calls".
 				if usedStructuredOutputTool && len(toolCalls) == 0 &&

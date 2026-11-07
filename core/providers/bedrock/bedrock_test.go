@@ -5203,8 +5203,9 @@ func TestBedrockStopReasonMapping(t *testing.T) {
 		{"MaxTokens", "max_tokens", "length"},
 		{"StopSequence", "stop_sequence", "stop"},
 		{"ToolUse", "tool_use", "tool_calls"},
-		{"GuardrailIntervened", "guardrail_intervened", "guardrail_intervened"}, // no clean mapping — passes through
+		{"GuardrailIntervened", "guardrail_intervened", "content_filter"},
 		{"ContentFiltered", "content_filtered", "content_filter"},
+		{"ModelContextWindowExceeded", "model_context_window_exceeded", "length"},
 		{"UnknownReason", "some_unknown_reason", "some_unknown_reason"}, // no clean mapping — passes through
 	}
 
