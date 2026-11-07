@@ -756,7 +756,9 @@ func validateChatToolCalls(state *State, raw json.RawMessage, path string, valid
 	}
 	for index, call := range calls {
 		callPath := fmt.Sprintf("%s[%d]", path, index)
-		if err := rejectUnsupportedInputKeys(call, callPath, "type", "id", "function"); err != nil {
+		// A reply's tool calls carry an index, which a client that sends the reply back keeps. No
+		// provider gets it.
+		if err := rejectUnsupportedInputKeys(call, callPath, "index", "type", "id", "function"); err != nil {
 			return err
 		}
 		if rawString(call["type"]) != "function" {

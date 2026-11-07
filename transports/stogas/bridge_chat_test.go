@@ -136,6 +136,11 @@ func TestChatBridgeRefusesWhatResponsesLackOrTheFormatRefuses(t *testing.T) {
 		{"top_k", `"top_k":5`, "top_k"},
 		{"prompt cache breakpoint member", `"messages":[{"role":"user","content":[{"type":"text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit","ttl":"1h"}}]}]`, "prompt_cache_breakpoint must contain only mode"},
 		{"prompt cache option", `"prompt_cache_options":{"mode":"implicit","scope":"org"}`, "prompt_cache_options supports only mode and ttl"},
+		{"breakpoint in a tool output", `"messages":[{"role":"user","content":"Find a1."},{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{\"id\":\"a1\"}"}}]},` +
+			`{"role":"tool","tool_call_id":"call_1","content":[{"type":"text","text":"42","prompt_cache_breakpoint":{"mode":"explicit"}}]}],` + chatBridgeTools,
+			"messages[2].content[0].prompt_cache_breakpoint: Responses deployments do not support prompt cache breakpoints in tool outputs"},
+		{"cache control in a tool output", `"messages":[{"role":"user","content":"Find a1."},{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{\"id\":\"a1\"}"}}]},` +
+			`{"role":"tool","tool_call_id":"call_1","content":[{"type":"text","text":"42","cache_control":{"type":"ephemeral"}}]}],` + chatBridgeTools, "cache_control"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			body := `{"model":"openai-gpt-5.6-sol-pro","messages":[{"role":"user","content":"hi"}],` + test.fields + `}`
@@ -246,13 +251,22 @@ func TestChatBridgeReplyBecomesChatCompletions(t *testing.T) {
 		t.Fatalf("finish reason %s, message =\n%s\nwant\n%s", *choice.FinishReason, message, want)
 	}
 
-	// The client sends the reply back as history, and the provider gets its items again.
-	next := chatBridgeState(t, `{"model":"openai-gpt-5.6-sol-pro","messages":[{"role":"user","content":"Find a1."},`+
-		`{"role":"assistant","content":"Looking it up.","refusal":null,"reasoning_details":[{"id":"rs_1","index":0,"type":"reasoning.encrypted","data":"opaque"}],`+
-		`"tool_calls":[{"type":"function","id":"call_1","function":{"name":"lookup","arguments":"{\"id\":\"a1\"}"}}]},`+
-		`{"role":"tool","tool_call_id":"call_1","content":"a1 is 42"}],`+chatBridgeTools+`}`)
+	// The client sends the reply back unchanged as history, with the tool's output in text parts, and
+	// the provider gets its items again.
+	next := chatBridgeState(t, `{"model":"openai-gpt-5.6-sol-pro","messages":[{"role":"user","content":"Find a1."},`+string(message)+`,`+
+		`{"role":"tool","tool_call_id":"call_1","content":[{"type":"text","text":"a1 is "},{"type":"text","text":"42"}]}],`+chatBridgeTools+`}`)
 	input := string(chatBridgeProviderBody(t, next)["input"])
 	if !strings.Contains(input, `{"id":"rs_1","type":"reasoning","summary":[],"encrypted_content":"opaque"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Looking it up.","annotations":[],"logprobs":[]}]},{"arguments":"{\"id\":\"a1\"}","type":"function_call","call_id":"call_1","name":"lookup"},{"type":"function_call_output","call_id":"call_1","output":"a1 is 42"}`) {
+		t.Fatalf("input = %s", input)
+	}
+}
+
+// OpenAI takes a prompt cache breakpoint on the assistant's text too.
+func TestChatBridgeKeepsAssistantCacheBreakpoints(t *testing.T) {
+	state := chatBridgeState(t, `{"model":"openai-gpt-5.6-sol-pro","messages":[{"role":"user","content":"Say hi."},`+
+		`{"role":"assistant","content":[{"type":"text","text":"Hi.","prompt_cache_breakpoint":{"mode":"explicit"}}]},{"role":"user","content":"Again."}]}`)
+	input := string(chatBridgeProviderBody(t, state)["input"])
+	if !strings.Contains(input, `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Hi.","annotations":[],"logprobs":[],"prompt_cache_breakpoint":{"mode":"explicit"}}]}`) {
 		t.Fatalf("input = %s", input)
 	}
 }

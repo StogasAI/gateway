@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -226,10 +227,11 @@ func (r *ResolvedRequest) translateToResponses() error {
 		return ErrUnsupportedRequest
 	}
 	chat := r.chat.ToBifrostChatRequest(nil)
-	if err := conversionGapError(chat.ResponsesGap(), "Responses"); err != nil {
+	if err := responsesBridgeGap(chat); err != nil {
 		return err
 	}
 	converted := chat.ToResponsesRequest()
+	textToolOutputs(converted.Input)
 	params := converted.Params
 	params.Reasoning = deploymentReasoning(params.Reasoning, r.Deployment)
 	// A Chat Completions client cannot ask for the encrypted reasoning that the deployment takes
@@ -262,6 +264,49 @@ func (r *ResolvedRequest) translateToResponses() error {
 
 // responsesIncludeEncryptedReasoning asks a Responses reply for its reasoning's encrypted content.
 const responsesIncludeEncryptedReasoning = "reasoning.encrypted_content"
+
+// responsesBridgeGap refuses a Chat Completions request that a Responses body cannot carry whole:
+// one with a part that Responses lacks, or with a prompt cache breakpoint in a tool's output, which
+// reaches the provider as text.
+func responsesBridgeGap(chat *schemas.BifrostChatRequest) error {
+	if err := conversionGapError(chat.ResponsesGap(), "Responses"); err != nil {
+		return err
+	}
+	for i, message := range chat.Input {
+		if message.Role != schemas.ChatMessageRoleTool || message.Content == nil {
+			continue
+		}
+		for j, block := range message.Content.ContentBlocks {
+			if block.PromptCacheBreakpoint != nil {
+				return conversionGapError(&schemas.ConversionGap{
+					Param:   "messages[" + strconv.Itoa(i) + "].content[" + strconv.Itoa(j) + "].prompt_cache_breakpoint",
+					Feature: "prompt cache breakpoints in tool outputs",
+				}, "Responses")
+			}
+		}
+	}
+	return nil
+}
+
+// textToolOutputs gives each tool output in parts as the text of its parts in order, because the
+// gateway takes a Responses tool output only as text. The checks of Chat Completions leave text as
+// the only part of a tool's output.
+func textToolOutputs(input []schemas.ResponsesMessage) {
+	for _, item := range input {
+		tool := item.ResponsesToolMessage
+		if tool == nil || tool.Output == nil || tool.Output.ResponsesFunctionToolCallOutputBlocks == nil {
+			continue
+		}
+		var text strings.Builder
+		for _, block := range tool.Output.ResponsesFunctionToolCallOutputBlocks {
+			if block.Text != nil {
+				text.WriteString(*block.Text)
+			}
+		}
+		tool.Output.ResponsesToolCallOutputStr = schemas.Ptr(text.String())
+		tool.Output.ResponsesFunctionToolCallOutputBlocks = nil
+	}
+}
 
 // conversionGapError refuses a request with a part that the interface that its provider takes
 // cannot carry.
@@ -321,7 +366,7 @@ func rawResponsesGap(raw map[string]json.RawMessage) error {
 	if request.UnmarshalJSON(body) != nil {
 		return nil
 	}
-	return conversionGapError(request.ToBifrostChatRequest(nil).ResponsesGap(), "Responses")
+	return responsesBridgeGap(request.ToBifrostChatRequest(nil))
 }
 
 // chatReasoning is the Chat Completions reasoning control of a Responses request: its effort and

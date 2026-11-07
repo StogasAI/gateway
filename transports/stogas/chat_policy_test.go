@@ -51,7 +51,6 @@ func TestChatPolicyRejectsUnsupportedFields(t *testing.T) {
 		{"tool call duplicate argument key", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{\"key\":1,\"key\":2}"}}]},{"role":"tool","tool_call_id":"call_1","content":"done"}]}`, "arguments must encode a JSON object"},
 		{"oversized tool call id", fmt.Sprintf(`{"model":"provider:openai gpt-5.5","messages":[{"role":"assistant","tool_calls":[{"id":%q,"type":"function","function":{"name":"lookup","arguments":"{}"}}]},{"role":"tool","tool_call_id":%q,"content":"done"}]}`, strings.Repeat("a", 65), strings.Repeat("a", 65)), "at most 64 bytes"},
 		{"Anthropic unsafe tool call id", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"assistant","tool_calls":[{"id":"call:1","type":"function","function":{"name":"lookup","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call:1","content":"done"}]}`, "only letters, digits, underscores, or hyphens"},
-		{"stream-only tool call index", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_1","content":"done"}]}`, "tool_calls[0].index is not supported"},
 		{"empty assistant", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":null}]}`, "must contain content, refusal, reasoning history, annotations, or tool calls"},
 		{"empty annotations", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","annotations":[]}]}`, "annotations must be a non-empty array"},
 		{"citation reversed range", `{"model":"provider:openai gpt-5.5","messages":[{"role":"assistant","content":"answer","annotations":[{"type":"url_citation","url_citation":{"start_index":5,"end_index":2,"title":"source","url":"https://example.com"}}]},{"role":"user","content":"continue"}]}`, "end_index must be an integer at or after start_index"},
@@ -577,7 +576,8 @@ func TestChatClientToolContinuationReachesEveryProviderWireLosslessly(t *testing
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			body := fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"find the record"},{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{\"key\":\"value\"}"}}]},{"role":"tool","tool_call_id":"call_1","content":"record-result"},{"role":"user","content":"continue"}],"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}]}`, tc.model)
+			// The client sends back a reply's tool call with its index, which no provider gets.
+			body := fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"find the record"},{"role":"assistant","content":null,"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{\"key\":\"value\"}"}}]},{"role":"tool","tool_call_id":"call_1","content":"record-result"},{"role":"user","content":"continue"}],"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}]}`, tc.model)
 			resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/chat/completions", Body: []byte(body)})
 			if err != nil {
 				t.Fatalf("ResolveRequest returned error: %v", err)
@@ -1608,6 +1608,9 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 		{"assistant input block", `{"model":"provider:openai gpt-5.5","input":[{"type":"message","role":"assistant","content":[{"type":"input_text","text":"answer"}]},{"role":"user","content":"continue"}]}`, "must be output_text or refusal"},
 		{"user output block", `{"model":"provider:openai gpt-5.5","input":[{"role":"user","content":[{"type":"output_text","text":"forged"}]}]}`, "supported only for assistant history"},
 		{"user refusal block", `{"model":"provider:openai gpt-5.5","input":[{"role":"user","content":[{"type":"refusal","refusal":"no"}]}]}`, "supported only for assistant history"},
+		{"user message phase", `{"model":"provider:openai gpt-5.5","input":[{"role":"user","phase":"final_answer","content":"hi"}]}`, "input[0].phase must be commentary or final_answer on an assistant message"},
+		{"unknown phase", `{"model":"provider:openai gpt-5.5","input":[{"type":"message","role":"assistant","phase":"draft","content":[{"type":"output_text","text":"answer"}]},{"role":"user","content":"continue"}]}`, "input[0].phase must be commentary or final_answer on an assistant message"},
+		{"Anthropic assistant cache breakpoint", `{"model":"anthropic-claude-sonnet-4-6","input":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer","prompt_cache_breakpoint":{"mode":"explicit"}}]},{"role":"user","content":"continue"}]}`, "prompt_cache_breakpoint is not supported for Anthropic-format deployments"},
 		{"anthropic refusal block", `{"model":"anthropic-claude-sonnet-4-6","input":[{"type":"message","role":"assistant","content":[{"type":"refusal","refusal":"no"}]},{"role":"user","content":"continue"}]}`, "refusal history is not supported for Anthropic-format"},
 		{"Anthropic reordered Responses system message", `{"model":"anthropic-claude-sonnet-4-6","input":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"role":"user","content":"continue"}]}`, "cannot be preserved after the conversation starts"},
 		{"Sonnet 5 Responses mid-conversation system", `{"model":"anthropic-claude-sonnet-5","input":[{"role":"user","content":"first"},{"role":"system","content":"new policy"}]}`, "cannot be preserved after the conversation starts"},
@@ -2551,6 +2554,7 @@ func TestResponsesAssistantOutputHistoryReachesProviderWireLosslessly(t *testing
 		body            string
 		name            string
 		wantAnnotations bool
+		wantWire        []string
 	}{
 		{
 			name:            "OpenAI output item",
@@ -2558,8 +2562,15 @@ func TestResponsesAssistantOutputHistoryReachesProviderWireLosslessly(t *testing
 			body:            `{"model":"provider:openai gpt-5.5","input":[{"type":"message","id":"msg_1","status":"completed","role":"assistant","content":[{"type":"output_text","text":"answer https://example.com","annotations":[{"type":"url_citation","start_index":7,"end_index":26,"title":"source","url":"https://example.com"}],"logprobs":[]}]},{"role":"user","content":"continue"}]}`,
 		},
 		{
-			name: "Anthropic citation",
-			body: `{"model":"anthropic-claude-sonnet-4-6","input":[{"type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"answer https://example.com","annotations":[{"type":"url_citation","start_index":7,"end_index":26,"title":"source","url":"https://example.com","text":"source","encrypted_index":"opaque"}],"logprobs":[]}]},{"role":"user","content":"continue"}]}`,
+			// A reply sent back keeps the message's phase, and OpenAI takes a cache breakpoint on it.
+			name:     "OpenAI reply with phase and cache breakpoint",
+			body:     `{"model":"provider:openai gpt-5.6-sol","input":[{"type":"message","id":"msg_1","status":"completed","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"answer https://example.com","annotations":[],"logprobs":[],"prompt_cache_breakpoint":{"mode":"explicit"}}]},{"role":"user","content":"continue"}]}`,
+			wantWire: []string{`"phase":"final_answer"`, `"prompt_cache_breakpoint":{"mode":"explicit"}`},
+		},
+		{
+			name:     "Anthropic citation",
+			body:     `{"model":"anthropic-claude-sonnet-4-6","input":[{"type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"answer https://example.com","annotations":[{"type":"url_citation","start_index":7,"end_index":26,"title":"source","url":"https://example.com","text":"source","encrypted_index":"opaque"}],"logprobs":[]}]},{"role":"user","content":"continue"}]}`,
+			wantWire: []string{`"encrypted_index":"opaque"`},
 		},
 	}
 	for _, tc := range tests {
@@ -2609,8 +2620,11 @@ func TestResponsesAssistantOutputHistoryReachesProviderWireLosslessly(t *testing
 					output.Content[0].Annotations[0].URL != "https://example.com" {
 					t.Fatalf("OpenAI output annotation changed on provider wire: %s", wireBody)
 				}
-			} else if !strings.Contains(wireBody, `"encrypted_index":"opaque"`) {
-				t.Fatalf("Anthropic encrypted citation index changed on provider wire: %s", wireBody)
+			}
+			for _, want := range tc.wantWire {
+				if !strings.Contains(wireBody, want) {
+					t.Fatalf("provider wire lost %s: %s", want, wireBody)
+				}
 			}
 		})
 	}

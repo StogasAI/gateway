@@ -1155,7 +1155,7 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 }
 
 func validateResponsesMessageInput(state *State, item map[string]json.RawMessage, path string, validation *responsesInputValidation) error {
-	if err := rejectUnsupportedInputKeys(item, path, "type", "id", "status", "role", "content"); err != nil {
+	if err := rejectUnsupportedInputKeys(item, path, "type", "id", "status", "role", "phase", "content"); err != nil {
 		return err
 	}
 	if err := validateResponsesInputItemIdentity(item, path); err != nil {
@@ -1172,6 +1172,13 @@ func validateResponsesMessageInput(state *State, item map[string]json.RawMessage
 	case "assistant", "developer", "system", "user":
 	default:
 		return invalidRequest(path + ".role is not supported")
+	}
+	// OpenAI's newer models label each message of a reply as commentary or the final answer, and a
+	// client that sends the reply back keeps the label.
+	if raw, ok := item["phase"]; ok {
+		if phase, ok := rawStringValue(raw); !ok || role != "assistant" || phase != "commentary" && phase != "final_answer" {
+			return invalidRequest(path + ".phase must be commentary or final_answer on an assistant message")
+		}
 	}
 	content, ok := item["content"]
 	if !ok {
@@ -1225,7 +1232,7 @@ func validateResponsesMessageContent(state *State, raw json.RawMessage, path str
 			}
 			meaningful = meaningful || hasNonWhitespace(text)
 		case "output_text":
-			if err := rejectUnsupportedInputKeys(block, blockPath, "type", "text", "annotations", "logprobs", "cache_control"); err != nil {
+			if err := rejectUnsupportedInputKeys(block, blockPath, "type", "text", "annotations", "logprobs", "cache_control", "prompt_cache_breakpoint"); err != nil {
 				return false, err
 			}
 			if role != "assistant" {
