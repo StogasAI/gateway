@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -74,28 +75,25 @@ func TestLiveChutesE2EE(t *testing.T) {
 	}
 }
 
-// TestLiveChutesMeasurements fails when Chutes publishes a TDX record the gateway
-// skips or any SEV-SNP measurement, which the gateway cannot verify yet.
-func TestLiveChutesMeasurements(t *testing.T) {
-	if os.Getenv("STOGAS_LIVE_CHUTES_MEASUREMENTS") != "1" {
-		t.Skip("set STOGAS_LIVE_CHUTES_MEASUREMENTS=1 to read Chutes' public measurement lists")
+// TestChutesMeasurements fails when Chutes publishes a TDX record that the gateway skips, or any
+// SEV-SNP measurement, which the gateway cannot verify yet. It reads copies of Chutes' lists, so
+// that the caller reports a list that Chutes did not serve as an outage, not as a failure here.
+func TestChutesMeasurements(t *testing.T) {
+	folder := os.Getenv("STOGAS_CHUTES_MEASUREMENTS")
+	if folder == "" {
+		t.Skip("set STOGAS_CHUTES_MEASUREMENTS to a folder with copies of Chutes' tdx.json and snp.json measurement lists")
 	}
-	read := func(path string, target any) {
-		response, err := http.Get(productionAPIBaseURL + path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer response.Body.Close()
-		body, err := io.ReadAll(io.LimitReader(response.Body, maxMeasurementBody+1))
-		if err != nil || response.StatusCode != http.StatusOK || len(body) > maxMeasurementBody {
-			t.Fatalf("GET %s: HTTP %d, %d bytes, %v", path, response.StatusCode, len(body), err)
+	read := func(name string, target any) {
+		body, err := os.ReadFile(filepath.Join(folder, name))
+		if err != nil || len(body) > maxMeasurementBody {
+			t.Fatalf("read %s: %d bytes, %v", name, len(body), err)
 		}
 		if err := json.Unmarshal(body, target); err != nil {
-			t.Fatalf("decode %s: %v", path, err)
+			t.Fatalf("decode %s: %v", name, err)
 		}
 	}
 	var records []json.RawMessage
-	read(measurementsPath, &records)
+	read("tdx.json", &records)
 	for _, record := range records {
 		if _, ok := parseMeasurement(record); !ok {
 			t.Errorf("gateway skips TDX measurement %.400s", record)
@@ -105,7 +103,7 @@ func TestLiveChutesMeasurements(t *testing.T) {
 		t.Error(err)
 	}
 	var snp []json.RawMessage
-	read("/servers/snp/measurements", &snp)
+	read("snp.json", &snp)
 	if len(snp) > 0 {
 		t.Errorf("Chutes publishes %d SEV-SNP measurements; the gateway cannot verify SEV-SNP instances", len(snp))
 	}
