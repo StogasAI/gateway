@@ -3,6 +3,7 @@ package billing
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/maximhq/bifrost/transports/stogas/customerkey"
 	"github.com/maximhq/bifrost/transports/stogas/policy"
 	"slices"
@@ -130,6 +131,29 @@ func TestCredentialsOfALaterReleaseAreLeftOut(t *testing.T) {
 	snapshot := &KeyConfigSnapshot{Claims: claims, Config: &policy.Config{}, Credentials: credentials}
 	if available := snapshot.AvailableCredentials(); len(available) != 1 || !slices.Equal(available["openai"], []int{0}) {
 		t.Fatalf("available = %v", available)
+	}
+}
+
+// A key can select every credential that its organization may hold when an operator raises the
+// limit to its maximum, and the managed choice, as the database lets it save.
+func TestKeySelectsEveryCredentialThatItsOrganizationMayHold(t *testing.T) {
+	claims := &APIKeyClaims{OrganizationID: "org"}
+	stored := func(i int) CredentialSelection {
+		id := fmt.Sprintf("01900000-0000-7000-8000-%012x", i)
+		return CredentialSelection{Mode: "stored", ID: id, Credential: &CachedCredential{
+			ID: id, OrganizationID: "org", Provider: "chutes", Kind: "stored", Enabled: true, EncryptedSecret: "ciphertext",
+			Policy: credentialPolicyRecord{policySourceRecord: policySourceRecord{PolicyVersion: PolicyVersion{Scope: policy.CredentialScope, ID: id, Revision: 1}, Source: json.RawMessage(`null`)}, Enabled: true},
+		}}
+	}
+	selections := []CredentialSelection{{Mode: "managed"}}
+	for i := 1; i <= 10_000; i++ {
+		selections = append(selections, stored(i))
+	}
+	if err := validateCredentials(claims, map[string][]CredentialSelection{"chutes": selections}); err != nil {
+		t.Fatalf("refused %d selections: %v", len(selections), err)
+	}
+	if validateCredentials(claims, map[string][]CredentialSelection{"chutes": append(selections, stored(10_001))}) == nil {
+		t.Fatal("accepted more selections than an organization may hold")
 	}
 }
 

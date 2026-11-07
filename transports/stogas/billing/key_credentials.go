@@ -362,6 +362,10 @@ func knownCredentials(credentials map[string][]CredentialSelection) map[string][
 	return credentials
 }
 
+// A key may select every credential that its organization may hold, at most 10,000 when an
+// operator raises the limit, and the managed choice, as the database allows.
+const maxCredentialSelections = 10_001
+
 func validateCredentials(claims *APIKeyClaims, credentials map[string][]CredentialSelection) error {
 	if claims == nil || len(credentials) > len(credentialProviders) {
 		return errors.New("invalid credential snapshot")
@@ -371,7 +375,7 @@ func validateCredentials(claims *APIKeyClaims, credentials map[string][]Credenti
 		if !known {
 			return errors.New("invalid credential provider")
 		}
-		if len(selections) > 1001 {
+		if len(selections) > maxCredentialSelections {
 			return errors.New("invalid credential selection count")
 		}
 		seen := make(map[string]bool, len(selections))
