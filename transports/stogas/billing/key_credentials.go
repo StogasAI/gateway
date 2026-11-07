@@ -416,10 +416,9 @@ func validateCredentials(claims *APIKeyClaims, credentials map[string][]Credenti
 	return nil
 }
 
+// restoreCredentialPolicySources puts each credential's policy source in its record. The
+// database bounds the sources with the rest of the key's snapshot, whose weight it caps.
 func restoreCredentialPolicySources(credentials map[string][]CredentialSelection, pins policySourcePins, sources []json.RawMessage) error {
-	if len(sources) > 1000 {
-		return ErrGatewayUnavailable
-	}
 	for _, selections := range credentials {
 		for _, selection := range selections {
 			if selection.Credential == nil {

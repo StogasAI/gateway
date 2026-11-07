@@ -231,6 +231,24 @@ func TestCredentialSourcePoolRestoresOnlyValidReferences(t *testing.T) {
 	}
 }
 
+// An organization may hold 10,000 credentials (ORGANIZATION_LIMITS.byokKeys), each with its own
+// policy, and one key may list them all.
+func TestCredentialSourcePoolRestoresEverySourceOfAFullOrganization(t *testing.T) {
+	const count = 10_000
+	sources := make([]json.RawMessage, count)
+	selections := make([]CredentialSelection, count)
+	for index := range sources {
+		sources[index] = json.RawMessage(fmt.Sprintf(`{"limits":{"requests":{"perMinute":%d}}}`, index+1))
+		selections[index] = CredentialSelection{Credential: &CachedCredential{Policy: credentialPolicyRecord{SourceIndex: &index}}}
+	}
+	if err := restoreCredentialPolicySources(map[string][]CredentialSelection{"openai": selections}, policySourcePins{}, sources); err != nil {
+		t.Fatal(err)
+	}
+	if last := selections[count-1].Credential.Policy.Source; string(last) != string(sources[count-1]) {
+		t.Fatalf("last credential policy = %s", last)
+	}
+}
+
 func TestDifferentCredentialIdentitiesShareOnePolicyDocument(t *testing.T) {
 	var cache keyConfigCache
 	defer cache.close()
