@@ -71,17 +71,9 @@ func InspectSource(raw []byte) (*Inspection, error) {
 	if err != nil {
 		return nil, err
 	}
-	source, err := document.compile(nil, &celCompiler{prepare: true})
+	source, err := compileForSave(document, nil)
 	if err != nil {
 		return nil, err
-	}
-	if err := validateInspectionPlugins(source.Config.Plugins); err != nil {
-		return nil, err
-	}
-	for _, rule := range source.Rules {
-		if err := validateInspectionPlugins(rule.Value.Config.Plugins); err != nil {
-			return nil, err
-		}
 	}
 	if !source.Config.Input.applies() {
 		source.Config.Input = nil
@@ -93,6 +85,24 @@ func InspectSource(raw []byte) (*Inspection, error) {
 		}
 	}
 	return &Inspection{Compiled: source.Config, CompilerVersion: CompilerVersion, Digest: source.Digest, Conditions: conditions}, nil
+}
+
+// compileForSave compiles a source with every check that a save runs: CEL type
+// checks, which an unchanged stored source skips, and its redaction patterns.
+func compileForSave(document *SourceDocument, plugins map[[32]byte]*Plugins) (*Source, error) {
+	source, err := document.compile(plugins, &celCompiler{prepare: true})
+	if err != nil {
+		return nil, err
+	}
+	if err := validateInspectionPlugins(source.Config.Plugins); err != nil {
+		return nil, err
+	}
+	for _, rule := range source.Rules {
+		if err := validateInspectionPlugins(rule.Value.Config.Plugins); err != nil {
+			return nil, err
+		}
+	}
+	return source, nil
 }
 
 // Inspector compiles one bounded source at a time and then composes the result.
@@ -141,7 +151,12 @@ func (v *Inspector) Add(entry InspectionSource) error {
 		if v.ruleBytes > MaxCompiledBytes {
 			return configError("combined policy exceeds the size limit")
 		}
-		source, err = document.compile(v.plugins, &celCompiler{})
+		// The edited source gets a save's checks, so the preview fails where saving it would.
+		if v.edit.covers(entry) {
+			source, err = compileForSave(document, v.plugins)
+		} else {
+			source, err = document.compile(v.plugins, &celCompiler{})
+		}
 		if err != nil {
 			return err
 		}
@@ -748,9 +763,10 @@ func (e *InspectionEdit) covers(entry InspectionSource) bool {
 // add or change them. A move passes no previous policy, so the new parents
 // check every section.
 func inspectDelegation(entries []InspectionSource, documents []*SourceDocument, sources []ScopedSource, edit *InspectionEdit) (map[string]any, []InspectionNote, error) {
-	ids := make(map[Scope]string, len(entries))
+	// A key's chain can hold several roles, and each rule's exceptions name one.
+	ids := make(map[Scope][]string, len(entries))
 	for _, entry := range entries {
-		ids[entry.Scope] = entry.ID
+		ids[entry.Scope] = append(ids[entry.Scope], entry.ID)
 	}
 	permissions := map[Scope]Permission{}
 	for _, scope := range []Scope{FolderScope, GrantScope, RoleScope, MemberScope, CredentialScope, KeyScope} {
@@ -782,7 +798,12 @@ func inspectDelegation(entries []InspectionSource, documents []*SourceDocument, 
 			}
 		}
 		for target, rule := range sources[i].Value.Delegation.saved() {
-			permissions[target] &= rule.Permission(ids[target])
+			if len(ids[target]) == 0 {
+				permissions[target] &= rule.Permission("")
+			}
+			for _, id := range ids[target] {
+				permissions[target] &= rule.Permission(id)
+			}
 		}
 	}
 	result := map[string]any{}

@@ -185,3 +185,24 @@ func TestPoliciesKeepSectionsTheirParentsNoLongerPermit(t *testing.T) {
 		}
 	}
 }
+
+func TestEffectiveDelegationReadsEveryRoleInTheChain(t *testing.T) {
+	const denied = "019a0100-0000-7000-8000-000000000001"
+	const allowed = "019a0100-0000-7000-8000-000000000002"
+	parent, _ := json.Marshal(map[string]any{"delegation": map[string]any{"roles": map[string]any{"default": true, "exceptions": map[string]any{denied: false}}}})
+	for _, roles := range [][]string{{denied, allowed}, {allowed, denied}} {
+		entries := []InspectionSource{{Scope: OrganizationScope, Config: parent}}
+		for _, id := range roles {
+			entries = append(entries, InspectionSource{Scope: RoleScope, ID: id, Config: json.RawMessage(`{}`)})
+		}
+		entries = append(entries, InspectionSource{Scope: KeyScope, Config: json.RawMessage(`{}`)})
+		inspection, err := InspectSources(entries, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		delegation, _ := inspection.Effective["delegation"].(map[string]any)
+		if _, restricted := delegation["roles"]; !restricted {
+			t.Errorf("roles %v: effective delegation %v leaves out the denied role", roles, delegation)
+		}
+	}
+}

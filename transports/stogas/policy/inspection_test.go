@@ -220,6 +220,25 @@ func TestInspectionUsesExecutionPatternValidationAndTypedEditErrors(t *testing.T
 	}
 }
 
+func TestInspectionChecksTheEditedPolicyAsASaveDoes(t *testing.T) {
+	edit := &InspectionEdit{Scope: KeyScope, ID: "key", Previous: json.RawMessage(`{}`)}
+	for name, config := range map[string]string{
+		"filter that is no condition": `{"routing":{"filter":"provider.id"}}`,
+		"unsafe redaction pattern":    `{"plugins":{"redaction":{"customPattern":"(a)\\1"}}}`,
+	} {
+		if _, err := InspectSource(json.RawMessage(config)); err == nil {
+			t.Fatalf("%s: a save accepts it", name)
+		}
+		entries := []InspectionSource{
+			{Scope: OrganizationScope, Config: json.RawMessage(`{}`)},
+			{Scope: KeyScope, ID: "key", Config: json.RawMessage(config)},
+		}
+		if _, err := InspectSources(entries, edit); err == nil {
+			t.Errorf("%s: the preview accepts what a save refuses", name)
+		}
+	}
+}
+
 func TestInspectionSharesEqualPluginSectionsAcrossDifferentSources(t *testing.T) {
 	inspector := NewInspector(nil, false)
 	for _, entry := range []InspectionSource{
