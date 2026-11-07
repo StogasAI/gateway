@@ -92,11 +92,16 @@ type DataHandling struct {
 	StorageLocation    string `json:"storageLocation"`
 	EndToEndEncrypted  bool   `json:"endToEndEncrypted"`
 	RetentionDays      *int   `json:"retentionDays"`
-	TrainingUse        bool   `json:"trainingUse"`
-	ZeroDataRetention  bool   `json:"zeroDataRetention"`
-	TEE                bool   `json:"tee"`
-	TEEVerified        bool   `json:"teeVerified"`
+	// TrainingUse is nil when the provider does not say whether it trains on the data.
+	TrainingUse       *bool `json:"trainingUse"`
+	ZeroDataRetention bool  `json:"zeroDataRetention"`
+	TEE               bool  `json:"tee"`
+	TEEVerified       bool  `json:"teeVerified"`
 }
+
+// HostingUnknown is the hosting of a deployment whose provider resells another operator's service
+// and does not say whose.
+const HostingUnknown = "unknown"
 
 type Upstream struct {
 	Model          string

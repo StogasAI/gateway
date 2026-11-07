@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/maximhq/bifrost/transports/stogas/money"
 	"math/big"
 	"sort"
 	"strings"
@@ -15,6 +14,7 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 	"github.com/maximhq/bifrost/transports/stogas/catalog/catalogtest"
+	"github.com/maximhq/bifrost/transports/stogas/money"
 	"github.com/maximhq/bifrost/transports/stogas/policy"
 )
 
@@ -59,8 +59,8 @@ func TestChutesChatWireUsesVerifiedOpenAICompatibleFields(t *testing.T) {
 	if request.ChatRequest.Provider != catalog.ProviderChutes {
 		t.Fatalf("provider = %q, want Chutes", request.ChatRequest.Provider)
 	}
-	if request.ChatRequest.Params.MaxCompletionTokens != nil {
-		t.Fatalf("max_completion_tokens must not reach Chutes wire: %#v", request.ChatRequest.Params)
+	if limit := request.ChatRequest.Params.MaxCompletionTokens; limit == nil || *limit != 7 {
+		t.Fatalf("max_completion_tokens = %v, want the resolved limit 7", limit)
 	}
 
 	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
@@ -76,7 +76,7 @@ func TestChutesChatWireUsesVerifiedOpenAICompatibleFields(t *testing.T) {
 	if err := sonic.Unmarshal(body["model"], &model); err != nil || model != "Qwen/Qwen3.6-27B-TEE" {
 		t.Fatalf("model = %s, want the selected Chutes deployment", body["model"])
 	}
-	assertRawNumber(t, body, "max_tokens", 7)
+	assertRawNumber(t, body, "max_completion_tokens", 7)
 	assertRawNumber(t, body, "temperature", 3)
 	assertRawNumber(t, body, "top_p", 1.1)
 	assertRawNumber(t, body, "repetition_penalty", 0)
@@ -88,9 +88,10 @@ func TestChutesChatWireUsesVerifiedOpenAICompatibleFields(t *testing.T) {
 	if err := sonic.Unmarshal(body["stop"], &stops); err != nil || len(stops) != 1 || stops[0] != "DONE" {
 		t.Fatalf("stop = %s, want [DONE]", body["stop"])
 	}
-	for _, name := range []string{"max_completion_tokens", "metadata", "provider", "store", "extra_params"} {
+	// max_tokens leaves reasoning unbounded on some Standard chutes, so only max_completion_tokens limits output.
+	for _, name := range []string{"max_tokens", "metadata", "provider", "store", "extra_params"} {
 		if _, exists := body[name]; exists {
-			t.Fatalf("Chutes wire contains private or gateway-only field %q: %s", name, encoded)
+			t.Fatalf("Chutes wire contains field %q that it must not send: %s", name, encoded)
 		}
 	}
 	for _, name := range []string{"response_format", "tools", "tool_choice"} {
@@ -540,7 +541,7 @@ func TestEveryChutesDeploymentHoldCoversMaximumReportedUsage(t *testing.T) {
 			{name: "explicit limit", field: `,"max_tokens":32`},
 		} {
 			t.Run(deployment.ID+"/"+limit.name, func(t *testing.T) {
-				state := resolveChutesState(t, fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"hold coverage"}]%s}`, deployment.ModelID, limit.field))
+				state := resolveChutesState(t, fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"hold coverage"}]%s}`, "deployment:"+deployment.ID, limit.field))
 				if state.Resolution.Deployment.ID != deployment.ID {
 					t.Fatalf("resolved deployment = %q, want %q", state.Resolution.Deployment.ID, deployment.ID)
 				}
@@ -576,7 +577,7 @@ func TestEveryChutesDeploymentPricesCompleteUsageExactly(t *testing.T) {
 	catalogtest.UseFallback(t)
 	for _, deployment := range currentChutesDeployments(t) {
 		t.Run(deployment.ID, func(t *testing.T) {
-			state := resolveChutesState(t, fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"pricing"}]}`, deployment.ModelID))
+			state := resolveChutesState(t, fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"pricing"}]}`, "deployment:"+deployment.ID))
 			if state.Resolution.Deployment.ID != deployment.ID {
 				t.Fatalf("resolved deployment = %q, want %q", state.Resolution.Deployment.ID, deployment.ID)
 			}
@@ -616,10 +617,14 @@ func TestEveryChutesDeploymentPricesCompleteUsageExactly(t *testing.T) {
 				t.Fatalf("upstream cost = %s, want exact meter sum %s", state.UpstreamCostUSD, wantTotal)
 			}
 
-			_, inputRate, _ := billing.PricingRate(pricing, billing.MeterInputTokens, billing.TokenRateForPrompt(state.Signals.PromptTokens()))
-			_, cachedRate, _ := billing.PricingRate(pricing, billing.MeterCachedInputTokens, billing.TokenRateForPrompt(state.Signals.PromptTokens()))
-			if new(money.USD).MulRatioCeil(cachedRate, big.NewInt(10), 1).Cmp(inputRate) != 0 {
-				t.Fatalf("cached input rate %s is not 10%% of input rate %s", cachedRate, inputRate)
+			// Chutes prices cached input at a tenth of input on its TEE chutes. A Standard chute
+			// takes its operator's rates, which follow no such rule.
+			if _, encrypted := deployment.Routes["chutes-chat-completions"]; encrypted {
+				_, inputRate, _ := billing.PricingRate(pricing, billing.MeterInputTokens, billing.TokenRateForPrompt(state.Signals.PromptTokens()))
+				_, cachedRate, _ := billing.PricingRate(pricing, billing.MeterCachedInputTokens, billing.TokenRateForPrompt(state.Signals.PromptTokens()))
+				if new(money.USD).MulRatioCeil(cachedRate, big.NewInt(10), 1).Cmp(inputRate) != 0 {
+					t.Fatalf("cached input rate %s is not 10%% of input rate %s", cachedRate, inputRate)
+				}
 			}
 		})
 	}
@@ -629,7 +634,7 @@ func TestChutesMissingUsageProducesNoCharge(t *testing.T) {
 	catalogtest.UseFallback(t)
 	for _, deployment := range currentChutesDeployments(t) {
 		t.Run(deployment.ID, func(t *testing.T) {
-			state := resolveChutesState(t, fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"missing usage"}]}`, deployment.ModelID))
+			state := resolveChutesState(t, fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"missing usage"}]}`, "deployment:"+deployment.ID))
 			if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
 				t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 			}
@@ -664,7 +669,6 @@ func TestChutesTopLevelReasoningUsageIsAccounted(t *testing.T) {
 
 type chutesCatalogDeployment struct {
 	ID      string
-	ModelID string `json:"modelId"`
 	Pricing billing.Pricing
 	Routes  map[string]struct {
 		Pricing billing.Pricing `json:"pricing"`
@@ -683,13 +687,14 @@ func currentChutesDeployments(t *testing.T) []chutesCatalogDeployment {
 		if err := sonic.Unmarshal(raw, &deployment); err != nil {
 			t.Fatalf("decode deployment %s: %v", id, err)
 		}
-		route, ok := deployment.Routes["chutes-chat-completions"]
-		if !ok {
-			continue
+		// A Chutes deployment serves on exactly one route: end to end encrypted or Standard.
+		for _, routeID := range []string{"chutes-chat-completions", "chutes-standard-chat-completions"} {
+			if route, ok := deployment.Routes[routeID]; ok {
+				deployment.ID = id
+				deployment.Pricing = route.Pricing
+				result = append(result, deployment)
+			}
 		}
-		deployment.ID = id
-		deployment.Pricing = route.Pricing
-		result = append(result, deployment)
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
 	if len(result) == 0 {

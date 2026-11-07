@@ -263,7 +263,8 @@ func (r *providerRun) failed(failure *schemas.BifrostError, attempt *schemas.Bif
 	defer attempt.Cancel()
 	r.client.responseWait.endOutput()
 	count := r.state.ProviderAttemptCount()
-	if count > r.attempts && chutese2ee.NotSent(attempt) {
+	// A standard Chutes call records no dispatch, so its transport error alone shows that nothing was sent.
+	if count > r.attempts && (chutese2ee.NotSent(attempt) || stogas.IsStandardCall(attempt) && requestNotSent(failure)) {
 		r.state.MarkProviderNotSent()
 		count--
 	}
@@ -495,14 +496,9 @@ func startProviderCall[T any](r *providerRun, wait time.Duration, call providerC
 	r.attempts = r.state.ProviderAttemptCount()
 	attempt := schemas.NewBifrostContext(r.pair.ctx, schemas.NoDeadline)
 	if resolution := r.pair.Resolution; resolution.Provider == catalog.ProviderChutes {
-		// The call goes to the chute of the deployment that the request was routed to, even once
-		// another catalog state is in effect.
-		upstream := resolution.Deployment.Upstream
-		target := chutese2ee.ModelTarget{ChuteID: upstream.ChuteID}
-		if upstream.GPUCount != nil {
-			target.GPUCount = *upstream.GPUCount
-		}
-		chutese2ee.SetInvocation(attempt, target, 1+resolution.Retries()-r.retries, r.waiting)
+		// The call goes to the deployment that the request was routed to, even once another catalog
+		// state is in effect.
+		stogas.SetChutesCall(attempt, resolution, 1+resolution.Retries()-r.retries, r.waiting)
 	}
 	request, state, idle := r.pair.request, r.state, r.pair.Resolution.RequestTimeouts().OutputIdle()
 	server, resolution, provider, authorization := r.server, r.pair.Resolution, r.pair.Resolution.Provider, r.pair.Authorization

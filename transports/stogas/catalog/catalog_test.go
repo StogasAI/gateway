@@ -204,6 +204,7 @@ func TestSnapshotValidationRejectsContradictoryZeroDataRetention(t *testing.T) {
 		{name: "positive retention", apply: func(handling map[string]any) { handling["retentionDays"] = 1 }},
 		{name: "unknown retention", apply: func(handling map[string]any) { handling["retentionDays"] = nil }},
 		{name: "training use", apply: func(handling map[string]any) { handling["trainingUse"] = true }},
+		{name: "unknown training use", apply: func(handling map[string]any) { handling["trainingUse"] = nil }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var whole map[string]any
@@ -220,6 +221,102 @@ func TestSnapshotValidationRejectsContradictoryZeroDataRetention(t *testing.T) {
 			if _, err := snapshotFromCatalogBytes(data); err == nil ||
 				!strings.Contains(err.Error(), "contradictory zero data retention") {
 				t.Fatalf("contradictory zero-retention artifact was accepted: %v", err)
+			}
+		})
+	}
+}
+
+func TestSnapshotLoadsUnknownTrainingUseAsUnknown(t *testing.T) {
+	var whole map[string]any
+	if err := json.Unmarshal(testCatalogJSON, &whole); err != nil {
+		t.Fatal(err)
+	}
+	route := whole["graph"].(map[string]any)["deployments"].(map[string]any)["chutes-qwen3.6-27b"].(map[string]any)["routes"].(map[string]any)["chutes-chat-completions"].(map[string]any)
+	handling := route["dataHandling"].(map[string]any)
+	handling["zeroDataRetention"] = false
+	handling["trainingUse"] = nil
+	data, err := json.Marshal(whole)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, err := snapshotFromCatalogBytes(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployment, ok := snap.deploymentFromCompiledAt("chutes-qwen3.6-27b", snap.graph.Routes["chutes-chat-completions"], time.Now())
+	if !ok || deployment.DataHandling.TrainingUse != nil {
+		t.Fatalf("unknown training use loaded as %#v", deployment.DataHandling.TrainingUse)
+	}
+}
+
+func TestSnapshotValidationRejectsEndToEndEncryptionWithoutTEE(t *testing.T) {
+	var whole map[string]any
+	if err := json.Unmarshal(testCatalogJSON, &whole); err != nil {
+		t.Fatal(err)
+	}
+	route := whole["graph"].(map[string]any)["deployments"].(map[string]any)["chutes-qwen3.6-27b"].(map[string]any)["routes"].(map[string]any)["chutes-chat-completions"].(map[string]any)
+	route["dataHandling"].(map[string]any)["tee"] = false
+	data, err := json.Marshal(whole)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := snapshotFromCatalogBytes(data); err == nil || !strings.Contains(err.Error(), "end to end encrypted without a TEE") {
+		t.Fatalf("encryption without a TEE was accepted: %v", err)
+	}
+}
+
+func TestSnapshotReadsV11ReleasesAsV12(t *testing.T) {
+	release := testCatalogRelease(t)
+	for _, schema := range []struct{ root, part string }{
+		{catalogSchemaV11, catalogPartSchemaV11},
+		{catalogSchema, catalogPartSchema},
+	} {
+		release.root["schema"] = schema.root
+		for _, part := range release.parts {
+			part["schema"] = schema.part
+		}
+		root, parts := release.files(t)
+		if _, err := snapshotFromFiles(root, parts, Identity{}, time.Time{}); err != nil {
+			t.Fatalf("%s release was rejected: %v", schema.root, err)
+		}
+	}
+	release.root["schema"] = "stogas.catalog.v13"
+	root, parts := release.files(t)
+	if _, err := snapshotFromFiles(root, parts, Identity{}, time.Time{}); err == nil {
+		t.Fatal("unknown catalog schema was accepted")
+	}
+}
+
+// A Chutes deployment selects an instance by chute and GPU count on an end-to-end encrypted route,
+// and names its operator on a standard route.
+func TestChutesSelectorMatchesItsRoute(t *testing.T) {
+	eight, nine, one := 8, 9, 1
+	encrypted := func(hosting string, gpus *int) *compiledDeployment {
+		return &compiledDeployment{Upstream: compiledUpstream{ChuteID: "chute", GPUCount: gpus, Hosting: hosting},
+			Routes: map[string]compiledDeploymentRoute{"chutes-chat-completions": {DataHandling: DataHandling{EndToEndEncrypted: true, TEE: true}}}}
+	}
+	standard := func(hosting string, gpus *int) *compiledDeployment {
+		return &compiledDeployment{Upstream: compiledUpstream{ChuteID: "chute", GPUCount: gpus, Hosting: hosting},
+			Routes: map[string]compiledDeploymentRoute{"chutes-standard-chat-completions": {}}}
+	}
+	for _, test := range []struct {
+		name       string
+		deployment *compiledDeployment
+		valid      bool
+	}{
+		{name: "encrypted with GPUs", deployment: encrypted("", &eight), valid: true},
+		{name: "encrypted with one GPU", deployment: encrypted("", &one), valid: true},
+		{name: "encrypted with too many GPUs", deployment: encrypted("", &nine)},
+		{name: "encrypted without GPUs", deployment: encrypted("", nil)},
+		{name: "encrypted naming an operator", deployment: encrypted(HostingUnknown, &eight)},
+		{name: "standard naming an operator", deployment: standard(HostingUnknown, nil), valid: true},
+		{name: "standard without an operator", deployment: standard("", nil)},
+		{name: "standard with GPUs", deployment: standard(HostingUnknown, &eight)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateChutesUpstreamSelector("deployment", test.deployment)
+			if (err == nil) != test.valid {
+				t.Fatalf("validateChutesUpstreamSelector() = %v, want valid %v", err, test.valid)
 			}
 		})
 	}

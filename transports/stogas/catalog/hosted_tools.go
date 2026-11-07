@@ -103,7 +103,9 @@ func (d Deployment) EffectiveDataHandling(tools []HostedTool) DataHandling {
 				handling.RetentionDays = &days
 			}
 		}
-		handling.TrainingUse = handling.TrainingUse || isTrue(effect.TrainingUse)
+		if isTrue(effect.TrainingUse) {
+			handling.TrainingUse = schemas.Ptr(true)
+		}
 		handling.ZeroDataRetention = handling.ZeroDataRetention && !isFalse(effect.ZeroDataRetention)
 		handling.EndToEndEncrypted = handling.EndToEndEncrypted && !isFalse(effect.EndToEndEncrypted)
 		handling.TEE = handling.TEE && !isFalse(effect.TEE)

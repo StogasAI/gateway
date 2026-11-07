@@ -79,7 +79,7 @@ func TestEffectiveDataHandlingOnlyWorsens(t *testing.T) {
 		t.Fatalf("web fetch: %+v", fetch)
 	}
 	mcp := deployment.EffectiveDataHandling([]HostedTool{HostedToolMCP})
-	if mcp.ProcessingLocation != "US" || !mcp.TrainingUse || mcp.EndToEndEncrypted || mcp.TEE || mcp.TEEVerified || !mcp.ZeroDataRetention {
+	if mcp.ProcessingLocation != "US" || mcp.TrainingUse == nil || !*mcp.TrainingUse || mcp.EndToEndEncrypted || mcp.TEE || mcp.TEEVerified || !mcp.ZeroDataRetention {
 		t.Fatalf("mcp: %+v", mcp)
 	}
 	if *deployment.DataHandling.RetentionDays != 0 {

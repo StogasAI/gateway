@@ -22,8 +22,11 @@ import (
 )
 
 const (
-	catalogSchema     = "stogas.catalog.v11"
-	catalogPartSchema = "stogas.catalog.part.v11"
+	catalogSchema     = "stogas.catalog.v12"
+	catalogPartSchema = "stogas.catalog.part.v12"
+	// A v11 release differs from v12 only in its schema strings, so the gateway reads it as v12.
+	catalogSchemaV11     = "stogas.catalog.v11"
+	catalogPartSchemaV11 = "stogas.catalog.part.v11"
 	// Evidence approves a release by the digest of its root, and the root names each part by
 	// digest and size. The build refuses a larger root, part or catalog, so the gateway refuses
 	// one before it downloads it.
@@ -58,6 +61,10 @@ var compiledRouteContracts = map[string]struct {
 		interfaces: []string{"chat_completions", "responses"},
 	},
 	"chutes-chat-completions": {
+		providerID: "chutes",
+		interfaces: []string{"chat_completions"},
+	},
+	"chutes-standard-chat-completions": {
 		providerID: "chutes",
 		interfaces: []string{"chat_completions"},
 	},
@@ -160,6 +167,15 @@ type PartFile struct {
 	StogasUnsupported bool    `json:"stogasUnsupported"`
 }
 
+// readableCatalogSchema and readableCatalogPartSchema say which schema strings the gateway reads.
+func readableCatalogSchema(schema string) bool {
+	return schema == catalogSchema || schema == catalogSchemaV11
+}
+
+func readableCatalogPartSchema(schema string) bool {
+	return schema == catalogPartSchema || schema == catalogPartSchemaV11
+}
+
 // partFiles reads the parts that a root names, after checking the root's size and schema, each
 // part's name, size and date, and the size of the root with every part.
 func partFiles(root []byte) ([]PartFile, error) {
@@ -173,7 +189,7 @@ func partFiles(root []byte) ([]PartFile, error) {
 	if err := json.Unmarshal(root, &listing); err != nil {
 		return nil, fmt.Errorf("decode catalog root: %w", err)
 	}
-	if listing.Schema != catalogSchema {
+	if !readableCatalogSchema(listing.Schema) {
 		return nil, fmt.Errorf("catalog schema %q is unsupported", listing.Schema)
 	}
 	seen := make(map[string]bool, len(listing.Parts))
@@ -320,7 +336,7 @@ func assemble(rootData []byte, files []PartFile, parts map[string][]byte, at tim
 		if err := decodeStrict(data, &part, prices); err != nil {
 			return compiledCatalog{}, fmt.Errorf("decode catalog part %d: %w", index, err)
 		}
-		if part.Schema != catalogPartSchema {
+		if !readableCatalogPartSchema(part.Schema) {
 			return compiledCatalog{}, fmt.Errorf("catalog part schema %q is unsupported", part.Schema)
 		}
 		// Each record in the part, and each of its changes, belongs to a summary that places it
@@ -984,9 +1000,6 @@ func validateCompiledDeployment(graph compiledGraph, selectors selectorRegistry,
 	if err != nil {
 		return err
 	}
-	if err := validateDeploymentUpstreamSelector(deploymentID, providerID, deployment); err != nil {
-		return err
-	}
 	for _, routeID := range sortedRouteIDs(deployment) {
 		route := deployment.Routes[routeID]
 		owner := "deployment " + deploymentID + " route " + routeID
@@ -1008,6 +1021,10 @@ func validateCompiledDeployment(graph compiledGraph, selectors selectorRegistry,
 		if err := validateReasoningEfforts(owner, route.ReasoningEfforts); err != nil {
 			return err
 		}
+	}
+	// The provider's selector rules build on the route facts checked above.
+	if err := validateDeploymentUpstreamSelector(deploymentID, providerID, deployment); err != nil {
+		return err
 	}
 	if err := validateReasoningConfiguration(deploymentID, providerID, model.AuthorID, deployment, graph); err != nil {
 		return err
@@ -1063,18 +1080,39 @@ func validateDeploymentUpstreamSelector(deploymentID, providerID string, deploym
 			return fmt.Errorf("deployment %s has an invalid Anthropic upstream selector", deploymentID)
 		}
 	case "chutes":
-		if selector.ChuteID == "" ||
-			selector.GPUCount == nil || *selector.GPUCount < 1 || *selector.GPUCount > 8 || selector.InferenceGeo != "" ||
-			selector.ReasoningMode != "" ||
-			selector.Hosting != "" || selector.DeploymentType != "" || selector.ModelFormat != "" || selector.ModelVersion != "" {
-			return fmt.Errorf("deployment %s has an invalid Chutes upstream selector", deploymentID)
-		}
+		return validateChutesUpstreamSelector(deploymentID, deployment)
 	case "azure":
 		return validateAzureUpstreamSelector(deploymentID, deployment)
 	case "aws", "google-cloud":
 		return validateCloudClaudeSelector(deploymentID, providerID, deployment)
 	default:
 		return fmt.Errorf("deployment %s uses unsupported provider %s", deploymentID, providerID)
+	}
+	return nil
+}
+
+// validateChutesUpstreamSelector checks a Chutes deployment's selector on each route. An end-to-end
+// encrypted route selects an instance by its chute and GPU count. A standard route names the
+// operator that runs the model, which a TEE instance does not have.
+func validateChutesUpstreamSelector(deploymentID string, deployment *compiledDeployment) error {
+	selector := deployment.Upstream
+	if selector.ChuteID == "" || selector.InferenceGeo != "" || selector.ReasoningMode != "" ||
+		selector.DeploymentType != "" || selector.ModelFormat != "" || selector.ModelVersion != "" {
+		return fmt.Errorf("deployment %s has an invalid Chutes upstream selector", deploymentID)
+	}
+	gpuCounted := selector.GPUCount != nil && *selector.GPUCount >= 1 && *selector.GPUCount <= 8
+	for routeID, route := range deployment.Routes {
+		// The gateway picks the encrypted path from endToEndEncrypted alone, so a Chutes route
+		// that claims a TEE must be encrypted end to end, and a Standard route names no operator.
+		valid := route.DataHandling.TEE == route.DataHandling.EndToEndEncrypted
+		if route.DataHandling.EndToEndEncrypted {
+			valid = valid && gpuCounted && selector.Hosting == ""
+		} else {
+			valid = valid && selector.GPUCount == nil && selector.Hosting == HostingUnknown
+		}
+		if !valid {
+			return fmt.Errorf("deployment %s has an invalid Chutes upstream selector on route %s", deploymentID, routeID)
+		}
 	}
 	return nil
 }
@@ -1184,8 +1222,12 @@ func validateDeploymentDataHandling(owner string, handling DataHandling) error {
 	if handling.TEEVerified && !handling.TEE {
 		return fmt.Errorf("%s verifies a TEE that is not enabled", owner)
 	}
+	if handling.EndToEndEncrypted && !handling.TEE {
+		return fmt.Errorf("%s is end to end encrypted without a TEE", owner)
+	}
 	if handling.ZeroDataRetention &&
-		(handling.StorageLocation != "none" || handling.RetentionDays == nil || *handling.RetentionDays != 0 || handling.TrainingUse) {
+		(handling.StorageLocation != "none" || handling.RetentionDays == nil || *handling.RetentionDays != 0 ||
+			handling.TrainingUse == nil || *handling.TrainingUse) {
 		return fmt.Errorf("%s has contradictory zero data retention", owner)
 	}
 	return nil

@@ -254,12 +254,9 @@ func ResponsesRequestSettings(params *schemas.ResponsesParameters) RequestSettin
 }
 
 // addExtraSettings reads the settings that Bifrost keeps as extra parameters:
-// top_k and task_budget on Responses, and the output limit, reasoning and
-// repetition penalty that the gateway sends to Chutes in its own fields.
+// top_k and task_budget on Responses, and the reasoning and repetition penalty
+// that the gateway sends to Chutes in its own fields.
 func addExtraSettings(settings *RequestSettings, extra map[string]any) {
-	if limit := extraInt(extra["max_tokens"]); limit != nil {
-		settings.MaxOutputTokens = limit
-	}
 	if effort, ok := extra["reasoning_effort"].(string); ok {
 		settings.ReasoningEffort = settingText(effort)
 	}

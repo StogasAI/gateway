@@ -104,8 +104,8 @@ func TestConfidentialRuntimeUsesTheSupportedProviderTransportSecurity(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if chutesConfig == nil || chutesConfig.NetworkConfig.RequirePostQuantumTLS {
-		t.Fatal("Chutes outer TLS must allow the provider's TLS 1.3 fallback; ML-KEM payload E2EE is mandatory")
+	if chutesConfig == nil || !chutesConfig.NetworkConfig.RequirePostQuantumTLS {
+		t.Fatal("Chutes Standard deployments must require post-quantum TLS to Chutes' API")
 	}
 	for _, provider := range []schemas.ModelProvider{schemas.OpenAI, schemas.Anthropic, schemas.Azure, catalog.ProviderChutes, catalog.ProviderAWS, catalog.ProviderGoogleCloud} {
 		config, err := account.GetConfigForProvider(provider)

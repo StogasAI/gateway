@@ -98,7 +98,7 @@ var fieldDomains = map[string]fieldDomain{
 		"a lowercase UUID"),
 	"deployment.upstream.deploymentType": oneOf("global_standard", "data_zone_standard_us", "data_zone_standard_eu",
 		"data_zone_standard_apac", "instant"),
-	"deployment.upstream.hosting":       oneOf("anthropic", "aws", "azure", "fireworks", "google"),
+	"deployment.upstream.hosting":       oneOf("anthropic", "aws", "azure", "fireworks", "google", "unknown"),
 	"deployment.upstream.inferenceGeo":  oneOf("global", "us", "eu", "jp", "au", "in", "ca"),
 	"deployment.upstream.modelFormat":   oneOf("OpenAI", "OpenAI-OSS", "Anthropic", "DeepSeek", "Fireworks"),
 	"deployment.upstream.reasoningMode": oneOf("pro"),

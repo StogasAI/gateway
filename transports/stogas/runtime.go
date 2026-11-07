@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 
 	bifrost "github.com/maximhq/bifrost/core"
+	"github.com/maximhq/bifrost/core/providers/utils"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/azureauth"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
@@ -255,7 +257,7 @@ func cloudClaudeConfig(config Config) schemas.ProviderConfig {
 	return providerConfig
 }
 
-func newAccount(config Config, chutesTransport fasthttp.RoundTripper) *account {
+func newAccount(config Config, chutesE2EE *chutese2ee.Transport) *account {
 	requirePostQuantumTLS := confidentialProduction(config)
 	openAIConfig := newProviderConfig(
 		config.OpenAIBaseURL,
@@ -281,7 +283,7 @@ func newAccount(config Config, chutesTransport fasthttp.RoundTripper) *account {
 	chutesConfig := newProviderConfig(
 		chutesBaseURL,
 		config.AllowPrivateProviderNetwork,
-		false,
+		requirePostQuantumTLS,
 	)
 	chutesConfig.CustomProviderConfig = &schemas.CustomProviderConfig{
 		BaseProviderType: schemas.OpenAI,
@@ -290,7 +292,10 @@ func newAccount(config Config, chutesTransport fasthttp.RoundTripper) *account {
 			ChatCompletionStream: true,
 		},
 	}
-	chutesConfig.NetworkConfig.Transport = chutesTransport
+	chutesConfig.NetworkConfig.Transport = &chutesTransport{
+		encrypted: chutesE2EE,
+		standard:  newChutesStandardClient(chutesConfig.NetworkConfig),
+	}
 	// Bedrock's runtime endpoint offers only classical key exchange, so AWS
 	// requires TLS 1.3 as Azure does. Every Google endpoint offers X25519MLKEM768.
 	awsConfig := cloudClaudeConfig(config)
@@ -331,6 +336,28 @@ func newChutesE2EETransport(config Config) (*chutese2ee.Transport, error) {
 		RequireProductionOrigin: confidentialProduction(config),
 		RequestTimeout:          billing.GatewayRequestLifetime,
 	})
+}
+
+// newChutesStandardClient sends Standard deployments to Chutes' OpenAI-compatible API, built as
+// core builds the other provider clients, with the same dialing, TLS and response limits.
+func newChutesStandardClient(network schemas.NetworkConfig) *fasthttp.Client {
+	requestTimeout := time.Duration(network.DefaultRequestTimeoutInSeconds) * time.Second
+	client := &fasthttp.Client{
+		ReadTimeout:         requestTimeout,
+		WriteTimeout:        requestTimeout,
+		MaxResponseBodySize: network.MaxResponseBodySize,
+		MaxConnsPerHost:     network.MaxConnsPerHost,
+		MaxIdleConnDuration: time.Duration(network.KeepAliveTimeoutInSeconds) * time.Second,
+		MaxConnWaitTimeout:  requestTimeout,
+		MaxConnDuration:     time.Duration(schemas.DefaultMaxConnDurationInSeconds) * time.Second,
+		ConnPoolStrategy:    fasthttp.FIFO,
+	}
+	client = utils.ConfigureDialer(client, network.AllowPrivateNetwork)
+	client = utils.ConfigureTLS(client, network, providerLibraryLogger{emit: writeOperationalLog})
+	// ConfigureDialer installs core's context transport, which providerio wraps with the
+	// response limits, so providerio goes on last.
+	client.Transport = providerio.NewTransport(maxProviderResponseBodySize, false)
+	return client
 }
 
 func chutesE2EEAPIBaseURL(chutesBaseURL string) (string, error) {

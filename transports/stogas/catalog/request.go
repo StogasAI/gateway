@@ -1619,7 +1619,10 @@ func (r *ResolvedRequest) SendReasoningOffAsEffort() {
 }
 
 // PrepareChutesChatWire applies Chutes-specific output and reasoning fields.
-// The resolved output limit remains the billing hold limit.
+// The resolved output limit remains the billing hold limit. It goes out as
+// max_completion_tokens, which bounds reasoning and answer together on Chutes'
+// SGLang and vLLM instances and on the operators that Standard chutes relay to,
+// some of which apply max_tokens to the answer alone.
 func (r *ResolvedRequest) PrepareChutesChatWire(
 	defaultOutputTokens int,
 	upstreamReasoningEffort string,
@@ -1640,10 +1643,9 @@ func (r *ResolvedRequest) PrepareChutesChatWire(
 		r.inputTokenLimit = min(r.Deployment.MaxInputTokens, maxInputTokenHold(r.Deployment.ContextWindowTokens, defaultOutputTokens))
 	}
 	limit := r.outputTokenLimit
-	r.chat.ChatParameters.MaxCompletionTokens = nil
+	r.chat.ChatParameters.MaxCompletionTokens = &limit
 	r.chat.MaxTokens = nil
 	r.chat.ChatParameters.Reasoning = nil
-	r.SetExtraParam("max_tokens", limit)
 	if upstreamReasoningEffort != "" {
 		r.SetExtraParam("reasoning_effort", upstreamReasoningEffort)
 	}

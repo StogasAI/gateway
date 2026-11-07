@@ -545,6 +545,14 @@ func validateActualResponseModel(state *State, model string) error {
 		return nil
 	}
 	resolution := state.Resolution
+	if resolution.Deployment.Upstream.Hosting == catalog.HostingUnknown {
+		// The operator names the model in its own terms, which the catalog does not know, so the reply
+		// is checked only for changing model within one reply.
+		if state.ActualModel != "" && state.ActualModel != model {
+			return ErrProviderExecutionMismatch
+		}
+		return nil
+	}
 	expected := strings.TrimSpace(resolution.ReportedModel())
 	if expected == "" {
 		return nil

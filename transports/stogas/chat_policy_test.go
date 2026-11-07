@@ -1927,14 +1927,15 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 		ProviderID string   `json:"providerId"`
 	}
 	type wirePayload struct {
-		AnthropicVersion string `json:"anthropic_version"`
-		InferenceGeo     string `json:"inference_geo"`
-		MaxTokens        int    `json:"max_tokens"`
-		Model            string `json:"model"`
-		ReasoningEffort  string `json:"reasoning_effort"`
-		ServiceTier      string `json:"service_tier"`
-		Speed            string `json:"speed"`
-		Reasoning        struct {
+		AnthropicVersion    string `json:"anthropic_version"`
+		InferenceGeo        string `json:"inference_geo"`
+		MaxCompletionTokens int    `json:"max_completion_tokens"`
+		MaxTokens           int    `json:"max_tokens"`
+		Model               string `json:"model"`
+		ReasoningEffort     string `json:"reasoning_effort"`
+		ServiceTier         string `json:"service_tier"`
+		Speed               string `json:"speed"`
+		Reasoning           struct {
 			Effort string `json:"effort"`
 			Mode   string `json:"mode"`
 		} `json:"reasoning"`
@@ -2165,7 +2166,7 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 									wire.ServiceTier, wire.Speed, wire.InferenceGeo, wire.AnthropicVersion, wantInferenceGeo, wantVersion)
 							}
 						case catalog.ProviderChutes:
-							if wire.MaxTokens != 2048 || wire.ServiceTier != "" || wire.InferenceGeo != "" || wire.Speed != "" {
+							if wire.MaxCompletionTokens != 2048 || wire.MaxTokens != 0 || wire.ServiceTier != "" || wire.InferenceGeo != "" || wire.Speed != "" {
 								t.Fatalf("wire Chutes controls are invalid: %#v", wire)
 							}
 						}
