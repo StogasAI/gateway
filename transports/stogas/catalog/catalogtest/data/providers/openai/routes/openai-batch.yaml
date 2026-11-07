@@ -9,4 +9,4 @@ routes:
     mediaTypes: []
   dataHandling:
     endToEndEncrypted: false
-  stogasUnsupported: The gateway answers each request as it arrives and has no batch API.
+  stogasUnsupported: The gateway has no batch API and serves each request as it arrives.

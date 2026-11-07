@@ -347,7 +347,7 @@ func TestRetiredSelectionsNameTheirDayWheneverTheyRetired(t *testing.T) {
 // The test catalog's one deployment that Stogas does not serve, through its one route of the same.
 const (
 	unsupportedDeployment = "openai-gpt-5.5-2026-04-23-batch"
-	unsupportedReason     = "The gateway answers each request as it arrives and has no batch API."
+	unsupportedReason     = "The gateway has no batch API and serves each request as it arrives."
 )
 
 // A model field that names only what Stogas does not serve gets model_unavailable with Stogas's
