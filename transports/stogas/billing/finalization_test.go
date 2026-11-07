@@ -430,6 +430,9 @@ func TestSettlementBatchesRequestsThatFinishDuringACall(t *testing.T) {
 	}
 	calls := db.recorded()
 	var sizes []int
+	// The fake times a call when its query arrives over TCP, some time after the service took the
+	// call's start time, and a loaded scheduler varies that delay. Half the interval still tells a
+	// call that waited from one that did not.
 	for i, call := range calls {
 		sizes = append(sizes, len(call.logs))
 		for _, id := range requestIDs(call.logs) {
@@ -438,7 +441,7 @@ func TestSettlementBatchesRequestsThatFinishDuringACall(t *testing.T) {
 			}
 			delete(pending, id)
 		}
-		if i > 0 && len(call.logs) < settlementMaxLogs && call.at.Sub(calls[i-1].at) < settlementInterval-10*time.Millisecond {
+		if i > 0 && len(call.logs) < settlementMaxLogs && call.at.Sub(calls[i-1].at) < settlementInterval/2 {
 			t.Fatalf("calls started %s apart", call.at.Sub(calls[i-1].at))
 		}
 	}

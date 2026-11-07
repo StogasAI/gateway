@@ -193,6 +193,24 @@ func TestValidateExternalURL(t *testing.T) {
 		},
 	}
 
+	// The cases test the address rules, so a fixed resolver answers for the host names, and a
+	// slow or unreachable DNS server cannot fail them. An address resolves to itself, as with
+	// the system resolver.
+	original := lookupIPAddr
+	t.Cleanup(func() { lookupIPAddr = original })
+	lookupIPAddr = func(_ context.Context, host string) ([]net.IPAddr, error) {
+		if ip := net.ParseIP(host); ip != nil {
+			return []net.IPAddr{{IP: ip}}, nil
+		}
+		switch host {
+		case "api.openai.com":
+			return []net.IPAddr{{IP: net.ParseIP("162.159.140.245")}}, nil
+		case "localhost":
+			return []net.IPAddr{{IP: net.IPv4(127, 0, 0, 1)}, {IP: net.IPv6loopback}}, nil
+		}
+		return nil, &net.DNSError{Err: "no such host", Name: host, IsNotFound: true}
+	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := ValidateExternalURL(tt.url, tt.allowPrivateNetwork)
