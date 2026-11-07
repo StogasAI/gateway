@@ -30,7 +30,7 @@ func CompileRequest(raw []byte, organizationID string, key customerkey.Keys) (*R
 		return nil, err
 	}
 	if document.usedSections&^requestPermissions != 0 {
-		return nil, configError("request policies cannot set limits, delegation, or encryption settings")
+		return nil, configError("request policies cannot set limits or delegation")
 	}
 	request := &Request{sections: document.usedSections}
 	if document.Encrypted() {
@@ -63,14 +63,11 @@ func ApplyRequest(parent *Config, request *Request) (*Config, error) {
 		return nil, ErrRequestPolicyDenied
 	}
 	request.permitted.Store(true)
+	// Its encrypted settings opened only with keys that the request sent under
+	// registered labels.
 	source, err := request.opened()
 	if err != nil {
 		return nil, err
-	}
-	for _, id := range source.RequiredEncryptionKeyIDs {
-		if !customerkey.Registered(parent.EncryptionKeys, id) {
-			return nil, customerkey.ErrKey
-		}
 	}
 	if len(parent.sources) == 0 {
 		return nil, configError("request policies require compiled saved sources")

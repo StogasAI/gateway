@@ -246,9 +246,9 @@ func (s *Server) simulatePolicy(ctx *requestContext) {
 			seen[label] = true
 		}
 		// A request that sends a key under a label that the organization
-		// policy does not register fails, so the simulated one does too.
+		// does not register fails, so the simulated one does too.
 		for label := range seen {
-			if _, registered := config.Config.EncryptionKeys[label]; !registered {
+			if _, registered := config.EncryptionKeys[label]; !registered {
 				public := stogas.PublicBillingErrorFor(customerkey.ErrKey)
 				result.Error = &simulationError{Code: public.Code, Message: public.Message}
 				s.writeJSON(ctx, http.StatusOK, result)
@@ -309,7 +309,7 @@ func (s *Server) simulatePolicy(ctx *requestContext) {
 			for _, pair := range pairs {
 				ids = append(ids, config.RequiredRoots(string(pair.Provider), pair.Credential, pair.Policy)...)
 			}
-			if err := customerkey.MissingLabels(config.Config.EncryptionKeys, *input.EncryptionKeys, ids...); err != nil {
+			if err := customerkey.MissingLabels(config.EncryptionKeys, *input.EncryptionKeys, ids...); err != nil {
 				public := stogas.PublicBillingErrorFor(err)
 				return errors.Join(err, catalog.APIError{Code: public.Code, StatusCode: public.StatusCode, Type: public.Type, Message: public.Message})
 			}

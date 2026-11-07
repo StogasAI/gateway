@@ -72,7 +72,6 @@ type Config struct {
 	requiredSettings       Permission
 	sortOrigins            []Origin
 	requiredSorts          int
-	EncryptionKeys         map[string]string `json:"-"`
 	RequiredEncryptionKeys []string          `json:"-"`
 	PluginSources          []*Plugins        `json:"-"`
 	Access                 *Access           `json:"access"`

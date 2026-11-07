@@ -441,6 +441,10 @@ func (s *KeyConfigSnapshot) MemoryBytes() int64 {
 		}
 	}
 	addPolicy(&s.PolicySnapshot)
+	// As gateway_api_key_config weighs the registry; credential policies share it.
+	for label, id := range s.EncryptionKeys {
+		total += int64(64 + len(label) + len(id))
+	}
 	for _, selections := range s.Credentials {
 		for _, selection := range selections {
 			total += int64(64 + len(selection.ID) + len(selection.Mode))

@@ -36,8 +36,17 @@ func encryptedPolicyFixture(t testing.TB) ([]json.RawMessage, string, customerke
 		t.Fatal(err)
 	}
 	t.Cleanup(key.Clear)
-	source, _ := json.Marshal(map[string]any{"encryption": map[string]any{"keys": map[string]string{"default": key["default"].ID()}}, "plugins": map[string]any{"redaction": map[string]any{"encrypted": fixture.Envelope}}})
+	source, _ := json.Marshal(map[string]any{"plugins": map[string]any{"redaction": map[string]any{"encrypted": fixture.Envelope}}})
 	return []json.RawMessage{source, json.RawMessage(`null`), json.RawMessage(`{}`)}, fixture.OrganizationID, key
+}
+
+// registryOf returns the organization registry that holds the fixture's keys.
+func registryOf(keys customerkey.Keys) map[string]string {
+	registry := make(map[string]string, len(keys))
+	for label, key := range keys {
+		registry[label] = key.ID()
+	}
+	return registry
 }
 
 func TestEncryptedPolicyWarmCacheRequiresKeyAndRefreshKeepsPlan(t *testing.T) {
@@ -51,7 +60,7 @@ func TestEncryptedPolicyWarmCacheRequiresKeyAndRefreshKeepsPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshot := s.keyConfigs.put("api", &KeyConfigSnapshot{PolicySnapshot: PolicySnapshot{Config: config, Digest: policy.ChainDigest([]policy.ScopedSource{{Scope: policy.OrganizationScope, Value: sources[0].value}, {Scope: policy.KeyScope, Value: sources[2].value}}), sourceRefs: sources}, CredentialsGeneration: 1}, time.Now())
+	snapshot := s.keyConfigs.put("api", &KeyConfigSnapshot{PolicySnapshot: PolicySnapshot{EncryptionKeys: registryOf(key), Config: config, Digest: policy.ChainDigest([]policy.ScopedSource{{Scope: policy.OrganizationScope, Value: sources[0].value}, {Scope: policy.KeyScope, Value: sources[2].value}}), sourceRefs: sources}, CredentialsGeneration: 1}, time.Now())
 	s.keyConfigs.releaseSources(sources)
 	plan, err := snapshot.RedactionPolicy()
 	if err != nil {
@@ -133,7 +142,7 @@ func TestConditionalEncryptedPluginRequiresOnlyItsActiveRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshot := cache.put("api", &KeyConfigSnapshot{PolicySnapshot: PolicySnapshot{Config: config, Digest: policy.ChainDigest(sources), sourceRefs: refs}, Claims: &APIKeyClaims{OrganizationID: org}, CredentialsGeneration: 1}, time.Now())
+	snapshot := cache.put("api", &KeyConfigSnapshot{PolicySnapshot: PolicySnapshot{EncryptionKeys: registryOf(keys), Config: config, Digest: policy.ChainDigest(sources), sourceRefs: refs}, Claims: &APIKeyClaims{OrganizationID: org}, CredentialsGeneration: 1}, time.Now())
 	cache.releaseSources(refs)
 	for _, provider := range []string{"anthropic", "openai", "anthropic", "openai"} {
 		active, err := snapshot.Config.Activate(conditionalPolicyValues{"provider.id": {Type: "string", String: provider}})
@@ -180,7 +189,6 @@ func TestSuppressedEncryptedDefaultPluginNeedsNoRoot(t *testing.T) {
 	export := sealTestEnvelope(t, roots["exports"], keys["exports"].ID(), org, "plugins/export", `{"destinations":[{"url":"https://collector.example/v1/traces"}]}`)
 	redaction := sealTestEnvelope(t, roots["redactions"], keys["redactions"].ID(), org, "plugins/redaction", `{"literals":[{"values":["CUSTOMER_PRIVATE_VALUE"]}]}`)
 	organization, _ := json.Marshal(map[string]any{
-		"encryption": map[string]any{"keys": map[string]string{"exports": keys["exports"].ID(), "redactions": keys["redactions"].ID()}},
 		"delegation": map[string]any{"keys": []string{"plugins.redaction"}},
 		"rules": map[string]any{"defaults": map[string]any{"mode": "default", "plugins": map[string]any{
 			"export":    map[string]any{"encrypted": json.RawMessage(export)},
@@ -208,7 +216,7 @@ func TestSuppressedEncryptedDefaultPluginNeedsNoRoot(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			snapshot := cache.put("api", &KeyConfigSnapshot{PolicySnapshot: PolicySnapshot{Config: config, Digest: policy.ChainDigest(sources), sourceRefs: refs}, Claims: &APIKeyClaims{OrganizationID: org}, CredentialsGeneration: 1}, time.Now())
+			snapshot := cache.put("api", &KeyConfigSnapshot{PolicySnapshot: PolicySnapshot{EncryptionKeys: registryOf(keys), Config: config, Digest: policy.ChainDigest(sources), sourceRefs: refs}, Claims: &APIKeyClaims{OrganizationID: org}, CredentialsGeneration: 1}, time.Now())
 			cache.releaseSources(refs)
 			active, err := snapshot.Config.Activate(conditionalPolicyValues{})
 			if err != nil {
@@ -252,10 +260,6 @@ func TestOptionalValidationDistinguishesUncheckedFromInvalid(t *testing.T) {
 	if _, err := s.ValidatePolicySources(validationSources(bad), org, key); err == nil {
 		t.Fatal("malformed regex accepted")
 	}
-	bad[2] = json.RawMessage(`{"encryption":{"keys":{"default":"` + key["default"].ID() + `"}}}`)
-	if _, err := s.ValidatePolicySources(validationSources(bad), org, key); err == nil {
-		t.Fatal("child root accepted")
-	}
 	if _, err := s.ValidatePolicySources(validationSources(raw)[:1], org, key); err == nil {
 		t.Fatal("missing source accepted")
 	}
@@ -286,9 +290,8 @@ func TestPolicyValidationOpensEachPluginWithItsOwnRoot(t *testing.T) {
 	t.Cleanup(keys.Clear)
 	export := sealTestEnvelope(t, roots["exports"], keys["exports"].ID(), org, "plugins/export", `{"destinations":[{"url":"https://collector.example/v1/traces","headers":{"Authorization":"Bearer private"}}]}`)
 	redaction := sealTestEnvelope(t, roots["redactions"], keys["redactions"].ID(), org, "plugins/redaction", `{"literals":[{"values":["CUSTOMER_PRIVATE_VALUE"]}]}`)
-	registry := map[string]any{"keys": map[string]string{"exports": keys["exports"].ID(), "redactions": keys["redactions"].ID()}}
 	plugins := map[string]any{"textExtraction": "always", "export": map[string]any{"encrypted": json.RawMessage(export)}, "redaction": map[string]any{"encrypted": json.RawMessage(redaction)}}
-	base, _ := json.Marshal(map[string]any{"encryption": registry, "plugins": plugins})
+	base, _ := json.Marshal(map[string]any{"plugins": plugins})
 	rule, _ := json.Marshal(map[string]any{"rules": map[string]any{"private": map[string]any{"when": `provider.id == "openai"`, "plugins": plugins}}})
 	s := &Service{}
 	for _, test := range []struct {
@@ -329,7 +332,7 @@ func TestPolicyValidationOpensEachPluginWithItsOwnRoot(t *testing.T) {
 		t.Fatal("a readable plugin beside an unchecked one escaped its check")
 	}
 	// Ciphertext moved under another plugin does not open.
-	swapped, _ := json.Marshal(map[string]any{"encryption": registry, "plugins": map[string]any{"export": plugins["redaction"]}})
+	swapped, _ := json.Marshal(map[string]any{"plugins": map[string]any{"export": plugins["redaction"]}})
 	if _, err := s.ValidatePolicySources(validationSources([]json.RawMessage{swapped, json.RawMessage(`null`), json.RawMessage(`{}`)}), org, keys); !errors.Is(err, customerkey.ErrEnvelope) {
 		t.Fatalf("redaction ciphertext opened as an export: %v", err)
 	}
@@ -386,7 +389,7 @@ func BenchmarkEncryptedPolicy(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		s.keyConfigs.put("api", &KeyConfigSnapshot{PolicySnapshot: PolicySnapshot{Config: config, Digest: "test", sourceRefs: sources}, CredentialsGeneration: 1}, time.Now())
+		s.keyConfigs.put("api", &KeyConfigSnapshot{PolicySnapshot: PolicySnapshot{EncryptionKeys: registryOf(key), Config: config, Digest: "test", sourceRefs: sources}, CredentialsGeneration: 1}, time.Now())
 		s.keyConfigs.releaseSources(sources)
 		defer s.keyConfigs.close()
 		for b.Loop() {
@@ -407,7 +410,7 @@ func BenchmarkEncryptedPolicyFullDictionary(b *testing.B) {
 	plaintext, _ := json.Marshal(map[string]any{"literals": []map[string]any{{"values": literals, "fuzzy": true}}})
 	root, _ := base64.RawURLEncoding.DecodeString("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8")
 	envelope := sealTestEnvelope(b, root, key["default"].ID(), org, "plugins/redaction", string(plaintext))
-	raw[0], _ = json.Marshal(map[string]any{"encryption": map[string]any{"keys": map[string]string{"default": key["default"].ID()}}, "plugins": map[string]any{"redaction": map[string]any{"encrypted": json.RawMessage(envelope)}}})
+	raw[0], _ = json.Marshal(map[string]any{"plugins": map[string]any{"redaction": map[string]any{"encrypted": json.RawMessage(envelope)}}})
 	s := &Service{}
 	b.SetBytes(int64(len(plaintext)))
 	for b.Loop() {

@@ -83,7 +83,6 @@ func TestDelegationFollowsResourceOwnershipAndRequestPermissionsIntersect(t *tes
 	for _, raw := range []string{
 		`{"delegation":{"request":["limits"]}}`,
 		`{"delegation":{"request":["delegation"]}}`,
-		`{"delegation":{"request":["encryption"]}}`,
 		`{"delegation":{"keys":["unknown"]}}`,
 		`{"delegation":{"keys":["input","input"]}}`,
 		`{"delegation":{"keys":{"default":true,"exceptions":{}}}}`,
@@ -96,10 +95,10 @@ func TestDelegationFollowsResourceOwnershipAndRequestPermissionsIntersect(t *tes
 	}
 }
 
-// An encrypted plugin needs permission for that plugin and for encryption,
-// which hides its settings from the parent. Its purpose keeps the ciphertext
+// An encrypted plugin needs permission for that plugin and for encrypted
+// plugins, which hides its settings from the parent. Its purpose keeps the ciphertext
 // to that plugin, so no other plugin's permission is needed.
-func TestEncryptedPluginNeedsItsSectionAndEncryption(t *testing.T) {
+func TestEncryptedPluginNeedsItsSectionAndEncryptedPlugins(t *testing.T) {
 	fixture, key := loadWebcryptoFixture(t)
 	plugins := map[string]any{"redaction": map[string]any{"encrypted": fixture.Envelope}}
 	for permission, allowed := range map[string]bool{
@@ -108,7 +107,6 @@ func TestEncryptedPluginNeedsItsSectionAndEncryption(t *testing.T) {
 	} {
 		permission := strings.Fields(permission)
 		parent, _ := json.Marshal(map[string]any{
-			"encryption": map[string]any{"keys": map[string]string{"test": fixture.Envelope.KeyID}},
 			"delegation": map[string]any{"keys": permission, "request": permission},
 		})
 		for _, child := range []map[string]any{{"plugins": plugins}, {"rules": map[string]any{"private": map[string]any{"plugins": plugins}}}} {

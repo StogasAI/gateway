@@ -37,7 +37,6 @@ type Source struct {
 	defaultSettings  bool
 	defaultOrdering  *ordering
 	encryptedPlugins *SourceDocument
-	EncryptionKeys   map[string]string
 	// RequiredEncryptionKeyIDs names the roots of the plugins that opening
 	// this source decrypted.
 	RequiredEncryptionKeyIDs []string
@@ -214,10 +213,7 @@ func (b *SourceBudget) add(size sourceSize) error {
 }
 
 type sourceBody struct {
-	Schema     *string `json:"$schema"`
-	Encryption *struct {
-		Keys map[string]string `json:"keys"`
-	} `json:"encryption"`
+	Schema     *string         `json:"$schema"`
 	Rules      json.RawMessage `json:"rules"`
 	Limits     json.RawMessage `json:"limits"`
 	Delegation *Delegation     `json:"delegation"`
@@ -495,9 +491,6 @@ func (d *SourceDocument) compile(plugins map[[32]byte]*Plugins, compiler *celCom
 	if doc.Schema != nil && *doc.Schema != "https://stogas.ai/schemas/key-config-v1.json" {
 		return nil, configError("unsupported source schema")
 	}
-	if doc.Encryption != nil && customerkey.ValidateRegistry(doc.Encryption.Keys) != nil {
-		return nil, configError("encryption keys require unique identifiers and lowercase labels")
-	}
 	// Null cannot silently turn an explicitly supplied requirement off.
 	if err := validateSourceMembers(canonical, reflect.TypeOf(doc)); err != nil {
 		return nil, err
@@ -506,9 +499,6 @@ func (d *SourceDocument) compile(plugins map[[32]byte]*Plugins, compiler *celCom
 		Routing: Routing{Fallbacks: DefaultFallbacks}}
 	source := &Source{Config: config, Digest: d.digest, Delegation: doc.Delegation, size: d.size}
 	source.settings = settingsMask(d.ownSections())
-	if doc.Encryption != nil {
-		source.EncryptionKeys = doc.Encryption.Keys
-	}
 
 	if doc.Routing != nil {
 		sorts := doc.Routing.Sort
@@ -1061,30 +1051,8 @@ func ComposeSources(sources []ScopedSource) (*Config, error) {
 	out.sources = append([]ScopedSource{}, sources...)
 	for _, entry := range sources {
 		out.hasRules = out.hasRules || len(entry.Value.Rules) > 0 || entry.Value.encryptedPlugins != nil
-		if !registered(out.EncryptionKeys, entry.Value.encryptedPlugins) {
-			return nil, customerkey.ErrKey
-		}
-		for _, rule := range entry.Value.Rules {
-			if !registered(out.EncryptionKeys, rule.Encrypted) {
-				return nil, customerkey.ErrKey
-			}
-		}
 	}
 	return out, nil
-}
-
-// registered reports whether the organization policy registers the root of
-// every encrypted plugin in document.
-func registered(keys map[string]string, document *SourceDocument) bool {
-	if document == nil {
-		return true
-	}
-	for _, id := range document.EncryptionKeyIDs() {
-		if !customerkey.Registered(keys, id) {
-			return false
-		}
-	}
-	return true
 }
 
 func composeSettings(sources []ScopedSource) (*Config, error) {
@@ -1095,7 +1063,6 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 	if sources[0].Value == nil {
 		return nil, configError("organization source is required")
 	}
-	out.EncryptionKeys = sources[0].Value.EncryptionKeys
 	ruleBytes := 0
 	for _, entry := range sources {
 		if entry.Value != nil {
@@ -1125,13 +1092,7 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 		if !scope.Valid() && scope != RequestScope || source == nil {
 			return nil, configError("invalid policy source scope or content")
 		}
-		if scope != OrganizationScope && source.EncryptionKeys != nil {
-			return nil, configError("only organization policy may register encryption keys")
-		}
 		for _, id := range source.RequiredEncryptionKeyIDs {
-			if !customerkey.Registered(out.EncryptionKeys, id) {
-				return nil, customerkey.ErrKey
-			}
 			if !slices.Contains(out.RequiredEncryptionKeys, id) {
 				out.RequiredEncryptionKeys = append(out.RequiredEncryptionKeys, id)
 			}

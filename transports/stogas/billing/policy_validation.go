@@ -105,7 +105,6 @@ func (s *Service) ValidatePolicySources(raw []PolicyValidationSource, organizati
 	values := make([]policy.ScopedSource, 0, len(prepared))
 	var plans []*redaction.Policy
 	var sections []*policy.Plugins
-	var registered map[string]string
 	for _, entry := range prepared {
 		source := entry.Config
 		if bytes.Equal(bytes.TrimSpace(source), []byte("null")) {
@@ -119,21 +118,9 @@ func (s *Service) ValidatePolicySources(raw []PolicyValidationSource, organizati
 		if err != nil {
 			return nil, err
 		}
-		if document.Encrypted() && entry.Scope == policy.OrganizationScope {
-			var encryption struct {
-				Keys map[string]string `json:"keys"`
-			}
-			if json.Unmarshal(doc["encryption"], &encryption) != nil {
-				return nil, customerkey.ErrKey
-			}
-			registered = encryption.Keys
-		}
 		// Check the rest of the policy without each plugin whose root is missing.
 		var plugins map[string]json.RawMessage
 		for _, plugin := range document.EncryptedPlugins() {
-			if !customerkey.Registered(registered, plugin.Envelope.KeyID) {
-				return nil, customerkey.ErrKey
-			}
 			if key.Matches(plugin.Envelope.KeyID) {
 				continue
 			}
@@ -160,12 +147,6 @@ func (s *Service) ValidatePolicySources(raw []PolicyValidationSource, organizati
 		}
 		sources = append(sources, compiled)
 		values = append(values, policy.ScopedSource{Scope: entry.Scope, Value: compiled.value})
-		if entry.Scope == policy.OrganizationScope {
-			registered = compiled.value.EncryptionKeys
-			if err := key.Validate(registered); err != nil {
-				return nil, err
-			}
-		}
 		if compiled.plan != nil {
 			plan, err := compiled.plan.get()
 			if err != nil {
@@ -188,9 +169,6 @@ func (s *Service) ValidatePolicySources(raw []PolicyValidationSource, organizati
 			}
 			var units policy.Permission
 			for _, plugin := range rule.Encrypted.EncryptedPlugins() {
-				if !customerkey.Registered(registered, plugin.Envelope.KeyID) {
-					return nil, customerkey.ErrKey
-				}
 				if key.Matches(plugin.Envelope.KeyID) {
 					units |= plugin.Unit
 					continue

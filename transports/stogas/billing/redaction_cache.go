@@ -162,7 +162,7 @@ func (snapshot *KeyConfigSnapshot) ActivePlugins(config *policy.Config, keys cus
 	if snapshot == nil || snapshot.owner == nil || snapshot.Claims == nil || config == nil {
 		return nil, ErrGatewayUnavailable
 	}
-	if err := keys.Validate(config.EncryptionKeys); err != nil {
+	if err := keys.Validate(snapshot.EncryptionKeys); err != nil {
 		return nil, err
 	}
 	c := snapshot.owner
@@ -174,7 +174,7 @@ func (snapshot *KeyConfigSnapshot) ActivePlugins(config *policy.Config, keys cus
 	defer func() { c.releaseSources(opened) }()
 	for _, encrypted := range config.ActiveEncryptedPlugins {
 		for _, id := range encrypted.EncryptionKeyIDs() {
-			if !customerkey.Registered(config.EncryptionKeys, id) {
+			if !customerkey.Registered(snapshot.EncryptionKeys, id) {
 				return nil, customerkey.ErrKey
 			}
 		}

@@ -114,7 +114,6 @@ func TestInputCheckNamesTheSettingThatReadsAllInputText(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	keys := `"encryption":{"keys":{"test":"` + fixture.Envelope.KeyID + `"}},`
 	encrypted := `"plugins":{"redaction":{"encrypted":` + string(envelope) + `}}`
 	for _, tc := range []struct{ name, source, want string }{
 		{"nothing", `{}`, ""},
@@ -122,9 +121,9 @@ func TestInputCheckNamesTheSettingThatReadsAllInputText(t *testing.T) {
 		{"empty redaction", `{"plugins":{"redaction":{}}}`, ""},
 		{"ASCII input", `{"input":{"asciiOnly":true}}`, "input.asciiOnly"},
 		{"redaction", `{"plugins":{"redaction":{"email_address":true}}}`, "plugins.redaction"},
-		{"encrypted redaction", `{` + keys + encrypted + `}`, "plugins.redaction"},
-		{"encrypted redaction of a matched rule", `{` + keys + `"rules":{"private":{"when":"provider.id == 'openai'",` + encrypted + `}}}`, "plugins.redaction"},
-		{"encrypted redaction of an unmatched rule", `{` + keys + `"rules":{"private":{"when":"provider.id == 'azure'",` + encrypted + `}}}`, ""},
+		{"encrypted redaction", `{` + encrypted + `}`, "plugins.redaction"},
+		{"encrypted redaction of a matched rule", `{"rules":{"private":{"when":"provider.id == 'openai'",` + encrypted + `}}}`, "plugins.redaction"},
+		{"encrypted redaction of an unmatched rule", `{"rules":{"private":{"when":"provider.id == 'azure'",` + encrypted + `}}}`, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			// The gateway compiles a source for routing without opening its ciphertext.

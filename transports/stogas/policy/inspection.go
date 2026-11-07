@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/maximhq/bifrost/transports/stogas/customerkey"
 	"github.com/maximhq/bifrost/transports/stogas/plugins/exporter/exportconfig"
 	"github.com/maximhq/bifrost/transports/stogas/plugins/redaction"
 )
@@ -233,9 +232,6 @@ func (v *Inspector) Finish() (*Inspection, error) {
 	}
 	delegation["request"] = compiled.RequestPermission
 	effective := map[string]any{"delegation": delegation}
-	if len(compiled.EncryptionKeys) > 0 {
-		effective["encryption"] = map[string]any{"keys": compiled.EncryptionKeys}
-	}
 	if compiled.Input != nil {
 		effective["input"] = compiled.Input
 	}
@@ -312,9 +308,6 @@ func (v *Inspector) Finish() (*Inspection, error) {
 			routing["missingEncryptionKeys"] = compiled.Routing.MissingEncryptionKeys
 		}
 		for _, plugin := range document.encrypted {
-			if !customerkey.Registered(compiled.EncryptionKeys, plugin.envelope.KeyID) {
-				return nil, configError("register the plugin encryption key identifier in the organization policy")
-			}
 			opaque = append(opaque, map[string]any{"policy": inspectionReference(entry), "plugin": plugin.name, "encrypted": plugin.envelope})
 		}
 	}

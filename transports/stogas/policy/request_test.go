@@ -172,7 +172,6 @@ func TestEncryptedRequestPolicyIsDecryptedOnlyAfterPermission(t *testing.T) {
 	for name, permission := range map[string][]string{"denied": {"routing.filter"}, "permitted": {"plugins.redaction", "plugins.encrypted"}} {
 		t.Run(name, func(t *testing.T) {
 			parent, _ := json.Marshal(map[string]any{
-				"encryption": map[string]any{"keys": map[string]string{"test": fixture.Envelope.KeyID}},
 				"delegation": map[string]any{"request": permission},
 			})
 			base, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: ruleSource(t, string(parent))}})
@@ -204,7 +203,6 @@ func TestEncryptedRequestPolicyIsDecryptedOnlyAfterPermission(t *testing.T) {
 func TestEncryptedRequestPolicyReportsReadableErrors(t *testing.T) {
 	fixture, key := loadWebcryptoFixture(t)
 	parent, _ := json.Marshal(map[string]any{
-		"encryption": map[string]any{"keys": map[string]string{"test": fixture.Envelope.KeyID}},
 		"delegation": map[string]any{"request": []string{"routing.retries", "plugins.redaction", "plugins.encrypted"}},
 	})
 	base, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: ruleSource(t, string(parent))}})

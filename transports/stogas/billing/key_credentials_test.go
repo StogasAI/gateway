@@ -35,7 +35,7 @@ func TestCredentialSelectionRequiresTheOrganizationKey(t *testing.T) {
 		{"stored plugins can use root", CredentialSelection{Mode: "stored", ID: id}, customerkey.Keys{"default": key}, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			snapshot := &KeyConfigSnapshot{PolicySnapshot: PolicySnapshot{Config: &policy.Config{EncryptionKeys: map[string]string{"default": key.ID()}}}, Credentials: map[string][]CredentialSelection{"chutes": {tc.selection}}}
+			snapshot := &KeyConfigSnapshot{PolicySnapshot: PolicySnapshot{Config: &policy.Config{}, EncryptionKeys: map[string]string{"default": key.ID()}}, Credentials: map[string][]CredentialSelection{"chutes": {tc.selection}}}
 			selection, err := snapshot.credentialSelection("chutes", 0, tc.key)
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("got %v, want %v", err, tc.want)
@@ -47,7 +47,7 @@ func TestCredentialSelectionRequiresTheOrganizationKey(t *testing.T) {
 	}
 	// Applying the credential's policy needs no root, so planning can name a
 	// missing one for the pairs it tries. A wrong root still fails at once.
-	snapshot := &KeyConfigSnapshot{PolicySnapshot: PolicySnapshot{Config: &policy.Config{EncryptionKeys: map[string]string{"default": key.ID()}}}, Credentials: map[string][]CredentialSelection{"chutes": {registered}}}
+	snapshot := &KeyConfigSnapshot{PolicySnapshot: PolicySnapshot{Config: &policy.Config{}, EncryptionKeys: map[string]string{"default": key.ID()}}, Credentials: map[string][]CredentialSelection{"chutes": {registered}}}
 	if _, err := snapshot.assignedSelection("chutes", 0, nil); err != nil {
 		t.Fatalf("applying the policy needed the credential's root: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestEncryptedCredentialsKeepTheirPlaceAndNameMissingRoots(t *testing.T) {
 	registry := map[string]string{"providers": keys["providers"].ID(), "redaction": keys["redaction"].ID()}
 	snapshot := &KeyConfigSnapshot{
 		Claims:         &APIKeyClaims{OrganizationID: "org"},
-		PolicySnapshot: PolicySnapshot{Config: &policy.Config{EncryptionKeys: registry}},
+		PolicySnapshot: PolicySnapshot{Config: &policy.Config{}, EncryptionKeys: registry},
 		Credentials: map[string][]CredentialSelection{
 			"openai": {
 				{Mode: "encrypted", ID: openAIID, Credential: &CachedCredential{ID: openAIID, EncryptionKeyID: keys["providers"].ID(), EncryptedSecret: "invalid ciphertext"}},

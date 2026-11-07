@@ -20,7 +20,7 @@ func TestLabeledRootsBindLabelsWithoutRequiringUnusedRoots(t *testing.T) {
 	}
 	defer keys.Clear()
 	registered := map[string]string{"providers": keys["providers"].ID(), "redaction": keys["redaction"].ID()}
-	if ValidateRegistry(registered) != nil || keys.Validate(registered) != nil {
+	if keys.Validate(registered) != nil {
 		t.Fatal("valid labeled roots rejected")
 	}
 	providerOnly := Keys{"providers": keys["providers"]}
@@ -50,16 +50,7 @@ func TestLabeledRootsBindLabelsWithoutRequiringUnusedRoots(t *testing.T) {
 	}
 }
 
-func TestKeyRegistryRejectsAmbiguousLabelsAndIdentifiers(t *testing.T) {
-	id := strings.Repeat("a", 64)
-	for _, registered := range []map[string]string{
-		{}, {"A": id}, {"_key": id}, {strings.Repeat("a", 49): id}, {"key": "bad"},
-		{"one": id, "two": id}, {"__proto__": id},
-	} {
-		if ValidateRegistry(registered) == nil {
-			t.Fatal("invalid registry accepted")
-		}
-	}
+func TestParseKeysRejectsInvalidLabelsAndKeys(t *testing.T) {
 	for _, encoded := range []map[string]string{{"invalid label": "bad"}, {"key": "bad"}, {"good": base64.RawURLEncoding.EncodeToString(make([]byte, 32)), "bad": "invalid"}} {
 		if keys, err := ParseKeys(encoded); err == nil || keys != nil {
 			t.Fatal("invalid supplied keys accepted")

@@ -272,7 +272,6 @@ func TestEverySettingDeclaresItsScopeAndCombination(t *testing.T) {
 		"routing.fallbacks":             {"request", "minimum"},
 		"timeouts.totalSeconds":         {"request", "minimum"},
 		"delegation":                    {"saved", "permissions intersect"},
-		"encryption":                    {"saved", "organization only"},
 	}
 	var covered, requestWide, savedOnly Permission
 	for section, setting := range settings {

@@ -98,7 +98,7 @@ func (s *Server) startRun(ctx *requestContext, startedAt time.Time, preparation 
 			for _, pair := range pairs {
 				ids = append(ids, keyConfig.RequiredRoots(string(pair.Provider), pair.Credential, pair.Policy)...)
 			}
-			if err := credential.EncryptionKeys.Missing(keyConfig.Config.EncryptionKeys, ids...); err != nil {
+			if err := credential.EncryptionKeys.Missing(keyConfig.EncryptionKeys, ids...); err != nil {
 				public := stogas.PublicBillingErrorFor(err)
 				return errors.Join(err, catalog.APIError{Code: public.Code, StatusCode: public.StatusCode, Type: public.Type, Message: public.Message})
 			}

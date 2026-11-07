@@ -29,7 +29,7 @@ const keyConfigArguments = `
   $6::text
 `
 
-const keyConfigColumns = "result, key_id, policy_sources, key_claims, credentials_generation, credentials, credential_sources"
+const keyConfigColumns = "result, key_id, policy_sources, key_claims, credentials_generation, credentials, credential_sources, encryption_keys"
 
 type PolicyVersion struct {
 	Scope    policy.Scope `json:"scope"`
@@ -78,14 +78,17 @@ type policySourceRecord struct {
 // PolicySnapshot contains one immutable combination of applicable sources.
 // A selected credential adds its own source without changing other candidates.
 type PolicySnapshot struct {
-	Versions   *PolicyVersions
-	Logged     *LoggedPolicyVersions
-	Config     *policy.Config
-	Digest     string
-	cacheBytes int64
-	shared     *sharedKeyPolicy
-	matchers   []*sharedRedactionPlan
-	sourceRefs []*sharedPolicySource
+	Versions *PolicyVersions
+	Logged   *LoggedPolicyVersions
+	Config   *policy.Config
+	// EncryptionKeys maps each label that the organization registers to its
+	// root. It stays off Config, which organizations with equal policies share.
+	EncryptionKeys map[string]string
+	Digest         string
+	cacheBytes     int64
+	shared         *sharedKeyPolicy
+	matchers       []*sharedRedactionPlan
+	sourceRefs     []*sharedPolicySource
 }
 
 // Versions identify the saved snapshot; they do not commit to policy content.
@@ -109,6 +112,7 @@ type keyConfigRow struct {
 	CredentialsGeneration *int
 	Credentials           map[string][]CredentialSelection
 	CredentialSources     []json.RawMessage
+	EncryptionKeys        map[string]string
 }
 
 func (s *Service) ConfigForAPIKey(
@@ -191,7 +195,7 @@ func (s *Service) cachedOrFetchKeyConfig(
 
 func (s *PolicySnapshot) checkEncryptionKeys(key customerkey.Keys) error {
 	if s != nil && s.Config != nil {
-		if err := key.Validate(s.Config.EncryptionKeys); err != nil {
+		if err := key.Validate(s.EncryptionKeys); err != nil {
 			return err
 		}
 		for _, id := range s.Config.RequiredEncryptionKeys {
@@ -250,6 +254,7 @@ func (s *Service) fetchKeyConfig(
 		&row.CredentialsGeneration,
 		&row.Credentials,
 		&row.CredentialSources,
+		&row.EncryptionKeys,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, err)
@@ -322,8 +327,9 @@ func (s *Service) composeKeyConfig(row keyConfigRow, pins policySourcePins, encr
 		Claims: row.Claims,
 		PolicySnapshot: PolicySnapshot{
 			Versions: &versions, Logged: loggedVersions(versions, sources), Config: compiled, Digest: digest,
-			cacheBytes: compiled.CompositionBytes(),
-			sourceRefs: sources,
+			EncryptionKeys: row.EncryptionKeys,
+			cacheBytes:     compiled.CompositionBytes(),
+			sourceRefs:     sources,
 		},
 		CredentialsGeneration: *row.CredentialsGeneration,
 		Credentials:           row.Credentials,

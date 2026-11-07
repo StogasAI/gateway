@@ -30,7 +30,7 @@ test('opaque plugins survive the memory bridge in their original order', () => {
 	const sources = [
 		{
 			scope: 'organization',
-			config: { encryption: { keys: { default: 'a'.repeat(64) } } }
+			config: {}
 		},
 		...[1, 2, 1].map((byte, index) => ({
 			scope: 'role',
@@ -93,7 +93,7 @@ test('conditional opaque rules preserve their source identity without retaining 
 	const sources = [
 		{
 			scope: 'organization',
-			config: { encryption: { keys: { rules: 'b'.repeat(64) } } }
+			config: {}
 		},
 		...[1, 2].map((byte) => ({
 			scope: 'role',
@@ -151,7 +151,6 @@ test('a rule whose only setting is the default ordering shows in routing.sort, n
 		{
 			scope: 'organization',
 			config: {
-				encryption: { keys: { rules: 'c'.repeat(64) } },
 				rules: {
 					a_order: { mode: 'default', routing: { sort: [{ by: 'provider.id' }] } },
 					z_opaque: opaque(1)

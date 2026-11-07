@@ -102,7 +102,7 @@ func TestInspectionPreservesOpaqueSourcesWithoutChargingTheirEncodingToCompiledS
 	}
 	encoded, _ := json.Marshal(map[string]any{"plugins": map[string]any{"redaction": map[string]any{"encrypted": envelope}}})
 	entries := []InspectionSource{
-		{Scope: OrganizationScope, Config: json.RawMessage(`{"encryption":{"keys":{"default":"` + envelope.KeyID + `"}},"plugins":{"redaction":{"email_address":true}}}`)},
+		{Scope: OrganizationScope, Config: json.RawMessage(`{"plugins":{"redaction":{"email_address":true}}}`)},
 		{Scope: RoleScope, ID: "first", Config: encoded},
 		{Scope: RoleScope, ID: "second", Config: encoded},
 		{Scope: KeyScope, Config: json.RawMessage(`{}`)},
@@ -153,7 +153,6 @@ func TestEncryptedSectionsShareTheCombinedByteBudget(t *testing.T) {
 				scope := RoleScope
 				if index == 0 {
 					scope = OrganizationScope
-					doc["encryption"] = map[string]any{"keys": map[string]string{"test": envelope.KeyID}}
 				}
 				raw, _ := json.Marshal(doc)
 				document, err := ParseSourceDocument(raw)
@@ -383,7 +382,6 @@ func BenchmarkInspectionOpaqueRules(b *testing.B) {
 		entries[i].Scope = RoleScope
 		if i == 0 {
 			entries[i].Scope = OrganizationScope
-			doc["encryption"] = map[string]any{"keys": map[string]string{"test": keyID}}
 		}
 		entries[i].Config, _ = json.Marshal(doc)
 	}

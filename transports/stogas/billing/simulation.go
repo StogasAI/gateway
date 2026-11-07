@@ -22,7 +22,7 @@ func (s *Service) SimulationConfig(ctx context.Context, credential *DashboardCre
 	row := keyConfigRow{}
 	if err := s.queryForTool(ctx, s.keyConfigQuery,
 		[]any{nil, credential.KeyID, credential.ActorUserID, credential.SessionID, nil, "view"},
-		&row.Result, &row.KeyID, &row.Sources, &row.Claims, &row.CredentialsGeneration, &row.Credentials, &row.CredentialSources,
+		&row.Result, &row.KeyID, &row.Sources, &row.Claims, &row.CredentialsGeneration, &row.Credentials, &row.CredentialSources, &row.EncryptionKeys,
 	); err != nil {
 		return nil, false, err
 	}
@@ -93,7 +93,7 @@ func (s *KeyConfigSnapshot) SimulatedPolicyForCredential(provider string, index 
 		return nil, ErrByokRequired
 	}
 	selection := selections[index]
-	if selection.Mode == "encrypted" && (selection.Credential == nil || !customerkey.Registered(s.Config.EncryptionKeys, selection.Credential.EncryptionKeyID)) {
+	if selection.Mode == "encrypted" && (selection.Credential == nil || !customerkey.Registered(s.EncryptionKeys, selection.Credential.EncryptionKeyID)) {
 		return nil, ErrByokKeyUnregistered
 	}
 	return s.selectionPolicy(selection, now, budget)

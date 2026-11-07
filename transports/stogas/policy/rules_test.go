@@ -526,7 +526,7 @@ func TestReplacedDefaultsNameTheRequirementOnEachDeployment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	org := ruleSource(t, `{"encryption":{"keys":{"test":"`+fixture.Envelope.KeyID+`"}},"plugins":{"textExtraction":"always"},"rules":{`+
+	org := ruleSource(t, `{"plugins":{"textExtraction":"always"},"rules":{`+
 		`"base":{"mode":"default","input":{"asciiOnly":true},"plugins":{"textExtraction":"off","redaction":{"email_address":true}},"routing":{"retries":2,"sort":[{"by":"provider.id"}]}},`+
 		`"strict_openai":{"when":"provider.id == 'openai'","plugins":{"redaction":{"credit_card_number":true}}}}}`)
 	role := ruleSource(t, `{"rules":{`+
@@ -697,7 +697,7 @@ func TestRuleShapeRejectsNestedAuthorityAndReplaceableBudgets(t *testing.T) {
 		`{"mode":"default","limits":{"total":{"tokens":1}}}`,
 		`{"when":"true"}`, `{"mode":null,"input":{"asciiOnly":true}}`,
 		`{"delegation":{"request":true}}`, `{"rules":{"again":{"input":{"asciiOnly":true}}}}`,
-		`{"when":"true","encryption":{"keys":{}}}`, `{"version":1,"input":{"asciiOnly":true}}`,
+		`{"version":1,"input":{"asciiOnly":true}}`,
 	} {
 		if _, err := CompileSource([]byte(`{"rules":{"test":` + body + `}}`)); err == nil {
 			t.Fatalf("invalid rule accepted: %s", body)

@@ -272,7 +272,7 @@ func (s *KeyConfigSnapshot) AvailableCredentials() map[string][]int {
 	for provider, selections := range s.Credentials {
 		for index, selection := range selections {
 			if selection.Mode == "encrypted" && (selection.ID == "" || selection.Credential == nil || selection.Credential.ID != selection.ID ||
-				!customerkey.Registered(s.Config.EncryptionKeys, selection.Credential.EncryptionKeyID)) {
+				!customerkey.Registered(s.EncryptionKeys, selection.Credential.EncryptionKeyID)) {
 				continue
 			}
 			available[provider] = append(available[provider], index)
@@ -310,7 +310,7 @@ func (s *KeyConfigSnapshot) assignedSelection(provider string, index int, keys c
 	}
 	selection := selections[index]
 	if selection.Mode == "encrypted" && (selection.ID == "" || selection.Credential == nil || selection.Credential.ID != selection.ID || s.Config == nil ||
-		keys.Validate(s.Config.EncryptionKeys) != nil || !customerkey.Registered(s.Config.EncryptionKeys, selection.Credential.EncryptionKeyID)) {
+		keys.Validate(s.EncryptionKeys) != nil || !customerkey.Registered(s.EncryptionKeys, selection.Credential.EncryptionKeyID)) {
 		return CredentialSelection{}, customerkey.ErrKey
 	}
 	return selection, nil
@@ -321,7 +321,7 @@ func (s *KeyConfigSnapshot) assignedSelection(provider string, index int, keys c
 func (s *KeyConfigSnapshot) credentialSelection(provider string, index int, keys customerkey.Keys) (CredentialSelection, error) {
 	selection, err := s.assignedSelection(provider, index, keys)
 	if err == nil && selection.Mode == "encrypted" {
-		err = keys.Missing(s.Config.EncryptionKeys, selection.Credential.EncryptionKeyID)
+		err = keys.Missing(s.EncryptionKeys, selection.Credential.EncryptionKeyID)
 	}
 	if err != nil {
 		return CredentialSelection{}, err
@@ -529,7 +529,7 @@ func (s *KeyConfigSnapshot) selectionPolicy(selection CredentialSelection, now t
 	if err := budget.AddConfig(config); err != nil {
 		return nil, err
 	}
-	compiled = &PolicySnapshot{Versions: &versions, Logged: loggedVersions(versions, refs), Config: config, Digest: digest, sourceRefs: refs, cacheBytes: config.CompositionBytes()}
+	compiled = &PolicySnapshot{Versions: &versions, Logged: loggedVersions(versions, refs), Config: config, EncryptionKeys: s.EncryptionKeys, Digest: digest, sourceRefs: refs, cacheBytes: config.CompositionBytes()}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if previous := s.credentialPolicies[selection.ID]; previous != nil {

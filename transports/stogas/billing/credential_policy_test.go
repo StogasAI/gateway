@@ -100,15 +100,9 @@ func TestCredentialPolicyCacheIsolationAndEviction(t *testing.T) {
 
 func TestUnusedEncryptedCredentialPolicyDoesNotRequireItsRoot(t *testing.T) {
 	raw, organization, key := encryptedPolicyFixture(t)
-	var source map[string]json.RawMessage
-	if err := json.Unmarshal(raw[0], &source); err != nil {
-		t.Fatal(err)
-	}
-	delete(source, "encryption")
-	encrypted, _ := json.Marshal(source)
-	org, _ := json.Marshal(map[string]any{"encryption": map[string]any{"keys": map[string]string{"default": key["default"].ID()}}})
 	var cache keyConfigCache
-	snapshot := credentialPolicySnapshot(t, &cache, organization, org, map[string][]json.RawMessage{"openai": {encrypted}, "azure": {json.RawMessage(`null`)}})
+	snapshot := credentialPolicySnapshot(t, &cache, organization, json.RawMessage(`null`), map[string][]json.RawMessage{"openai": {raw[0]}, "azure": {json.RawMessage(`null`)}})
+	snapshot.EncryptionKeys = registryOf(key)
 	defer cache.close()
 	for _, provider := range []string{"chutes", "azure"} {
 		if _, err := snapshot.PolicyForCredential(provider, 0, nil, time.Now(), nil); err != nil {

@@ -95,7 +95,7 @@ func TestTextExtractionPrecedesASCIIAndRedaction(t *testing.T) {
 					defer key.Clear()
 					// Independently generated with Node crypto for this organization and purpose.
 					const envelope = `{"version":1,"keyId":"3a1121028ba40964d5f10b47662650a021d736bd671f4083b5066d9bd51c9ef0","salt":"AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM","nonce":"BAQEBAQEBAQEBAQE","blob":"MUgKUlBwNjuw0aMvsAVKMdfwJ_mzeyhYggR0-E20ahBYWNcbmyo_HmA"}`
-					document := []byte(`{"encryption":{"keys":{"default":"` + key.ID() + `"}},"plugins":{"textExtraction":"always","redaction":{"encrypted":` + envelope + `}}}`)
+					document := []byte(`{"plugins":{"textExtraction":"always","redaction":{"encrypted":` + envelope + `}}}`)
 					if _, missingErr := policy.OpenSource(document, "org-test", nil); missingErr == nil {
 						t.Fatal("encrypted redaction accepted without key")
 					}
@@ -178,7 +178,7 @@ func customerOpenAICredential(t *testing.T) (*billing.KeyConfigSnapshot, *billin
 	const envelope = `{"version":1,"keyId":"3a1121028ba40964d5f10b47662650a021d736bd671f4083b5066d9bd51c9ef0","salt":"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc","nonce":"CQkJCQkJCQkJCQkJ","blob":"tWrhodGoOpIuR8FHpvQEq_u8kTS4r0HPEkvwKUzCaZz2SGH2mXN4"}`
 	snapshot := &billing.KeyConfigSnapshot{
 		Claims:         &billing.APIKeyClaims{OrganizationID: "org-test"},
-		PolicySnapshot: billing.PolicySnapshot{Config: &policy.Config{EncryptionKeys: map[string]string{"default": key.ID()}}},
+		PolicySnapshot: billing.PolicySnapshot{Config: &policy.Config{}, EncryptionKeys: map[string]string{"default": key.ID()}},
 		Credentials:    map[string][]billing.CredentialSelection{"openai": {{Mode: "encrypted", ID: id, Credential: &billing.CachedCredential{ID: id, OrganizationID: "org-test", Provider: "openai", Kind: "encrypted", Enabled: true, EncryptionKeyID: key.ID(), EncryptedSecret: envelope}}}},
 	}
 	prepared, err := (&billing.Service{}).PrepareCredential(snapshot, "openai", 0, customerkey.Keys{"default": key})

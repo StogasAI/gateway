@@ -24,14 +24,13 @@ const (
 	permissionFallbacks
 	permissionDelegation
 	permissionTextExtraction
-	permissionEncryption
 	permissionExport
 	permissionTotalTimeout
 	permissionOutputIdleTimeout
 	permissionOrder
 	permissionMissingKeys
 	allPermissions     = permissionMissingKeys | (permissionMissingKeys - 1)
-	requestPermissions = allPermissions &^ (permissionLimits | permissionDelegation | permissionEncryption)
+	requestPermissions = allPermissions &^ (permissionLimits | permissionDelegation)
 )
 
 var permissionSections = map[string]Permission{
@@ -48,7 +47,7 @@ var permissionSections = map[string]Permission{
 	"routing.allowedCatalogNodes": permissionNodes, "routing.retries": permissionRetries,
 	"routing.fallbacks": permissionFallbacks, "routing.order": permissionOrder,
 	"routing.missingEncryptionKeys": permissionMissingKeys,
-	"delegation":                    permissionDelegation, "encryption": permissionEncryption,
+	"delegation":                    permissionDelegation,
 }
 
 var policyEntityID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
@@ -147,7 +146,7 @@ func (p *RequestPermission) UnmarshalJSON(raw []byte) error {
 		value = requestPermissions
 	}
 	if value&^requestPermissions != 0 {
-		return configError("request permissions cannot allow limits, delegation, or encryption settings")
+		return configError("request permissions cannot allow limits or delegation")
 	}
 	*p = RequestPermission(value)
 	return nil

@@ -133,20 +133,6 @@ func missing(registered map[string]string, sent func(string) bool, ids []string)
 	return &MissingError{Labels: labels}
 }
 
-func ValidateRegistry(registered map[string]string) error {
-	if len(registered) == 0 {
-		return ErrKey
-	}
-	seen := make(map[string]bool, len(registered))
-	for label, id := range registered {
-		if !labelPattern.MatchString(label) || len(id) != 64 || strings.Trim(id, "0123456789abcdef") != "" || seen[id] {
-			return ErrKey
-		}
-		seen[id] = true
-	}
-	return nil
-}
-
 func Registered(registered map[string]string, id string) bool {
 	for _, current := range registered {
 		if current == id {
