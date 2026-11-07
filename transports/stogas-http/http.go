@@ -389,7 +389,7 @@ func (s *Server) finalizeState(outcome *schemas.BifrostContext, state *stogas.St
 // ingestProviderResult returns the reply that the caller gets, the provider
 // outcome, nil for a valid response, and the caller's failure, which also
 // includes local processing errors. A bridged request's caller gets the
-// provider's Chat Completions reply as Responses.
+// provider's reply on the interface that the caller called.
 func ingestProviderResult(memory *requestMemoryLease, request *schemas.BifrostContext, state *stogas.State, response *schemas.BifrostResponse, failure *schemas.BifrostError) (reply *schemas.BifrostResponse, outcome, callerFailure *schemas.BifrostError) {
 	state.MarkProviderCompleted()
 	reply = response
@@ -503,7 +503,8 @@ func (s *Server) startSSEStream(ctx *requestContext, run *providerRun, started p
 		_ = reader.Close()
 	}
 	includeChatUsage := clientRequestedChatStreamUsage(state)
-	// A bridged request's client gets the provider's chunks as Responses events.
+	// A bridged request's client gets the provider's chunks on the interface
+	// that the client called.
 	var bridge *stogas.BridgedStream
 	bridgeChecked := false
 	completedAsync = true
@@ -894,22 +895,30 @@ type streamEvent struct {
 }
 
 // clientStreamEvents returns the events of a chunk that the state took. A
-// bridged request's chunk gives the Responses events that convert it.
+// bridged request's chunk gives the events of the chunks that convert it.
 func clientStreamEvents(state *stogas.State, bridge *stogas.BridgedStream, chunk *schemas.BifrostStreamChunk, includeChatUsage bool) ([]streamEvent, error) {
-	model := servedModel(state)
-	switch {
-	case bridge != nil:
-		converted, err := bridge.Convert(chunk.BifrostChatResponse)
+	chunks := []*schemas.BifrostStreamChunk{chunk}
+	if bridge != nil {
+		converted, err := bridge.Convert(chunk)
 		if err != nil {
 			return nil, err
 		}
-		events := make([]streamEvent, 0, len(converted))
-		for _, event := range converted {
-			if payload := responsesStreamPayload(event, model); payload != nil {
-				events = append(events, streamEvent{name: string(event.Type), payload: payload})
-			}
+		chunks = converted
+	}
+	model := servedModel(state)
+	events := make([]streamEvent, 0, len(chunks))
+	for _, chunk := range chunks {
+		if event, ok := clientStreamEvent(chunk, model, includeChatUsage); ok {
+			events = append(events, event)
 		}
-		return events, nil
+	}
+	return events, nil
+}
+
+// clientStreamEvent returns the event of a chunk on the client's interface,
+// unless the chunk is one that only core uses.
+func clientStreamEvent(chunk *schemas.BifrostStreamChunk, model string, includeChatUsage bool) (streamEvent, bool) {
+	switch {
 	case chunk.BifrostChatResponse != nil:
 		chat := chunk.BifrostChatResponse
 		event := streamEvent{payload: publicResponsePayload(chat, model)}
@@ -923,15 +932,12 @@ func clientStreamEvents(state *stogas.State, bridge *stogas.BridgedStream, chunk
 				event.client = publicResponsePayload(&filtered, model)
 			}
 		}
-		return []streamEvent{event}, nil
+		return event, true
 	case chunk.BifrostResponsesStreamResponse != nil:
 		payload := responsesStreamPayload(chunk.BifrostResponsesStreamResponse, model)
-		if payload == nil {
-			return nil, nil
-		}
-		return []streamEvent{{name: string(chunk.BifrostResponsesStreamResponse.Type), payload: payload}}, nil
+		return streamEvent{name: string(chunk.BifrostResponsesStreamResponse.Type), payload: payload}, payload != nil
 	default:
-		return nil, nil
+		return streamEvent{}, false
 	}
 }
 

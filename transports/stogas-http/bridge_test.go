@@ -2,6 +2,7 @@ package stogashttp
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -16,16 +17,25 @@ import (
 
 const bridgedStreamBody = `{"model":"chutes-glm-5.2","input":"hi","stream":true}`
 
-func bridgedTestState(t *testing.T, body string) *stogas.State {
+// bridgedTestState prepares a request that reaches a deployment on the other interface, as a pair
+// does before it calls the provider.
+func bridgedTestState(t *testing.T, path, body string) *stogas.State {
 	t.Helper()
-	resolution := mustResolvedRequest(t, "/v1/responses", body)
+	resolution := mustResolvedRequest(t, path, body)
 	if !resolution.Bridged() {
-		t.Fatalf("deployment %s takes Responses itself", resolution.Deployment.ID)
+		t.Fatalf("deployment %s takes the client's interface itself", resolution.Deployment.ID)
 	}
-	return &stogas.State{
+	state := &stogas.State{
 		Pair:      stogas.Pair{Resolution: resolution, Adapter: stogas.AdapterFor(resolution.Provider)},
 		StartedAt: time.Now().Add(-5 * time.Millisecond),
 	}
+	if err := state.Adapter.ValidateRequest(state); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Adapter.SanitizeRequest(state); err != nil {
+		t.Fatal(err)
+	}
+	return state
 }
 
 // sendBridgedChunks streams a reply with reasoning and text, then its usage, in its own chunk or
@@ -90,7 +100,7 @@ func TestWriteSSEStreamSendsBridgedChatAsResponsesEvents(t *testing.T) {
 	ctx := newTestRequest(t)
 	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
 	stream := make(chan *schemas.BifrostStreamChunk)
-	state := bridgedTestState(t, bridgedStreamBody)
+	state := bridgedTestState(t, "/v1/responses", bridgedStreamBody)
 	reader := startTestStream(&Server{}, ctx, bifrostCtx, state, stream, cancel, nil)
 	defer reader.Close()
 	go sendBridgedChunks(stream, state, false)
@@ -161,7 +171,7 @@ func testBridgedResponsesReceipt(t *testing.T, usageWithFinish bool) {
 	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
 	bifrostCtx.SetValue(stogasMetadataKey, true)
 	stream := make(chan *schemas.BifrostStreamChunk)
-	state := bridgedTestState(t, bridgedStreamBody)
+	state := bridgedTestState(t, "/v1/responses", bridgedStreamBody)
 	state.RequestID = "018f4f70-7c88-7b9a-baf8-31a93d2cf615"
 	state.NodeID = strings.Repeat("5", 64)
 	state.FinalEvent = &billing.RequestEvent{
@@ -199,7 +209,7 @@ func testBridgedResponsesReceipt(t *testing.T, usageWithFinish bool) {
 }
 
 func TestUnaryBridgedReplyReachesTheClientAsResponses(t *testing.T) {
-	state := bridgedTestState(t, `{"model":"chutes-glm-5.2","input":"hi"}`)
+	state := bridgedTestState(t, "/v1/responses", `{"model":"chutes-glm-5.2","input":"hi"}`)
 	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
 	defer cancel()
 	response := &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{
@@ -236,6 +246,164 @@ func TestUnaryBridgedReplyReachesTheClientAsResponses(t *testing.T) {
 	}
 	if payload.ID != "chatcmpl-unary" || payload.Object != "response" || payload.Model != state.Resolution.Deployment.ModelID ||
 		len(payload.Output) != 1 || payload.Output[0].Type != "message" || payload.Output[0].Content[0].Text != "Hello" {
+		t.Fatalf("payload = %s", encoded)
+	}
+}
+
+const chatBridgeBody = `{"model":"openai-gpt-5.6-sol-pro","messages":[{"role":"user","content":"hi"}]`
+
+// responsesReply is a Responses reply without output, as OpenAI gives it.
+func responsesReply(status string) *schemas.BifrostResponsesResponse {
+	return &schemas.BifrostResponsesResponse{ID: schemas.Ptr("resp_bridged"), Object: "response", CreatedAt: 1_700_000_000, Status: &status}
+}
+
+func responsesTextItem(status, text string) *schemas.ResponsesMessage {
+	item := &schemas.ResponsesMessage{
+		ID: schemas.Ptr("msg_1"), Type: schemas.Ptr(schemas.ResponsesMessageTypeMessage),
+		Role: schemas.Ptr(schemas.ResponsesInputMessageRoleAssistant), Status: &status,
+		Content: &schemas.ResponsesMessageContent{ContentBlocks: []schemas.ResponsesMessageContentBlock{}},
+	}
+	if status == "completed" {
+		item.Content.ContentBlocks = []schemas.ResponsesMessageContentBlock{*responsesTextPart(text)}
+	}
+	return item
+}
+
+func responsesTextPart(text string) *schemas.ResponsesMessageContentBlock {
+	return &schemas.ResponsesMessageContentBlock{
+		Type: schemas.ResponsesOutputMessageContentTypeText, Text: &text,
+		ResponsesOutputMessageContentText: &schemas.ResponsesOutputMessageContentText{Annotations: []schemas.ResponsesOutputMessageContentTextAnnotation{}},
+	}
+}
+
+// sendResponsesEvents streams a Responses reply with one message, as OpenAI sends it.
+func sendResponsesEvents(stream chan<- *schemas.BifrostStreamChunk, text string) {
+	sequence, output, content, id := 0, 0, 0, "msg_1"
+	send := func(event *schemas.BifrostResponsesStreamResponse) {
+		event.SequenceNumber = sequence
+		sequence++
+		stream <- &schemas.BifrostStreamChunk{BifrostResponsesStreamResponse: event}
+	}
+	send(&schemas.BifrostResponsesStreamResponse{Type: schemas.ResponsesStreamResponseTypeCreated, Response: responsesReply("in_progress")})
+	send(&schemas.BifrostResponsesStreamResponse{Type: schemas.ResponsesStreamResponseTypeInProgress, Response: responsesReply("in_progress")})
+	send(&schemas.BifrostResponsesStreamResponse{Type: schemas.ResponsesStreamResponseTypeOutputItemAdded, OutputIndex: &output, Item: responsesTextItem("in_progress", "")})
+	send(&schemas.BifrostResponsesStreamResponse{Type: schemas.ResponsesStreamResponseTypeContentPartAdded, OutputIndex: &output, ContentIndex: &content, ItemID: &id, Part: responsesTextPart("")})
+	send(&schemas.BifrostResponsesStreamResponse{Type: schemas.ResponsesStreamResponseTypeOutputTextDelta, OutputIndex: &output, ContentIndex: &content, ItemID: &id, Delta: &text})
+	send(&schemas.BifrostResponsesStreamResponse{Type: schemas.ResponsesStreamResponseTypeOutputTextDone, OutputIndex: &output, ContentIndex: &content, ItemID: &id, Text: &text})
+	send(&schemas.BifrostResponsesStreamResponse{Type: schemas.ResponsesStreamResponseTypeContentPartDone, OutputIndex: &output, ContentIndex: &content, ItemID: &id, Part: responsesTextPart(text)})
+	send(&schemas.BifrostResponsesStreamResponse{Type: schemas.ResponsesStreamResponseTypeOutputItemDone, OutputIndex: &output, Item: responsesTextItem("completed", text)})
+	completed := responsesReply("completed")
+	completed.Output = []schemas.ResponsesMessage{*responsesTextItem("completed", text)}
+	completed.Usage = &schemas.ResponsesResponseUsage{InputTokens: 3, OutputTokens: 4, TotalTokens: 7}
+	send(&schemas.BifrostResponsesStreamResponse{Type: schemas.ResponsesStreamResponseTypeCompleted, Response: completed})
+	close(stream)
+}
+
+func TestWriteSSEStreamSendsBridgedResponsesAsChatChunks(t *testing.T) {
+	for _, tc := range []struct {
+		name, options string
+		want          string
+	}{
+		{"usage omitted", "", `{"role":"assistant"}` + "\n" + `{"content":"Hello"}` + "\n" + `{} stop`},
+		{"usage requested", `,"stream_options":{"include_usage":true}`, `{"role":"assistant"}` + "\n" + `{"content":"Hello"}` + "\n" + `{} stop` + "\nusage 3 4"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := newTestRequest(t)
+			bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
+			stream := make(chan *schemas.BifrostStreamChunk)
+			state := bridgedTestState(t, "/v1/chat/completions", chatBridgeBody+`,"stream":true`+tc.options+`}`)
+			reader := startTestStream(&Server{}, ctx, bifrostCtx, state, stream, cancel, nil)
+			defer reader.Close()
+			go sendResponsesEvents(stream, "Hello")
+
+			body := readResponseBodyStream(t, reader)
+			chunks, done := strings.CutSuffix(body, "data: [DONE]\n\n")
+			if !done || strings.Contains(chunks, "event: ") || strings.Contains(chunks, "response.") {
+				t.Fatalf("a Chat Completions client got Responses framing: %q", body)
+			}
+			lines := []string{}
+			for _, event := range parseSSEEvents(t, chunks) {
+				var chunk struct {
+					ID      string `json:"id"`
+					Object  string `json:"object"`
+					Model   string `json:"model"`
+					Choices []struct {
+						Delta        json.RawMessage `json:"delta"`
+						FinishReason *string         `json:"finish_reason"`
+					} `json:"choices"`
+					Usage *struct {
+						PromptTokens     int `json:"prompt_tokens"`
+						CompletionTokens int `json:"completion_tokens"`
+					} `json:"usage"`
+				}
+				encoded, _ := json.Marshal(event.data)
+				if err := json.Unmarshal(encoded, &chunk); err != nil {
+					t.Fatal(err)
+				}
+				if chunk.ID != "resp_bridged" || chunk.Object != "chat.completion.chunk" || chunk.Model != state.Resolution.Deployment.ModelID {
+					t.Fatalf("chunk = %s", encoded)
+				}
+				switch {
+				case len(chunk.Choices) == 0 && chunk.Usage != nil:
+					lines = append(lines, fmt.Sprintf("usage %d %d", chunk.Usage.PromptTokens, chunk.Usage.CompletionTokens))
+				case len(chunk.Choices) == 1 && chunk.Usage == nil:
+					line := string(chunk.Choices[0].Delta)
+					if reason := chunk.Choices[0].FinishReason; reason != nil {
+						line += " " + *reason
+					}
+					lines = append(lines, line)
+				default:
+					t.Fatalf("chunk = %s", encoded)
+				}
+			}
+			if got := strings.Join(lines, "\n"); got != tc.want {
+				t.Fatalf("chunks =\n%s\nwant\n%s", got, tc.want)
+			}
+			if state.Response == nil || state.Response.ResponsesStreamResponse == nil {
+				t.Fatal("the state lost the provider's Responses reply")
+			}
+		})
+	}
+}
+
+func TestUnaryBridgedReplyReachesTheClientAsChatCompletions(t *testing.T) {
+	state := bridgedTestState(t, "/v1/chat/completions", chatBridgeBody+`}`)
+	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
+	defer cancel()
+	completed := responsesReply("completed")
+	completed.Output = []schemas.ResponsesMessage{*responsesTextItem("completed", "Hello")}
+	completed.Usage = &schemas.ResponsesResponseUsage{InputTokens: 3, OutputTokens: 1, TotalTokens: 4}
+	response := &schemas.BifrostResponse{ResponsesResponse: completed}
+	reply, outcome, failure := ingestProviderResult(nil, bifrostCtx, state, response, nil)
+	if outcome != nil || failure != nil || reply == nil || reply.ChatResponse == nil || state.Response != response {
+		t.Fatalf("reply = %#v, outcome = %v, failure = %v", reply, outcome, failure)
+	}
+	encoded, err := marshalPayload(unaryResponsePayload(reply, servedModel(state)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		ID      string `json:"id"`
+		Object  string `json:"object"`
+		Model   string `json:"model"`
+		Choices []struct {
+			FinishReason string `json:"finish_reason"`
+			Message      struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+		Usage struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(encoded, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.ID != "resp_bridged" || payload.Object != "chat.completion" || payload.Model != state.Resolution.Deployment.ModelID ||
+		len(payload.Choices) != 1 || payload.Choices[0].FinishReason != "stop" || payload.Choices[0].Message.Role != "assistant" ||
+		payload.Choices[0].Message.Content != "Hello" || payload.Usage.PromptTokens != 3 || payload.Usage.CompletionTokens != 1 {
 		t.Fatalf("payload = %s", encoded)
 	}
 }

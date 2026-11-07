@@ -19,7 +19,7 @@ func validateProviderChatResponse(state *State, response *schemas.BifrostChatRes
 	if response.SystemFingerprint != "" && !validProviderResponseID(response.SystemFingerprint) {
 		return ErrProviderResponseMalformed
 	}
-	if state.Resolution.WireRoute() != catalog.RouteChat || !validProviderResponseID(response.ID) {
+	if state.Resolution.WireView().Route != catalog.RouteChat || !validProviderResponseID(response.ID) {
 		return ErrProviderResponseMalformed
 	}
 	if streaming && !observeProviderStreamPayload(state, response) {
@@ -129,7 +129,7 @@ func validateProviderResponsesResponse(state *State, response *schemas.BifrostRe
 	if response.Status != nil {
 		status = *response.Status
 	}
-	if state.Resolution.Route != catalog.RouteResponses || response.ID == nil ||
+	if state.Resolution.WireView().Route != catalog.RouteResponses || response.ID == nil ||
 		!validProviderResponseID(*response.ID) ||
 		response.Object != "response" || response.Status == nil ||
 		(status != schemas.ResponsesResponseStatusCompleted && status != schemas.ResponsesResponseStatusIncomplete) {
@@ -145,7 +145,7 @@ func validateProviderResponsesStream(state *State, response *schemas.BifrostResp
 	if state == nil || state.Resolution == nil || state.Resolution.Route == "" || response == nil {
 		return nil
 	}
-	if state.Resolution.Route != catalog.RouteResponses {
+	if state.Resolution.WireView().Route != catalog.RouteResponses {
 		return ErrProviderResponseMalformed
 	}
 	discardUnexposedResponsesStreamFields(response)

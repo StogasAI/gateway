@@ -271,7 +271,7 @@ func validateProviderChatAnnotations(state *State, annotations []schemas.ChatAss
 		return nil
 	}
 	if len(annotations) > maxProviderResponseItems || state == nil || state.Resolution == nil ||
-		!state.Resolution.HasWebSearchOptions() {
+		!state.Resolution.WireView().HasWebSearchOptions() {
 		return ErrProviderResponseMalformed
 	}
 	for _, annotation := range annotations {
@@ -343,7 +343,7 @@ func providerChatToolCallRequired(state *State) bool {
 	if state == nil || state.Resolution == nil {
 		return false
 	}
-	choice := state.Resolution.RawBody()["tool_choice"]
+	choice := state.Resolution.WireView().RawBody()["tool_choice"]
 	if value, ok := rawStringValue(choice); ok {
 		return value == "required"
 	}
@@ -361,13 +361,13 @@ func validProviderFinishReason(state *State, value string) bool {
 	case "compaction":
 		return state != nil && state.Resolution != nil &&
 			stateUsesClaudeWire(state) &&
-			anthropicContextManagementUsesCompaction(state.Resolution.RawBody()["context_management"])
+			anthropicContextManagementUsesCompaction(state.Resolution.WireView().RawBody()["context_management"])
 	default:
 		return false
 	}
 }
 
 func providerChatToolNameAllowed(state *State, name string) bool {
-	return state != nil && state.Resolution != nil && state.Resolution.WireRoute() == catalog.RouteChat &&
+	return state != nil && state.Resolution != nil && state.Resolution.WireView().Route == catalog.RouteChat &&
 		state.providerTools().names[providerToolName{schemas.ResponsesToolTypeFunction, name}]
 }

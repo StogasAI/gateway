@@ -198,8 +198,10 @@ type ResolvedRequest struct {
 	pricing            requestPricingContext
 	redactionSummary   *redaction.Summary
 	responses          *openaiprovider.OpenAIResponsesRequest
-	// wireBody is the Chat Completions body of a bridged request, which TranslateToChat makes.
+	// wireBody is the body of a bridged request on the interface that its provider takes, and wire
+	// is the request as its provider gets it. Translate makes both.
 	wireBody          map[string]json.RawMessage
+	wire              *ResolvedRequest
 	policy            *policy.Config
 	activePolicyRules []policy.RuleMatch
 	retries           int
@@ -321,8 +323,8 @@ func (r *ResolvedRequest) ToBifrost(ctx *schemas.BifrostContext) (*schemas.Bifro
 		}()
 	}
 	switch {
-	case r.Bridged() && r.chat == nil:
-		// TranslateToChat has not run, and the deployment takes only Chat Completions.
+	case r.Bridged() && r.wire == nil:
+		// Translate has not run, and the deployment takes only the other interface.
 		return nil, ErrUnsupportedRequest
 	case r.chat != nil:
 		body := r.chat.ToBifrostChatRequest(ctx)
@@ -343,7 +345,7 @@ func (r *ResolvedRequest) ToBifrost(ctx *schemas.BifrostContext) (*schemas.Bifro
 		body.Model = r.Model
 		body.Fallbacks = nil
 		converted = true
-		return &schemas.BifrostRequest{RequestType: r.RequestType, ResponsesRequest: body}, nil
+		return &schemas.BifrostRequest{RequestType: r.WireRequestType(), ResponsesRequest: body}, nil
 	default:
 		return nil, ErrUnsupportedRequest
 	}
@@ -560,7 +562,7 @@ func (r *ResolvedRequest) ReleaseInput() {
 	if r.wireBody != nil {
 		wire := make(map[string]json.RawMessage, len(r.wireBody))
 		for key, value := range r.wireBody {
-			if key != "messages" {
+			if key != "messages" && key != "input" {
 				wire[strings.Clone(key)] = bytes.Clone(value)
 			}
 		}
@@ -577,6 +579,9 @@ func (r *ResolvedRequest) ReleaseInput() {
 		r.pricing.ToolTypes[i] = strings.Clone(kind)
 	}
 	r.pricing.SearchContextSize = strings.Clone(r.pricing.SearchContextSize)
+	if r.wire != nil {
+		r.wire = r.wireView()
+	}
 }
 
 func (r *ResolvedRequest) RawTools() []map[string]json.RawMessage {
@@ -925,10 +930,7 @@ func resolveChatRequests(input RequestInput, route Route) (*ResolvedRequest, err
 		}
 		candidateRaw := copyRawRequestData(variant.fields)
 		request := *variant.chat
-		if request.Reasoning != nil {
-			reasoning := *request.Reasoning
-			request.Reasoning = &reasoning
-		}
+		request.Reasoning = withoutChatReasoningMode(request.Reasoning)
 		requestType := schemas.ChatCompletionRequest
 		if request.IsStreamingRequested() {
 			requestType = schemas.ChatCompletionStreamRequest
@@ -1019,27 +1021,15 @@ func resolveResponsesRequests(input RequestInput, route Route) (*ResolvedRequest
 			selection,
 			variant.estimate,
 		)
-		// A bridged request takes Chat Completions' reasoning controls, which TranslateToChat
-		// applies once the request's checks have passed. The catalog gives a fixed mode only to
-		// deployments that take Responses.
+		// A bridged request takes Chat Completions' reasoning controls, which Translate applies
+		// once the request's checks have passed.
 		if err == nil && !resolution.Bridged() {
 			err = normalizeResponsesReasoning(request.ResponsesParameters.Reasoning, resolution.Deployment, resolution.outputTokenLimit)
 		}
 		if err != nil {
 			return nil, err
 		}
-		// The deployment owns the mode; the client's reasoning.mode only selected it.
-		if reasoning := request.ResponsesParameters.Reasoning; reasoning != nil {
-			copied := *reasoning
-			copied.Mode = nil
-			request.ResponsesParameters.Reasoning = &copied
-		}
-		if mode := resolution.Deployment.Upstream.ReasoningMode; mode != "" {
-			if request.ResponsesParameters.Reasoning == nil {
-				request.ResponsesParameters.Reasoning = &schemas.ResponsesParametersReasoning{}
-			}
-			request.ResponsesParameters.Reasoning.Mode = &mode
-		}
+		request.ResponsesParameters.Reasoning = deploymentReasoning(request.ResponsesParameters.Reasoning, resolution.Deployment)
 		resolution.responses = &request
 		resolution.hostedTools = variants.hostedTools
 		resolution.retainVariant(variant, candidatePolicy.Config, input)
@@ -1088,8 +1078,8 @@ func filterRequestParameters(selections []routingSelection, raw map[string]json.
 	if err != nil {
 		return nil, nil, err
 	}
-	// A bridged deployment serves a request only when Chat Completions carry it whole.
-	bridgeGap := sync.OnceValue(func() error { return rawChatCompletionsGap(raw) })
+	// A bridged deployment serves a request only when the other interface carries it whole.
+	bridgeGap := sync.OnceValue(func() error { return rawConversionGap(raw, route) })
 	kept := selections[:0]
 	var removed []ruledOut
 	for _, selection := range selections {
@@ -1285,8 +1275,7 @@ type routingFields struct {
 	variant variant
 }
 
-// requestRoutingFields parses the fields that select deployments. Only Responses accepts
-// reasoning.mode; request validation rejects it on Chat Completions first.
+// requestRoutingFields parses the fields that select deployments.
 func requestRoutingFields(raw map[string]json.RawMessage) (routingFields, error) {
 	var fields routingFields
 	if value, ok := raw["model"]; ok {

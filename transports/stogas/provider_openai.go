@@ -76,13 +76,25 @@ func (a OpenAIAdapter) ValidateRequest(state *State) error {
 	if err := validateOpenAIPromptCaching(wire); err != nil {
 		return err
 	}
-	if err := validateOpenAIWireChatPolicy(wire); err != nil {
-		return err
+	// A bridged request's body must pass the rules of its own interface too, so that the
+	// translation never drops a field that those rules refuse.
+	if wire != state {
+		if err := validateOpenAIWirePolicy(state); err != nil {
+			return err
+		}
 	}
-	if err := validateOpenAIWireResponsesPolicy(wire); err != nil {
+	if err := validateOpenAIWirePolicy(wire); err != nil {
 		return err
 	}
 	return openAIGuardrailError(validateOpenAIGuardrails(openAIAdapterContextForState(wire)))
+}
+
+// validateOpenAIWirePolicy checks a request with the rules of OpenAI's format for its interface.
+func validateOpenAIWirePolicy(state *State) error {
+	if err := validateOpenAIWireChatPolicy(state); err != nil {
+		return err
+	}
+	return validateOpenAIWireResponsesPolicy(state)
 }
 
 func validateOpenAIPromptCaching(state *State) error {

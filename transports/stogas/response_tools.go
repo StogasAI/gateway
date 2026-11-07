@@ -103,7 +103,7 @@ func providerResponsesToolCallRequired(state *State) bool {
 	if state == nil || state.Resolution == nil {
 		return false
 	}
-	choice := state.Resolution.RawBody()["tool_choice"]
+	choice := state.Resolution.WireView().RawBody()["tool_choice"]
 	if selected, ok := rawStringValue(choice); ok {
 		return selected == "required"
 	}
@@ -149,7 +149,7 @@ func validProviderResponsesStatusDetails(state *State, response *schemas.Bifrost
 		return response.StopDetails == nil
 	case "compaction":
 		return response.StopDetails == nil &&
-			anthropicContextManagementUsesCompaction(state.Resolution.RawBody()["context_management"])
+			anthropicContextManagementUsesCompaction(state.Resolution.WireView().RawBody()["context_management"])
 	case "refusal":
 		return validProviderResponsesStopDetails(response.StopDetails)
 	default:
@@ -221,12 +221,13 @@ func sanitizeProviderResponsesEcho(state *State, response *schemas.BifrostRespon
 	}
 	trusted := trustedResponsesEcho{}
 	if state != nil && state.Resolution != nil {
-		encoded, err := json.Marshal(state.Resolution.RawBody())
+		body := state.Resolution.WireView().RawBody()
+		encoded, err := json.Marshal(body)
 		if err != nil || json.Unmarshal(encoded, &trusted) != nil {
 			return ErrProviderResponseMalformed
 		}
 		if trusted.Reasoning == nil {
-			if rawEffort := state.Resolution.RawBody()["reasoning.effort"]; len(rawEffort) != 0 {
+			if rawEffort := body["reasoning.effort"]; len(rawEffort) != 0 {
 				var effort string
 				if json.Unmarshal(rawEffort, &effort) != nil {
 					return ErrProviderResponseMalformed
@@ -1799,7 +1800,7 @@ func validateProviderResponsesContentBlock(state *State, block *schemas.Response
 		}
 	case schemas.ResponsesOutputMessageContentTypeCompaction:
 		if state == nil || state.Resolution == nil ||
-			!anthropicContextManagementUsesCompaction(state.Resolution.RawBody()["context_management"]) ||
+			!anthropicContextManagementUsesCompaction(state.Resolution.WireView().RawBody()["context_management"]) ||
 			block.Text != nil || block.Signature != nil || block.EncryptedContent != nil ||
 			block.ResponsesOutputMessageContentText != nil || block.ResponsesOutputMessageContentRefusal != nil ||
 			block.ResponsesOutputMessageContentCompaction == nil ||
@@ -1921,7 +1922,7 @@ type providerWebTool struct {
 
 func (s *State) providerTools() *providerToolSet {
 	if s.providerToolSet == nil {
-		s.providerToolSet = readProviderTools(s.Resolution)
+		s.providerToolSet = readProviderTools(s.Resolution.WireView())
 	}
 	return s.providerToolSet
 }
@@ -2029,7 +2030,7 @@ func providerResponsesAddedStatusAllowed(itemType schemas.ResponsesMessageType, 
 }
 
 func providerResponsesToolTypeAllowed(state *State, wanted schemas.ResponsesToolType) bool {
-	if state == nil || state.Resolution == nil || state.Resolution.Route != catalog.RouteResponses {
+	if state == nil || state.Resolution == nil || state.Resolution.WireView().Route != catalog.RouteResponses {
 		return false
 	}
 	types := state.providerTools().types

@@ -1478,7 +1478,7 @@ func validateResponsesReasoningInput(state *State, item map[string]json.RawMessa
 	if state != nil && state.Resolution.Bridged() && chatPlainReasoningInputSupported(state) {
 		return validateResponsesPlainReasoningInput(item, path)
 	}
-	if state == nil || state.Resolution == nil || state.Resolution.Provider != schemas.OpenAI || !state.Resolution.Deployment.ReasoningSupported {
+	if state == nil || state.Resolution == nil || !catalog.EncryptedReasoningReplay(state.Resolution.Provider, state.Resolution.Deployment) {
 		return invalidRequest("reasoning input items are only supported for OpenAI reasoning deployments")
 	}
 	if err := rejectUnsupportedInputKeys(item, path, "type", "id", "status", "summary", "content", "encrypted_content"); err != nil {

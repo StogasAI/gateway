@@ -64,26 +64,29 @@ func (DefaultAdapter) ValidateRequest(state *State) error {
 	if err := validateCommonResponsesPolicy(state); err != nil {
 		return err
 	}
-	return translateToChat(state)
+	return translate(state)
 }
 
-// translateToChat gives a bridged request the Chat Completions body that its provider gets. The
-// translation must pass the checks of a Chat Completions request too, so that a provider never
-// gets what a Chat Completions request could not send it.
-func translateToChat(state *State) error {
+// translate gives a bridged request the body of the interface that its provider takes. The
+// translation must pass the checks of a request on that interface too, so that a provider never
+// gets what a request on its interface could not send it.
+func translate(state *State) error {
 	if !state.Resolution.Bridged() {
 		return nil
 	}
-	if err := state.Resolution.TranslateToChat(); err != nil {
+	if err := state.Resolution.Translate(); err != nil {
 		return err
 	}
-	return validateCommonChatCompletionPolicy(wireState(state))
+	wire := wireState(state)
+	if err := validateCommonChatCompletionPolicy(wire); err != nil {
+		return err
+	}
+	return validateCommonResponsesPolicy(wire)
 }
 
 // wireState is the state of the request that its provider gets. For a bridged request, it is a
-// state of its own that holds the Chat Completions translation, so that the checks of the
-// provider's Chat Completions read a Chat Completions request and change nothing of the client's
-// state.
+// state of its own that holds the translation, so that the checks of the provider's interface read
+// a request on it and change nothing of the client's state.
 func wireState(state *State) *State {
 	if state == nil || !state.Resolution.Bridged() {
 		return state
@@ -166,10 +169,6 @@ func (DefaultAdapter) IngestChunk(state *State, chunk *schemas.BifrostStreamChun
 		state.observeChatTextMaterial(response)
 		state.Response = &schemas.BifrostResponse{ChatResponse: response}
 	case chunk.BifrostResponsesStreamResponse != nil:
-		// A bridged request's provider replies with Chat Completions.
-		if state.Resolution.Bridged() {
-			return ErrProviderResponseMalformed
-		}
 		streamResp := chunk.BifrostResponsesStreamResponse
 		numberAnthropicResponsesContentPart(state, streamResp)
 		if streamResp.Response != nil && streamResp.Response.Usage != nil {
@@ -294,8 +293,7 @@ func validateBifrostResponseShape(state *State, resp *schemas.BifrostResponse) e
 	if resp.ResponsesStreamResponse != nil {
 		parts++
 	}
-	// A bridged request's provider replies with Chat Completions.
-	if parts != 1 || resp.ChatResponse == nil && state.Resolution.Bridged() {
+	if parts != 1 {
 		return ErrProviderResponseMalformed
 	}
 	switch {

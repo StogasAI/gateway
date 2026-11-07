@@ -118,7 +118,7 @@ func readStructuredOutput(resolution *catalog.ResolvedRequest) structuredOutput 
 
 func (s *State) structuredOutput() structuredOutput {
 	if s.outputFormat == nil {
-		format := readStructuredOutput(s.Resolution)
+		format := readStructuredOutput(s.Resolution.WireView())
 		s.outputFormat = &format
 	}
 	return *s.outputFormat
@@ -149,9 +149,10 @@ func (s *State) checkOutputs() outputChecks {
 	if s == nil || s.Resolution == nil || s.Response == nil {
 		return checks
 	}
-	checker := &outputChecker{resolution: s.Resolution, budget: checkBudgetSteps}
-	// A bridged request's state holds the provider's Chat Completions reply.
-	switch s.Resolution.WireRoute() {
+	// The state holds the provider's reply to the request as the provider got it.
+	checked := s.Resolution.WireView()
+	checker := &outputChecker{resolution: checked, budget: checkBudgetSteps}
+	switch checked.Route {
 	case catalog.RouteChat:
 		s.checkChatOutputs(checker, &checks)
 	case catalog.RouteResponses:

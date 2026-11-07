@@ -362,11 +362,14 @@ func (s *bridgedStream) chunk(delta schemas.ChatStreamResponseChoiceDelta, finis
 			chunk.Choices = []schemas.BifrostResponseChoice{}
 		}
 	}
-	if err := s.state.Adapter.IngestChunk(s.state, &schemas.BifrostStreamChunk{BifrostChatResponse: chunk}); err != nil {
+	provider := &schemas.BifrostStreamChunk{BifrostChatResponse: chunk}
+	if err := s.state.Adapter.IngestChunk(s.state, provider); err != nil {
 		s.t.Fatal(err)
 	}
-	events, err := s.stream.Convert(chunk)
-	s.events = append(s.events, events...)
+	converted, err := s.stream.Convert(provider)
+	for _, event := range converted {
+		s.events = append(s.events, event.BifrostResponsesStreamResponse)
+	}
 	return err
 }
 

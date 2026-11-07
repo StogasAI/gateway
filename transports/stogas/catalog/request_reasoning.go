@@ -163,6 +163,40 @@ func normalizeChatReasoning(reasoning *schemas.ChatReasoning, deployment Deploym
 	return nil
 }
 
+// withoutChatReasoningMode is a copy of a Chat Completions reasoning control without its mode, which
+// only selects the deployment: Translate gives a deployment that takes only Responses its own mode,
+// and Bifrost would call any other deployment's Responses for a mode. A control without any setting
+// is none.
+func withoutChatReasoningMode(reasoning *schemas.ChatReasoning) *schemas.ChatReasoning {
+	if reasoning == nil {
+		return nil
+	}
+	copied := *reasoning
+	copied.Mode = nil
+	if copied == (schemas.ChatReasoning{}) {
+		return nil
+	}
+	return &copied
+}
+
+// deploymentReasoning is a copy of a Responses reasoning control with the deployment's reasoning
+// mode: the client's reasoning.mode only selected the deployment. A control without any setting is
+// none.
+func deploymentReasoning(reasoning *schemas.ResponsesParametersReasoning, deployment Deployment) *schemas.ResponsesParametersReasoning {
+	copied := schemas.ResponsesParametersReasoning{}
+	if reasoning != nil {
+		copied = *reasoning
+	}
+	copied.Mode = nil
+	if mode := deployment.Upstream.ReasoningMode; mode != "" {
+		copied.Mode = &mode
+	}
+	if copied == (schemas.ResponsesParametersReasoning{}) {
+		return nil
+	}
+	return &copied
+}
+
 func normalizeResponsesReasoning(reasoning *schemas.ResponsesParametersReasoning, deployment Deployment, outputTokenLimit int) error {
 	if reasoning == nil {
 		return nil
@@ -250,6 +284,7 @@ var (
 		"enabled":    true,
 		"effort":     true,
 		"max_tokens": true,
+		"mode":       true,
 	}
 	responsesRawReasoningFields = map[string]bool{
 		"effort":           true,
@@ -286,7 +321,12 @@ func requestReasoningValidation(raw map[string]json.RawMessage, route Route) (fu
 				return nil
 			}
 			reasoning := *parameters.Reasoning
-			return normalizeChatReasoning(&reasoning, deployment, outputLimit)
+			if err := normalizeChatReasoning(&reasoning, deployment, outputLimit); err != nil || !deployment.bridges(RouteChat) {
+				return err
+			}
+			// Translate gives the deployment the controls as Responses take them.
+			request := schemas.BifrostChatRequest{Params: &schemas.ChatParameters{Reasoning: &reasoning}}
+			return conversionGapError(request.ResponsesGap(), "Responses")
 		}, nil
 	}
 	var parameters schemas.ResponsesParameters
@@ -308,7 +348,7 @@ func requestReasoningValidation(raw map[string]json.RawMessage, route Route) (fu
 		case parameters.Reasoning == nil:
 			return nil
 		case deployment.bridges(RouteResponses):
-			// TranslateToChat gives the deployment the controls as Chat Completions take them.
+			// Translate gives the deployment the controls as Chat Completions take them.
 			return normalizeChatReasoning(chatReasoning(parameters.Reasoning), deployment, outputLimit)
 		}
 		reasoning := *parameters.Reasoning

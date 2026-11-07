@@ -419,8 +419,16 @@ func TestGPT56ProDeploymentsUseFixedResponsesModeWithoutChangingTheUpstreamModel
 					*request.ResponsesRequest.Params.Reasoning.Mode != "pro" {
 					t.Fatalf("Pro mode did not reach the typed provider request: %#v", request.ResponsesRequest)
 				}
-				if _, ok := testDeploymentForRoute(schemas.OpenAI, deploymentID, RouteChat); ok {
-					t.Fatalf("%s was exposed on Chat Completions", deploymentID)
+				chat, err := ResolveRequest(RequestInput{
+					Method: "POST",
+					Path:   "/v1/chat/completions",
+					Body:   []byte(`{"model":"` + deploymentID + `","messages":[{"role":"user","content":"hello"}]}`),
+				})
+				if err != nil {
+					t.Fatalf("resolve Pro deployment for Chat Completions: %v", err)
+				}
+				if chat.Deployment.ID != deploymentID || chat.WireRoute() != RouteResponses {
+					t.Fatalf("%s serves Chat Completions on %s", chat.Deployment.ID, chat.WireRoute())
 				}
 			})
 		}
@@ -793,12 +801,32 @@ func TestReasoningModeSelectsDeployments(t *testing.T) {
 			t.Fatalf("%s selected %s with mode %q and effort %q, want %s with effort %q", test.fields, resolution.Deployment.ID, mode, effort, test.deployment, test.effort)
 		}
 	}
-	if _, err := ResolveRequest(RequestInput{
-		Method: "POST",
-		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"provider:openai gpt-5.6-sol","messages":[{"role":"user","content":"hello"}],"reasoning":{"mode":"pro"}}`),
-	}); err == nil || !strings.Contains(err.Error(), "reasoning.mode is not supported") {
-		t.Fatalf("Chat Completions reasoning.mode error = %v", err)
+	// Chat Completions select a mode too. A deployment that takes only Responses gets its own mode
+	// through the translation, and no mode reaches a deployment that takes Chat Completions.
+	chat := func(mode string) *ResolvedRequest {
+		t.Helper()
+		resolution, err := ResolveRequest(RequestInput{
+			Method: "POST",
+			Path:   "/v1/chat/completions",
+			Body:   []byte(`{"model":"provider:openai gpt-5.6-sol","messages":[{"role":"user","content":"hello"}],"reasoning":{"mode":"` + mode + `"}}`),
+		})
+		if err != nil {
+			t.Fatalf("resolve Chat Completions in %s mode: %v", mode, err)
+		}
+		return resolution
+	}
+	if standard := chat("standard"); standard.Deployment.ID != "openai-gpt-5.6-sol" || standard.Bridged() || standard.chat.Reasoning != nil {
+		t.Fatalf("standard mode selected %s with reasoning %+v", standard.Deployment.ID, standard.chat.Reasoning)
+	}
+	pro := chat("pro")
+	if pro.Deployment.ID != "openai-gpt-5.6-sol-pro" || !pro.Bridged() || pro.chat.Reasoning != nil {
+		t.Fatalf("pro mode selected %s with reasoning %+v", pro.Deployment.ID, pro.chat.Reasoning)
+	}
+	if err := pro.Translate(); err != nil {
+		t.Fatal(err)
+	}
+	if reasoning := pro.responses.Reasoning; reasoning == nil || ptrValue(reasoning.Mode) != ModePro {
+		t.Fatalf("translated reasoning = %+v", reasoning)
 	}
 }
 
