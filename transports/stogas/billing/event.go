@@ -366,9 +366,12 @@ func NormalizeUpstreamStatus(bifrostErr *schemas.BifrostError) string {
 		return "provider_overloaded"
 	case identifiers.has("upstream_response_invalid", "upstream_execution_invalid", "upstream_protocol_error", "upstream_response_too_large"):
 		return "invalid_response"
-	case identifiers.has("authentication_error", "invalid_api_key", "unauthorized", "upstream_authentication_failed"):
+	// AWS sends UnrecognizedClientException, as a 403, for an access key that no longer exists.
+	case identifiers.has("authentication_error", "invalid_api_key", "unauthorized", "upstream_authentication_failed",
+		"unrecognizedclientexception"):
 		return "authentication_error"
-	case identifiers.has("permission_error", "permission_denied", "forbidden", "upstream_access_denied"):
+	// OpenAI sends missing_scope, as a 401, for a restricted key that lacks a permission.
+	case identifiers.has("permission_error", "permission_denied", "forbidden", "upstream_access_denied", "missing_scope"):
 		return "permission_error"
 	case identifiers.has("billing_error", "insufficient_quota", "over_budget", "upstream_quota_exceeded", "payment_required",
 		// Anthropic's monthly spend cap, a 429 that retries cannot pass until the next month.
@@ -447,8 +450,13 @@ func messageRefusal(bifrostErr *schemas.BifrostError) string {
 	case strings.HasPrefix(message, "you have reached your ") && strings.Contains(message, "api usage limits"),
 		strings.HasPrefix(message, "your credit balance is too low"):
 		return "over_budget"
-	case strings.HasPrefix(message, "inference_geo ") && strings.Contains(message, " is not allowed for this workspace"):
+	case strings.HasPrefix(message, "inference_geo ") && strings.Contains(message, " is not allowed for this workspace"),
+		// OpenAI's restricted key that lacks a permission, as a 401, sometimes without missing_scope.
+		strings.HasPrefix(message, "you have insufficient permissions for this operation"):
 		return "permission_error"
+	// AWS quarantines an access key found in public, and its denial names the policy.
+	case strings.Contains(message, "awscompromisedkeyquarantine"):
+		return "authentication_error"
 	case strings.HasPrefix(message, "prompt is too long: "),
 		strings.HasPrefix(message, "input is too long for requested model"),
 		strings.HasPrefix(message, "this model's maximum context length is "),
@@ -459,7 +467,7 @@ func messageRefusal(bifrostErr *schemas.BifrostError) string {
 }
 
 // maxMessageRefusalBytes bounds the messages that messageRefusal reads; those it knows are under
-// 300 bytes.
+// 500 bytes.
 const maxMessageRefusalBytes = 1024
 
 type errorIdentifierSet map[string]struct{}
