@@ -134,6 +134,8 @@ func TestChatBridgeRefusesWhatResponsesLackOrTheFormatRefuses(t *testing.T) {
 		{"repetition penalty", `"repetition_penalty":1.1`, "repetition_penalty is not supported for OpenAI-format deployments"},
 		{"reasoning display", `"reasoning":{"display":"summarized"}`, "reasoning.display"},
 		{"top_k", `"top_k":5`, "top_k"},
+		{"prompt cache breakpoint member", `"messages":[{"role":"user","content":[{"type":"text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit","ttl":"1h"}}]}]`, "prompt_cache_breakpoint must contain only mode"},
+		{"prompt cache option", `"prompt_cache_options":{"mode":"implicit","scope":"org"}`, "prompt_cache_options supports only mode and ttl"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			body := `{"model":"openai-gpt-5.6-sol-pro","messages":[{"role":"user","content":"hi"}],` + test.fields + `}`

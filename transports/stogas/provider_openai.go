@@ -73,9 +73,6 @@ func (a OpenAIAdapter) ValidateRequest(state *State) error {
 		return err
 	}
 	wire := wireState(state)
-	if err := validateOpenAIPromptCaching(wire); err != nil {
-		return err
-	}
 	// A bridged request's body must pass the rules of its own interface too, so that the
 	// translation never drops a field that those rules refuse.
 	if wire != state {
@@ -91,6 +88,9 @@ func (a OpenAIAdapter) ValidateRequest(state *State) error {
 
 // validateOpenAIWirePolicy checks a request with the rules of OpenAI's format for its interface.
 func validateOpenAIWirePolicy(state *State) error {
+	if err := validateOpenAIPromptCaching(state); err != nil {
+		return err
+	}
 	if err := validateOpenAIWireChatPolicy(state); err != nil {
 		return err
 	}
