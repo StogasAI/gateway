@@ -125,12 +125,16 @@ func parseDashboardCredential(
 
 // verifySignedToken checks a JWT that Control signed with its composite key and returns its
 // claims' JSON, which each kind of token then reads strictly.
+// signedTokenEncoding refuses unused bits in a part's last character, so each token has one
+// spelling.
+var signedTokenEncoding = base64.RawURLEncoding.Strict()
+
 func verifySignedToken(token string, publicKey *inferenceTokenKey) ([]byte, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
 		return nil, ErrInvalidAPIKey
 	}
-	headerBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
+	headerBytes, err := signedTokenEncoding.DecodeString(parts[0])
 	if err != nil {
 		return nil, ErrInvalidAPIKey
 	}
@@ -140,11 +144,11 @@ func verifySignedToken(token string, publicKey *inferenceTokenKey) ([]byte, erro
 		header.Type != "JWT" {
 		return nil, ErrInvalidAPIKey
 	}
-	signature, err := base64.RawURLEncoding.DecodeString(parts[2])
+	signature, err := signedTokenEncoding.DecodeString(parts[2])
 	if err != nil || !publicKey.verify([]byte(parts[0]+"."+parts[1]), signature) {
 		return nil, ErrInvalidAPIKey
 	}
-	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
+	payloadBytes, err := signedTokenEncoding.DecodeString(parts[1])
 	if err != nil {
 		return nil, ErrInvalidAPIKey
 	}

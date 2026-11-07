@@ -103,6 +103,38 @@ func TestDashboardTokenRequiresBothSignatureComponents(t *testing.T) {
 	}
 }
 
+// A signature whose last character differs only in its unused low bits decodes to the same
+// bytes, so the gateway refuses it to keep one spelling for each token.
+func TestSignedTokenRefusesAnotherSpelling(t *testing.T) {
+	privateKey := newInferenceTokenTestKey(t)
+	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
+	token := signDashboardToken(t, privateKey, dashboardTokenClaims{
+		Audience:  inferenceTokenAudience,
+		ExpiresAt: now.Add(15 * time.Minute).Unix(),
+		IssuedAt:  now.Unix(),
+		Issuer:    inferenceTokenIssuer,
+		JWTID:     mustUUIDV7(t),
+		Scope:     inferenceTokenScope,
+		SessionID: mustUUIDV7(t),
+		Subject:   mustUUIDV7(t),
+	})
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+	last := strings.IndexByte(alphabet, token[len(token)-1])
+	respelled := token[:len(token)-1] + string(alphabet[last^1])
+	cut := strings.LastIndexByte(token, '.')
+	original, _ := base64.RawURLEncoding.DecodeString(token[cut+1:])
+	lenient, err := base64.RawURLEncoding.DecodeString(respelled[cut+1:])
+	if err != nil || !bytes.Equal(lenient, original) {
+		t.Fatal("the respelled signature must decode to the same bytes")
+	}
+	if _, err := verifyDashboardToken(token, privateKey.public, now); err != nil {
+		t.Fatalf("valid token was rejected: %v", err)
+	}
+	if _, err := verifyDashboardToken(respelled, privateKey.public, now); err == nil {
+		t.Fatal("a respelled token was accepted")
+	}
+}
+
 func TestDashboardAdmissionUsesSignedPrincipalInsteadOfKeyPrefix(t *testing.T) {
 	privateKey := newInferenceTokenTestKey(t)
 	publicKey := privateKey.public
