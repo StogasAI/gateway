@@ -100,14 +100,14 @@ func attachmentError(provider schemas.ModelProvider, deployment Deployment, atta
 	if modality != "" && !slices.Contains(deployment.InputModalities, modality) {
 		return attachmentRefusal(attachment.Path, " "+modality+" input is not supported by "+subject)
 	}
-	// Claude that AWS or Google runs has no Files API and fetches no URL.
-	if CloudRunsClaude(provider, deployment) {
-		if attachment.ID != "" {
-			return attachmentRefusal(attachment.Path, " file IDs are not supported when AWS or Google runs Claude")
-		}
-		if attachment.URL != "" && !strings.HasPrefix(attachment.URL, "data:") {
-			return attachmentRefusal(attachment.Path, " URL sources are not supported when AWS or Google runs Claude; send the content inline")
-		}
+	// A Claude file ID names a file in the Files API of Anthropic's own platform, which Claude that
+	// a cloud hosts, on Azure too, lacks.
+	if claude && attachment.ID != "" && deployment.Upstream.Hosting != "" && deployment.Upstream.Hosting != "anthropic" {
+		return attachmentRefusal(attachment.Path, " file IDs are not supported by "+subject)
+	}
+	// Claude that AWS or Google runs fetches no URL.
+	if CloudRunsClaude(provider, deployment) && attachment.URL != "" && !strings.HasPrefix(attachment.URL, "data:") {
+		return attachmentRefusal(attachment.Path, " URLs are not supported by "+subject+"; send the content inline")
 	}
 	return nil
 }
@@ -115,13 +115,13 @@ func attachmentError(provider schemas.ModelProvider, deployment Deployment, atta
 func documentError(claude bool, formats DocumentFormats, attachment Attachment, subject string) error {
 	path := attachment.Path
 	if attachment.URL != "" && !attachment.Responses && !claude {
-		return attachmentRefusal(path, " file URLs require Responses or an Anthropic-format deployment")
+		return attachmentRefusal(path, " file URLs on Chat Completions are not supported by "+subject+"; send the file in file_data or use Responses")
 	}
 	if attachment.FileType != "" && !claude {
-		return attachmentRefusal(path, " native files must declare MIME type in a base64 data URL, not file_type")
+		return attachmentRefusal(path, " file_type is not supported by "+subject+"; name the media type in a base64 data URL")
 	}
 	if len(formats.MediaTypes) == 0 {
-		return attachmentRefusal(path, " native files are not supported by "+subject)
+		return attachmentRefusal(path, " documents are not supported by "+subject)
 	}
 	if attachment.Data == "" {
 		return nil
@@ -129,19 +129,19 @@ func documentError(claude bool, formats DocumentFormats, attachment Attachment, 
 	extension := strings.ToLower(filepath.Ext(attachment.Filename))
 	mediaType, _, err := inputfiles.ParseInline(attachment.Data, attachment.FileType)
 	if err != nil {
-		return attachmentRefusal(path, " has an invalid declared file type")
+		return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: path + " " + err.Error(), Param: path}
 	}
 	if mediaType != "" && mediaType != "application/octet-stream" {
 		if !slices.Contains(formats.MediaTypes, mediaType) {
-			return attachmentRefusal(path, " native file media type is not supported by "+subject)
+			return attachmentRefusal(path, " is "+mediaType+", which is not supported by "+subject)
 		}
 	} else if !slices.Contains(formats.Extensions, extension) {
-		return attachmentRefusal(path, " requires a supported file media type or filename extension")
+		return attachmentRefusal(path, " has no media type, and its filename extension is not supported by "+subject)
 	}
-	// Core treats untyped raw base64 as PDF, and raw file_type text/plain as literal text. A data
-	// URL keeps native text bytes unambiguous.
+	// Core sends untyped raw base64 to Claude as a PDF, and a raw file_type text/plain as literal
+	// text, and Anthropic reads no application/octet-stream document.
 	if claude && (mediaType == "application/octet-stream" || (!strings.HasPrefix(attachment.Data, "data:") && mediaType != "application/pdf" && !(mediaType == "" && extension == ".pdf"))) {
-		return attachmentRefusal(path, " native text files require a typed base64 data URL")
+		return attachmentRefusal(path, " needs a base64 data URL that names its media type, such as application/pdf, for "+subject)
 	}
 	return nil
 }
@@ -151,8 +151,58 @@ const AttachmentUnsupported = "attachment_unsupported"
 
 // attachmentRefusal refuses the attachment at path for reason, which follows the path.
 func attachmentRefusal(path, reason string) error {
-	return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: path + reason, Param: path}
+	return APIError{StatusCode: http.StatusBadRequest, Code: AttachmentUnsupported, Type: ErrorTypeInvalidRequest, Message: path + reason, Param: path}
 }
+
+// ManagedFileIDRefusal refuses a provider file ID that a credential of Stogas would send. A file
+// ID names a file in the account that holds it, which is never Stogas's.
+func ManagedFileIDRefusal(path string) error {
+	return attachmentRefusal(path, " is a provider file ID, which only a BYOK credential can read")
+}
+
+// fileIDAccounts refuses a request with a provider file ID that more than one credential could
+// serve. A file ID names a file in the account that holds it, and nothing tells which credential
+// that is, so routing must not choose one.
+func fileIDAccounts(attachment Attachment, candidates []*ResolvedRequest, credentials map[*ResolvedRequest][]int) error {
+	seen := make(map[credentialCandidate]bool)
+	// providers lists the providers of the credentials in candidate order, and counts their
+	// credentials.
+	var providers []schemas.ModelProvider
+	counts := make(map[schemas.ModelProvider]int)
+	for _, candidate := range candidates {
+		for _, index := range credentials[candidate] {
+			key := credentialCandidate{candidate.Provider, index}
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			if counts[key.provider] == 0 {
+				providers = append(providers, key.provider)
+			}
+			counts[key.provider]++
+		}
+	}
+	if len(seen) <= 1 {
+		return nil
+	}
+	fix := "use a key with one credential for this model"
+	// Naming a provider helps only where it leaves one credential.
+	if i := slices.IndexFunc(providers, func(provider schemas.ModelProvider) bool { return counts[provider] == 1 }); i >= 0 {
+		fix = "name the provider in the model, such as provider:" + string(providers[i]) + ", or " + fix
+	}
+	return attachmentRefusal(attachment.Path, fmt.Sprintf(" is a provider file ID, which only the credential of the account that holds the file can read, and this request can use %d credentials; %s", len(seen), fix))
+}
+
+// inputCheckRefusal refuses the attachment at path, which setting, input.asciiOnly or
+// plugins.redaction, cannot check, since it reads only text.
+func inputCheckRefusal(path, setting string) error {
+	return attachmentRefusal(path, " is an attachment, which "+setting+" cannot check")
+}
+
+// textExtractionHint ends the refusal of an inline text file that a pair without text extraction
+// cannot read. Text extraction turns the file into text, which every deployment and input check
+// reads.
+const textExtractionHint = ". Turn on plugins.textExtraction to send it as text"
 
 // CloudRunsClaude reports whether AWS or Google runs a Claude deployment itself, rather than
 // Anthropic behind the cloud's sign-in.
@@ -185,16 +235,13 @@ type attachmentPair struct {
 	// extracts turns inline text files into prompt text, as a file or as text depending on the
 	// mode. Text extraction is never encrypted.
 	extracts bool
-	// inspects refuses an attachment that stays opaque: input limited to ASCII, or redaction
-	// that the policy holds unencrypted. Encrypted redaction is known only once the pair is
-	// prepared, and its checks refuse the attachment then.
-	inspects bool
-	// managed marks a credential of Stogas, which cannot read a provider file ID.
-	managed bool
+	// check names the setting that refuses an attachment that stays opaque, input.asciiOnly or
+	// plugins.redaction, or is "".
+	check string
 }
 
-func newAttachmentPair(selection routingSelection, config *policy.Config, managed bool) attachmentPair {
-	return attachmentPair{selection: selection, mediaTypes: config.MediaTypes(), extracts: config.TextExtraction() != policy.TextExtractionOff, inspects: config.InspectsInput(), managed: managed}
+func newAttachmentPair(selection routingSelection, config *policy.Config) attachmentPair {
+	return attachmentPair{selection: selection, mediaTypes: config.MediaTypes(), extracts: config.TextExtraction() != policy.TextExtractionOff, check: config.InputCheck()}
 }
 
 // typeRefusal reports why the pair's policy refuses an attachment's media type, or nil.
@@ -214,11 +261,8 @@ func (p attachmentPair) refusal(attachment Attachment, subject string) error {
 	if err := attachmentError(p.selection.provider, p.selection.deployment, attachment, subject); err != nil {
 		return err
 	}
-	if attachment.ID != "" && p.managed {
-		return attachmentRefusal(attachment.Path, " provider file IDs require BYOK")
-	}
-	if p.inspects {
-		return attachmentRefusal(attachment.Path, " cannot satisfy the active input inspection policy; submit text or enable text extraction for inline UTF-8 text files")
+	if p.check != "" {
+		return inputCheckRefusal(attachment.Path, p.check)
 	}
 	return nil
 }
@@ -244,44 +288,71 @@ func deploymentReads(attachments []Attachment, selection routingSelection) bool 
 	return true
 }
 
+// attachmentReason is a refusal that pairs give an attachment, with their deployments.
+type attachmentReason struct {
+	pair        attachmentPair
+	message     string
+	deployments []string
+}
+
 // attachmentsRefusal explains why none of the pairs reads the request's attachments: the first
-// attachment that none of them reads, with the first pair's reason, or else that no pair reads
+// attachment that none of them reads, with the reasons of the pairs, or else that no pair reads
 // them all together. Retrying cannot change the answer, so the request ends at once.
 func attachmentsRefusal(attachments []Attachment, pairs []attachmentPair) error {
-	// split lists the attachments that some pair reads and another does not.
+	// split lists the attachments that some pair reads and another does not. Each pair refuses an
+	// attachment, so when every attachment has a reader, at least two are split.
 	var split []string
 	for _, attachment := range attachments {
-		var first error
-		read, byType := false, false
+		var reasons []attachmentReason
+		read := false
 		for _, pair := range pairs {
-			if err := pair.refusal(attachment, routingSubject); err == nil {
+			err := pair.refusal(attachment, routingSubject)
+			if err == nil {
 				read = true
-			} else if first == nil {
-				first, byType = err, pair.typeRefusal(attachment) != nil
+				continue
+			}
+			message := PublicError(err).Message
+			i := slices.IndexFunc(reasons, func(reason attachmentReason) bool { return reason.message == message })
+			if i < 0 {
+				i = len(reasons)
+				reasons = append(reasons, attachmentReason{pair: pair, message: message})
+			}
+			if id := pair.selection.deployment.ID; !slices.Contains(reasons[i].deployments, id) {
+				reasons[i].deployments = append(reasons[i].deployments, id)
 			}
 		}
 		switch {
 		case !read:
-			refusal := PublicError(first)
-			refusal.Code = AttachmentUnsupported
-			// Only text extraction makes an inline text file readable where nothing reads it, unless
-			// its type is what the policy refuses.
-			if attachment.text && !byType && !slices.ContainsFunc(pairs, func(pair attachmentPair) bool { return pair.extracts }) {
-				refusal.Message += "; enable text extraction to send it as prompt text"
-			}
-			return refusal
-		case first != nil:
+			return unreadAttachment(attachment, reasons)
+		case len(reasons) > 0:
 			split = append(split, attachment.Path)
 		}
-	}
-	// Each pair refuses an attachment that another pair reads, so at least two are split.
-	if len(split) == 0 {
-		return attachmentRefusal(attachments[0].Path, " is not supported by "+routingSubject)
 	}
 	return APIError{
 		StatusCode: http.StatusBadRequest, Code: AttachmentUnsupported, Type: ErrorTypeInvalidRequest, Param: split[0],
 		Message: strings.Join(split, ", ") + " are not supported together by " + routingSubject + "; send them in separate requests",
 	}
+}
+
+// unreadAttachment refuses an attachment that no pair reads. Where the pairs give one reason, it
+// names every deployment that this request can use, and otherwise each reason names the
+// deployments that give it, so that the refusal holds for every pair.
+func unreadAttachment(attachment Attachment, reasons []attachmentReason) error {
+	refusal := PublicError(reasons[0].pair.refusal(attachment, routingSubject))
+	if len(reasons) > 1 {
+		messages := make([]string, len(reasons))
+		for i, reason := range reasons {
+			slices.Sort(reason.deployments)
+			messages[i] = PublicError(reason.pair.refusal(attachment, namedIDs(reason.deployments))).Message
+		}
+		refusal.Message = strings.Join(messages, ". ")
+	}
+	// Text extraction makes an inline text file readable to every pair whose policy allows its
+	// type, and a pair that extracts it reads it.
+	if attachment.text && slices.ContainsFunc(reasons, func(reason attachmentReason) bool { return reason.pair.typeRefusal(attachment) == nil }) {
+		refusal.Message += textExtractionHint
+	}
+	return refusal
 }
 
 // requestAttachments lists the attachments of the request's user messages, so that routing can

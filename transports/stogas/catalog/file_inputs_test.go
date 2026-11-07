@@ -39,7 +39,7 @@ func TestRoutingSkipsDeploymentsThatCannotReadTheAttachments(t *testing.T) {
 		{name: "chat image without the modality", part: `{"type":"image_url","image_url":{"url":` + image + `}}`, want: gpt[1], textOnly: true},
 		{name: "chat audio", part: `{"type":"input_audio","input_audio":{"data":"AAAA","format":"wav"}}`, want: gpt[1], textOnly: true, audio: true},
 		{name: "chat audio that no candidate reads", part: `{"type":"input_audio","input_audio":{"data":"AAAA","format":"wav"}}`, wantErr: "messages[0].content[1] audio input is not supported by any deployment that this request can use", textOnly: true},
-		{name: "chat file URL", part: `{"type":"file","file":{"file_url":"https://example.com/a.pdf"}}`, wantErr: "messages[0].content[1] file URLs require Responses or an Anthropic-format deployment"},
+		{name: "chat file URL", part: `{"type":"file","file":{"file_url":"https://example.com/a.pdf"}}`, wantErr: "messages[0].content[1] file URLs on Chat Completions are not supported by any deployment that this request can use; send the file in file_data or use Responses"},
 		{name: "responses PDF", path: "/v1/responses", part: responsesFile(pdf), want: gpt[0]},
 		{name: "responses text file", path: "/v1/responses", part: responsesFile(text), want: gpt[1]},
 		{name: "responses text file with extraction", path: "/v1/responses", part: responsesFile(text), want: gpt[0], extract: true},
@@ -103,7 +103,7 @@ func TestRoutingSkipsDeploymentsThatCannotReadTheAttachments(t *testing.T) {
 }
 
 // Where no candidate can read a part, routing refuses the request before it prepares a
-// credential, with the error of a candidate's checks.
+// credential, with each reason that the candidates give and the deployments that give it.
 func TestRoutingRefusesAnAttachmentThatNoCandidateCanRead(t *testing.T) {
 	snap := loadTestCatalog(t)
 	route := snap.graph.Routes["openai-chat-completions"]
@@ -118,7 +118,7 @@ func TestRoutingRefusesAnAttachmentThatNoCandidateCanRead(t *testing.T) {
 		CheckCandidate: func(schemas.ModelProvider, int, Deployment) error { checks++; return nil },
 	})
 	public := PublicError(err)
-	if public.StatusCode != 400 || checks != 0 || !strings.HasPrefix(public.Message, "messages[0].content[1] native file") ||
+	if public.StatusCode != 400 || checks != 0 || public.Message != "messages[0].content[1] documents are not supported by azure-gpt-5.6-sol. messages[0].content[1] is application/pdf, which is not supported by openai-gpt-5.6-sol" ||
 		public.Code != AttachmentUnsupported || public.Param != "messages[0].content[1]" {
 		t.Fatalf("the request was not refused before credential preparation: %+v, %d", public, checks)
 	}
@@ -128,44 +128,86 @@ func TestRoutingRefusesAnAttachmentThatNoCandidateCanRead(t *testing.T) {
 	}
 }
 
-// Provider file IDs resolve only through a customer's own credential. A Stogas credential leaves
-// without using the request's one pair, even where it shares the customer credential's policy,
-// and where only Stogas credentials remain, the request is refused before any is prepared.
+// Provider file IDs resolve only through a customer's own credential, and only where one such
+// credential can serve the request, since a file ID names a file in one account. A Stogas
+// credential leaves without using the request's one pair, even where it shares the customer
+// credential's policy, and refusals come before any credential is prepared.
 func TestRoutingSendsProviderFileIDsOnlyThroughCustomerCredentials(t *testing.T) {
 	loadTestCatalog(t)
-	body := []byte(`{"model":"gpt-5.6-sol","input":[{"role":"user","content":[{"type":"input_text","text":"read this"},{"type":"input_file","file_id":"file-abc"}]}]}`)
+	const (
+		part   = "input[0].content[1]"
+		shared = part + " is a provider file ID, which only the credential of the account that holds the file can read, and this request can use "
+	)
 	for _, tc := range []struct {
-		name string
-		byok []bool
-		// want is the credential that serves, or -1 where the request is refused.
-		want int
+		name, model string
+		// credentials are the key's credentials by provider, and byok marks the customer's own.
+		credentials map[string][]int
+		byok        map[string][]bool
+		want        int
+		wantErr     string
 	}{
-		{"a customer credential after a Stogas one", []bool{false, true}, 1},
-		{"Stogas credentials only", []bool{false, false}, -1},
+		{name: "a customer credential after a Stogas one", model: "openai-gpt-5.6-sol", credentials: map[string][]int{"openai": {0, 1}},
+			byok: map[string][]bool{"openai": {false, true}}, want: 1},
+		{name: "Stogas credentials only", model: "openai-gpt-5.6-sol", credentials: map[string][]int{"openai": {0, 1}},
+			byok: map[string][]bool{"openai": {false, false}}, wantErr: part + " is a provider file ID, which only a BYOK credential can read"},
+		{name: "two customer credentials of a provider", model: "openai-gpt-5.6-sol", credentials: map[string][]int{"openai": {0, 1}},
+			byok: map[string][]bool{"openai": {true, true}}, wantErr: shared + "2 credentials; use a key with one credential for this model"},
+		{name: "customer credentials of two providers", model: "gpt-5.6-sol", credentials: map[string][]int{"azure": {0}, "openai": {0, 1}},
+			byok:    map[string][]bool{"azure": {true}, "openai": {true, true}},
+			wantErr: shared + "3 credentials; name the provider in the model, such as provider:azure, or use a key with one credential for this model"},
+		{name: "a provider named in the model", model: "provider:azure gpt-5.6-sol", credentials: map[string][]int{"azure": {0}, "openai": {0, 1}},
+			byok: map[string][]bool{"azure": {true}, "openai": {true, true}}, want: 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			config := policyConfig(1)
-			config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Deployments: []string{"openai-gpt-5.6-sol"}}
 			var checked []int
 			resolved, err := ResolveRequest(RequestInput{
-				Body: body, Method: "POST", Path: "/v1/responses", Policy: config,
-				AvailableCredentials: map[string][]int{string(schemas.OpenAI): {0, 1}},
-				CredentialBYOK:       func(_ schemas.ModelProvider, index int) bool { return tc.byok[index] },
+				Body:   []byte(`{"model":"` + tc.model + `","input":[{"role":"user","content":[{"type":"input_text","text":"read this"},{"type":"input_file","file_id":"file-abc"}]}]}`),
+				Method: "POST", Path: "/v1/responses", Policy: config, AvailableCredentials: tc.credentials,
+				CredentialBYOK: func(provider schemas.ModelProvider, index int) bool { return tc.byok[string(provider)][index] },
 				CheckCandidate: func(_ schemas.ModelProvider, index int, _ Deployment) error {
 					checked = append(checked, index)
 					return nil
 				},
 			})
-			if tc.want >= 0 {
+			if tc.wantErr == "" {
 				if err != nil || resolved.CredentialIndex != tc.want || len(checked) != 1 {
 					t.Fatalf("want credential %d: resolved=%v checked=%v error=%v", tc.want, resolved, checked, err)
 				}
 				return
 			}
 			public := PublicError(err)
-			if public.StatusCode != 400 || public.Code != AttachmentUnsupported || public.Param != "input[0].content[1]" ||
-				public.Message != "input[0].content[1] provider file IDs require BYOK" || len(checked) != 0 {
+			if public.StatusCode != 400 || public.Code != AttachmentUnsupported || public.Param != part || public.Message != tc.wantErr || len(checked) != 0 {
 				t.Fatalf("want a refusal before any credential is prepared: %+v, checked=%v", public, checked)
+			}
+		})
+	}
+}
+
+// A deny period removes only a pair that could otherwise serve the request, so a client that waits
+// for the period to end is not refused for another reason then.
+func TestRoutingDeniesOnlyPairsThatReadTheAttachments(t *testing.T) {
+	loadTestCatalog(t)
+	const week = `[{"days":["mon","tue","wed","thu","fri","sat","sun"],"start":"00:00","end":"24:00","timeZone":"UTC"}]`
+	for _, tc := range []struct{ name, input, code string }{
+		{"a pair that reads the attachment", `{}`, "schedule_denied"},
+		{"a pair whose policy cannot check the attachment", `{"asciiOnly":true}`, AttachmentUnsupported},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source, err := policy.CompileSource([]byte(`{"input":` + tc.input + `,"rules":{"closed":{"when":"provider.id == 'openai'","access":{"deny":` + week + `}}}}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			config, err := policy.ComposeSources([]policy.ScopedSource{{Scope: policy.OrganizationScope, Value: source}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = ResolveRequest(RequestInput{
+				Body:   []byte(`{"model":"openai-gpt-5.6-sol","messages":[{"role":"user","content":[{"type":"text","text":"read this"},{"type":"file","file":{"filename":"a.pdf","file_data":"data:application/pdf;base64,JVBERi0xLjcK"}}]}]}`),
+				Method: "POST", Path: "/v1/chat/completions", Policy: config,
+			})
+			if code := PublicError(err).Code; code != tc.code {
+				t.Fatalf("want %s: %v", tc.code, err)
 			}
 		})
 	}
@@ -197,10 +239,10 @@ func TestRoutingSkipsPairsWhosePolicyRefusesOpaqueAttachments(t *testing.T) {
 		{name: "input limited to ASCII", part: pdf, azure: []setting{asciiOnly}, want: gpt[1]},
 		{name: "redaction", part: pdf, azure: []setting{redaction}, want: gpt[1]},
 		{name: "inspection on every pair", part: pdf, azure: []setting{asciiOnly}, openai: []setting{redaction},
-			wantErr: "input[0].content[1] cannot satisfy the active input inspection policy; submit text or enable text extraction for inline UTF-8 text files"},
+			wantErr: "input[0].content[1] is an attachment, which input.asciiOnly cannot check. input[0].content[1] is an attachment, which plugins.redaction cannot check"},
 		{name: "an extracted text file", part: text, azure: []setting{asciiOnly, extraction}, want: gpt[0]},
 		{name: "a text file that no pair extracts", part: text, azure: []setting{asciiOnly}, openai: []setting{redaction},
-			wantErr: "input[0].content[1] native file media type is not supported by any deployment that this request can use; enable text extraction to send it as prompt text"},
+			wantErr: "input[0].content[1] is text/plain, which is not supported by azure-gpt-5.6-sol. input[0].content[1] is an attachment, which plugins.redaction cannot check. Turn on plugins.textExtraction to send it as text"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			configure := func(settings []setting) *policy.Config {

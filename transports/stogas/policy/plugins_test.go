@@ -104,3 +104,49 @@ func TestInspectionNamesThePolicyWhoseTextExtractionModeWins(t *testing.T) {
 		t.Fatalf("plugins.textExtraction set by %v", setBy)
 	}
 }
+
+// Routing decides, before any plugin is opened, whether a pair's policy refuses an attachment that
+// stays opaque, and the pair's preparation refuses it under the same name: the setting that reads
+// all input text. An encrypted redaction counts whatever it holds, and an empty one reads nothing.
+func TestInputCheckNamesTheSettingThatReadsAllInputText(t *testing.T) {
+	fixture, _ := loadWebcryptoFixture(t)
+	envelope, err := json.Marshal(fixture.Envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := `"encryption":{"keys":{"test":"` + fixture.Envelope.KeyID + `"}},`
+	encrypted := `"plugins":{"redaction":{"encrypted":` + string(envelope) + `}}`
+	for _, tc := range []struct{ name, source, want string }{
+		{"nothing", `{}`, ""},
+		{"text extraction", `{"plugins":{"textExtraction":"always"}}`, ""},
+		{"empty redaction", `{"plugins":{"redaction":{}}}`, ""},
+		{"ASCII input", `{"input":{"asciiOnly":true}}`, "input.asciiOnly"},
+		{"redaction", `{"plugins":{"redaction":{"email_address":true}}}`, "plugins.redaction"},
+		{"encrypted redaction", `{` + keys + encrypted + `}`, "plugins.redaction"},
+		{"encrypted redaction of a matched rule", `{` + keys + `"rules":{"private":{"when":"provider.id == 'openai'",` + encrypted + `}}}`, "plugins.redaction"},
+		{"encrypted redaction of an unmatched rule", `{` + keys + `"rules":{"private":{"when":"provider.id == 'azure'",` + encrypted + `}}}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// The gateway compiles a source for routing without opening its ciphertext.
+			document, err := ParseSourceDocument([]byte(tc.source))
+			if err != nil {
+				t.Fatal(err)
+			}
+			source, err := document.RoutingSource()
+			if err != nil {
+				t.Fatal(err)
+			}
+			combined, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: source}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			active, err := combined.Activate(ruleValues{"provider.id": {Type: "string", String: "openai"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := active.InputCheck(); got != tc.want {
+				t.Fatalf("input check %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

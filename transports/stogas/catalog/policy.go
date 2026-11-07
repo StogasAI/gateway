@@ -244,9 +244,18 @@ func (r *routingCandidates) finish(preference ProviderRoutingPreference) ([][]*R
 	return groups, groupTies, nil
 }
 
-// maxAmbiguousIDs bounds the IDs that an ambiguity error names, so a request
-// cannot list the catalog through it.
-const maxAmbiguousIDs = 3
+// maxNamedIDs bounds the IDs that an error names, so a request cannot list the catalog through
+// it.
+const maxNamedIDs = 3
+
+// namedIDs names the first of the sorted ids and counts the rest.
+func namedIDs(ids []string) string {
+	named := strings.Join(ids[:min(len(ids), maxNamedIDs)], ", ")
+	if more := len(ids) - maxNamedIDs; more > 0 {
+		named += fmt.Sprintf(" and %d more", more)
+	}
+	return named
+}
 
 // ambiguousError names what tied groups differ in: their models when they
 // span several, otherwise their deployments. It names the first few in ID
@@ -266,11 +275,7 @@ func ambiguousError(groups [][]*ResolvedRequest) (APIError, []string) {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
-	named := strings.Join(ids[:min(len(ids), maxAmbiguousIDs)], ", ")
-	if more := len(ids) - maxAmbiguousIDs; more > 0 {
-		named += fmt.Sprintf(" and %d more", more)
-	}
-	base.Message = fmt.Sprintf(base.Message, named)
+	base.Message = fmt.Sprintf(base.Message, namedIDs(ids))
 	return base, ids
 }
 

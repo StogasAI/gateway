@@ -108,12 +108,14 @@ func TestRoutingSimulationNamesWhatRemovedEachCandidate(t *testing.T) {
 		{name: "undecided condition", model: "gpt-5.6-sol", credentials: map[string][]int{"azure": {0}, "openai": {0}},
 			base:    compose(`{"routing":{"sort":[{"by":"blended_price(3, 1)"},{"by":"deployment.id"}]},"rules":{"typed":{"when":"deployment.upstream.deploymentType == 'global_standard'","input":{"asciiOnly":true}}}}`),
 			removed: []string{"condition openai/openai-gpt-5.6-sol#0 @0typed deployment.upstream.deploymentType == 'global_standard'"}, pairs: 5, tried: 3},
-		// A deny period comes before the filters that would also remove a pair.
+		// A deny period removes only a pair that the filters keep, so a client that waits for the
+		// period to end is not refused for another reason then.
 		{name: "deny period of a rule", model: "gpt-5.6-sol", credentials: map[string][]int{"azure": {0}, "openai": {0}},
-			base: compose(`{"routing":{"filter":"provider.id == 'openai'"}}`, `{"rules":{"closed":{"when":"provider.id == 'azure'","access":{"deny":`+week+`}}}}`),
+			base: compose(`{"routing":{"filter":"deployment.id != 'azure-gpt-5.6-sol-eu'"}}`, `{"rules":{"closed":{"when":"provider.id == 'azure'","access":{"deny":`+week+`}}}}`),
 			removed: []string{
-				"deny azure/azure-gpt-5.6-sol#0 @1closed", "deny azure/azure-gpt-5.6-sol-apac#0 @1closed", "deny azure/azure-gpt-5.6-sol-eu#0 @1closed",
+				"deny azure/azure-gpt-5.6-sol#0 @1closed", "deny azure/azure-gpt-5.6-sol-apac#0 @1closed",
 				"deny azure/azure-gpt-5.6-sol-instant#0 @1closed", "deny azure/azure-gpt-5.6-sol-us#0 @1closed",
+				"filter azure/azure-gpt-5.6-sol-eu#0 @0 deployment.id != 'azure-gpt-5.6-sol-eu'",
 			}, pairs: 1, tried: 1},
 		{name: "deny period of the key", model: "openai-gpt-5.6-sol", credentials: map[string][]int{"openai": {0}},
 			base:    compose(`{}`, `{"access":{"deny":`+week+`}}`),

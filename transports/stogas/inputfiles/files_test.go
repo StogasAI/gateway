@@ -53,7 +53,7 @@ func TestExtractionPreservesOrderAndLeavesDocumentsOpaque(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stats.Count != 2 || stats.InlineBytes != 6 || !stats.Opaque {
+	if stats.Count != 2 || stats.InlineBytes != 6 || stats.Opaque != "input[0].content[2]" {
 		t.Fatalf("wrong quantities: %+v", stats)
 	}
 	// Decode the public field names, independently of the processor's maps.
@@ -153,7 +153,7 @@ func TestNativeTextFilesStayFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(asked, []string{"input[0].content[0]", "input[0].content[1]"}) || !stats.Opaque {
+	if !reflect.DeepEqual(asked, []string{"input[0].content[0]", "input[0].content[1]"}) || stats.Opaque != "input[0].content[0]" {
 		t.Fatalf("asked %v, stats %+v", asked, stats)
 	}
 	if !strings.Contains(string(fields["input"]), `"type":"input_file","file_data":"data:text/plain;base64,aGk=","filename":"a.txt"`) || !strings.Contains(string(fields["input"]), `"text":"b.txt (text/plain)\nhi"`) {

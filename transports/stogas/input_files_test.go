@@ -128,7 +128,7 @@ func TestTextExtractionPrecedesASCIIAndRedaction(t *testing.T) {
 				if estimate, _ := resolved.EstimatedInputTokens(); estimate >= resolved.Deployment.MaxInputTokens {
 					t.Fatal("extracted text retained full-input hold")
 				}
-				if resolved.InputFiles().InlineBytes != 5 || resolved.InputFiles().Opaque {
+				if resolved.InputFiles().InlineBytes != 5 || resolved.InputFiles().Opaque != "" {
 					t.Fatal("extracted file statistics incorrect")
 				}
 				state := NewState(resolved, "sk-test", nil, AdapterFor(resolved.Provider))
@@ -375,26 +375,34 @@ func TestNativeDocumentsPreserveProviderContent(t *testing.T) {
 }
 
 func TestNativeFileFormatsFollowSelectedRouteAfterTextExtraction(t *testing.T) {
+	const (
+		chatPart      = "messages[0].content[0]"
+		responsesPart = "input[0].content[0]"
+		subject       = " any deployment that this request can use"
+		hint          = ". Turn on plugins.textExtraction to send it as text"
+	)
 	for _, tc := range []struct {
 		name, model, route, mime, filename string
-		extract, raw, reject               bool
+		extract, raw                       bool
+		// refusal is the error of a file that the model's one deployment cannot read.
+		refusal string
 	}{
-		{"OpenAI Chat PDF", "openai-gpt-5.6-luna", "chat/completions", "application/pdf", "note.pdf", false, false, false},
-		{"OpenAI Chat CSV", "openai-gpt-5.6-luna", "chat/completions", "text/csv", "note.csv", false, false, true},
-		{"OpenAI Chat extracted CSV", "openai-gpt-5.6-luna", "chat/completions", "text/csv", "note.csv", true, false, false},
-		{"OpenAI Responses CSV", "openai-gpt-5.6-luna", "responses", "text/csv", "note.csv", false, false, false},
-		{"OpenAI Responses DOCX", "openai-gpt-5.6-luna", "responses", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "note.docx", false, false, false},
-		{"OpenAI Responses unknown binary", "openai-gpt-5.6-luna", "responses", "application/x-unknown", "note.pdf", false, false, true},
-		{"OpenAI raw PDF filename", "openai-gpt-5.6-luna", "chat/completions", "", "note.PDF", false, true, false},
-		{"OpenAI unknown filename", "openai-gpt-5.6-luna", "responses", "", "note.unknown", false, true, true},
-		{"OpenAI octet-stream PDF filename", "openai-gpt-5.6-luna", "responses", "application/octet-stream", "note.pdf", false, false, false},
-		{"Anthropic plain text", "anthropic-claude-opus-4-8", "responses", "text/plain", "note.txt", false, false, false},
-		{"Anthropic untyped raw text", "anthropic-claude-opus-4-8", "responses", "", "note.txt", false, true, true},
-		{"Anthropic CSV MIME", "anthropic-claude-opus-4-8", "responses", "text/csv", "note.csv", false, false, true},
-		{"Anthropic extracted CSV", "anthropic-claude-opus-4-8", "responses", "text/csv", "note.csv", true, false, false},
-		{"Azure Responses PDF", "azure-gpt-5.6-luna", "responses", "application/pdf", "note.pdf", false, false, false},
-		{"Azure Chat PDF", "azure-gpt-5.6-luna", "chat/completions", "application/pdf", "note.pdf", false, false, true},
-		{"Azure extracted text", "azure-gpt-5.6-luna", "chat/completions", "text/plain", "note.txt", true, false, false},
+		{"OpenAI Chat PDF", "openai-gpt-5.6-luna", "chat/completions", "application/pdf", "note.pdf", false, false, ""},
+		{"OpenAI Chat CSV", "openai-gpt-5.6-luna", "chat/completions", "text/csv", "note.csv", false, false, chatPart + " is text/csv, which is not supported by" + subject + hint},
+		{"OpenAI Chat extracted CSV", "openai-gpt-5.6-luna", "chat/completions", "text/csv", "note.csv", true, false, ""},
+		{"OpenAI Responses CSV", "openai-gpt-5.6-luna", "responses", "text/csv", "note.csv", false, false, ""},
+		{"OpenAI Responses DOCX", "openai-gpt-5.6-luna", "responses", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "note.docx", false, false, ""},
+		{"OpenAI Responses unknown binary", "openai-gpt-5.6-luna", "responses", "application/x-unknown", "note.pdf", false, false, responsesPart + " is application/x-unknown, which is not supported by" + subject},
+		{"OpenAI raw PDF filename", "openai-gpt-5.6-luna", "chat/completions", "", "note.PDF", false, true, ""},
+		{"OpenAI unknown filename", "openai-gpt-5.6-luna", "responses", "", "note.unknown", false, true, responsesPart + " has no media type, and its filename extension is not supported by" + subject},
+		{"OpenAI octet-stream PDF filename", "openai-gpt-5.6-luna", "responses", "application/octet-stream", "note.pdf", false, false, ""},
+		{"Anthropic plain text", "anthropic-claude-opus-4-8", "responses", "text/plain", "note.txt", false, false, ""},
+		{"Anthropic untyped raw text", "anthropic-claude-opus-4-8", "responses", "", "note.txt", false, true, responsesPart + " needs a base64 data URL that names its media type, such as application/pdf, for" + subject},
+		{"Anthropic CSV MIME", "anthropic-claude-opus-4-8", "responses", "text/csv", "note.csv", false, false, responsesPart + " is text/csv, which is not supported by" + subject + hint},
+		{"Anthropic extracted CSV", "anthropic-claude-opus-4-8", "responses", "text/csv", "note.csv", true, false, ""},
+		{"Azure Responses PDF", "azure-gpt-5.6-luna", "responses", "application/pdf", "note.pdf", false, false, ""},
+		{"Azure Chat PDF", "azure-gpt-5.6-luna", "chat/completions", "application/pdf", "note.pdf", false, false, chatPart + " documents are not supported by" + subject},
+		{"Azure extracted text", "azure-gpt-5.6-luna", "chat/completions", "text/plain", "note.txt", true, false, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var config *policy.Config
@@ -421,9 +429,9 @@ func TestNativeFileFormatsFollowSelectedRouteAfterTextExtraction(t *testing.T) {
 			}
 			resolved, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/" + tc.route, Policy: config, Body: []byte(`{"model":"` + tc.model + `","` + field + `":[{"role":"user","content":[` + block + `]}]}`)})
 			// The model has one deployment, so routing refuses a file that it cannot read.
-			if tc.reject {
-				if public := catalog.PublicError(err); public.Code != catalog.AttachmentUnsupported || !strings.Contains(public.Message, "file") {
-					t.Fatalf("native format accepted: %v", err)
+			if tc.refusal != "" {
+				if public := catalog.PublicError(err); public.Code != catalog.AttachmentUnsupported || public.Message != tc.refusal {
+					t.Fatalf("want %q: %v", tc.refusal, err)
 				}
 				return
 			}
@@ -435,7 +443,7 @@ func TestNativeFileFormatsFollowSelectedRouteAfterTextExtraction(t *testing.T) {
 				t.Fatal(err)
 			}
 			if tc.extract {
-				if resolved.InputFiles().Opaque {
+				if resolved.InputFiles().Opaque != "" {
 					t.Fatal("extracted file remained opaque")
 				}
 			} else if estimate, _ := resolved.EstimatedInputTokens(); estimate != resolved.Deployment.MaxInputTokens {
@@ -478,8 +486,8 @@ func TestAutoTextExtractionFollowsTheDeployment(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if files := resolved.InputFiles(); files.Opaque == tc.extracted || files.Count != 1 {
-				t.Fatalf("extracted %v, files %+v", !files.Opaque, files)
+			if files := resolved.InputFiles(); (files.Opaque == "") != tc.extracted || files.Count != 1 {
+				t.Fatalf("extracted %v, files %+v", files.Opaque == "", files)
 			}
 			state := NewState(resolved, "sk-test", nil, AdapterFor(resolved.Provider))
 			if err := state.Adapter.ValidateRequest(state); err != nil {

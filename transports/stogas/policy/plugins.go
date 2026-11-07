@@ -40,15 +40,16 @@ func (c *Config) MediaTypes() *MediaTypes {
 	return c.Input.MediaTypes
 }
 
-// InspectsInput reports whether the policy, as far as it is unencrypted, inspects input text:
-// input limited to ASCII, or redaction. Either refuses an attachment that stays opaque.
-// Encrypted redaction is known only once its plugin is opened.
-func (c *Config) InspectsInput() bool {
+// InputCheck names the setting that reads all input text, input.asciiOnly or plugins.redaction,
+// or returns "" when the policy sets neither. Either refuses an attachment that stays opaque. An
+// encrypted redaction that applies counts whatever it holds, since only the request's key opens
+// it, so routing and each pair's preparation give the same answer.
+func (c *Config) InputCheck() string {
 	if c == nil {
-		return false
+		return ""
 	}
 	if c.Input != nil && c.Input.ASCIIOnly {
-		return true
+		return "input.asciiOnly"
 	}
 	parts := c.PluginSources
 	if len(parts) == 0 && c.Plugins != nil {
@@ -59,10 +60,15 @@ func (c *Config) InspectsInput() bool {
 			continue
 		}
 		if r := part.Redaction; len(r.Presets) > 0 || len(r.CustomPatterns) > 0 || len(r.Literals) > 0 {
-			return true
+			return "plugins.redaction"
 		}
 	}
-	return false
+	for _, plugins := range c.ActiveEncryptedPlugins {
+		if plugins.Units&permissionRedaction != 0 {
+			return "plugins.redaction"
+		}
+	}
+	return ""
 }
 
 // ExportConfig retains independent destinations from every applicable source.

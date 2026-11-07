@@ -103,7 +103,7 @@ func validateNativeAttachment(state *State, block map[string]json.RawMessage, pa
 		return invalidRequest(path + " inline files must use file_data")
 	}
 	if id != "" && !state.PreparedCredential.UsesBYOK() {
-		return invalidRequest("Provider file IDs require BYOK")
+		return catalog.ManagedFileIDRefusal(path)
 	}
 	if sourceURL != "" && !strings.HasPrefix(sourceURL, "data:") {
 		parsed, err := url.Parse(sourceURL)

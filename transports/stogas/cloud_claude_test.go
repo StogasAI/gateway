@@ -563,10 +563,16 @@ func TestCloudClaudeAdapterRefusesWhatTheCloudLacks(t *testing.T) {
 		{"aws-claude-fable-5-1", "/v1/responses", `"input":"hi","tools":[{"type":"web_fetch"}],`, "No deployment that your credentials reach runs web_fetch."},
 		{"aws-claude-fable-5-1-anthropic-hosted", "/v1/responses", `"input":"hi","tools":[{"type":"web_fetch"}],`, ""},
 		{"google-cloud-claude-fable-5-1-anthropic-hosted", "/v1/responses", `"input":"hi","tools":[{"type":"web_search"}],`, ""},
-		{"aws-claude-fable-5-1", "/v1/responses", `"input":[{"role":"user","content":[{"type":"input_file","file_id":"file_123"}]}],`, "file IDs are not supported when AWS or Google runs Claude"},
-		{"aws-claude-fable-5-1-anthropic-hosted", "/v1/responses", `"input":[{"role":"user","content":[{"type":"input_file","file_id":"file_123"}]}],`, "Provider file IDs require BYOK"},
-		{"aws-claude-fable-5-1-us", "/v1/responses", `"input":[{"role":"user","content":[{"type":"input_image","image_url":"https://example.com/a.png"}]}],`, "URL sources are not supported when AWS or Google runs Claude; send the content inline"},
-		{"google-cloud-claude-fable-5-1-us", "/v1/chat/completions", `"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/a.png"}}]}],`, "URL sources are not supported when AWS or Google runs Claude; send the content inline"},
+		// A Claude file ID names a file in Anthropic's Files API, which only Anthropic's hosting has.
+		{"aws-claude-fable-5-1", "/v1/responses", `"input":[{"role":"user","content":[{"type":"input_file","file_id":"file_123"}]}],`, "input[0].content[0] file IDs are not supported by any deployment that this request can use"},
+		{"azure-claude-haiku-5-5", "/v1/responses", `"input":[{"role":"user","content":[{"type":"input_file","file_id":"file_123"}]}],`, "input[0].content[0] file IDs are not supported by any deployment that this request can use"},
+		{"aws-claude-fable-5-1-anthropic-hosted", "/v1/responses", `"input":[{"role":"user","content":[{"type":"input_file","file_id":"file_123"}]}],`, "input[0].content[0] is a provider file ID, which only a BYOK credential can read"},
+		{"azure-claude-haiku-5-5-anthropic-hosted", "/v1/responses", `"input":[{"role":"user","content":[{"type":"input_file","file_id":"file_123"}]}],`, "input[0].content[0] is a provider file ID, which only a BYOK credential can read"},
+		{"aws-claude-fable-5-1-us", "/v1/responses", `"input":[{"role":"user","content":[{"type":"input_image","image_url":"https://example.com/a.png"}]}],`, "input[0].content[0] URLs are not supported by any deployment that this request can use; send the content inline"},
+		{"google-cloud-claude-fable-5-1-us", "/v1/chat/completions", `"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/a.png"}}]}],`, "messages[0].content[0] URLs are not supported by any deployment that this request can use; send the content inline"},
+		// Of file IDs and URL sources, Claude that Azure hosts lacks only file IDs, which need the
+		// Files API.
+		{"azure-claude-haiku-5-5", "/v1/chat/completions", `"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/a.png"}}]}],`, ""},
 		{"google-cloud-claude-fable-5-1-anthropic-hosted", "/v1/chat/completions", `"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/a.png"}}]}],`, ""},
 	} {
 		// The model's deployments at AWS and Google read attachments differently, so routing

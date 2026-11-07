@@ -58,9 +58,6 @@ func (DefaultAdapter) ValidateRequest(state *State) error {
 	if state == nil || state.Resolution == nil {
 		return catalog.ErrUnsupportedRequest
 	}
-	if state.Resolution.InputFiles().IDs > 0 && !state.PreparedCredential.UsesBYOK() {
-		return invalidRequest("Provider file IDs require BYOK")
-	}
 	if err := validateCommonChatCompletionPolicy(state); err != nil {
 		return err
 	}

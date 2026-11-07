@@ -14,6 +14,7 @@ import (
 	"io"
 	"maps"
 	"mime"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -26,8 +27,18 @@ type Stats struct {
 	URLs        int
 	IDs         int
 	InlineBytes int
-	Opaque      bool
+	// Opaque names the first attachment that stays a file, a URL or a file ID, whose content the
+	// gateway does not read, or is "" when there is none.
+	Opaque string
 }
+
+// PartError refuses the attachment at Path, such as messages[0].content[1].
+type PartError struct {
+	Path   string
+	Reason string
+}
+
+func (e *PartError) Error() string { return e.Path + " " + e.Reason }
 
 // Options say what Process does with a request's attachments.
 type Options struct {
@@ -193,6 +204,7 @@ type processor struct {
 }
 
 func (p *processor) block(path string, block map[string]json.RawMessage, responses bool) (json.RawMessage, error) {
+	refuse := func(reason string) error { return &PartError{Path: path, Reason: reason} }
 	kind := stringField(block, "type")
 	var file map[string]json.RawMessage
 	var data, sourceURL, id, audioType string
@@ -202,7 +214,7 @@ func (p *processor) block(path string, block map[string]json.RawMessage, respons
 		var err error
 		file, err = rawjson.Object(block["file"])
 		if err != nil {
-			return nil, errors.New("file must be an object")
+			return nil, refuse("file must be an object")
 		}
 		document = true
 	case responses && kind == "input_file":
@@ -210,7 +222,7 @@ func (p *processor) block(path string, block map[string]json.RawMessage, respons
 	case !responses && kind == "image_url":
 		image, err := rawjson.Object(block["image_url"])
 		if err != nil {
-			return nil, errors.New("image_url must be an object")
+			return nil, refuse("image_url must be an object")
 		}
 		sourceURL, id = stringField(image, "url"), stringField(image, "file_id")
 	case responses && kind == "input_image":
@@ -218,7 +230,7 @@ func (p *processor) block(path string, block map[string]json.RawMessage, respons
 	case !responses && kind == "input_audio":
 		audio, err := rawjson.Object(block["input_audio"])
 		if err != nil {
-			return nil, errors.New("input_audio must be an object")
+			return nil, refuse("input_audio must be an object")
 		}
 		data = stringField(audio, "data")
 		audioType = AudioMediaType(stringField(audio, "format"))
@@ -235,7 +247,7 @@ func (p *processor) block(path string, block map[string]json.RawMessage, respons
 		}
 	}
 	if sources != 1 {
-		return nil, errors.New("an attachment requires exactly one inline payload, URL, or provider file ID")
+		return nil, refuse("requires exactly one inline payload, URL or provider file ID")
 	}
 	p.stats.Count++
 	if strings.HasPrefix(sourceURL, "data:") {
@@ -245,7 +257,7 @@ func (p *processor) block(path string, block map[string]json.RawMessage, respons
 	if data != "" {
 		var err error
 		if mediaType, payload, err = ParseInline(data, stringField(file, "file_type")); err != nil {
-			return nil, err
+			return nil, refuse(err.Error())
 		}
 		if audioType != "" {
 			mediaType = audioType
@@ -254,7 +266,7 @@ func (p *processor) block(path string, block map[string]json.RawMessage, respons
 	if p.Check != nil {
 		resolved, err := ResolveMediaType(kind, mediaType, payload)
 		if err != nil {
-			return nil, fmt.Errorf("%s %w", path, err)
+			return nil, refuse(err.Error())
 		}
 		if err := p.Check(path, resolved); err != nil {
 			return nil, err
@@ -262,12 +274,12 @@ func (p *processor) block(path string, block map[string]json.RawMessage, respons
 	}
 	if id != "" {
 		p.stats.IDs++
-		p.stats.Opaque = true
+		p.opaque(path)
 		return nil, nil
 	}
 	if sourceURL != "" {
 		p.stats.URLs++
-		p.stats.Opaque = true
+		p.opaque(path)
 		return nil, nil
 	}
 	if document && p.Extract && TextMediaType(mediaType) && (p.Native == nil || !p.Native(path)) {
@@ -281,30 +293,29 @@ func (p *processor) block(path string, block map[string]json.RawMessage, respons
 		}
 		decoded, err := base64.StdEncoding.Strict().DecodeString(payload)
 		if err != nil {
-			return nil, errors.New("inline attachment has invalid base64")
+			return nil, refuse("has invalid base64")
 		}
 		if !utf8.Valid(decoded) || bytes.IndexByte(decoded, 0) >= 0 {
-			return nil, errors.New("text extraction requires UTF-8 text without NUL bytes")
+			return nil, refuse("is not UTF-8 text without NUL bytes, which text extraction requires")
 		}
 		p.stats.InlineBytes += len(decoded)
-		// Reject extra members rather than silently removing request semantics.
-		for key := range file {
-			if key != "type" && key != "file_data" && key != "filename" && key != "file_type" && key != "cache_control" && key != "prompt_cache_breakpoint" {
-				return nil, errors.New("unsupported text attachment field")
-			}
-			if !responses && (key == "type" || key == "cache_control" || key == "prompt_cache_breakpoint") {
-				return nil, errors.New("unsupported text attachment field")
+		// Reject extra members rather than silently removing request semantics. Sorted keys name
+		// the same member each time.
+		for _, key := range slices.Sorted(maps.Keys(file)) {
+			if key != "type" && key != "file_data" && key != "filename" && key != "file_type" && key != "cache_control" && key != "prompt_cache_breakpoint" ||
+				!responses && (key == "type" || key == "cache_control" || key == "prompt_cache_breakpoint") {
+				return nil, refuse("has " + key + ", which text extraction cannot keep")
 			}
 		}
-		for key := range block {
+		for _, key := range slices.Sorted(maps.Keys(block)) {
 			if !responses && key != "type" && key != "file" && key != "cache_control" && key != "prompt_cache_breakpoint" {
-				return nil, errors.New("unsupported text attachment block field")
+				return nil, refuse("has " + key + ", which text extraction cannot keep")
 			}
 		}
 		if raw, exists := file["filename"]; exists {
 			var name string
 			if err := sonic.Unmarshal(raw, &name); err != nil || strings.TrimSpace(name) == "" {
-				return nil, errors.New("filename must be a non-empty string")
+				return nil, refuse("filename must be a non-empty string")
 			}
 		}
 		// The first line keeps what the file part said of the file: its name and media type.
@@ -333,11 +344,17 @@ func (p *processor) block(path string, block map[string]json.RawMessage, respons
 	// second decoded file. No image, archive, document, or media parser runs here.
 	count, err := io.Copy(io.Discard, base64.NewDecoder(base64.StdEncoding.Strict(), strings.NewReader(payload)))
 	if err != nil {
-		return nil, errors.New("inline attachment has invalid base64")
+		return nil, refuse("has invalid base64")
 	}
 	p.stats.InlineBytes += int(count)
-	p.stats.Opaque = true
+	p.opaque(path)
 	return nil, nil
+}
+
+func (p *processor) opaque(path string) {
+	if p.stats.Opaque == "" {
+		p.stats.Opaque = path
+	}
 }
 
 // ParseInline borrows the base64 payload and normalizes its declared media

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"sort"
 	"time"
 
@@ -96,14 +97,6 @@ type requestPlan struct {
 	resolve  func(routingSelection, RequestPolicy) (*ResolvedRequest, error)
 }
 
-// credentialGroup holds the credentials of a deployment that share one candidate. They share the
-// policy, and a credential of Stogas never shares one with a customer's own credential, since
-// only the latter reads provider file IDs.
-type credentialGroup struct {
-	config  *policy.Config
-	managed bool
-}
-
 // capacityError marks a failed memory reservation, which every pair would repeat.
 type capacityError struct{ error }
 
@@ -127,6 +120,14 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 	var firstErr error
 	// attachmentPairs are the pairs that cannot read an attachment of the request.
 	var attachmentPairs []attachmentPair
+	// fileID is the first attachment that names a provider file, which only the credential of the
+	// account that holds the file reads. Credentials of Stogas, which hold no customer's file,
+	// leave such a request, and fileIDManaged records that one did.
+	var fileID *Attachment
+	if i := slices.IndexFunc(variants.attachments, func(attachment Attachment) bool { return attachment.ID != "" }); i >= 0 {
+		fileID = &variants.attachments[i]
+	}
+	fileIDManaged := false
 	// keep records why a pair left. A pair whose deployment cannot read an attachment counts as
 	// one that cannot read it, since waiting or another policy cannot change that. Otherwise the
 	// input's preference keeps one error, as in take.
@@ -186,7 +187,8 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 		if input.AvailableCredentials != nil {
 			indexes = input.AvailableCredentials[string(selection.provider)]
 		}
-		groups := make(map[credentialGroup]*ResolvedRequest)
+		// The credentials of a deployment that share a policy share one candidate.
+		groups := make(map[*policy.Config]*ResolvedRequest)
 		for rank, index := range indexes {
 			// Credentials are tried in assignment order, so later ones cannot
 			// fit within the request's pairs once they are full.
@@ -205,6 +207,10 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 				continue
 			}
 			targetPassed = true
+			if fileID != nil && input.CredentialBYOK != nil && !input.CredentialBYOK(selection.provider, index) {
+				fileIDManaged = true
+				continue
+			}
 			value, err := variants.policyFor(selection.provider, index)
 			if err != nil {
 				if errors.Is(err, customerkey.ErrKey) || errors.Is(err, customerkey.ErrEnvelope) {
@@ -220,8 +226,7 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 				continue
 			}
 			original := value.Config
-			group := credentialGroup{original, input.CredentialBYOK != nil && !input.CredentialBYOK(selection.provider, index)}
-			if existing, found := groups[group]; found {
+			if existing, found := groups[original]; found {
 				switch {
 				case existing == nil:
 					trace.removeGrouped(selection, index, original)
@@ -239,7 +244,7 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 				}
 				continue
 			}
-			groups[group] = nil
+			groups[original] = nil
 			// An undecided condition or a deny period from a matched rule
 			// excludes only this candidate, as an unmatched filter does.
 			value.Config, err = value.Config.Activate(values)
@@ -252,14 +257,6 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 			}
 			if err != nil {
 				return nil, policyEvaluationError(err)
-			}
-			if value.Config.DeniedAt(input.now) {
-				keep(selection, ErrScheduleDenied)
-				if trace != nil {
-					origin, _ := value.Config.DenyOrigin(input.now)
-					trace.removePair(selection, index, original, RemovedCandidate{Reason: RemovedDeny, Origin: &origin})
-				}
-				continue
 			}
 			if !policyAllowsSelection(value.Config, selection) {
 				if trace != nil {
@@ -283,14 +280,24 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 			}
 			// A simulation sends no messages, so no pair leaves here without a record.
 			if len(variants.attachments) > 0 {
-				if pair := newAttachmentPair(selection, value.Config, group.managed); !pair.reads(variants.attachments) {
+				if pair := newAttachmentPair(selection, value.Config); !pair.reads(variants.attachments) {
 					attachmentPairs = append(attachmentPairs, pair)
 					continue
 				}
 			}
+			// A deny period removes only a pair that could otherwise serve the request, so a client
+			// that waits for it to end is not refused for another reason afterwards.
+			if value.Config.DeniedAt(input.now) {
+				keep(selection, ErrScheduleDenied)
+				if trace != nil {
+					origin, _ := value.Config.DenyOrigin(input.now)
+					trace.removePair(selection, index, original, RemovedCandidate{Reason: RemovedDeny, Origin: &origin})
+				}
+				continue
+			}
 			candidate := template
 			candidate.CredentialIndex, candidate.policy = index, value.Config
-			groups[group] = &candidate
+			groups[original] = &candidate
 			if skips(selection, index, value.Config) {
 				pending[&candidate] = values
 				continue
@@ -310,6 +317,14 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 	}
 	if len(candidates.filtered) == 0 && len(attachmentPairs) > 0 {
 		return nil, attachmentsRefusal(variants.attachments, attachmentPairs)
+	}
+	if len(candidates.filtered) == 0 && fileIDManaged {
+		return nil, ManagedFileIDRefusal(fileID.Path)
+	}
+	if fileID != nil {
+		if err := fileIDAccounts(*fileID, candidates.filtered, credentials); err != nil {
+			return nil, err
+		}
 	}
 	// Later pairs are prepared with their own checks, which read the attachments in full.
 	for _, attachment := range variants.attachments {
@@ -611,10 +626,14 @@ func (v *requestVariants) prepareBody(selection routingSelection, value RequestP
 		reserveExpansion = func(bytes int) error { return v.reserve(v.inputBytes + bytes) }
 	}
 	asciiOnly := value.Config != nil && value.Config.Input != nil && value.Config.Input.ASCIIOnly
+	// check names the setting that reads all input text, as routing named it.
+	check := value.Config.InputCheck()
+	if check == "" && compiled.Enabled() {
+		check = "plugins.redaction"
+	}
 	options := inputfiles.Options{Extract: extraction != policy.TextExtractionOff, Reserve: reserveExpansion}
-	// Auto keeps a text file that the deployment reads as a file, unless input checks or
-	// redaction must read it.
-	if extraction == policy.TextExtractionAuto && !asciiOnly && !compiled.Enabled() {
+	// Auto keeps a text file that the deployment reads as a file, unless the check must read it.
+	if extraction == policy.TextExtractionAuto && check == "" {
 		options.Native = func(path string) bool {
 			for _, attachment := range v.textFiles {
 				if attachment.Path == path {
@@ -631,10 +650,19 @@ func (v *requestVariants) prepareBody(selection routingSelection, value RequestP
 	}
 	files, err := inputfiles.Process(fields, v.route == RouteResponses, options)
 	if err != nil {
-		return nil, errors.Join(err, APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: err.Error()})
+		public := APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: err.Error()}
+		var part *inputfiles.PartError
+		if errors.As(err, &part) {
+			public.Param = part.Path
+		}
+		return nil, errors.Join(err, public)
 	}
-	if files.Opaque && (asciiOnly || compiled.Enabled()) {
-		return nil, APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Opaque attachments cannot satisfy the active input inspection policy; submit text or enable text extraction for inline UTF-8 text files"}
+	if files.Opaque != "" && check != "" {
+		refusal := PublicError(inputCheckRefusal(files.Opaque, check))
+		if slices.ContainsFunc(v.textFiles, func(file Attachment) bool { return file.Path == files.Opaque }) {
+			refusal.Message += textExtractionHint
+		}
+		return nil, refusal
 	}
 	if asciiOnly {
 		if err := redaction.ValidateASCII(fields, surface); err != nil {
@@ -655,7 +683,7 @@ func (v *requestVariants) prepareBody(selection routingSelection, value RequestP
 	}
 	variant := &requestBodyVariant{exports: exports, body: body, fields: fields, summary: redactor.Summary(), textBytes: redactor.InputTextBytes()}
 	variant.files = files
-	if files.Opaque {
+	if files.Opaque != "" {
 		variant.estimate = func(deployment Deployment) (int, error) { return deployment.MaxInputTokens, nil }
 	} else {
 		variant.estimate = requestTokenEstimator(fields, v.route, v.selections)
