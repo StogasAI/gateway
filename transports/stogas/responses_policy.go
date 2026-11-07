@@ -1115,6 +1115,8 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 				return err
 			}
 			if itemType == "mcp_approval_response" {
+				// An approval answers the model as a client tool result does.
+				validation.meaningful = true
 				turn.result(rawString(item["approval_request_id"]))
 			} else {
 				turn.call()
@@ -1147,6 +1149,11 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 	}
 	if !validation.meaningful {
 		return invalidRequest("input must contain non-empty text or a client tool result")
+	}
+	if responsesMCPSupported(state) {
+		if err := validateResponsesMCPApprovals(raw, state.Resolution.RawTools()); err != nil {
+			return err
+		}
 	}
 	if state != nil {
 		state.answeredCallIDs = turn.answered

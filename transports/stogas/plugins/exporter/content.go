@@ -2,6 +2,7 @@ package exporter
 
 import (
 	"encoding/json"
+	"net/url"
 	"time"
 
 	"github.com/maximhq/bifrost/transports/stogas/inputfiles"
@@ -94,9 +95,10 @@ func (c *Capture) Metadata(body []byte) {
 	c.metadata = append([]byte(nil), body...)
 }
 
-// omitToolCredentials replaces the authorization and header values of each tool. A remote MCP
-// tool carries them so that the provider can reach its server, and an export must not. It
-// reports false when it cannot read the tools, and the caller then leaves them out.
+// omitToolCredentials replaces the authorization and header values of each tool, and keeps only
+// the origin of its server URL, where servers also take tokens. A remote MCP tool carries them
+// so that the provider can reach its server, and an export must not. It reports false when it
+// cannot read the tools, and the caller then leaves them out.
 func omitToolCredentials(raw json.RawMessage) (json.RawMessage, bool) {
 	var tools []map[string]json.RawMessage
 	if json.Unmarshal(raw, &tools) != nil {
@@ -107,6 +109,18 @@ func omitToolCredentials(raw json.RawMessage) (json.RawMessage, bool) {
 	for _, tool := range tools {
 		if _, ok := tool["authorization"]; ok {
 			tool["authorization"] = omitted
+			changed = true
+		}
+		if value, ok := tool["server_url"]; ok {
+			var serverURL string
+			if json.Unmarshal(value, &serverURL) != nil {
+				return nil, false
+			}
+			origin, err := json.Marshal(urlOrigin(serverURL))
+			if err != nil {
+				return nil, false
+			}
+			tool["server_url"] = origin
 			changed = true
 		}
 		if value, ok := tool["headers"]; ok {
@@ -133,4 +147,13 @@ func omitToolCredentials(raw json.RawMessage) (json.RawMessage, bool) {
 		return nil, false
 	}
 	return encoded, true
+}
+
+// urlOrigin returns the scheme, host and port of a URL, or [omitted] when it has none.
+func urlOrigin(value string) string {
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "[omitted]"
+	}
+	return parsed.Scheme + "://" + parsed.Host
 }

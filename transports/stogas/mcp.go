@@ -3,6 +3,7 @@ package stogas
 import (
 	"bytes"
 	"encoding/json"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -199,24 +200,81 @@ func mcpLabelsAllowedByToolChoice(rawBody map[string]json.RawMessage) map[string
 	return selected
 }
 
-// mcpApprovedCalls counts the approvals in a request's input: each lets one call run.
-func mcpApprovedCalls(rawInput json.RawMessage) int {
+// mcpApprovedCall is an approval in a request's input that lets a call run.
+type mcpApprovedCall struct {
+	// index is the approval's position in the input.
+	index int
+	// server is the label of the approval request that the approval answers, or "" when the
+	// input holds no such request.
+	server string
+}
+
+// mcpApprovedCalls returns the approvals in an input that let a call run, once per approval
+// request and in input order. An approval lets a call run when it says approve true and no
+// mcp_call in the input reports its call yet: a replayed conversation repeats earlier approvals
+// with the calls that ran, and those calls run no more.
+func mcpApprovedCalls(rawInput json.RawMessage) []mcpApprovedCall {
 	items, err := rawjson.Array(rawInput)
 	if err != nil {
-		return 0
+		return nil
 	}
-	approved := 0
-	for _, raw := range items {
+	objects := make([]map[string]json.RawMessage, len(items))
+	servers, ran := map[string]string{}, map[string]bool{}
+	for index, raw := range items {
 		item, err := rawjson.Object(raw)
-		if err != nil || rawString(item["type"]) != string(schemas.ResponsesMessageTypeMCPApprovalResponses) {
+		if err != nil {
+			continue
+		}
+		objects[index] = item
+		switch rawString(item["type"]) {
+		case string(schemas.ResponsesMessageTypeMCPApprovalRequest):
+			servers[rawString(item["id"])] = rawString(item["server_label"])
+		case string(schemas.ResponsesMessageTypeMCPCall):
+			if id := rawString(item["approval_request_id"]); id != "" {
+				ran[id] = true
+			}
+		}
+	}
+	var approved []mcpApprovedCall
+	for index, item := range objects {
+		if item == nil || rawString(item["type"]) != string(schemas.ResponsesMessageTypeMCPApprovalResponses) {
 			continue
 		}
 		var approve bool
-		if sonic.Unmarshal(item["approve"], &approve) == nil && approve {
-			approved++
+		id := rawString(item["approval_request_id"])
+		if sonic.Unmarshal(item["approve"], &approve) != nil || !approve || ran[id] {
+			continue
 		}
+		ran[id] = true
+		approved = append(approved, mcpApprovedCall{index: index, server: servers[id]})
 	}
 	return approved
+}
+
+// validateResponsesMCPApprovals checks that each approved call that a request lets run answers
+// an approval request in the same input, from a server that the request declares. OpenAI needs
+// both to run the call, and the hold covers only such calls.
+func validateResponsesMCPApprovals(rawInput json.RawMessage, rawTools []map[string]json.RawMessage) error {
+	approved := mcpApprovedCalls(rawInput)
+	if len(approved) == 0 {
+		return nil
+	}
+	declared := map[string]bool{}
+	for _, tool := range rawTools {
+		if catalog.CanonicalResponsesToolType(rawString(tool["type"])) == schemas.ResponsesToolTypeMCP {
+			declared[rawString(tool["server_label"])] = true
+		}
+	}
+	for _, call := range approved {
+		path := "input[" + strconv.Itoa(call.index) + "]"
+		if call.server == "" {
+			return invalidRequest(path + " must answer an mcp_approval_request in the same input")
+		}
+		if !declared[call.server] {
+			return invalidRequest(path + " approves a call to an MCP server that tools does not declare")
+		}
+	}
+	return nil
 }
 
 func responsesMCPServerUnattended(servers []mcpServer) bool {
@@ -237,10 +295,12 @@ func openAIResponsesMCPHoldMeters(req openAIAdapterContext) []billing.MeterEstim
 		return nil
 	}
 	servers := enabledMCPServers(req.RawBody, req.RawTools)
-	if len(servers) == 0 {
+	// An approved call answers an earlier approval request, so it counts whatever tool_choice
+	// now selects.
+	calls := len(mcpApprovedCalls(req.RawBody["input"]))
+	if len(servers) == 0 && calls == 0 {
 		return nil
 	}
-	calls := mcpApprovedCalls(req.RawBody["input"])
 	if responsesMCPServerUnattended(servers) {
 		calls += responsesHostedToolHoldQuantity(req)
 	}
@@ -532,14 +592,29 @@ func validateProviderResponsesCompletedMCPItem(streamItem providerResponsesItem,
 
 // omitResponsesMCPCredentials removes the credentials of each MCP tool from a copy of the
 // request that the client gets back. The client sent them, and the echo need not repeat them.
+// The server URL keeps only its origin, because servers also take tokens in the URL's user
+// information, path or query.
 func omitResponsesMCPCredentials(tools []schemas.ResponsesTool) []schemas.ResponsesTool {
 	for index := range tools {
 		if tools[index].Type == schemas.ResponsesToolTypeMCP && tools[index].ResponsesToolMCP != nil {
 			server := *tools[index].ResponsesToolMCP
 			server.Authorization = nil
 			server.Headers = nil
+			if server.ServerURL != nil {
+				server.ServerURL = schemas.Ptr(mcpServerOrigin(*server.ServerURL))
+			}
 			tools[index].ResponsesToolMCP = &server
 		}
 	}
 	return tools
+}
+
+// mcpServerOrigin returns the scheme, host and port of a server URL, or [omitted] when the URL
+// has none.
+func mcpServerOrigin(serverURL string) string {
+	parsed, err := url.Parse(serverURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "[omitted]"
+	}
+	return parsed.Scheme + "://" + parsed.Host
 }

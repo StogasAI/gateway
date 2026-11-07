@@ -684,13 +684,14 @@ func TestHeldExportKeepsOnlyWhatItSendsLater(t *testing.T) {
 	}
 }
 
-// A remote MCP tool's credentials reach the provider but never an export.
+// A remote MCP tool's credentials reach the provider but never an export, including a token
+// in the server URL's user information, path or query.
 func TestCapturedInputOmitsToolCredentials(t *testing.T) {
 	e := New(context.Background(), testOptions(true, 16<<20))
 	defer e.Close()
 	c := e.Start(testConfig("https://example.com/webhook"))
 	defer c.Discard()
-	tools := json.RawMessage(`[{"type":"mcp","server_label":"wiki","server_url":"https://mcp.example.com","authorization":"token-secret","headers":{"X-Api-Key":"header-secret"}},{"type":"function","name":"lookup"}]`)
+	tools := json.RawMessage(`[{"type":"mcp","server_label":"wiki","server_url":"https://user:pass@mcp.example.com:8443/s/path-secret/mcp?api_key=query-secret#x","authorization":"token-secret","headers":{"X-Api-Key":"header-secret"}},{"type":"mcp","server_label":"odd","server_url":"not a url"},{"type":"function","name":"lookup"}]`)
 	body := map[string]json.RawMessage{"input": json.RawMessage(`"hi"`), "tools": tools}
 	c.Input(body, true)
 	if string(body["tools"]) != string(tools) {
@@ -703,7 +704,8 @@ func TestCapturedInputOmitsToolCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []map[string]any{
-		{"type": "mcp", "server_label": "wiki", "server_url": "https://mcp.example.com", "authorization": "[omitted]", "headers": map[string]any{"X-Api-Key": "[omitted]"}},
+		{"type": "mcp", "server_label": "wiki", "server_url": "https://mcp.example.com:8443", "authorization": "[omitted]", "headers": map[string]any{"X-Api-Key": "[omitted]"}},
+		{"type": "mcp", "server_label": "odd", "server_url": "[omitted]"},
 		{"type": "function", "name": "lookup"},
 	}
 	if !reflect.DeepEqual(captured.Tools, want) {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/big"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -35,6 +36,20 @@ func TestResponsesPolicyAcceptsOpenAIRemoteMCP(t *testing.T) {
 			{"role":"user","content":"Look it up"},
 			{"type":"mcp_call","id":"mcp_1","server_label":"wiki","name":"ask","arguments":"{}","output":"answer","error":null,"status":"completed","approval_request_id":"mcpr_1"},
 			{"type":"mcp_call","id":"mcp_2","server_label":"wiki","name":"ask","arguments":"","error":{"type":"http_error","code":500,"message":"down"},"status":"failed"},
+			{"role":"user","content":"Thanks"}]}`,
+		// An approval answers the model as a tool result does, so it needs no new message.
+		`{"model":"provider:openai gpt-5.5","tools":[` + mcpServerTool + `],"input":[
+			{"type":"mcp_list_tools","id":"mcpl_1","server_label":"wiki","tools":[{"name":"ask","input_schema":{"type":"object"}}]},
+			{"type":"mcp_approval_request","id":"mcpr_1","server_label":"wiki","name":"ask","arguments":"{}"},
+			{"type":"mcp_approval_response","approval_request_id":"mcpr_1","approve":true}]}`,
+		// History can name a server that the request no longer declares, once its calls ran.
+		`{"model":"provider:openai gpt-5.5","tools":[` + mcpServerTool + `],"input":[
+			{"role":"user","content":"Look it up"},
+			{"type":"mcp_approval_request","id":"mcpr_1","server_label":"docs","name":"ask","arguments":"{}"},
+			{"type":"mcp_approval_response","approval_request_id":"mcpr_1","approve":true},
+			{"type":"mcp_call","id":"mcp_1","server_label":"docs","name":"ask","arguments":"{}","output":"answer","approval_request_id":"mcpr_1"},
+			{"type":"mcp_approval_request","id":"mcpr_2","server_label":"docs","name":"ask","arguments":"{}"},
+			{"type":"mcp_approval_response","approval_request_id":"mcpr_2","approve":false},
 			{"role":"user","content":"Thanks"}]}`,
 		// MCP items can sit between a client call and its output, as a response returns them.
 		`{"model":"provider:openai gpt-5.5","tools":[` + mcpServerTool + `,{"type":"function","name":"lookup"}],"input":[
@@ -68,6 +83,8 @@ func TestResponsesPolicyRefusesUnsupportedRemoteMCP(t *testing.T) {
 		{"undeclared server choice", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[` + mcpServerTool + `],"tool_choice":{"type":"mcp","server_label":"docs"}}`, "selects an undeclared MCP server"},
 		{"undeclared allowed server", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[` + mcpServerTool + `],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"mcp","server_label":"docs"}]}}`, "selects an undeclared MCP server"},
 		{"approval without decision", `{"model":"provider:openai gpt-5.5","tools":[` + mcpServerTool + `],"input":[{"role":"user","content":"hi"},{"type":"mcp_approval_response","approval_request_id":"mcpr_1"}]}`, "approve must be a boolean"},
+		{"approval without its request", `{"model":"provider:openai gpt-5.5","tools":[` + mcpServerTool + `],"input":[{"role":"user","content":"hi"},{"type":"mcp_approval_response","approval_request_id":"mcpr_1","approve":true}]}`, "must answer an mcp_approval_request in the same input"},
+		{"approval for an undeclared server", `{"model":"provider:openai gpt-5.5","tools":[` + mcpServerTool + `],"input":[{"role":"user","content":"hi"},{"type":"mcp_approval_request","id":"mcpr_1","server_label":"docs","name":"ask","arguments":"{}"},{"type":"mcp_approval_response","approval_request_id":"mcpr_1","approve":true}]}`, "approves a call to an MCP server that tools does not declare"},
 		{"listing without tools", `{"model":"provider:openai gpt-5.5","tools":[` + mcpServerTool + `],"input":[{"role":"user","content":"hi"},{"type":"mcp_list_tools","id":"mcpl_1","server_label":"wiki"}]}`, "tools must list the server's tools"},
 		{"call without name", `{"model":"provider:openai gpt-5.5","tools":[` + mcpServerTool + `],"input":[{"role":"user","content":"hi"},{"type":"mcp_call","id":"mcp_1","server_label":"wiki","arguments":"{}"}]}`, "name is required"},
 		{"azure", `{"model":"provider:azure gpt-5.5","input":"hi","tools":[` + mcpServerTool + `]}`, "No deployment for this request runs mcp."},
@@ -120,11 +137,14 @@ func TestRemoteMCPHoldsEveryModelPassThatCallsCanAdd(t *testing.T) {
 	if limit <= 0 || plain <= 0 || plain >= limit {
 		t.Fatalf("unexpected base hold %d for input limit %d", plain, limit)
 	}
-	approval := func(approve bool) string {
-		if approve {
-			return `{"type":"mcp_approval_response","approval_request_id":"mcpr_1","approve":true}`
-		}
-		return `{"type":"mcp_approval_response","approval_request_id":"mcpr_2","approve":false}`
+	request := func(id string) string {
+		return `{"type":"mcp_approval_request","id":"` + id + `","server_label":"wiki","name":"ask","arguments":"{}"}`
+	}
+	approval := func(id string, approve bool) string {
+		return `{"type":"mcp_approval_response","approval_request_id":"` + id + `","approve":` + strconv.FormatBool(approve) + `}`
+	}
+	ran := func(id string) string {
+		return `{"type":"mcp_call","id":"mcp_` + id + `","server_label":"wiki","name":"ask","arguments":"{}","output":"x","approval_request_id":"` + id + `"}`
 	}
 	for _, item := range []struct {
 		name   string
@@ -133,7 +153,15 @@ func TestRemoteMCPHoldsEveryModelPassThatCallsCanAdd(t *testing.T) {
 	}{
 		// A listing can fill the first pass, so the hold covers that pass at the input limit.
 		{"approval required", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[` + mcpServerTool + `]}`, 1},
-		{"one approved call", `{"model":"provider:openai gpt-5.5","tools":[` + mcpServerTool + `],"input":[{"role":"user","content":"hi"},` + approval(true) + `,` + approval(false) + `]}`, 2},
+		{"one approved call", `{"model":"provider:openai gpt-5.5","tools":[` + mcpServerTool + `],"input":[{"role":"user","content":"hi"},` +
+			request("mcpr_1") + `,` + request("mcpr_2") + `,` + approval("mcpr_1", true) + `,` + approval("mcpr_2", false) + `]}`, 2},
+		// A replay repeats earlier approvals with the calls that ran, and only the new one runs.
+		{"replayed approvals", `{"model":"provider:openai gpt-5.5","tools":[` + mcpServerTool + `],"input":[{"role":"user","content":"hi"},` +
+			request("mcpr_1") + `,` + approval("mcpr_1", true) + `,` + ran("mcpr_1") + `,` + request("mcpr_2") + `,` + approval("mcpr_2", true) + `,` + ran("mcpr_2") +
+			`,{"role":"assistant","content":"Done"},{"role":"user","content":"Again"},` + request("mcpr_3") + `,` + approval("mcpr_3", true) + `,` + approval("mcpr_3", true) + `]}`, 2},
+		// An approved call answers an earlier request, whatever tool_choice now selects.
+		{"approved call without a choice of MCP", `{"model":"provider:openai gpt-5.5","tool_choice":"none","tools":[` + mcpServerTool + `],"input":[{"role":"user","content":"hi"},` +
+			request("mcpr_1") + `,` + approval("mcpr_1", true) + `]}`, 2},
 		{"calls without approval up to the default", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"wiki","server_url":"https://mcp.example.com","require_approval":"never"}]}`, 1 + defaultResponsesHostedToolCalls},
 		{"calls without approval up to the cap", `{"model":"provider:openai gpt-5.5","input":"hi","max_tool_calls":3,"tools":[{"type":"mcp","server_label":"wiki","server_url":"https://mcp.example.com","require_approval":{"never":{"read_only":true}}}]}`, 4},
 	} {
@@ -152,6 +180,13 @@ func TestRemoteMCPHoldsEveryModelPassThatCallsCanAdd(t *testing.T) {
 		if held, _ := heldInputTokens(t, body); held >= limit {
 			t.Fatalf("held input %d reaches the input limit for a request that allows no MCP call\n%s", held, body)
 		}
+	}
+	// A choice of a hosted tool holds that tool's passes, and the server adds only the input of
+	// its definition.
+	webOnly, _ := heldInputTokens(t, `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"web_search"}],"tool_choice":{"type":"web_search"}}`)
+	withServer, _ := heldInputTokens(t, `{"model":"provider:openai gpt-5.5","input":"hi","tools":[`+mcpServerTool+`,{"type":"web_search"}],"tool_choice":{"type":"web_search"}}`)
+	if added := withServer - webOnly; added < 0 || added >= limit {
+		t.Fatalf("an MCP server that tool_choice leaves out added %d held input tokens", added)
 	}
 }
 
@@ -275,10 +310,11 @@ func TestProviderResponsesAcceptRemoteMCPItemsFromDeclaredServers(t *testing.T) 
 	if state.responsesHostedCalls != 0 || state.responsesDeclaredCalls != 1 {
 		t.Fatalf("hosted calls %d, declared calls %d", state.responsesHostedCalls, state.responsesDeclaredCalls)
 	}
-	// The echo of the request never repeats the server's credentials.
+	// The echo of the request never repeats the server's credentials, and its URL keeps only
+	// the origin, since a path or query can carry a token.
 	if len(response.Tools) != 1 || response.Tools[0].ResponsesToolMCP == nil ||
 		response.Tools[0].ResponsesToolMCP.Authorization != nil || response.Tools[0].ResponsesToolMCP.Headers != nil ||
-		response.Tools[0].ResponsesToolMCP.ServerURL == nil {
+		response.Tools[0].ResponsesToolMCP.ServerURL == nil || *response.Tools[0].ResponsesToolMCP.ServerURL != "https://mcp.example.com" {
 		t.Fatalf("echoed tools = %#v", response.Tools)
 	}
 
@@ -310,6 +346,7 @@ func TestProviderResponsesAcceptRemoteMCPItemsFromDeclaredServers(t *testing.T) 
 		"undeclared server":   {unattended, []schemas.ResponsesMessage{mcpCall("mcp_1", "docs")}},
 		"server not chosen":   {`{"model":"provider:openai gpt-5.5","input":"hi","tools":[` + mcpServerTool + `,{"type":"mcp","server_label":"docs","server_url":"https://docs.example.com"}],"tool_choice":{"type":"mcp","server_label":"docs"}}`, []schemas.ResponsesMessage{mcpCall("mcp_1", "wiki")}},
 		"no MCP tool":         {`{"model":"provider:openai gpt-5.5","input":"hi"}`, []schemas.ResponsesMessage{mcpListing("mcpl_1", "wiki")}},
+		"hosted tool chosen":  {`{"model":"provider:openai gpt-5.5","input":"hi","tools":[` + mcpServerTool + `,{"type":"web_search"}],"tool_choice":{"type":"web_search"}}`, []schemas.ResponsesMessage{mcpCall("mcp_1", "wiki")}},
 		"calls above the cap": {unattended, []schemas.ResponsesMessage{mcpCall("mcp_1", "wiki"), mcpCall("mcp_2", "wiki"), mcpCall("mcp_3", "wiki")}},
 		"call still running":  {unattended, changed(mcpCall("mcp_1", "wiki"), func(call *schemas.ResponsesMessage) { call.Status = schemas.Ptr("calling") })},
 		"call without name":   {unattended, changed(mcpCall("mcp_1", "wiki"), func(call *schemas.ResponsesMessage) { call.ResponsesToolMessage.Name = nil })},
