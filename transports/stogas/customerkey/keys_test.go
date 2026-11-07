@@ -73,10 +73,19 @@ func TestMissingNamesEachAbsentRootByLabel(t *testing.T) {
 	}
 	err = keys.Missing(registry, unregistered, absent, present.ID(), absent)
 	var missing *MissingError
-	if !errors.As(err, &missing) || !errors.Is(err, ErrKey) || !slices.Equal(missing.Labels, []string{"billing", unregistered}) {
-		t.Fatalf("Missing() = %v, want billing and the unregistered ID once each", err)
+	if !errors.As(err, &missing) || !errors.Is(err, ErrKey) || !slices.Equal(missing.Labels, []string{"billing"}) ||
+		!slices.Equal(missing.Unregistered, []string{unregistered}) || !slices.Equal(missing.IDs, []string{absent, unregistered}) {
+		t.Fatalf("Missing() = %+v, want billing by label and the unregistered root by ID, once each", missing)
 	}
-	if want := "Supply the registered encryption keys labeled billing, " + unregistered; err.Error() != want {
+	// No label registers the root, so the message names its ID and never calls the ID a label.
+	if want := "Supply the registered encryption keys labeled billing. Register the encryption key " + unregistered +
+		" again, or encrypt the policy settings that use it with a registered key"; err.Error() != want {
 		t.Fatalf("message = %q", err.Error())
+	}
+	other := strings.Repeat("d", 64)
+	err = keys.Missing(registry, other, unregistered)
+	if want := "Register the encryption keys " + unregistered + ", " + other +
+		" again, or encrypt the policy settings that use them with a registered key"; err == nil || err.Error() != want {
+		t.Fatalf("message = %v", err)
 	}
 }

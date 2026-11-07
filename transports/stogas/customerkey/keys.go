@@ -80,18 +80,31 @@ func (keys Keys) Validate(registered map[string]string) error {
 	return nil
 }
 
-// MissingError names registered roots that content a request may use needs
-// and the request did not supply, by label and by sorted ID. It is an ErrKey.
-type MissingError struct{ Labels, IDs []string }
+// MissingError names the roots that content a request may use needs and the
+// request did not supply: registered ones by label, the rest by ID, and all of
+// them by sorted ID. It is an ErrKey.
+type MissingError struct{ Labels, Unregistered, IDs []string }
 
 func (e *MissingError) Error() string {
-	return "Supply the registered encryption keys labeled " + strings.Join(e.Labels, ", ")
+	var parts []string
+	if len(e.Labels) > 0 {
+		parts = append(parts, "Supply the registered encryption keys labeled "+strings.Join(e.Labels, ", "))
+	}
+	// A request can supply only registered roots, so it cannot supply these.
+	switch len(e.Unregistered) {
+	case 0:
+	case 1:
+		parts = append(parts, "Register the encryption key "+e.Unregistered[0]+" again, or encrypt the policy settings that use it with a registered key")
+	default:
+		parts = append(parts, "Register the encryption keys "+strings.Join(e.Unregistered, ", ")+" again, or encrypt the policy settings that use them with a registered key")
+	}
+	return strings.Join(parts, ". ")
 }
 
 func (e *MissingError) Unwrap() error { return ErrKey }
 
 // Missing returns a *MissingError naming each root in ids that keys lacks, by
-// its registered label, or nil when none is missing.
+// its registered label or, without one, by its ID, or nil when none is missing.
 func (keys Keys) Missing(registered map[string]string, ids ...string) error {
 	return missing(registered, keys.Matches, ids)
 }
@@ -110,28 +123,31 @@ func MissingLabels(registered map[string]string, labels []string, ids ...string)
 }
 
 func missing(registered map[string]string, sent func(string) bool, ids []string) error {
-	var labels, lacking []string
+	var labels, unregistered, lacking []string
 	for _, id := range ids {
-		if id == "" || sent(id) {
+		if id == "" || sent(id) || slices.Contains(lacking, id) {
 			continue
 		}
 		lacking = append(lacking, id)
-		label := id
+		label := ""
 		for name, current := range registered {
 			if current == id {
 				label = name
 				break
 			}
 		}
-		if !slices.Contains(labels, label) {
+		if label == "" {
+			unregistered = append(unregistered, id)
+		} else {
 			labels = append(labels, label)
 		}
 	}
-	if len(labels) == 0 {
+	if len(lacking) == 0 {
 		return nil
 	}
 	slices.Sort(labels)
-	return &MissingError{Labels: labels, IDs: SortedIDs(lacking)}
+	slices.Sort(unregistered)
+	return &MissingError{Labels: labels, Unregistered: unregistered, IDs: SortedIDs(lacking)}
 }
 
 // SortedIDs returns the distinct root IDs in ids, sorted, leaving out empty
