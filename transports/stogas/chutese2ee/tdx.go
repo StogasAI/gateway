@@ -2,6 +2,7 @@ package chutese2ee
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto"
 	"crypto/rsa"
@@ -349,16 +350,19 @@ func verifyEvidenceKeyPossession(evidence instanceEvidence, certificate *x509.Ce
 func verifyAttestedEvidenceBody(body []byte, evidence instanceEvidence) error {
 	var attested struct {
 		Evidence struct {
+			// Guests on sek8s releases before October 2026 sign the quote as tdx_quote.
+			Quote           string          `json:"quote"`
 			TDXQuote        string          `json:"tdx_quote"`
 			NVTrustEvidence json.RawMessage `json:"nvtrust_evidence"`
 		} `json:"evidence"`
 	}
-	if err := json.Unmarshal(body, &attested); err != nil || attested.Evidence.TDXQuote == "" ||
-		len(attested.Evidence.NVTrustEvidence) == 0 {
+	err := json.Unmarshal(body, &attested)
+	signedQuote := cmp.Or(attested.Evidence.Quote, attested.Evidence.TDXQuote)
+	if err != nil || signedQuote == "" || len(attested.Evidence.NVTrustEvidence) == 0 {
 		return fmt.Errorf("%w: malformed signed evidence body", ErrAttestationFailed)
 	}
 	outerQuote, outerErr := base64.StdEncoding.Strict().DecodeString(evidence.Quote)
-	attestedQuote, attestedErr := base64.StdEncoding.Strict().DecodeString(attested.Evidence.TDXQuote)
+	attestedQuote, attestedErr := base64.StdEncoding.Strict().DecodeString(signedQuote)
 	if outerErr != nil || attestedErr != nil || len(outerQuote) == 0 ||
 		subtle.ConstantTimeCompare(outerQuote, attestedQuote) != 1 {
 		return fmt.Errorf("%w: signed TDX quote does not match evidence", ErrAttestationFailed)
