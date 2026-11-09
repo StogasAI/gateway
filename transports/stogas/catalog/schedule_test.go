@@ -35,10 +35,9 @@ func promotedDeployment(t *testing.T, deploymentID string) map[string]any {
 		t.Fatal(err)
 	}
 	deployment := whole["graph"].(map[string]any)["deployments"].(map[string]any)[deploymentID].(map[string]any)
+	deployment["pricing"].(map[string]any)[billing.MeterOutputTokens] = map[string]any{billing.RatePerMillionTokens: "10"}
 	for _, route := range deployment["routes"].(map[string]any) {
-		route := route.(map[string]any)
-		route["pricing"].(map[string]any)[billing.MeterOutputTokens] = map[string]any{billing.RatePerMillionTokens: "10"}
-		route["chainHash"] = promotedChainHash
+		route.(map[string]any)["chainHash"] = promotedChainHash
 	}
 	return deployment
 }
@@ -127,7 +126,7 @@ func catalogNode(t *testing.T, kind, id string) map[string]any {
 
 func TestSnapshotValidationRejectsInvalidSchedules(t *testing.T) {
 	unpriced := promotedDeployment(t, "openai-gpt-5.6-sol")
-	delete(unpriced["routes"].(map[string]any)["openai-responses"].(map[string]any)["pricing"].(map[string]any), billing.MeterOutputTokens)
+	delete(unpriced["pricing"].(map[string]any), billing.MeterOutputTokens)
 	relinked := promotedDeployment(t, "openai-gpt-5.6-sol")
 	relinked["modelId"] = "gpt-5.6-terra"
 	// The model's deployments all leave reasoning optional.

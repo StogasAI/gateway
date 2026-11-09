@@ -121,9 +121,9 @@ func TestBillingUpstreamTargetIncludesCatalogDataBoundaries(t *testing.T) {
 		return billingUpstreamTarget(&catalog.ResolvedRequest{
 			Provider: schemas.Azure,
 			Deployment: catalog.Deployment{
+				Hosting: "azure",
 				Upstream: catalog.Upstream{
 					DeploymentType: "data_zone_standard_eu",
-					Hosting:        "azure",
 					Model:          "gpt-5.6-sol",
 					ModelFormat:    "OpenAI",
 					ModelVersion:   "2026-07-09",
@@ -1640,9 +1640,7 @@ func TestEveryActiveCatalogDeploymentHoldCoversEveryTokenCategory(t *testing.T) 
 func TestEveryActiveCatalogDeploymentPricesEveryTokenMeterExactly(t *testing.T) {
 	catalogtest.UseFallback(t)
 	type matrixDeployment struct {
-		Routes map[string]struct {
-			Pricing catalog.Pricing `json:"pricing"`
-		} `json:"routes"`
+		Pricing catalog.Pricing `json:"pricing"`
 	}
 	deployments := map[string]matrixDeployment{}
 	if err := json.Unmarshal(activeCatalogRecords(t, "deployments"), &deployments); err != nil {
@@ -1666,109 +1664,107 @@ func TestEveryActiveCatalogDeploymentPricesEveryTokenMeterExactly(t *testing.T) 
 
 	priced := 0
 	for _, deploymentID := range deploymentIDs {
-		for _, routeID := range slices.Sorted(maps.Keys(deployments[deploymentID].Routes)) {
-			routePricing := deployments[deploymentID].Routes[routeID].Pricing
-			pricing := effectivePricingForDeployment(catalog.Deployment{Pricing: routePricing})
-			for _, meterKey := range tokenMeters {
-				rates := pricing[meterKey]
-				if len(rates) == 0 {
-					continue
-				}
-				modes := []struct {
-					name          string
-					promptContext int
-					rateKey       string
-				}{
-					{name: "standard", promptContext: 1, rateKey: billing.RatePerMillionTokens},
-				}
-				for rateKey := range rates {
-					if cutoff, ok := billing.ContextCutoff(rateKey); ok {
-						modes = append(modes, struct {
-							name          string
-							promptContext int
-							rateKey       string
-						}{
-							name:          rateKey,
-							promptContext: cutoff + 1,
-							rateKey:       rateKey,
-						})
-					}
-				}
-
-				for _, mode := range modes {
-					priced++
-					t.Run(deploymentID+"/"+routeID+"/"+meterKey+"/"+mode.name, func(t *testing.T) {
-						quantity := 1
-						signals := &StandardSignals{}
-						switch meterKey {
-						case billing.MeterInputTokens:
-							quantity = mode.promptContext
-							signals.Prompt = quantity
-						case billing.MeterCachedInputTokens:
-							quantity = mode.promptContext
-							signals.Prompt = quantity
-							signals.Cached = quantity
-						case billing.MeterCacheWriteInputTokens:
-							quantity = mode.promptContext
-							signals.Prompt = quantity
-							signals.CacheWrite = quantity
-						case billing.MeterCacheWrite5mInputTokens:
-							quantity = mode.promptContext
-							signals.Prompt = quantity
-							signals.CacheWrite5m = quantity
-						case billing.MeterCacheWrite1hInputTokens:
-							quantity = mode.promptContext
-							signals.Prompt = quantity
-							signals.CacheWrite1h = quantity
-						case billing.MeterOutputTokens:
-							signals.Prompt = mode.promptContext
-							signals.Completion = quantity
-						case billing.MeterReasoningTokens:
-							signals.Prompt = mode.promptContext
-							signals.Completion = quantity
-							signals.Reasoning = quantity
-						default:
-							t.Fatalf("unhandled token meter %s", meterKey)
-						}
-
-						state := &State{
-							Pair: Pair{
-								Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: routePricing}},
-							},
-							Signals: signals,
-						}
-						if _, err := calculateBaseUpstreamCost(state, nil); err != nil {
-							t.Fatalf("calculateBaseUpstreamCost returned error: %v", err)
-						}
-						meter := findMeterEstimate(state.FinalMeters, meterKey)
-						if meter == nil {
-							t.Fatalf("final price omitted %s: %#v", meterKey, state.FinalMeters)
-						}
-						rateKey := mode.rateKey
-						rate, priced := billing.ParseRate(rates[rateKey])
-						if !priced {
-							t.Fatalf("effective pricing omitted %s/%s", meterKey, rateKey)
-						}
-						wantAmount, err := calculatedMeterAmount(rateKey, big.NewInt(int64(quantity)), rate)
-						if err != nil {
-							t.Fatalf("calculate expected meter amount: %v", err)
-						}
-						if meter.Quantity != strconv.Itoa(quantity) ||
-							meter.RateKey != rateKey ||
-							meter.RateUSD != rate.String() ||
-							meter.AmountUSD != wantAmount.String() {
-							t.Fatalf(
-								"%s meter = %#v, want quantity=%d rate=%s/%s amount=%s",
-								meterKey,
-								meter,
-								quantity,
-								rateKey,
-								rate,
-								wantAmount,
-							)
-						}
+		deploymentPricing := deployments[deploymentID].Pricing
+		pricing := effectivePricingForDeployment(catalog.Deployment{Pricing: deploymentPricing})
+		for _, meterKey := range tokenMeters {
+			rates := pricing[meterKey]
+			if len(rates) == 0 {
+				continue
+			}
+			modes := []struct {
+				name          string
+				promptContext int
+				rateKey       string
+			}{
+				{name: "standard", promptContext: 1, rateKey: billing.RatePerMillionTokens},
+			}
+			for rateKey := range rates {
+				if cutoff, ok := billing.ContextCutoff(rateKey); ok {
+					modes = append(modes, struct {
+						name          string
+						promptContext int
+						rateKey       string
+					}{
+						name:          rateKey,
+						promptContext: cutoff + 1,
+						rateKey:       rateKey,
 					})
 				}
+			}
+
+			for _, mode := range modes {
+				priced++
+				t.Run(deploymentID+"/"+meterKey+"/"+mode.name, func(t *testing.T) {
+					quantity := 1
+					signals := &StandardSignals{}
+					switch meterKey {
+					case billing.MeterInputTokens:
+						quantity = mode.promptContext
+						signals.Prompt = quantity
+					case billing.MeterCachedInputTokens:
+						quantity = mode.promptContext
+						signals.Prompt = quantity
+						signals.Cached = quantity
+					case billing.MeterCacheWriteInputTokens:
+						quantity = mode.promptContext
+						signals.Prompt = quantity
+						signals.CacheWrite = quantity
+					case billing.MeterCacheWrite5mInputTokens:
+						quantity = mode.promptContext
+						signals.Prompt = quantity
+						signals.CacheWrite5m = quantity
+					case billing.MeterCacheWrite1hInputTokens:
+						quantity = mode.promptContext
+						signals.Prompt = quantity
+						signals.CacheWrite1h = quantity
+					case billing.MeterOutputTokens:
+						signals.Prompt = mode.promptContext
+						signals.Completion = quantity
+					case billing.MeterReasoningTokens:
+						signals.Prompt = mode.promptContext
+						signals.Completion = quantity
+						signals.Reasoning = quantity
+					default:
+						t.Fatalf("unhandled token meter %s", meterKey)
+					}
+
+					state := &State{
+						Pair: Pair{
+							Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: deploymentPricing}},
+						},
+						Signals: signals,
+					}
+					if _, err := calculateBaseUpstreamCost(state, nil); err != nil {
+						t.Fatalf("calculateBaseUpstreamCost returned error: %v", err)
+					}
+					meter := findMeterEstimate(state.FinalMeters, meterKey)
+					if meter == nil {
+						t.Fatalf("final price omitted %s: %#v", meterKey, state.FinalMeters)
+					}
+					rateKey := mode.rateKey
+					rate, priced := billing.ParseRate(rates[rateKey])
+					if !priced {
+						t.Fatalf("effective pricing omitted %s/%s", meterKey, rateKey)
+					}
+					wantAmount, err := calculatedMeterAmount(rateKey, big.NewInt(int64(quantity)), rate)
+					if err != nil {
+						t.Fatalf("calculate expected meter amount: %v", err)
+					}
+					if meter.Quantity != strconv.Itoa(quantity) ||
+						meter.RateKey != rateKey ||
+						meter.RateUSD != rate.String() ||
+						meter.AmountUSD != wantAmount.String() {
+						t.Fatalf(
+							"%s meter = %#v, want quantity=%d rate=%s/%s amount=%s",
+							meterKey,
+							meter,
+							quantity,
+							rateKey,
+							rate,
+							wantAmount,
+						)
+					}
+				})
 			}
 		}
 	}
@@ -3171,9 +3167,8 @@ func TestCacheEconomicsFloorNonBenefitsAtZero(t *testing.T) {
 func TestEveryActiveCatalogDeploymentCacheEconomics(t *testing.T) {
 	catalogtest.UseFallback(t)
 	type matrixDeployment struct {
-		Routes map[string]struct {
-			Pricing catalog.Pricing `json:"pricing"`
-		} `json:"routes"`
+		Pricing catalog.Pricing            `json:"pricing"`
+		Routes  map[string]json.RawMessage `json:"routes"`
 	}
 	type matrixRoute struct {
 		ProviderID string `json:"providerId"`
@@ -3202,7 +3197,7 @@ func TestEveryActiveCatalogDeploymentCacheEconomics(t *testing.T) {
 
 	for _, deploymentID := range deploymentIDs {
 		for _, routeID := range slices.Sorted(maps.Keys(deployments[deploymentID].Routes)) {
-			pricing := deployments[deploymentID].Routes[routeID].Pricing
+			pricing := deployments[deploymentID].Pricing
 			providerID := routes[routeID].ProviderID
 			if providerID == "" {
 				t.Fatalf("%s route %s has no provider", deploymentID, routeID)

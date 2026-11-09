@@ -179,7 +179,8 @@ func TestChutesStandardClientRequiresPostQuantumTLSWhenConfigured(t *testing.T) 
 
 func TestChutesUnknownHostingAcceptsTheOperatorsModelName(t *testing.T) {
 	unknown := &State{Resolution: &catalog.ResolvedRequest{Model: "glm-5.2-fast", Deployment: catalog.Deployment{
-		Upstream: catalog.Upstream{Hosting: catalog.HostingUnknown, Model: "zai-org/GLM-5.2-Fast"},
+		Hosting:  catalog.HostingUnknown,
+		Upstream: catalog.Upstream{Model: "zai-org/GLM-5.2-Fast"},
 	}}}
 	if err := validateActualResponseModel(unknown, "glm-5.2-fast-preview"); err != nil {
 		t.Fatalf("operator's own model name was refused: %v", err)

@@ -1,8 +1,8 @@
 deployments:
   modelId: claude-mythos-5
   routeIds: [anthropic-messages]
+  hosting: anthropic
   upstream:
-    hosting: anthropic
     model: claude-mythos-5
     inferenceGeo: us
   approvalRequired: true

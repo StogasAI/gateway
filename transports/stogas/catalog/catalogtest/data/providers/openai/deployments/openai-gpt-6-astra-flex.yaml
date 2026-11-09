@@ -1,8 +1,8 @@
 deployments:
   modelId: gpt-6-astra
   routeIds: [openai-chat-completions, openai-responses]
+  hosting: openai
   upstream:
-    hosting: openai
     model: gpt-6-astra
     serviceTier: flex
   pricing:

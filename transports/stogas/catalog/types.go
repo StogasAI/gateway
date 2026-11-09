@@ -55,10 +55,16 @@ type Identity struct {
 
 // Deployment is a deployment as it serves one route.
 type Deployment struct {
-	ID                  string
-	ChainHash           string
-	ModelID             string
-	RouteID             string
+	ID        string
+	ChainHash string
+	ModelID   string
+	RouteID   string
+	// Hosting is who runs the model: the provider's ID, the ID of a company whose service the
+	// provider resells, or HostingUnknown.
+	Hosting string
+	// Via lists the companies that a request passes through between the provider and the
+	// hosting, in order.
+	Via                 []string
 	Upstream            Upstream
 	Capabilities        Capabilities
 	DocumentFormats     DocumentFormats
@@ -111,7 +117,6 @@ type Upstream struct {
 	InferenceGeo   string
 	ReasoningMode  string
 	ServiceTier    string
-	Hosting        string
 	DeploymentType string
 }
 
@@ -159,6 +164,7 @@ type compiledGraph struct {
 // The root holds each author and provider whole. The gateway tells when records retire, and
 // whether Stogas serves them, from their deployments, so it skips their dates and reasons.
 type compiledAuthor struct {
+	Notes                shown    `json:"notes"`
 	RetirementDate       shown    `json:"retirementDate"`
 	StogasUnsupported    shown    `json:"stogasUnsupported"`
 	Aliases              []string `json:"aliases"`
@@ -171,17 +177,20 @@ type compiledAuthor struct {
 type compiledDeployment struct {
 	ApprovalRequired    bool                               `json:"approvalRequired"`
 	ContextWindowTokens int                                `json:"contextWindowTokens"`
+	Hosting             string                             `json:"hosting"`
 	MaxInputTokens      int                                `json:"maxInputTokens"`
 	MaxOutputTokens     int                                `json:"maxOutputTokens"`
 	ModelID             string                             `json:"modelId"`
 	Notes               shown                              `json:"notes"`
 	OutputModalities    []string                           `json:"outputModalities"`
+	Pricing             Pricing                            `json:"pricing"`
 	Reasoning           string                             `json:"reasoning"`
 	ReasoningMaxTokens  *ReasoningMaxTokens                `json:"reasoningMaxTokens"`
 	RetirementDate      *string                            `json:"retirementDate"`
 	Routes              map[string]compiledDeploymentRoute `json:"routes"`
 	StogasUnsupported   shown                              `json:"stogasUnsupported"`
 	Upstream            compiledUpstream                   `json:"upstream"`
+	Via                 []string                           `json:"via"`
 	WeightPrecision     string                             `json:"weightPrecision"`
 }
 
@@ -189,12 +198,13 @@ type compiledDeploymentRoute struct {
 	Capabilities Capabilities `json:"capabilities"`
 	ChainHash    string       `json:"chainHash"`
 	DataHandling DataHandling `json:"dataHandling"`
-	// HostedTools are the tools that the route runs for this deployment, whose call meters are
-	// already in Pricing.
-	HostedTools      map[HostedTool]HostedToolOffer `json:"hostedTools"`
-	InputModalities  []string                       `json:"inputModalities"`
-	Pricing          Pricing                        `json:"pricing"`
-	ReasoningEfforts []string                       `json:"reasoningEfforts"`
+	// HostedTools are the tools that the route runs for this deployment, each with its call meters.
+	HostedTools     map[HostedTool]HostedToolOffer `json:"hostedTools"`
+	InputModalities []string                       `json:"inputModalities"`
+	// Pricing holds every meter that the deployment bills on the route: the deployment's own
+	// and the call meters of the route's hosted tools. The loader derives it.
+	Pricing          Pricing  `json:"-"`
+	ReasoningEfforts []string `json:"reasoningEfforts"`
 }
 
 type Capabilities struct {
@@ -217,7 +227,6 @@ type compiledUpstream struct {
 	InferenceGeo   string `json:"inferenceGeo,omitempty"`
 	ReasoningMode  string `json:"reasoningMode,omitempty"`
 	ServiceTier    string `json:"serviceTier"`
-	Hosting        string `json:"hosting"`
 	DeploymentType string `json:"deploymentType,omitempty"`
 }
 
@@ -229,6 +238,7 @@ type compiledModel struct {
 	InputModalities             shown `json:"inputModalities"`
 	KnowledgeCutoff             shown `json:"knowledgeCutoff"`
 	MaxInputTokens              shown `json:"maxInputTokens"`
+	Notes                       shown `json:"notes"`
 	OutputModalities            shown `json:"outputModalities"`
 	ReasoningEffortsByInterface shown `json:"reasoningEffortsByInterface"`
 	Snapshot                    shown `json:"snapshot"`
@@ -248,6 +258,7 @@ type compiledProvider struct {
 	// AccountLocations are the places where an account's resources can keep data. A credential
 	// narrows storage to its resource's place, which the gateway checks against the catalog's places.
 	AccountLocations     shown    `json:"accountLocations"`
+	Notes                shown    `json:"notes"`
 	RetirementDate       shown    `json:"retirementDate"`
 	StogasUnsupported    shown    `json:"stogasUnsupported"`
 	Aliases              []string `json:"aliases"`

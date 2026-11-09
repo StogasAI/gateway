@@ -176,7 +176,7 @@ func validateActualExecutionReport(state *State, serviceTier *schemas.BifrostSer
 	}
 	// Fast may run at Standard: OpenAI and Azure fall back above the Fast ramp rate and bill
 	// Standard. Every other tier must run as selected, and every report must agree.
-	if reported := catalog.ReportedTier(state.Resolution.Provider, state.Resolution.Deployment.Upstream, serviceTier, speed); reported != "" {
+	if reported := catalog.ReportedTier(state.Resolution.Provider, state.Resolution.Deployment, serviceTier, speed); reported != "" {
 		selected := state.Resolution.Deployment.Upstream.ServiceTier
 		if reported != selected && (selected != catalog.TierFast || reported != catalog.TierStandard) ||
 			state.ActualTier != "" && state.ActualTier != reported {
@@ -531,7 +531,7 @@ func observeActualExecution(state *State, serviceTier *schemas.BifrostServiceTie
 	if state == nil || state.Resolution == nil {
 		return
 	}
-	if reported := catalog.ReportedTier(state.Resolution.Provider, state.Resolution.Deployment.Upstream, serviceTier, speed); reported != "" {
+	if reported := catalog.ReportedTier(state.Resolution.Provider, state.Resolution.Deployment, serviceTier, speed); reported != "" {
 		state.ActualTier = reported
 	}
 }
@@ -545,7 +545,7 @@ func validateActualResponseModel(state *State, model string) error {
 		return nil
 	}
 	resolution := state.Resolution
-	if resolution.Deployment.Upstream.Hosting == catalog.HostingUnknown {
+	if resolution.Deployment.Hosting == catalog.HostingUnknown {
 		// The operator names the model in its own terms, which the catalog does not know, so the reply
 		// is checked only for changing model within one reply.
 		if state.ActualModel != "" && state.ActualModel != model {

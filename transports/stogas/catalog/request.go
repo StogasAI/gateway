@@ -1150,7 +1150,7 @@ func resolveOpenAIRequest(
 		return nil, ErrRouteUnavailable
 	}
 	*modelField = deployment.Upstream.Model
-	*serviceTier = upstreamServiceTier(provider, deployment.Upstream)
+	*serviceTier = upstreamServiceTier(provider, deployment)
 	if applyRequestAliases != nil {
 		applyRequestAliases()
 	}

@@ -212,7 +212,7 @@ func (r *ResolvedRequest) translateToChat() error {
 	}
 	request.SetExtraParams(extraParams)
 	request.Model = r.Model
-	request.ChatParameters.ServiceTier = upstreamServiceTier(r.Provider, r.Deployment.Upstream)
+	request.ChatParameters.ServiceTier = upstreamServiceTier(r.Provider, r.Deployment)
 	if err := normalizeChatReasoning(request.ChatParameters.Reasoning, r.Deployment, r.outputTokenLimit); err != nil {
 		return err
 	}
@@ -258,7 +258,7 @@ func (r *ResolvedRequest) translateToResponses() error {
 	}
 	request.SetExtraParams(extraParams)
 	request.Model = r.Model
-	request.ResponsesParameters.ServiceTier = upstreamServiceTier(r.Provider, r.Deployment.Upstream)
+	request.ResponsesParameters.ServiceTier = upstreamServiceTier(r.Provider, r.Deployment)
 	r.chat, r.responses, r.wireBody = nil, request, fields
 	return nil
 }

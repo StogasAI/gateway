@@ -1,11 +1,11 @@
 deployments:
   modelId: deepseek-v4-flash-0423
   routeIds: [azure-chat-completions]
+  hosting: azure
   upstream:
     model: DeepSeek-V4-Flash
     modelFormat: DeepSeek
     modelVersion: '2026-04-23'
-    hosting: azure
     deploymentType: global_standard
   # Reviewed 2026-10-13: https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure#deepseek-models-sold-by-azure
   retirementDate: 2128-02-20

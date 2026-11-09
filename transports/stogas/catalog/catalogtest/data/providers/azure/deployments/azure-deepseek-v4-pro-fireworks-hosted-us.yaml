@@ -1,11 +1,11 @@
 deployments:
   modelId: deepseek-v4-pro
   routeIds: [azure-chat-completions]
+  hosting: fireworks
   upstream:
     model: FW-DeepSeek-V4-Pro
     modelFormat: Fireworks
     modelVersion: '1'
-    hosting: fireworks
     deploymentType: data_zone_standard_us
   overrides:
     capabilities:

@@ -1,8 +1,8 @@
 deployments:
   modelId: kimi-k2.6
   routeIds: [chutes-chat-completions]
+  hosting: chutes
   upstream:
-    hosting: chutes
     model: moonshotai/Kimi-K2.6-TEE
     chuteId: aac09863-35b4-5d9b-9b67-6e6a9d54273a
     gpuCount: 8

@@ -1,11 +1,11 @@
 deployments:
   modelId: gpt-5.6-terra
   routeIds: [azure-responses]
+  hosting: azure
   upstream:
     model: gpt-5.6-terra
     modelFormat: OpenAI
     modelVersion: '2026-07-09'
-    hosting: azure
     deploymentType: global_standard
     reasoningMode: pro
     serviceTier: fast

@@ -436,6 +436,7 @@ func TestResolvedPolicyValuesExposeTypedRegisteredCatalogAndRequestData(t *testi
 		{path: "model.id", fieldType: "string", value: "gpt-5.6-sol"},
 		{path: "model.name", fieldType: "string", value: "GPT-5.6 Sol"},
 		{path: "deployment.id", fieldType: "string", value: "openai-gpt-5.6-sol"},
+		{path: "deployment.hosting", fieldType: "string", value: "openai"},
 		{path: "provider.id", fieldType: "string", value: "openai"},
 		{path: "provider.name", fieldType: "string", value: "OpenAI"},
 		{path: "provider.headquarteredCountry", fieldType: "string", value: "US"},

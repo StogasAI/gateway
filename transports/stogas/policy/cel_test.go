@@ -103,6 +103,44 @@ func TestCELRejectsStringsThatFieldsCannotHold(t *testing.T) {
 	}
 }
 
+// A policy names the companies that it accepts on the way to the hosting as it names the hosting.
+func TestCELReadsTheHostingAndThePathToIt(t *testing.T) {
+	accepted := `["anthropic", "aws", "azure", "chutes", "google-cloud", "openai"]`
+	program, err := CompileCEL(`deployment.hosting in ` + accepted + ` && deployment.via.all(company, company in ` + accepted + `)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		hosting string
+		via     []string
+		matches bool
+	}{
+		{"anthropic", nil, true},
+		{"anthropic", []string{"aws"}, true},
+		{"fireworks", nil, false},
+		{"anthropic", []string{"aws", "fireworks"}, false},
+		{"anthropic", []string{"unknown"}, false},
+	} {
+		values := testValues{
+			"deployment.hosting": {Type: "string", String: test.hosting},
+			"deployment.via":     {Type: "string_list", Strings: test.via},
+		}
+		if known, matches, _, err := program.Evaluate(values, time.Time{}); err != nil || !known || matches != test.matches {
+			t.Errorf("%s via %v: known %v, matches %v, error %v", test.hosting, test.via, known, matches, err)
+		}
+	}
+	for _, source := range []string{`deployment.hosting == provider.id`, `size(deployment.via) == 0`, `"unknown" in deployment.via`} {
+		if _, err := CompileCEL(source); err != nil {
+			t.Errorf("%s: %v", source, err)
+		}
+	}
+	for _, source := range []string{`deployment.hosting == "Azure"`, `"fire works" in deployment.via`, `deployment.via.exists(c, c == "AWS")`} {
+		if _, err := CompileCEL(source); err == nil || !strings.Contains(err.Error(), "cannot be") {
+			t.Errorf("%s: error = %v", source, err)
+		}
+	}
+}
+
 func BenchmarkCELConditions(b *testing.B) {
 	for _, size := range []int{1, 64, 256} {
 		source := strings.Repeat(`model.id == "model-a" && `, size-1) + `blended_price(3, 1) < decimal("2")`

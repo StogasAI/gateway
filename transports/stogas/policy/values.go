@@ -73,6 +73,9 @@ var (
 	mcpServer = patternDomain(`^[a-z0-9:][a-z0-9._:-]*$`, "a lowercase host, such as 'mcp.example.com', or a connector or tunnel ID")
 	mcpTool   = patternDomain(`^[a-z0-9:][a-z0-9._:-]*/.+$`,
 		"a server and one of its tools, such as 'mcp.example.com/search', or 'mcp.example.com/*' for every tool")
+	// A company that handles requests: a provider's ID, the ID of a company that the catalog lists
+	// no provider for, or unknown for one that the provider does not name.
+	company    = oneOf("anthropic", "aws", "azure", "chutes", "fireworks", "google-cloud", "openai", "unknown")
 	reasoning  = oneOf("unsupported", "optional", "required")
 	modalities = oneOf("text", "image", "audio", "video")
 	efforts    = oneOf(ReasoningEfforts...)
@@ -89,6 +92,8 @@ var fieldDomains = map[string]fieldDomain{
 	"model.releaseDate":                          catalogDate,
 	"deployment.id":                              catalogID,
 	"deployment.modelId":                         catalogID,
+	"deployment.hosting":                         company,
+	"deployment.via":                             company,
 	"deployment.inputModalities":                 modalities,
 	"deployment.outputModalities":                modalities,
 	"deployment.reasoning":                       reasoning,
@@ -103,7 +108,6 @@ var fieldDomains = map[string]fieldDomain{
 		"a lowercase UUID"),
 	"deployment.upstream.deploymentType": oneOf("global_standard", "data_zone_standard_us", "data_zone_standard_eu",
 		"data_zone_standard_apac", "instant"),
-	"deployment.upstream.hosting":       oneOf("anthropic", "aws", "azure", "chutes", "fireworks", "google-cloud", "openai", "unknown"),
 	"deployment.upstream.inferenceGeo":  oneOf("global", "us", "eu", "jp", "au", "in", "ca"),
 	"deployment.upstream.modelFormat":   oneOf("OpenAI", "OpenAI-OSS", "Anthropic", "DeepSeek", "Fireworks"),
 	"deployment.upstream.reasoningMode": oneOf("pro"),

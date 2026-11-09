@@ -30,10 +30,11 @@ var HostedTools = []HostedTool{HostedToolWebSearch, HostedToolWebFetch, HostedTo
 
 func hostedToolRank(tool HostedTool) int { return slices.Index(HostedTools, tool) }
 
-// HostedToolOffer is a hosted tool that a deployment's route runs for it. Its call meters are
-// already in the deployment's prices.
+// HostedToolOffer is a hosted tool that a deployment's route runs for it, with the call meters
+// that the tool bills.
 type HostedToolOffer struct {
 	DataHandling HostedToolDataHandling `json:"dataHandling"`
+	Pricing      Pricing                `json:"pricing"`
 }
 
 // HostedToolDataHandling is where a tool's own processing sends request content and what it
@@ -118,9 +119,10 @@ func isTrue(value *bool) bool  { return value != nil && *value }
 func isFalse(value *bool) bool { return value != nil && !*value }
 
 // validateHostedTools checks a deployment's tools on one route: each is known and sets only facts
-// that it can make worse, and web search prices every call meter of its wire and nothing else, so
-// no search bills at zero. validateLocations checks the tools' locations.
-func validateHostedTools(owner string, claudeWire bool, tools map[HostedTool]HostedToolOffer, pricing Pricing) error {
+// that it can make worse, web search prices exactly the call meters of its wire, so no search bills
+// at zero, and nothing else prices them. validateLocations checks the tools' locations.
+func validateHostedTools(owner string, claudeWire bool, tools map[HostedTool]HostedToolOffer, deployment Pricing) error {
+	required, foreign := webSearchMeters(claudeWire)
 	for tool, offer := range tools {
 		if hostedToolRank(tool) < 0 {
 			return fmt.Errorf("%s offers unknown hosted tool %q", owner, tool)
@@ -131,17 +133,22 @@ func validateHostedTools(owner string, claudeWire bool, tools map[HostedTool]Hos
 			isTrue(effect.TEE) || isTrue(effect.TEEVerified) {
 			return fmt.Errorf("%s has %s data handling that would improve the deployment's", owner, tool)
 		}
-	}
-	required, foreign := webSearchMeters(claudeWire)
-	_, search := tools[HostedToolWebSearch]
-	for _, meter := range required {
-		if search != (len(pricing[meter]) > 0) {
-			return fmt.Errorf("%s prices %s only with web search", owner, meter)
+		meters := 0
+		if tool == HostedToolWebSearch {
+			meters = len(required)
+			for _, meter := range required {
+				if len(offer.Pricing[meter]) == 0 {
+					return fmt.Errorf("%s offers web search without a price for %s", owner, meter)
+				}
+			}
+		}
+		if len(offer.Pricing) != meters {
+			return fmt.Errorf("%s prices %s on a meter that it does not bill", owner, tool)
 		}
 	}
-	for _, meter := range foreign {
-		if len(pricing[meter]) > 0 {
-			return fmt.Errorf("%s prices %s, which its wire does not charge", owner, meter)
+	for _, meter := range slices.Concat(required, foreign) {
+		if len(deployment[meter]) > 0 {
+			return fmt.Errorf("%s prices %s, which only web search on its wire charges", owner, meter)
 		}
 	}
 	return nil

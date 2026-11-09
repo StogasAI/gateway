@@ -648,7 +648,7 @@ func TestCloudClaudeKeepsStrictToolsOnEveryHosting(t *testing.T) {
 				if err != nil {
 					t.Fatalf("%s %s: %v", path, deployment, err)
 				}
-				hosting := state.Resolution.Deployment.Upstream.Hosting
+				hosting := state.Resolution.Deployment.Hosting
 				var wire []byte
 				var bifrostErr *schemas.BifrostError
 				if request.ChatRequest != nil {

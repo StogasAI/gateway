@@ -69,7 +69,7 @@ func PrepareProviderRequest(ctx *schemas.BifrostContext, state *State, request *
 		}
 		sanitizeChatProviderFields(ctx, chat, customerAccount)
 		applyRequiredChatOutputLimit(ctx, resolution, chat)
-		body, bifrostErr = prepareChatProviderBody(ctx, chat, request.RequestType == schemas.ChatCompletionStreamRequest, resolution.Deployment.Upstream.Hosting)
+		body, bifrostErr = prepareChatProviderBody(ctx, chat, request.RequestType == schemas.ChatCompletionStreamRequest, resolution.Deployment.Hosting)
 		settings = billing.ChatRequestSettings(chat.Params)
 	case request.ResponsesRequest != nil && request.ChatRequest == nil:
 		responses := request.ResponsesRequest
@@ -78,7 +78,7 @@ func PrepareProviderRequest(ctx *schemas.BifrostContext, state *State, request *
 		}
 		sanitizeResponsesProviderFields(ctx, responses, customerAccount)
 		applyRequiredResponsesOutputLimit(ctx, resolution, responses)
-		body, bifrostErr = prepareResponsesProviderBody(ctx, responses, request.RequestType == schemas.ResponsesStreamRequest, resolution.Deployment.Upstream.Hosting)
+		body, bifrostErr = prepareResponsesProviderBody(ctx, responses, request.RequestType == schemas.ResponsesStreamRequest, resolution.Deployment.Hosting)
 		program := ""
 		if bifrostErr == nil && resolution.Provider == schemas.OpenAI {
 			body, program, bifrostErr = setOpenAIAccessPrograms(body, resolution.RawBody()["access_programs"])

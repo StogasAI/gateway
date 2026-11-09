@@ -68,7 +68,7 @@ func CredentialDeploymentFilter(snapshot *billing.KeyConfigSnapshot, now time.Ti
 			ModelFormat:    deployment.Upstream.ModelFormat,
 			Model:          deployment.Upstream.Model,
 			ModelVersion:   deployment.Upstream.ModelVersion,
-			Hosting:        deployment.Upstream.Hosting,
+			Hosting:        deployment.Hosting,
 			DeploymentType: deployment.Upstream.DeploymentType,
 		}) {
 			if item.ModelDeprecationAt != nil && !now.Before(*item.ModelDeprecationAt) ||
@@ -95,7 +95,7 @@ func CredentialTargetChanged(snapshot *billing.KeyConfigSnapshot) func(schemas.M
 		upstream := deployment.Upstream
 		return selections[index].Credential.AzureTargetChanged(billing.UpstreamTarget{
 			ModelFormat: upstream.ModelFormat, Model: upstream.Model, ModelVersion: upstream.ModelVersion,
-			Hosting: upstream.Hosting, DeploymentType: upstream.DeploymentType,
+			Hosting: deployment.Hosting, DeploymentType: upstream.DeploymentType,
 		})
 	}
 }
@@ -251,7 +251,7 @@ func validAzureBinding(binding billing.AzureBinding, deployment catalog.Deployme
 		!places.Within(binding.ProcessingLocation, dataHandling.ProcessingLocation) ||
 		!places.Within(binding.StorageLocation, dataHandling.StorageLocation) ||
 		binding.DeploymentType != upstream.DeploymentType ||
-		binding.Hosting != upstream.Hosting ||
+		binding.Hosting != deployment.Hosting ||
 		binding.ModelFormat != upstream.ModelFormat ||
 		binding.ModelName != upstream.Model ||
 		binding.ModelVersion != upstream.ModelVersion {

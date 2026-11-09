@@ -1952,6 +1952,7 @@ func TestReasoningEffortAdmissionAcrossCatalogModels(t *testing.T) {
 func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 	catalogtest.UseFallback(t)
 	type matrixDeployment struct {
+		Hosting        string                     `json:"hosting"`
 		ModelID        string                     `json:"modelId"`
 		RetirementDate *string                    `json:"retirementDate"`
 		Routes         map[string]json.RawMessage `json:"routes"`
@@ -1959,7 +1960,6 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 			InferenceGeo  string `json:"inferenceGeo"`
 			Model         string `json:"model"`
 			ModelFormat   string `json:"modelFormat"`
-			Hosting       string `json:"hosting"`
 			ReasoningMode string `json:"reasoningMode"`
 			ServiceTier   string `json:"serviceTier"`
 		} `json:"upstream"`
@@ -2104,12 +2104,12 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 						switch {
 						case cloudClaude && interfaceName == "chat_completions":
 							var bifrostErr *schemas.BifrostError
-							if wireBytes, bifrostErr = prepareChatProviderBody(ctx, request.ChatRequest, false, source.Upstream.Hosting); bifrostErr != nil {
+							if wireBytes, bifrostErr = prepareChatProviderBody(ctx, request.ChatRequest, false, source.Hosting); bifrostErr != nil {
 								t.Fatalf("prepare cloud Claude chat body: %v", bifrostErr)
 							}
 						case cloudClaude && interfaceName == "responses":
 							var bifrostErr *schemas.BifrostError
-							if wireBytes, bifrostErr = prepareResponsesProviderBody(ctx, request.ResponsesRequest, false, source.Upstream.Hosting); bifrostErr != nil {
+							if wireBytes, bifrostErr = prepareResponsesProviderBody(ctx, request.ResponsesRequest, false, source.Hosting); bifrostErr != nil {
 								t.Fatalf("prepare cloud Claude Responses body: %v", bifrostErr)
 							}
 						case usesAnthropicWire && interfaceName == "chat_completions":
@@ -2153,7 +2153,7 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 							t.Fatalf("decode provider wire request: %v\n%s", err, wireBytes)
 						}
 						wantModel := source.Upstream.Model
-						if cloudClaude && source.Upstream.Hosting == hostingGoogleCloud {
+						if cloudClaude && source.Hosting == hostingGoogleCloud {
 							// Vertex AI names the model in the URL.
 							wantModel = ""
 						}
@@ -2197,7 +2197,7 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 							}
 						case catalog.ProviderAWS, catalog.ProviderGoogleCloud:
 							wantInferenceGeo, wantVersion, wantSpeed := "", "", ""
-							switch source.Upstream.Hosting {
+							switch source.Hosting {
 							case hostingAnthropic:
 								wantInferenceGeo = source.Upstream.InferenceGeo
 							case hostingGoogleCloud:

@@ -148,7 +148,7 @@ func billingUpstreamTarget(resolution *catalog.ResolvedRequest) *gatewaybilling.
 	upstream, dataHandling, places := resolution.Deployment.Upstream, resolution.Deployment.DataHandling, resolution.Deployment.Locations
 	target := &gatewaybilling.UpstreamTarget{
 		DeploymentType:      upstream.DeploymentType,
-		Hosting:             upstream.Hosting,
+		Hosting:             resolution.Deployment.Hosting,
 		Model:               upstream.Model,
 		ModelFormat:         upstream.ModelFormat,
 		ModelVersion:        upstream.ModelVersion,

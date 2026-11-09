@@ -163,7 +163,7 @@ func cloudCredentialTarget(provider schemas.ModelProvider, secret string) (billi
 // the deployment's hosting, and a Bedrock inference profile other than global
 // starts in a Region that keeps it in its geography.
 func cloudTargetServes(provider schemas.ModelProvider, target *billing.CloudTarget, deployment catalog.Deployment) bool {
-	if target == nil || !slices.Contains(target.Hosting, deployment.Upstream.Hosting) {
+	if target == nil || !slices.Contains(target.Hosting, deployment.Hosting) {
 		return false
 	}
 	switch provider {
@@ -172,7 +172,7 @@ func cloudTargetServes(provider schemas.ModelProvider, target *billing.CloudTarg
 			return false
 		}
 		geo := deployment.Upstream.InferenceGeo
-		return deployment.Upstream.Hosting != hostingAWS || geo == "global" || catalog.BedrockSourceRegions[geo][target.Region]
+		return deployment.Hosting != hostingAWS || geo == "global" || catalog.BedrockSourceRegions[geo][target.Region]
 	case catalog.ProviderGoogleCloud:
 		return target.Region == ""
 	}
@@ -222,7 +222,7 @@ func cloudClaudeRequest(ctx context.Context, provider schemas.ModelProvider, sec
 		}
 		request := cloudRequest{headers: map[string]string{}}
 		service := "bedrock"
-		switch upstream.Hosting {
+		switch deployment.Hosting {
 		case hostingAWS:
 			request.url = "https://bedrock-runtime." + credential.Region + ".amazonaws.com/anthropic/v1/messages"
 		case hostingAnthropic:
@@ -249,7 +249,7 @@ func cloudClaudeRequest(ctx context.Context, provider schemas.ModelProvider, sec
 			return cloudRequest{}, billing.ErrByok
 		}
 		request := cloudRequest{headers: map[string]string{}}
-		switch upstream.Hosting {
+		switch deployment.Hosting {
 		case hostingGoogleCloud:
 			host, ok := vertexHosts[upstream.InferenceGeo]
 			if !ok || !vertexModelPattern.MatchString(upstream.Model) {

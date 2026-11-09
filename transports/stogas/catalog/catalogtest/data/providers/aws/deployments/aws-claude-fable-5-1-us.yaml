@@ -7,9 +7,9 @@
 deployments:
   modelId: claude-fable-5-1
   routeIds: [aws-messages]
+  hosting: aws
   upstream:
     model: us.anthropic.claude-fable-5-1
-    hosting: aws
     inferenceGeo: us
   overrides:
     dataHandling:

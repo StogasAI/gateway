@@ -4,9 +4,9 @@
 deployments:
   modelId: claude-opus-4-5
   routeIds: [aws-messages]
+  hosting: anthropic
   upstream:
     model: claude-opus-4-5-20251101
-    hosting: anthropic
   pricing:
     input_tokens:
       per_mill_tokens: '5'

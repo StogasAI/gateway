@@ -5,9 +5,9 @@
 deployments:
   modelId: claude-haiku-5-5
   routeIds: [aws-messages]
+  hosting: aws
   upstream:
     model: global.anthropic.claude-haiku-5-5
-    hosting: aws
     inferenceGeo: global
   pricing:
     input_tokens:

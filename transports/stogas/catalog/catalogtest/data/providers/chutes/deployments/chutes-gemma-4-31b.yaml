@@ -1,8 +1,8 @@
 deployments:
   modelId: gemma-4-31b
   routeIds: [chutes-chat-completions]
+  hosting: chutes
   upstream:
-    hosting: chutes
     model: google/gemma-4-31B-turbo-TEE
     chuteId: 42ee92ba-a537-5a73-8741-876067750db7
     gpuCount: 1

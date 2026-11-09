@@ -29,6 +29,7 @@ type policyDeploymentData struct {
 	ContextWindowTokens int                 `json:"contextWindowTokens"`
 	MaxInputTokens      int                 `json:"maxInputTokens"`
 	DataHandling        policyDataHandling  `json:"dataHandling"`
+	Hosting             string              `json:"hosting"`
 	InputModalities     []string            `json:"inputModalities"`
 	MaxOutputTokens     int                 `json:"maxOutputTokens"`
 	ModelID             string              `json:"modelId"`
@@ -39,6 +40,7 @@ type policyDeploymentData struct {
 	ReasoningMaxTokens  *ReasoningMaxTokens `json:"reasoningMaxTokens"`
 	RetirementDate      *string             `json:"retirementDate"`
 	Upstream            compiledUpstream    `json:"upstream"`
+	Via                 []string            `json:"via"`
 	WeightPrecision     string              `json:"weightPrecision"`
 }
 
@@ -416,6 +418,7 @@ func newResolvedPolicyValues(candidate *ResolvedRequest) (*resolvedPolicyValues,
 					ProcessingWithin: deployment.Locations.Containing(dataHandling.ProcessingLocation),
 					StorageWithin:    deployment.Locations.Containing(dataHandling.StorageLocation),
 				},
+				Hosting:            deployment.Hosting,
 				InputModalities:    deployment.InputModalities,
 				MaxOutputTokens:    deployment.MaxOutputTokens,
 				ModelID:            deployment.ModelID,
@@ -426,6 +429,7 @@ func newResolvedPolicyValues(candidate *ResolvedRequest) (*resolvedPolicyValues,
 				ReasoningMaxTokens: deployment.ReasoningMaxTokens,
 				RetirementDate:     compiledDeployment.RetirementDate,
 				Upstream:           compiledDeployment.Upstream,
+				Via:                deployment.Via,
 				ApprovalRequired:   deployment.ApprovalRequired,
 				WeightPrecision:    deployment.WeightPrecision,
 			},

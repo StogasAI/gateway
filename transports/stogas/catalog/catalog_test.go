@@ -268,8 +268,8 @@ func TestSnapshotValidationRejectsEndToEndEncryptionWithoutTEE(t *testing.T) {
 func TestSnapshotReadsOnlyCurrentSchema(t *testing.T) {
 	release := testCatalogRelease(t)
 	for _, schema := range []struct{ root, part string }{
-		{"stogas.catalog.v12", "stogas.catalog.part.v12"},
 		{"stogas.catalog.v13", "stogas.catalog.part.v13"},
+		{"stogas.catalog.v14", "stogas.catalog.part.v14"},
 	} {
 		release.root["schema"] = schema.root
 		for _, part := range release.parts {
@@ -288,11 +288,11 @@ func TestSnapshotReadsOnlyCurrentSchema(t *testing.T) {
 func TestChutesSelectorMatchesItsRoute(t *testing.T) {
 	eight, nine, one := 8, 9, 1
 	encrypted := func(hosting string, gpus *int) *compiledDeployment {
-		return &compiledDeployment{Upstream: compiledUpstream{ChuteID: "chute", GPUCount: gpus, Hosting: hosting},
+		return &compiledDeployment{Hosting: hosting, Via: []string{}, Upstream: compiledUpstream{ChuteID: "chute", GPUCount: gpus},
 			Routes: map[string]compiledDeploymentRoute{"chutes-chat-completions": {DataHandling: DataHandling{EndToEndEncrypted: true, TEE: true}}}}
 	}
 	standard := func(hosting string, gpus *int) *compiledDeployment {
-		return &compiledDeployment{Upstream: compiledUpstream{ChuteID: "chute", GPUCount: gpus, Hosting: hosting},
+		return &compiledDeployment{Hosting: hosting, Via: []string{}, Upstream: compiledUpstream{ChuteID: "chute", GPUCount: gpus},
 			Routes: map[string]compiledDeploymentRoute{"chutes-standard-chat-completions": {}}}
 	}
 	for _, test := range []struct {
@@ -324,7 +324,7 @@ func TestSnapshotValidationAllowsUncachedPricingOnlyWhenCachingIsUnavailable(t *
 		t.Fatal(err)
 	}
 	deployments := whole["graph"].(map[string]any)["deployments"].(map[string]any)
-	uncached := deployments["azure-gpt-oss-120b"].(map[string]any)["routes"].(map[string]any)["azure-chat-completions"].(map[string]any)
+	uncached := deployments["azure-gpt-oss-120b"].(map[string]any)
 	if _, present := uncached["pricing"].(map[string]any)[billing.MeterCachedInputTokens]; present {
 		t.Fatal("test fixture unexpectedly has a cached-input price")
 	}
@@ -332,7 +332,7 @@ func TestSnapshotValidationAllowsUncachedPricingOnlyWhenCachingIsUnavailable(t *
 		t.Fatalf("uncached deployment was rejected: %v", err)
 	}
 
-	cached := deployments["azure-gpt-5.6-sol"].(map[string]any)["routes"].(map[string]any)["azure-responses"].(map[string]any)
+	cached := deployments["azure-gpt-5.6-sol"].(map[string]any)
 	delete(cached["pricing"].(map[string]any), billing.MeterCachedInputTokens)
 	broken, err := json.Marshal(whole)
 	if err != nil {
@@ -887,7 +887,7 @@ func TestAzureGPT56PriorityAndProAreIndependentDeploymentAxes(t *testing.T) {
 
 		actual, ok := StandardTierDeployment(schemas.Azure, RouteResponses, resolution.Deployment)
 		if !ok || actual.ID != "azure-"+model+"-pro" ||
-			actual.Upstream.Hosting != resolution.Deployment.Upstream.Hosting ||
+			actual.Hosting != resolution.Deployment.Hosting ||
 			actual.Upstream.DeploymentType != resolution.Deployment.Upstream.DeploymentType {
 			t.Fatalf("Azure Priority downgrade lost Pro, host, or deployment type: %#v", actual)
 		}
@@ -1456,7 +1456,7 @@ func TestSnapshotValidationKeepsBedrockGeographiesToTheirProfiles(t *testing.T) 
 		t.Fatal(err)
 	}
 	for _, id := range []string{"aws-claude-opus-4-5-anthropic-hosted", "google-cloud-claude-haiku-4-5-anthropic-hosted"} {
-		if deployment, ok := snapshot.graph.Deployments[id]; !ok || deployment.Upstream.InferenceGeo != "" || deployment.Upstream.Hosting != "anthropic" {
+		if deployment, ok := snapshot.graph.Deployments[id]; !ok || deployment.Upstream.InferenceGeo != "" || deployment.Hosting != "anthropic" {
 			t.Errorf("%s: %#v", id, deployment.Upstream)
 		}
 	}
@@ -1606,8 +1606,7 @@ func TestSnapshotValidationPreservesExactUSDRates(t *testing.T) {
 				t.Fatal(err)
 			}
 			deployment := whole["graph"].(map[string]any)["deployments"].(map[string]any)["openai-gpt-5.5-2026-04-23"].(map[string]any)
-			route := deployment["routes"].(map[string]any)["openai-responses"].(map[string]any)
-			route["pricing"].(map[string]any)[billing.MeterOutputTokens] = map[string]any{billing.RatePerMillionTokens: rate}
+			deployment["pricing"].(map[string]any)[billing.MeterOutputTokens] = map[string]any{billing.RatePerMillionTokens: rate}
 			data, err := json.Marshal(whole)
 			if err != nil {
 				t.Fatal(err)
@@ -1633,22 +1632,24 @@ func TestSnapshotValidationPreservesExactUSDRates(t *testing.T) {
 func TestSnapshotValidationRejectsUnbillablePricingAndReasoning(t *testing.T) {
 	for _, test := range []struct {
 		name  string
-		apply func(route map[string]any)
+		apply func(deployment, route map[string]any)
 		want  string
 	}{
 		{
-			name:  "missing input price",
-			apply: func(route map[string]any) { delete(route["pricing"].(map[string]any), billing.MeterInputTokens) },
-			want:  "missing required pricing meter",
+			name: "missing input price",
+			apply: func(deployment, _ map[string]any) {
+				delete(deployment["pricing"].(map[string]any), billing.MeterInputTokens)
+			},
+			want: "missing required pricing meter",
 		},
 		{
 			name:  "unknown effort",
-			apply: func(route map[string]any) { route["reasoningEfforts"] = []any{"low", "future"} },
+			apply: func(_, route map[string]any) { route["reasoningEfforts"] = []any{"low", "future"} },
 			want:  "unsupported reasoning effort",
 		},
 		{
 			name:  "unordered efforts",
-			apply: func(route map[string]any) { route["reasoningEfforts"] = []any{"high", "low"} },
+			apply: func(_, route map[string]any) { route["reasoningEfforts"] = []any{"high", "low"} },
 			want:  "canonical order",
 		},
 	} {
@@ -1658,13 +1659,58 @@ func TestSnapshotValidationRejectsUnbillablePricingAndReasoning(t *testing.T) {
 				t.Fatal(err)
 			}
 			deployment := whole["graph"].(map[string]any)["deployments"].(map[string]any)["openai-gpt-5.5-2026-04-23"].(map[string]any)
-			test.apply(deployment["routes"].(map[string]any)["openai-responses"].(map[string]any))
+			test.apply(deployment, deployment["routes"].(map[string]any)["openai-responses"].(map[string]any))
 			broken, err := json.Marshal(whole)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if _, err := snapshotFromCatalogBytes(broken); err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("catalog was accepted or failed for another reason: %v", err)
+			}
+		})
+	}
+}
+
+// A deployment names each company between its provider and its hosting once, and neither of
+// those two.
+func TestSnapshotValidationChecksThePathToTheHosting(t *testing.T) {
+	const hosted, own = "azure-claude-fable-5-1-anthropic-hosted", "azure-gpt-5.6-sol"
+	for _, test := range []struct {
+		name, deployment string
+		via              any
+		valid            bool
+	}{
+		{"no company between", hosted, []any{}, true},
+		{"one company between", hosted, []any{"fireworks"}, true},
+		{"an unnamed company between", hosted, []any{"aws", "unknown"}, true},
+		{"no list", hosted, nil, false},
+		{"the provider", hosted, []any{"azure"}, false},
+		{"the hosting", hosted, []any{"anthropic"}, false},
+		{"a company twice", hosted, []any{"fireworks", "aws", "fireworks"}, false},
+		{"a path to the provider itself", own, []any{"fireworks"}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var whole map[string]any
+			if err := json.Unmarshal(testCatalogJSON, &whole); err != nil {
+				t.Fatal(err)
+			}
+			whole["graph"].(map[string]any)["deployments"].(map[string]any)[test.deployment].(map[string]any)["via"] = test.via
+			data, err := json.Marshal(whole)
+			if err != nil {
+				t.Fatal(err)
+			}
+			loaded, err := snapshotFromCatalogBytes(data)
+			if !test.valid {
+				if err == nil || !strings.Contains(err.Error(), "has an invalid path to its hosting") {
+					t.Fatalf("catalog was accepted or failed for another reason: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := loaded.graph.Deployments[test.deployment].Via; len(got) != len(test.via.([]any)) {
+				t.Fatalf("via = %v, want %v", got, test.via)
 			}
 		})
 	}
@@ -1770,7 +1816,10 @@ func TestSnapshotRejectsValuesThatPoliciesCannotName(t *testing.T) {
 		apply func(graph map[string]any)
 		want  string
 	}{
-		{"hosting", func(g map[string]any) { upstream(g)["hosting"] = "Azure" }, vocabulary},
+		{"hosting", func(g map[string]any) { deployment(g)["hosting"] = "Azure" }, vocabulary},
+		{"a company on the way to the hosting", func(g map[string]any) {
+			deployment(g)["hosting"], deployment(g)["via"] = "anthropic", []any{"Fireworks"}
+		}, vocabulary},
 		{"deployment type", func(g map[string]any) { upstream(g)["deploymentType"] = "GlobalStandard" }, vocabulary},
 		{"weight precision", func(g map[string]any) { deployment(g)["weightPrecision"] = "fp7" }, vocabulary},
 		// Locations are the catalog's places, which name the European Union eu.

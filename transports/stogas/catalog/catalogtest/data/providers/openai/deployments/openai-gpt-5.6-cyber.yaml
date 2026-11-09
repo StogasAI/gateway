@@ -1,8 +1,8 @@
 deployments:
   modelId: gpt-5.6-cyber
   routeIds: [openai-responses]
+  hosting: openai
   upstream:
-    hosting: openai
     model: gpt-5.6-cyber
   approvalRequired: true
   pricing:

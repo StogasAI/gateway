@@ -53,10 +53,10 @@ func azureTestResolution() *catalog.ResolvedRequest {
 				ProcessingLocation: "world",
 				StorageLocation:    "unknown",
 			},
+			Hosting:   "azure",
 			Locations: testPlaces,
 			Upstream: catalog.Upstream{
 				DeploymentType: "global_standard",
-				Hosting:        "azure",
 				Model:          "gpt-5.6-sol",
 				ModelFormat:    "OpenAI",
 				ModelVersion:   "2026-07-09",
@@ -152,10 +152,11 @@ func TestAzureOnlyCredentialSelectsItsConfiguredDeploymentWithoutSecretAccess(t 
 }
 
 func TestAzureTargetThatChangedNamesTheCauseWhenNothingElseServes(t *testing.T) {
-	upstream := azureTestResolution().Deployment.Upstream
+	deployment := azureTestResolution().Deployment
+	upstream := deployment.Upstream
 	changed := billing.AzureTarget{
 		ModelFormat: upstream.ModelFormat, Model: upstream.Model, ModelVersion: upstream.ModelVersion,
-		Hosting: upstream.Hosting, DeploymentType: upstream.DeploymentType,
+		Hosting: deployment.Hosting, DeploymentType: upstream.DeploymentType,
 	}
 	otherVersion := changed
 	otherVersion.ModelVersion = "2026-10-28"
@@ -410,8 +411,8 @@ func TestAzureDirectKeyUsesOnlyTheAuthorizedExactBinding(t *testing.T) {
 	}
 
 	for _, upstream := range []catalog.Upstream{
-		{DeploymentType: "global_standard", Hosting: "azure", Model: "gpt-5.6-sol", ModelFormat: "OpenAI", ModelVersion: "2026-07-09", ServiceTier: catalog.TierFast},
-		{DeploymentType: "global_standard", Hosting: "azure", Model: "gpt-5.6-sol", ModelFormat: "OpenAI", ModelVersion: "2026-07-09", ReasoningMode: "pro"},
+		{DeploymentType: "global_standard", Model: "gpt-5.6-sol", ModelFormat: "OpenAI", ModelVersion: "2026-07-09", ServiceTier: catalog.TierFast},
+		{DeploymentType: "global_standard", Model: "gpt-5.6-sol", ModelFormat: "OpenAI", ModelVersion: "2026-07-09", ReasoningMode: "pro"},
 	} {
 		resolution := azureTestResolution()
 		resolution.Deployment.Upstream = upstream

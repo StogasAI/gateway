@@ -669,10 +669,8 @@ func TestChutesTopLevelReasoningUsageIsAccounted(t *testing.T) {
 
 type chutesCatalogDeployment struct {
 	ID      string
-	Pricing billing.Pricing
-	Routes  map[string]struct {
-		Pricing billing.Pricing `json:"pricing"`
-	} `json:"routes"`
+	Pricing billing.Pricing            `json:"pricing"`
+	Routes  map[string]json.RawMessage `json:"routes"`
 }
 
 func currentChutesDeployments(t *testing.T) []chutesCatalogDeployment {
@@ -689,9 +687,8 @@ func currentChutesDeployments(t *testing.T) []chutesCatalogDeployment {
 		}
 		// A Chutes deployment serves on exactly one route: end to end encrypted or Standard.
 		for _, routeID := range []string{"chutes-chat-completions", "chutes-standard-chat-completions"} {
-			if route, ok := deployment.Routes[routeID]; ok {
+			if _, ok := deployment.Routes[routeID]; ok {
 				deployment.ID = id
-				deployment.Pricing = route.Pricing
 				result = append(result, deployment)
 			}
 		}

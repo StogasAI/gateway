@@ -8,9 +8,9 @@
 deployments:
   modelId: claude-fable-5-1
   routeIds: [google-cloud-messages]
+  hosting: google-cloud
   upstream:
     model: claude-fable-5-1
-    hosting: google-cloud
     inferenceGeo: global
   pricing:
     input_tokens:

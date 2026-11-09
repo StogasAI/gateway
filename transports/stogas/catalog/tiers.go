@@ -74,9 +74,9 @@ func requestedTier(value *schemas.BifrostServiceTier) (string, error) {
 // Claude reports Fast mode in speed wherever it can run at Fast: on Anthropic, on Azure and on
 // Anthropic-managed Google Cloud. Its service_tier describes Priority Tier capacity instead.
 // Providers without tiers can report nothing that Stogas bills.
-func ReportedTier(provider schemas.ModelProvider, upstream Upstream, serviceTier *schemas.BifrostServiceTier, speed *string) string {
-	if provider == schemas.Anthropic || provider == schemas.Azure && upstream.ModelFormat == "Anthropic" ||
-		provider == ProviderGoogleCloud && upstream.Hosting == "anthropic" {
+func ReportedTier(provider schemas.ModelProvider, deployment Deployment, serviceTier *schemas.BifrostServiceTier, speed *string) string {
+	if provider == schemas.Anthropic || provider == schemas.Azure && deployment.Upstream.ModelFormat == "Anthropic" ||
+		provider == ProviderGoogleCloud && deployment.Hosting == "anthropic" {
 		serviceTier = (*schemas.BifrostServiceTier)(speed)
 	} else if _, tiered := providerServiceTiers[provider]; !tiered {
 		return ""
@@ -87,8 +87,8 @@ func ReportedTier(provider schemas.ModelProvider, upstream Upstream, serviceTier
 	return serviceTierNames[*serviceTier]
 }
 
-func upstreamServiceTier(provider schemas.ModelProvider, upstream Upstream) *schemas.BifrostServiceTier {
-	value := offeredTiers(provider, upstream.ModelFormat, upstream.Hosting)[upstream.ServiceTier]
+func upstreamServiceTier(provider schemas.ModelProvider, deployment Deployment) *schemas.BifrostServiceTier {
+	value := offeredTiers(provider, deployment.Upstream.ModelFormat, deployment.Hosting)[deployment.Upstream.ServiceTier]
 	if value == "" {
 		return nil
 	}

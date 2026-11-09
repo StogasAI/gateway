@@ -1,11 +1,11 @@
 deployments:
   modelId: claude-opus-5-5
   routeIds: [azure-anthropic-messages]
+  hosting: anthropic
   upstream:
     model: claude-opus-5-5
     modelFormat: Anthropic
     modelVersion: '1'
-    hosting: anthropic
     deploymentType: global_standard
   retirementDate: 2127-09-18
   overrides:

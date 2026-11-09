@@ -1,11 +1,11 @@
 deployments:
   modelId: minimax-m3
   routeIds: [azure-chat-completions]
+  hosting: fireworks
   upstream:
     model: FW-MiniMax-M3
     modelFormat: Fireworks
     modelVersion: '1'
-    hosting: fireworks
     deploymentType: data_zone_standard_us
   overrides:
     capabilities:

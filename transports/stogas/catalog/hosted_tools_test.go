@@ -232,7 +232,9 @@ func TestSnapshotValidationRejectsHostedToolsThatTheRouteCannotRun(t *testing.T)
 	effect := func(route map[string]any, tool string) map[string]any {
 		return tools(route)[tool].(map[string]any)["dataHandling"].(map[string]any)
 	}
-	pricing := func(route map[string]any) map[string]any { return route["pricing"].(map[string]any) }
+	pricing := func(route map[string]any, tool string) map[string]any {
+		return tools(route)[tool].(map[string]any)["pricing"].(map[string]any)
+	}
 	for _, test := range []struct {
 		name, deployment, route string
 		apply                   func(route map[string]any)
@@ -253,14 +255,18 @@ func TestSnapshotValidationRejectsHostedToolsThatTheRouteCannotRun(t *testing.T)
 			func(route map[string]any) { effect(route, "mcp")["processingLocation"] = "atlantis" },
 			"data handling in a location that the catalog does not list"},
 		{"web search without its price", "openai-gpt-5.5-2026-04-23", "openai-responses",
-			func(route map[string]any) { delete(pricing(route), "openai_responses_web_search_preview_calls") },
-			"prices openai_responses_web_search_preview_calls only with web search"},
-		{"a search price without web search", "anthropic-claude-fable-5-1", "anthropic-messages",
-			func(route map[string]any) { delete(tools(route), "web_search") }, "prices anthropic_web_search_calls only with web search"},
+			func(route map[string]any) {
+				delete(pricing(route, "web_search"), "openai_responses_web_search_preview_calls")
+			},
+			"offers web search without a price for openai_responses_web_search_preview_calls"},
+		{"a search price on another tool", "anthropic-claude-fable-5-1", "anthropic-messages",
+			func(route map[string]any) {
+				pricing(route, "web_fetch")["anthropic_web_search_calls"] = pricing(route, "web_search")["anthropic_web_search_calls"]
+			}, "prices web_fetch on a meter that it does not bill"},
 		{"another wire's search price", "anthropic-claude-fable-5-1", "anthropic-messages",
 			func(route map[string]any) {
-				pricing(route)["openai_responses_web_search_calls"] = pricing(route)["anthropic_web_search_calls"]
-			}, "which its wire does not charge"},
+				pricing(route, "web_search")["openai_responses_web_search_calls"] = pricing(route, "web_search")["anthropic_web_search_calls"]
+			}, "prices web_search on a meter that it does not bill"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var whole map[string]any
@@ -277,6 +283,24 @@ func TestSnapshotValidationRejectsHostedToolsThatTheRouteCannotRun(t *testing.T)
 				t.Fatalf("catalog was accepted or failed for another reason: %v", err)
 			}
 		})
+	}
+}
+
+// A search call priced on the deployment would bill on a route that runs no search.
+func TestSnapshotValidationRejectsSearchPricesOutsideWebSearch(t *testing.T) {
+	var whole map[string]any
+	if err := json.Unmarshal(testCatalogJSON, &whole); err != nil {
+		t.Fatal(err)
+	}
+	deployment := whole["graph"].(map[string]any)["deployments"].(map[string]any)["anthropic-claude-fable-5-1"].(map[string]any)
+	deployment["pricing"].(map[string]any)["anthropic_web_search_calls"] = map[string]any{"per_1k_calls": "10"}
+	broken, err := json.Marshal(whole)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := snapshotFromCatalogBytes(broken); err == nil ||
+		!strings.Contains(err.Error(), "which only web search on its wire charges") {
+		t.Fatalf("catalog was accepted or failed for another reason: %v", err)
 	}
 }
 

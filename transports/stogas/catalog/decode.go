@@ -88,6 +88,7 @@ type summary struct {
 type groupSummary struct {
 	AuthorID shown `json:"authorId"`
 	Name     shown `json:"name"`
+	Notes    shown `json:"notes"`
 
 	ParentIDs         []string `json:"parentIds"`
 	RetirementDate    *string  `json:"retirementDate"`

@@ -1,8 +1,8 @@
 deployments:
   modelId: glm-5.1
   routeIds: [chutes-chat-completions]
+  hosting: chutes
   upstream:
-    hosting: chutes
     model: zai-org/GLM-5.1-TEE
     chuteId: b048fe26-0352-5c46-acf7-335e527e7f3d
     gpuCount: 8
