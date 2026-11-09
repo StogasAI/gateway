@@ -62,7 +62,6 @@ func newAPIClient(apiKey, rawBaseURL string, requireProductionOrigin, requirePos
 	}
 	client := &http.Client{
 		Transport: transport,
-		Timeout:   transportTimeout,
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return errors.New("redirects are not permitted")
 		},
@@ -96,8 +95,10 @@ func (c *apiClient) close() {
 	}
 }
 
-func (c *apiClient) requestJSON(ctx context.Context, method, path string, requestBody io.Reader, maximum int64, output any) (int, time.Duration, error) {
+func (c *apiClient) requestJSON(ctx context.Context, timeout time.Duration, method, path string, requestBody io.Reader, maximum int64, output any) (int, time.Duration, error) {
 	started := time.Now()
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	reference, err := url.Parse(path)
 	if err != nil || reference.IsAbs() || reference.Host != "" || !strings.HasPrefix(reference.Path, "/") {
 		return 0, time.Since(started), errors.New("invalid Chutes API path")

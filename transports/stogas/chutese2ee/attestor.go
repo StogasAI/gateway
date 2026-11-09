@@ -280,6 +280,7 @@ func (a *attestor) verifyOnce(
 		response = evidenceResponse{}
 		status, latency, requestErr := a.api.requestJSON(
 			ctx,
+			evidenceTimeout,
 			http.MethodGet,
 			path,
 			nil,

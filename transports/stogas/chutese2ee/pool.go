@@ -535,6 +535,7 @@ func (s *poolState) discover(target ModelTarget) ([]discoveredInstance, time.Tim
 		path := discoveryPathPrefix + url.PathEscape(chuteID)
 		status, latency, requestErr := s.api.requestJSON(
 			s.ctx,
+			transportTimeout,
 			http.MethodGet,
 			path,
 			nil,

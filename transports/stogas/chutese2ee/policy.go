@@ -64,6 +64,7 @@ func (c *policyCache) current(ctx context.Context) (*policySnapshot, error) {
 			records = nil
 			_, _, requestErr := c.api.requestJSON(
 				ctx,
+				transportTimeout,
 				http.MethodGet,
 				measurementsPath,
 				nil,

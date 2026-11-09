@@ -28,6 +28,9 @@ const (
 	attestationRetryMaximum    = 30 * time.Second
 	transportTimeout           = 30 * time.Second
 	attestationTimeout         = 55 * time.Second
+	// Chutes collects evidence from every instance of a chute before it answers, which took 26 to
+	// 34 seconds on November 9, 2026. The GPU and TDX checks that follow get the rest.
+	evidenceTimeout            = attestationTimeout - 10*time.Second
 	maxDiscoveryBody           = 2 << 20
 	maxEvidenceBody            = 64 << 20
 	maxMeasurementBody         = 4 << 20
