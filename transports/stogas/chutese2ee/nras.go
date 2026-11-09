@@ -183,8 +183,7 @@ func (v *nrasVerifier) verify(
 		!constantTimeStringEqual(claimString(overall, "eat_nonce"), expectedNonce) {
 		return fmt.Errorf("%w: invalid NVIDIA overall claims", ErrGPUAttestationFailed)
 	}
-	overallTimes, err := validateTokenTimes(overall, now)
-	if err != nil {
+	if err := validateTokenTimes(overall, now); err != nil {
 		return err
 	}
 	submods, ok := overall["submods"].(map[string]any)
@@ -255,9 +254,9 @@ func (v *nrasVerifier) verify(
 		if warning, exists := claims["x-nvidia-attestation-warning"]; exists && !emptyAttestationWarning(warning) {
 			return fmt.Errorf("%w: NVIDIA attestation warning is present", ErrGPUAttestationFailed)
 		}
-		times, err := validateTokenTimes(claims, now)
-		if err != nil || times != overallTimes {
-			return fmt.Errorf("%w: inconsistent NVIDIA token times", ErrGPUAttestationFailed)
+		// NVIDIA signs each token on its own, so their times can differ by a second.
+		if err := validateTokenTimes(claims, now); err != nil {
+			return err
 		}
 		uniqueID := claimString(claims, "ueid")
 		if uniqueID == "" {
@@ -403,26 +402,19 @@ func (v *nrasVerifier) request(ctx context.Context, method, endpoint string, pay
 	return body, err
 }
 
-type tokenTimes struct {
-	IssuedAt  int64
-	NotBefore int64
-	ExpiresAt int64
-}
-
-func validateTokenTimes(claims jwt.MapClaims, now time.Time) (tokenTimes, error) {
+func validateTokenTimes(claims jwt.MapClaims, now time.Time) error {
 	issuedAt, issuedErr := claims.GetIssuedAt()
 	notBefore, notBeforeErr := claims.GetNotBefore()
 	expiresAt, expiresErr := claims.GetExpirationTime()
 	if issuedErr != nil || notBeforeErr != nil || expiresErr != nil || issuedAt == nil || notBefore == nil || expiresAt == nil {
-		return tokenTimes{}, fmt.Errorf("%w: NVIDIA token times are missing", ErrGPUAttestationFailed)
+		return fmt.Errorf("%w: NVIDIA token times are missing", ErrGPUAttestationFailed)
 	}
-	result := tokenTimes{IssuedAt: issuedAt.Unix(), NotBefore: notBefore.Unix(), ExpiresAt: expiresAt.Unix()}
 	if issuedAt.After(now.Add(30*time.Second)) || issuedAt.Before(now.Add(-5*time.Minute)) ||
 		notBefore.After(now.Add(30*time.Second)) || !expiresAt.After(now) ||
 		expiresAt.Sub(issuedAt.Time) <= 0 || expiresAt.Sub(issuedAt.Time) > 2*time.Hour {
-		return tokenTimes{}, fmt.Errorf("%w: NVIDIA token freshness is invalid", ErrGPUAttestationFailed)
+		return fmt.Errorf("%w: NVIDIA token freshness is invalid", ErrGPUAttestationFailed)
 	}
-	return result, nil
+	return nil
 }
 
 func validateGPULabels(submods map[string]any, expected int) error {

@@ -614,7 +614,7 @@ func TestNVIDIAClaimHelpersFailClosed(t *testing.T) {
 		"nbf": now.Add(-10 * time.Minute).Unix(),
 		"exp": now.Add(time.Minute).Unix(),
 	}
-	if _, err := validateTokenTimes(claims, now); err == nil {
+	if err := validateTokenTimes(claims, now); err == nil {
 		t.Fatal("expected stale NVIDIA token to be rejected")
 	}
 }
