@@ -3,6 +3,7 @@ package chutese2ee
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -20,25 +21,12 @@ func TestLiveChutesE2EE(t *testing.T) {
 	if os.Getenv("STOGAS_LIVE_CHUTES_E2EE") != "1" {
 		t.Skip("set STOGAS_LIVE_CHUTES_E2EE=1 to run the paid Chutes interoperability test")
 	}
-	apiKey := strings.TrimSpace(os.Getenv("CHUTES_API_KEY"))
-	if apiKey == "" {
-		t.Fatal("CHUTES_API_KEY is required")
-	}
+	transport, apiKey := newLiveChutesTransport(t)
 	targets := liveChutesTargets(t)
 	byModel := make(map[string]ModelTarget, len(targets))
 	for _, target := range targets {
 		byModel[target.Model] = ModelTarget{ChuteID: target.ChuteID, GPUCount: target.GPUCount}
 	}
-	transport, err := New(Options{
-		APIKey:                  apiKey,
-		APIBaseURL:              productionAPIBaseURL,
-		RequireProductionOrigin: true,
-		RequestTimeout:          10 * time.Minute,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer transport.Close()
 	transport.unaryClient.ReadTimeout = 45 * time.Second
 	transport.streamClient.ReadTimeout = 45 * time.Second
 
@@ -73,6 +61,80 @@ func TestLiveChutesE2EE(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestLiveChutesAttestation verifies every instance of each target, as the gateway does before it
+// sends a request, and pays for no request. It writes the targets with an instance that failed
+// verification, and those that Chutes did not serve, to the JSON report that
+// STOGAS_LIVE_CHUTES_ATTESTATION_REPORT names.
+func TestLiveChutesAttestation(t *testing.T) {
+	reportPath := os.Getenv("STOGAS_LIVE_CHUTES_ATTESTATION_REPORT")
+	if reportPath == "" {
+		t.Skip("set STOGAS_LIVE_CHUTES_ATTESTATION_REPORT to attest live Chutes instances")
+	}
+	transport, _ := newLiveChutesTransport(t)
+	report := struct {
+		Failed      map[string]string `json:"failed"`
+		Unavailable map[string]string `json:"unavailable"`
+	}{Failed: map[string]string{}, Unavailable: map[string]string{}}
+	// One at a time, because the attestor turns away evidence reads beyond its few slots.
+	for _, live := range liveChutesTargets(t) {
+		unavailable, err := attestLiveChute(t, transport.pools, live)
+		switch {
+		case err == nil:
+		case unavailable:
+			report.Unavailable[live.Model] = err.Error()
+		default:
+			report.Failed[live.Model] = err.Error()
+			t.Errorf("%s: %v", live.Model, err)
+		}
+	}
+	body, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(reportPath, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// attestLiveChute reports whether Chutes did not serve the chute, or the reason that an instance
+// failed verification. An instance without evidence is starting or stopping, so it fails nothing.
+func attestLiveChute(t *testing.T, pools *poolState, live liveChutesTarget) (bool, error) {
+	target := ModelTarget{ChuteID: live.ChuteID, GPUCount: live.GPUCount}
+	discovered, _, err := pools.discover(target)
+	if err != nil {
+		return chutesOutage(err), err
+	}
+	result, err := pools.attestor.verify(t.Context(), target, discovered, true)
+	if err == nil {
+		return false, nil
+	}
+	if result != nil {
+		counts := result.FailureCounts
+		t.Logf("%s: %d of %d instances verified; failures %v", live.Model, len(result.Instances), len(discovered), counts)
+		if counts["tdx"]+counts["gpu"]+counts["measurement_policy"] == 0 &&
+			counts["evidence_missing"]+counts["evidence_unavailable"] > 0 {
+			if len(result.Instances) > 0 {
+				return false, nil
+			}
+			return true, errors.New("no instance returned evidence")
+		}
+	}
+	// A failed verification joins ErrAttestationFailed with its cause.
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		causes := joined.Unwrap()
+		err = causes[len(causes)-1]
+	}
+	return chutesOutage(err), err
+}
+
+func chutesOutage(err error) bool {
+	switch diagnosticErrorClass(err) {
+	case "upstream_unavailable", "rate_limited", "timeout":
+		return true
+	}
+	return false
 }
 
 // TestChutesMeasurements fails when Chutes publishes a TDX record that the gateway skips, or any
@@ -213,6 +275,25 @@ func liveChutesTargets(t *testing.T) []liveChutesTarget {
 		gpuCount = parsed
 	}
 	return []liveChutesTarget{{Model: model, ChuteID: chuteID, GPUCount: gpuCount}}
+}
+
+func newLiveChutesTransport(t *testing.T) (*Transport, string) {
+	t.Helper()
+	apiKey := strings.TrimSpace(os.Getenv("CHUTES_API_KEY"))
+	if apiKey == "" {
+		t.Fatal("CHUTES_API_KEY is required")
+	}
+	transport, err := New(Options{
+		APIKey:                  apiKey,
+		APIBaseURL:              productionAPIBaseURL,
+		RequireProductionOrigin: true,
+		RequestTimeout:          10 * time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(transport.Close)
+	return transport, apiKey
 }
 
 func invokeLiveChutesForTest(t *testing.T, transport *Transport, apiKey, model string, target ModelTarget, stream bool) []byte {
