@@ -66,7 +66,6 @@ type rootSummaries struct {
 // and what links it to the others: a model's author and groups, a route's provider, and a
 // deployment's model and routes. The rest repeat the record.
 type summary struct {
-	DerivedFrom shown `json:"derivedFrom"`
 	Interfaces  shown `json:"interfaces"`
 	Name        shown `json:"name"`
 	ReleaseDate shown `json:"releaseDate"`

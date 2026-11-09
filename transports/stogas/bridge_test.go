@@ -55,7 +55,7 @@ func wireMessages(t *testing.T, state *State) []map[string]json.RawMessage {
 }
 
 func TestResponsesReachChatOnlyDeploymentsThroughChatCompletions(t *testing.T) {
-	for _, model := range []string{"chutes-glm-5.2", "azure-minimax-m3"} {
+	for _, model := range []string{"chutes-glm-5.2", "azure-minimax-m3-fireworks-hosted-us"} {
 		t.Run(model, func(t *testing.T) {
 			state := bridgedState(t, `{"model":"`+model+`","instructions":"Be brief.","input":[{"role":"developer","content":"Use tools."},{"role":"user","content":[{"type":"input_text","text":"Find a1."}]}],"max_output_tokens":300,"stream":true,`+bridgedTestTools+`}`)
 			resolution := state.Resolution
@@ -578,7 +578,7 @@ func messagesText(messages []map[string]json.RawMessage) string {
 }
 
 func TestAzureBridgedRequestsRefuseReasoningHistory(t *testing.T) {
-	err := bridgedValidationError(t, `{"model":"azure-minimax-m3","input":[{"role":"user","content":"hi"},`+
+	err := bridgedValidationError(t, `{"model":"azure-minimax-m3-fireworks-hosted-us","input":[{"role":"user","content":"hi"},`+
 		`{"type":"reasoning","id":"rs_1","summary":[],"content":[{"type":"reasoning_text","text":"Thinking."}]},`+
 		`{"role":"assistant","content":[{"type":"output_text","text":"Hello."}]},{"role":"user","content":"again"}]}`)
 	if err == nil || !strings.Contains(err.Error(), "reasoning input items") {

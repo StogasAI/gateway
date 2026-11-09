@@ -22,11 +22,8 @@ import (
 )
 
 const (
-	catalogSchema     = "stogas.catalog.v12"
-	catalogPartSchema = "stogas.catalog.part.v12"
-	// A v11 release differs from v12 only in its schema strings, so the gateway reads it as v12.
-	catalogSchemaV11     = "stogas.catalog.v11"
-	catalogPartSchemaV11 = "stogas.catalog.part.v11"
+	catalogSchema     = "stogas.catalog.v13"
+	catalogPartSchema = "stogas.catalog.part.v13"
 	// Evidence approves a release by the digest of its root, and the root names each part by
 	// digest and size. The build refuses a larger root, part or catalog, so the gateway refuses
 	// one before it downloads it.
@@ -167,15 +164,6 @@ type PartFile struct {
 	StogasUnsupported bool    `json:"stogasUnsupported"`
 }
 
-// readableCatalogSchema and readableCatalogPartSchema say which schema strings the gateway reads.
-func readableCatalogSchema(schema string) bool {
-	return schema == catalogSchema || schema == catalogSchemaV11
-}
-
-func readableCatalogPartSchema(schema string) bool {
-	return schema == catalogPartSchema || schema == catalogPartSchemaV11
-}
-
 // partFiles reads the parts that a root names, after checking the root's size and schema, each
 // part's name, size and date, and the size of the root with every part.
 func partFiles(root []byte) ([]PartFile, error) {
@@ -189,7 +177,7 @@ func partFiles(root []byte) ([]PartFile, error) {
 	if err := json.Unmarshal(root, &listing); err != nil {
 		return nil, fmt.Errorf("decode catalog root: %w", err)
 	}
-	if !readableCatalogSchema(listing.Schema) {
+	if listing.Schema != catalogSchema {
 		return nil, fmt.Errorf("catalog schema %q is unsupported", listing.Schema)
 	}
 	seen := make(map[string]bool, len(listing.Parts))
@@ -336,7 +324,7 @@ func assemble(rootData []byte, files []PartFile, parts map[string][]byte, at tim
 		if err := decodeStrict(data, &part, prices); err != nil {
 			return compiledCatalog{}, fmt.Errorf("decode catalog part %d: %w", index, err)
 		}
-		if !readableCatalogPartSchema(part.Schema) {
+		if part.Schema != catalogPartSchema {
 			return compiledCatalog{}, fmt.Errorf("catalog part schema %q is unsupported", part.Schema)
 		}
 		// Each record in the part, and each of its changes, belongs to a summary that places it
@@ -1065,18 +1053,21 @@ func sortedRouteIDs(deployment *compiledDeployment) []string {
 
 func validateDeploymentUpstreamSelector(deploymentID, providerID string, deployment *compiledDeployment) error {
 	selector := deployment.Upstream
+	if selector.Hosting == "" {
+		return fmt.Errorf("deployment %s has no hosting", deploymentID)
+	}
 	if _, offered := offeredTiers(schemas.ModelProvider(providerID), selector.ModelFormat, selector.Hosting)[selector.ServiceTier]; !offered {
 		return fmt.Errorf("deployment %s has a service tier that its provider does not offer", deploymentID)
 	}
 	switch providerID {
 	case "openai":
 		if selector.ChuteID != "" || selector.GPUCount != nil || selector.InferenceGeo != "" ||
-			selector.Hosting != "" || selector.DeploymentType != "" || selector.ModelFormat != "" || selector.ModelVersion != "" {
+			selector.Hosting != providerID || selector.DeploymentType != "" || selector.ModelFormat != "" || selector.ModelVersion != "" {
 			return fmt.Errorf("deployment %s has an invalid OpenAI upstream selector", deploymentID)
 		}
 	case "anthropic":
 		if selector.ChuteID != "" || selector.GPUCount != nil || selector.ReasoningMode != "" ||
-			selector.Hosting != "" || selector.DeploymentType != "" || selector.ModelFormat != "" || selector.ModelVersion != "" {
+			selector.Hosting != providerID || selector.DeploymentType != "" || selector.ModelFormat != "" || selector.ModelVersion != "" {
 			return fmt.Errorf("deployment %s has an invalid Anthropic upstream selector", deploymentID)
 		}
 	case "chutes":
@@ -1092,8 +1083,8 @@ func validateDeploymentUpstreamSelector(deploymentID, providerID string, deploym
 }
 
 // validateChutesUpstreamSelector checks a Chutes deployment's selector on each route. An end-to-end
-// encrypted route selects an instance by its chute and GPU count. A standard route names the
-// operator that runs the model, which a TEE instance does not have.
+// encrypted route runs on Chutes, selected by its chute and GPU count. A standard route is hosted
+// by an operator that Chutes does not name, and has no GPU count.
 func validateChutesUpstreamSelector(deploymentID string, deployment *compiledDeployment) error {
 	selector := deployment.Upstream
 	if selector.ChuteID == "" || selector.InferenceGeo != "" || selector.ReasoningMode != "" ||
@@ -1106,7 +1097,7 @@ func validateChutesUpstreamSelector(deploymentID string, deployment *compiledDep
 		// that claims a TEE must be encrypted end to end, and a Standard route names no operator.
 		valid := route.DataHandling.TEE == route.DataHandling.EndToEndEncrypted
 		if route.DataHandling.EndToEndEncrypted {
-			valid = valid && gpuCounted && selector.Hosting == ""
+			valid = valid && gpuCounted && selector.Hosting == "chutes"
 		} else {
 			valid = valid && selector.GPUCount == nil && selector.Hosting == HostingUnknown
 		}
@@ -1121,7 +1112,7 @@ func validateAzureUpstreamSelector(deploymentID string, deployment *compiledDepl
 	selector := deployment.Upstream
 	if selector.ChuteID != "" || selector.GPUCount != nil || selector.InferenceGeo != "" ||
 		selector.ModelFormat == "" || strings.TrimSpace(selector.ModelVersion) == "" ||
-		selector.Hosting == "" || selector.DeploymentType == "" {
+		selector.DeploymentType == "" {
 		return fmt.Errorf("deployment %s has an invalid Azure upstream selector", deploymentID)
 	}
 	// Core sends the Anthropic wire format when the catalog model ID names Claude, so only the
@@ -1141,7 +1132,7 @@ func validateAzureUpstreamSelector(deploymentID string, deployment *compiledDepl
 // siblings.
 var cloudClaudeHostings = map[string][]string{
 	"aws":          {"anthropic", "aws"},
-	"google-cloud": {"anthropic", "google"},
+	"google-cloud": {"anthropic", "google-cloud"},
 }
 
 // BedrockSourceRegions are, for each geography of Bedrock's inference profiles but global, the
@@ -1166,7 +1157,7 @@ func validateCloudClaudeSelector(deploymentID, providerID string, deployment *co
 	route, hosted := providerID+"-messages", slices.Contains(cloudClaudeHostings[providerID], selector.Hosting)
 	geo := selector.InferenceGeo == "global" || selector.InferenceGeo == "us" ||
 		selector.InferenceGeo == "" && selector.Hosting == "anthropic" ||
-		selector.InferenceGeo == "eu" && selector.Hosting == "google" ||
+		selector.InferenceGeo == "eu" && selector.Hosting == "google-cloud" ||
 		selector.Hosting == "aws" && BedrockSourceRegions[selector.InferenceGeo] != nil
 	if !hosted || !geo || !schemas.IsAnthropicModel(deployment.ModelID) ||
 		selector.ChuteID != "" || selector.GPUCount != nil || selector.ReasoningMode != "" ||
@@ -1190,12 +1181,12 @@ func validateCloudClaudeSelector(deploymentID, providerID string, deployment *co
 // one of them or unknown, or none for the deployment's storage.
 func validateLocations(graph compiledGraph, places *location.Places) error {
 	for id, author := range graph.Authors {
-		if country := author.HeadquarteredCountry; country != "" && (!location.Country(country) || !places.Place(country)) {
+		if country := author.HeadquarteredCountry; !location.Country(country) || !places.Place(country) {
 			return fmt.Errorf("author %s is headquartered in %q, which is not a country of the catalog", id, country)
 		}
 	}
 	for id, provider := range graph.Providers {
-		if country := provider.HeadquarteredCountry; country != "" && (!location.Country(country) || !places.Place(country)) {
+		if country := provider.HeadquarteredCountry; !location.Country(country) || !places.Place(country) {
 			return fmt.Errorf("provider %s is headquartered in %q, which is not a country of the catalog", id, country)
 		}
 	}

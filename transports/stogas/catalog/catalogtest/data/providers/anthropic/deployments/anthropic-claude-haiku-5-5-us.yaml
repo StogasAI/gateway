@@ -2,6 +2,7 @@ deployments:
   modelId: claude-haiku-5-5
   routeIds: [anthropic-messages]
   upstream:
+    hosting: anthropic
     model: claude-haiku-5-5
     inferenceGeo: us
   overrides:

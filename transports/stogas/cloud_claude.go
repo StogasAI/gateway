@@ -32,9 +32,9 @@ const (
 	awsByokSchema         = "stogas.aws-byok.v1"
 	googleCloudByokSchema = "stogas.google-cloud-byok.v1"
 
-	hostingAnthropic = "anthropic"
-	hostingAWS       = "aws"
-	hostingGoogle    = "google"
+	hostingAnthropic   = "anthropic"
+	hostingAWS         = "aws"
+	hostingGoogleCloud = "google-cloud"
 )
 
 var (
@@ -152,9 +152,9 @@ func cloudCredentialTarget(provider schemas.ModelProvider, secret string) (billi
 			return billing.CloudTarget{}, err
 		}
 		if credential.WorkspaceID != "" {
-			return billing.CloudTarget{Hosting: []string{hostingAnthropic, hostingGoogle}}, nil
+			return billing.CloudTarget{Hosting: []string{hostingAnthropic, hostingGoogleCloud}}, nil
 		}
-		return billing.CloudTarget{Hosting: []string{hostingGoogle}}, nil
+		return billing.CloudTarget{Hosting: []string{hostingGoogleCloud}}, nil
 	}
 	return billing.CloudTarget{}, errors.New("not a cloud provider")
 }
@@ -250,7 +250,7 @@ func cloudClaudeRequest(ctx context.Context, provider schemas.ModelProvider, sec
 		}
 		request := cloudRequest{headers: map[string]string{}}
 		switch upstream.Hosting {
-		case hostingGoogle:
+		case hostingGoogleCloud:
 			host, ok := vertexHosts[upstream.InferenceGeo]
 			if !ok || !vertexModelPattern.MatchString(upstream.Model) {
 				return cloudRequest{}, billing.ErrByokTarget

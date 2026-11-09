@@ -102,7 +102,7 @@ func attachmentError(provider schemas.ModelProvider, deployment Deployment, atta
 	}
 	// A Claude file ID names a file in the Files API of Anthropic's own platform, which Claude that
 	// a cloud hosts, on Azure too, lacks.
-	if claude && attachment.ID != "" && deployment.Upstream.Hosting != "" && deployment.Upstream.Hosting != "anthropic" {
+	if claude && attachment.ID != "" && deployment.Upstream.Hosting != "anthropic" {
 		return attachmentRefusal(attachment.Path, " file IDs are not supported by "+subject)
 	}
 	// Claude that AWS or Google runs fetches no URL.

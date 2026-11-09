@@ -121,9 +121,10 @@ func chutesReasoningEnabledWireControl(deploymentID string, enabled bool) (chute
 		}
 		return chutesReasoningControl{Thinking: &enabled}, true
 	case "chutes-deepseek-v3.2",
-		"chutes-gemma-4-31b-turbo",
+		"chutes-gemma-4-31b",
 		"chutes-glm-5.1",
 		"chutes-kimi-k2.6",
+		"chutes-qwen3.5-27b",
 		"chutes-qwen3.5-397b-a17b",
 		"chutes-qwen3.6-27b":
 		return chutesReasoningControl{Thinking: &enabled}, true

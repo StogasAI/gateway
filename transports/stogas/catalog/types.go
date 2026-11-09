@@ -99,8 +99,7 @@ type DataHandling struct {
 	TEEVerified       bool  `json:"teeVerified"`
 }
 
-// HostingUnknown is the hosting of a deployment whose provider resells another operator's service
-// and does not say whose.
+// HostingUnknown is the hosting of a deployment whose provider forwards requests to a company that it does not name.
 const HostingUnknown = "unknown"
 
 type Upstream struct {
@@ -163,7 +162,7 @@ type compiledAuthor struct {
 	RetirementDate       shown    `json:"retirementDate"`
 	StogasUnsupported    shown    `json:"stogasUnsupported"`
 	Aliases              []string `json:"aliases"`
-	HeadquarteredCountry string   `json:"headquarteredCountry,omitempty"`
+	HeadquarteredCountry string   `json:"headquarteredCountry"`
 	Name                 string   `json:"name"`
 }
 
@@ -175,11 +174,13 @@ type compiledDeployment struct {
 	MaxInputTokens      int                                `json:"maxInputTokens"`
 	MaxOutputTokens     int                                `json:"maxOutputTokens"`
 	ModelID             string                             `json:"modelId"`
+	Notes               shown                              `json:"notes"`
 	OutputModalities    []string                           `json:"outputModalities"`
 	Reasoning           string                             `json:"reasoning"`
 	ReasoningMaxTokens  *ReasoningMaxTokens                `json:"reasoningMaxTokens"`
 	RetirementDate      *string                            `json:"retirementDate"`
 	Routes              map[string]compiledDeploymentRoute `json:"routes"`
+	StogasUnsupported   shown                              `json:"stogasUnsupported"`
 	Upstream            compiledUpstream                   `json:"upstream"`
 	WeightPrecision     string                             `json:"weightPrecision"`
 }
@@ -216,7 +217,7 @@ type compiledUpstream struct {
 	InferenceGeo   string `json:"inferenceGeo,omitempty"`
 	ReasoningMode  string `json:"reasoningMode,omitempty"`
 	ServiceTier    string `json:"serviceTier"`
-	Hosting        string `json:"hosting,omitempty"`
+	Hosting        string `json:"hosting"`
 	DeploymentType string `json:"deploymentType,omitempty"`
 }
 
@@ -225,7 +226,6 @@ type compiledModel struct {
 	// deployments and their routes already hold.
 	Capabilities                shown `json:"capabilities"`
 	ContextWindowTokens         shown `json:"contextWindowTokens"`
-	DerivedFrom                 shown `json:"derivedFrom"`
 	InputModalities             shown `json:"inputModalities"`
 	KnowledgeCutoff             shown `json:"knowledgeCutoff"`
 	MaxInputTokens              shown `json:"maxInputTokens"`
@@ -252,7 +252,7 @@ type compiledProvider struct {
 	StogasUnsupported    shown    `json:"stogasUnsupported"`
 	Aliases              []string `json:"aliases"`
 	CredentialModes      []string `json:"credentialModes"`
-	HeadquarteredCountry string   `json:"headquarteredCountry,omitempty"`
+	HeadquarteredCountry string   `json:"headquarteredCountry"`
 	Name                 string   `json:"name"`
 }
 
@@ -261,9 +261,13 @@ type compiledRoute struct {
 	// are defaults and offers that each deployment's route already holds.
 	Capabilities    shown `json:"capabilities"`
 	DataHandling    shown `json:"dataHandling"`
+	Batch           shown `json:"batch"`
 	Endpoint        shown `json:"endpoint"`
 	HostedTools     shown `json:"hostedTools"`
 	InputModalities shown `json:"inputModalities"`
+	Notes           shown `json:"notes"`
+	// Stogas does not serve a route, so none of its deployments either.
+	StogasUnsupported shown `json:"stogasUnsupported"`
 
 	ID              string          `json:"-"`
 	DeploymentIDs   []string        `json:"-"`

@@ -10,7 +10,7 @@ deployments:
   routeIds: [google-cloud-messages]
   upstream:
     model: claude-fable-5-1
-    hosting: google
+    hosting: google-cloud
     inferenceGeo: us
   overrides:
     dataHandling:

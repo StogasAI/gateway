@@ -2,6 +2,7 @@ deployments:
   modelId: gpt-5.6-luna
   routeIds: [openai-chat-completions, openai-responses]
   upstream:
+    hosting: openai
     model: gpt-5.6-luna
     serviceTier: flex
   pricing:

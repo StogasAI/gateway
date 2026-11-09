@@ -265,25 +265,21 @@ func TestSnapshotValidationRejectsEndToEndEncryptionWithoutTEE(t *testing.T) {
 	}
 }
 
-func TestSnapshotReadsV11ReleasesAsV12(t *testing.T) {
+func TestSnapshotReadsOnlyCurrentSchema(t *testing.T) {
 	release := testCatalogRelease(t)
 	for _, schema := range []struct{ root, part string }{
-		{catalogSchemaV11, catalogPartSchemaV11},
-		{catalogSchema, catalogPartSchema},
+		{"stogas.catalog.v12", "stogas.catalog.part.v12"},
+		{"stogas.catalog.v13", "stogas.catalog.part.v13"},
 	} {
 		release.root["schema"] = schema.root
 		for _, part := range release.parts {
 			part["schema"] = schema.part
 		}
 		root, parts := release.files(t)
-		if _, err := snapshotFromFiles(root, parts, Identity{}, time.Time{}); err != nil {
-			t.Fatalf("%s release was rejected: %v", schema.root, err)
+		_, err := snapshotFromFiles(root, parts, Identity{}, time.Time{})
+		if (schema.root == catalogSchema) != (err == nil) {
+			t.Fatalf("%s release: accepted %v, error %v", schema.root, schema.root == catalogSchema, err)
 		}
-	}
-	release.root["schema"] = "stogas.catalog.v13"
-	root, parts := release.files(t)
-	if _, err := snapshotFromFiles(root, parts, Identity{}, time.Time{}); err == nil {
-		t.Fatal("unknown catalog schema was accepted")
 	}
 }
 
@@ -304,13 +300,13 @@ func TestChutesSelectorMatchesItsRoute(t *testing.T) {
 		deployment *compiledDeployment
 		valid      bool
 	}{
-		{name: "encrypted with GPUs", deployment: encrypted("", &eight), valid: true},
-		{name: "encrypted with one GPU", deployment: encrypted("", &one), valid: true},
-		{name: "encrypted with too many GPUs", deployment: encrypted("", &nine)},
-		{name: "encrypted without GPUs", deployment: encrypted("", nil)},
+		{name: "encrypted with GPUs", deployment: encrypted("chutes", &eight), valid: true},
+		{name: "encrypted with one GPU", deployment: encrypted("chutes", &one), valid: true},
+		{name: "encrypted with too many GPUs", deployment: encrypted("chutes", &nine)},
+		{name: "encrypted without GPUs", deployment: encrypted("chutes", nil)},
 		{name: "encrypted naming an operator", deployment: encrypted(HostingUnknown, &eight)},
 		{name: "standard naming an operator", deployment: standard(HostingUnknown, nil), valid: true},
-		{name: "standard without an operator", deployment: standard("", nil)},
+		{name: "standard without hosting", deployment: standard("", nil)},
 		{name: "standard with GPUs", deployment: standard(HostingUnknown, &eight)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -500,11 +496,11 @@ func TestModelFieldTerms(t *testing.T) {
 	// A dot or an underscore matches a hyphen, so the dotted ID and the deployment ID with a dot
 	// name the same nodes as the aliases: Anthropic's dated ID and the version-first spelling.
 	for _, field := range []string{
-		"claude-haiku-4-5", "claude-haiku-4.5", "anthropic/claude-haiku-4.5", "anthropic-claude-haiku-4.5-20251001",
+		"claude-haiku-4-5", "claude-haiku-4.5", "anthropic/claude-haiku-4.5", "anthropic-claude-haiku-4.5",
 		"claude-haiku-4-5-20251001", "claude-4.5-haiku", "model:Claude_4.5_Haiku",
 	} {
 		deployment, ok := testDeploymentForRoute(schemas.Anthropic, field, RouteChat)
-		if !ok || deployment.ID != "anthropic-claude-haiku-4-5-20251001" || deployment.Upstream.Model != "claude-haiku-4-5-20251001" {
+		if !ok || deployment.ID != "anthropic-claude-haiku-4-5" || deployment.Upstream.Model != "claude-haiku-4-5-20251001" {
 			t.Fatalf("%s did not select Claude Haiku 4.5: %#v", field, deployment)
 		}
 	}

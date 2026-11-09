@@ -3,6 +3,7 @@ routes:
   providerId: openai
   endpoint: https://api.openai.com/v1/batches
   interfaces: [responses]
+  batch: true
   inputModalities: [text, image]
   documentFormats:
     extensions: []

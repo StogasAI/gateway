@@ -514,9 +514,8 @@ func TestResolvedPolicyValuesExposeTypedRegisteredCatalogAndRequestData(t *testi
 	if !exists || precision.Type != "string" || precision.String != "nvfp4" {
 		t.Fatalf("deployment precision = %#v, %t", precision, exists)
 	}
-	// Chutes states no headquarters, so filters see a missing value.
-	if value, exists := precisionValues.PolicyValue("provider.headquarteredCountry"); exists {
-		t.Fatalf("absent headquarters resolved as %#v", value)
+	if value, exists := precisionValues.PolicyValue("provider.headquarteredCountry"); !exists || value.String != "US" {
+		t.Fatalf("provider headquarters = %#v, %t", value, exists)
 	}
 	for _, path := range []string{"", "provider.__proto__", "deployment.pricing.unknown.per_mill_tokens"} {
 		if value, exists := values.PolicyValue(path); exists {

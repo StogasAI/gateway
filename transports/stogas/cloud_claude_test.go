@@ -137,8 +137,8 @@ func TestCloudCredentialTargetNamesWhatEachSecretServes(t *testing.T) {
 		{"IAM key with workspace", catalog.ProviderAWS, awsIAMSecret(t, "eu-west-1", testWorkspaceID), billing.CloudTarget{Hosting: []string{"anthropic", "aws"}, Region: "eu-west-1"}},
 		{"Bedrock API key", catalog.ProviderAWS, awsAPIKeySecret(t, "us-west-2", ""), billing.CloudTarget{Hosting: []string{"aws"}, Region: "us-west-2"}},
 		{"Claude Platform API key", catalog.ProviderAWS, awsAPIKeySecret(t, "us-east-1", testWorkspaceID), billing.CloudTarget{Hosting: []string{"anthropic"}, Region: "us-east-1"}},
-		{"service account", catalog.ProviderGoogleCloud, googleSecret(t, ""), billing.CloudTarget{Hosting: []string{"google"}}},
-		{"service account with workspace", catalog.ProviderGoogleCloud, googleSecret(t, testWorkspaceID), billing.CloudTarget{Hosting: []string{"anthropic", "google"}}},
+		{"service account", catalog.ProviderGoogleCloud, googleSecret(t, ""), billing.CloudTarget{Hosting: []string{"google-cloud"}}},
+		{"service account with workspace", catalog.ProviderGoogleCloud, googleSecret(t, testWorkspaceID), billing.CloudTarget{Hosting: []string{"anthropic", "google-cloud"}}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			got, err := cloudCredentialTarget(test.provider, test.secret)
@@ -237,10 +237,10 @@ func TestCloudTargetServesOnlyItsHostingsAndTheRegionsThatKeepAProfileInItsGeogr
 		{"Bedrock without the hosting", catalog.ProviderAWS, aws("us-east-1", "anthropic"), global, false},
 		{"AWS target without a Region", catalog.ProviderAWS, aws("", "aws"), global, false},
 		{"missing target", catalog.ProviderAWS, nil, global, false},
-		{"Vertex", catalog.ProviderGoogleCloud, &billing.CloudTarget{Hosting: []string{"google"}}, vertex, true},
-		{"Google target with a Region", catalog.ProviderGoogleCloud, &billing.CloudTarget{Hosting: []string{"google"}, Region: "us-east-1"}, vertex, false},
-		{"managed without a workspace", catalog.ProviderGoogleCloud, &billing.CloudTarget{Hosting: []string{"google"}}, managed, false},
-		{"managed", catalog.ProviderGoogleCloud, &billing.CloudTarget{Hosting: []string{"anthropic", "google"}}, managed, true},
+		{"Vertex", catalog.ProviderGoogleCloud, &billing.CloudTarget{Hosting: []string{"google-cloud"}}, vertex, true},
+		{"Google target with a Region", catalog.ProviderGoogleCloud, &billing.CloudTarget{Hosting: []string{"google-cloud"}, Region: "us-east-1"}, vertex, false},
+		{"managed without a workspace", catalog.ProviderGoogleCloud, &billing.CloudTarget{Hosting: []string{"google-cloud"}}, managed, false},
+		{"managed", catalog.ProviderGoogleCloud, &billing.CloudTarget{Hosting: []string{"anthropic", "google-cloud"}}, managed, true},
 		{"AWS target for Google", catalog.ProviderAzure, aws("us-east-1", "aws"), global, false},
 	} {
 		if got := cloudTargetServes(test.provider, test.target, test.deployment); got != test.want {
@@ -263,7 +263,7 @@ func TestValidateCloudCredentialHoldsTheSecretToItsRegisteredTarget(t *testing.T
 		{"a narrower target", &billing.CloudTarget{Hosting: []string{"aws"}, Region: "us-east-1"}, global, nil},
 		{"a hosting the narrower target leaves out", &billing.CloudTarget{Hosting: []string{"aws"}, Region: "us-east-1"}, platform, billing.ErrByokTarget},
 		{"another Region", &billing.CloudTarget{Hosting: []string{"aws"}, Region: "us-west-2"}, global, billing.ErrByok},
-		{"a hosting the secret cannot serve", &billing.CloudTarget{Hosting: []string{"anthropic", "aws", "google"}, Region: "us-east-1"}, global, billing.ErrByok},
+		{"a hosting the secret cannot serve", &billing.CloudTarget{Hosting: []string{"anthropic", "aws", "google-cloud"}, Region: "us-east-1"}, global, billing.ErrByok},
 		{"no target", nil, global, billing.ErrByok},
 	} {
 		if err := validateCloudCredential(catalog.ProviderAWS, secret, test.registered, test.deployment); !errors.Is(err, test.want) {
@@ -533,7 +533,7 @@ func TestCloudCredentialEligibilityUsesThePublicTarget(t *testing.T) {
 			{Credential: &billing.CachedCredential{Target: &billing.CloudTarget{Hosting: []string{"aws"}, Region: "eu-west-1"}}},
 			{Credential: &billing.CachedCredential{}},
 		},
-		"google-cloud": {{Credential: &billing.CachedCredential{Target: &billing.CloudTarget{Hosting: []string{"google"}}}}},
+		"google-cloud": {{Credential: &billing.CachedCredential{Target: &billing.CloudTarget{Hosting: []string{"google-cloud"}}}}},
 	}}
 	eligible := CredentialDeploymentFilter(snapshot, now)
 	if !eligible(catalog.ProviderAWS, 0, catalog.RouteChat, cloudDeployment(t, "aws-claude-fable-5-1")) ||

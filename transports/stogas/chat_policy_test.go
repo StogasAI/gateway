@@ -395,7 +395,7 @@ func TestAnthropicContextManagementValidation(t *testing.T) {
 		model   string
 		payload string
 	}{
-		{name: "clear tool defaults", model: "anthropic-claude-haiku-4-5-20251001", payload: `{"edits":[{"type":"clear_tool_uses_20250919"}]}`},
+		{name: "clear tool defaults", model: "anthropic-claude-haiku-4-5", payload: `{"edits":[{"type":"clear_tool_uses_20250919"}]}`},
 		{name: "clear tool full", model: "anthropic-claude-opus-5", payload: `{"edits":[{"type":"clear_tool_uses_20250919","clear_at_least":{"type":"input_tokens","value":0},"clear_tool_inputs":["lookup"],"exclude_tools":["preserve"],"keep":{"type":"tool_uses","value":0},"trigger":{"type":"tool_uses","value":1}}]}`},
 		{name: "clear thinking string all", model: "anthropic-claude-sonnet-4-6", payload: `{"edits":[{"type":"clear_thinking_20251015","keep":"all"}]}`},
 		{name: "clear thinking object all", model: "anthropic-claude-sonnet-4-6", payload: `{"edits":[{"type":"clear_thinking_20251015","keep":{"type":"all"}}]}`},
@@ -2153,7 +2153,7 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 							t.Fatalf("decode provider wire request: %v\n%s", err, wireBytes)
 						}
 						wantModel := source.Upstream.Model
-						if cloudClaude && source.Upstream.Hosting == hostingGoogle {
+						if cloudClaude && source.Upstream.Hosting == hostingGoogleCloud {
 							// Vertex AI names the model in the URL.
 							wantModel = ""
 						}
@@ -2200,7 +2200,7 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 							switch source.Upstream.Hosting {
 							case hostingAnthropic:
 								wantInferenceGeo = source.Upstream.InferenceGeo
-							case hostingGoogle:
+							case hostingGoogleCloud:
 								wantVersion = "vertex-2023-10-16"
 							}
 							if source.Upstream.ServiceTier == "fast" {

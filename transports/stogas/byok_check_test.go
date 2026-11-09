@@ -262,8 +262,8 @@ func TestByokCheckHoldsCloudSecretsToTheirTarget(t *testing.T) {
 		"another Region":     {"aws", awsIAMSecret(t, "eu-west-1", ""), &billing.CloudTarget{Hosting: []string{"aws"}, Region: "us-east-1"}},
 		"no workspace":       {"aws", awsIAMSecret(t, "us-east-1", ""), &billing.CloudTarget{Hosting: []string{"anthropic", "aws"}, Region: "us-east-1"}},
 		"no target":          {"aws", awsIAMSecret(t, "us-east-1", ""), nil},
-		"Google workspace":   {"google-cloud", googleSecret(t, ""), &billing.CloudTarget{Hosting: []string{"anthropic", "google"}}},
-		"Google with Region": {"google-cloud", googleSecret(t, ""), &billing.CloudTarget{Hosting: []string{"google"}, Region: "us"}},
+		"Google workspace":   {"google-cloud", googleSecret(t, ""), &billing.CloudTarget{Hosting: []string{"anthropic", "google-cloud"}}},
+		"Google with Region": {"google-cloud", googleSecret(t, ""), &billing.CloudTarget{Hosting: []string{"google-cloud"}, Region: "us"}},
 	} {
 		if got := checker.check(ctx, c.provider, c.secret, c.target); got == "" || !strings.Contains(got, "stogas encrypt printed") {
 			t.Fatalf("%s: %q", name, got)
@@ -280,7 +280,7 @@ func TestByokCheckHoldsCloudSecretsToTheirTarget(t *testing.T) {
 		}
 	}
 
-	target := &billing.CloudTarget{Hosting: []string{"google"}}
+	target := &billing.CloudTarget{Hosting: []string{"google-cloud"}}
 	if got := checker.check(ctx, "google-cloud", googleSecret(t, ""), target); got != "" {
 		t.Fatalf("Google: %q", got)
 	}

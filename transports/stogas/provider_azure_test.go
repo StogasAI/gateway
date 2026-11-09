@@ -468,7 +468,7 @@ func TestAzureBinaryReasoningReachesTheOpenAIWire(t *testing.T) {
 	} {
 		t.Run(test.reasoning, func(t *testing.T) {
 			state := resolveAzureState(t, "/v1/chat/completions",
-				`{"model":"azure-minimax-m3","messages":[{"role":"user","content":"hi"}],`+test.reasoning+`}`)
+				`{"model":"azure-minimax-m3-fireworks-hosted-us","messages":[{"role":"user","content":"hi"}],`+test.reasoning+`}`)
 			ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 			ctx.SetValue(schemas.BifrostContextKeyHTTPRequestType, state.Resolution.RequestType)
 			request, err := state.Resolution.ToBifrost(ctx)

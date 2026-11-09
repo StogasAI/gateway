@@ -13,8 +13,12 @@ deployments:
     # Reviewed 2026-10-13: https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure#responses-api-token-budget
     contextWindowTokens: 922000
     dataHandling:
-      storageLocation: world
       retentionDays: null
+      trainingUse: null
+  overrides:
+    dataHandling:
+      retentionDays: null
+      trainingUse: null
   pricing:
     input_tokens:
       per_mill_tokens: '5'

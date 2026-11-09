@@ -2,6 +2,7 @@ deployments:
   modelId: deepseek-v4-flash-0731
   routeIds: [chutes-chat-completions]
   upstream:
+    hosting: chutes
     model: deepseek-ai/DeepSeek-V4-Flash-0731-TEE
     chuteId: b4d58772-e72b-55d1-9d73-d30dff6d2ed8
     gpuCount: 8

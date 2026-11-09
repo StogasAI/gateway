@@ -159,7 +159,7 @@ func TestPreparedBudgetOnlyReasoningSendsTheEffortAsAThinkingBudget(t *testing.T
 	} {
 		t.Run(test.route+"/"+test.fields, func(t *testing.T) {
 			resolved, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/" + test.route,
-				Body: []byte(`{"model":"anthropic-claude-haiku-4-5-20251001",` + test.fields + `}`)})
+				Body: []byte(`{"model":"anthropic-claude-haiku-4-5",` + test.fields + `}`)})
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -231,9 +231,9 @@ func TestCredentialSnapshotRejectsConfusedScopeAndMaterial(t *testing.T) {
 		{"aws", nil, false},
 		{"aws", &CloudTarget{Hosting: []string{"aws"}}, false},
 		{"aws", &CloudTarget{Region: "us-east-1"}, false},
-		{"google-cloud", &CloudTarget{Hosting: []string{"google"}}, true},
-		{"google-cloud", &CloudTarget{Hosting: []string{"google"}, Region: "us-east-1"}, false},
-		{"google-cloud", &CloudTarget{Hosting: []string{"anthropic", "google", "aws"}}, false},
+		{"google-cloud", &CloudTarget{Hosting: []string{"google-cloud"}}, true},
+		{"google-cloud", &CloudTarget{Hosting: []string{"google-cloud"}, Region: "us-east-1"}, false},
+		{"google-cloud", &CloudTarget{Hosting: []string{"anthropic", "google-cloud", "aws"}}, false},
 		{"openai", &CloudTarget{Hosting: []string{"aws"}, Region: "us-east-1"}, false},
 	} {
 		credentials := valid()

@@ -561,7 +561,7 @@ func TestPartFilesCheckWhatARootNames(t *testing.T) {
 		return strings.Join(listed, ",")
 	}
 	root := func(parts string) []byte {
-		return []byte(`{"schema":"stogas.catalog.v11","parts":[` + parts + `]}`)
+		return []byte(`{"schema":"stogas.catalog.v13","parts":[` + parts + `]}`)
 	}
 	listed, err := partFiles(root(part(1, 1, "null") + "," + part(2, 3, `"2028-02-29"`)))
 	if want := []PartFile{{name(1), 1, nil, false}, {name(2), 3, stringPointer("2028-02-29"), false}}; err != nil || !reflect.DeepEqual(listed, want) {
@@ -630,8 +630,8 @@ func TestReleaseRefusesFilesThatDifferFromTheRoot(t *testing.T) {
 		"another part schema": {func(r testRelease) {
 			r.parts[1]["schema"] = "stogas.catalog.part.v8"
 		}, "unsupported"},
-		"an unknown record field": {func(r testRelease) {
-			r.record("deployments", deployment)["notes"] = "unread"
+		"a removed record field": {func(r testRelease) {
+			r.record("deployments", deployment)["derivedFrom"] = []any{}
 		}, "unknown"},
 		"an unknown root member": {func(r testRelease) {
 			r.root["archive"] = nil

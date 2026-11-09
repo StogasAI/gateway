@@ -107,7 +107,8 @@ const (
 )
 
 // variant is the service tier and reasoning mode that a request selects. An empty field leaves the
-// choice to the model selector: the base deployment's tier, in standard mode.
+// choice to the selection: a named deployment's own tier and mode, and otherwise the Standard tier
+// in standard mode.
 type variant struct {
 	tier string
 	mode string

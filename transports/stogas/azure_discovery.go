@@ -434,36 +434,33 @@ func (c *azureDiscoveryContext) append(bindings []azureDiscoveredBinding, bindin
 	return append(bindings, binding), nil
 }
 
-// placement is where a deployment's SKU processes and stores requests.
+// placement is where a deployment's SKU processes and stores requests. A data zone keeps the
+// requests of a model that Fireworks runs in the zone too. Anthropic doesn't say where it
+// processes the requests of a deployment that it hosts.
 func (c *azureDiscoveryContext) placement(skuName string, hosting string) (deploymentType, processing, storage string, ok bool) {
-	sku := strings.ToLower(trimJS(skuName))
-	external := hosting != "azure"
-	storage = "unknown"
-	if !external {
-		storage = c.storageLocation()
-	}
-	if sku == "globalstandard" {
-		processing = "unknown"
-		if !external {
-			processing = "world"
-		}
-		return "global_standard", processing, storage, true
-	}
-	if sku != "datazonestandard" {
+	switch sku := strings.ToLower(trimJS(skuName)); {
+	case sku == "globalstandard":
+		deploymentType, processing = "global_standard", "world"
+	case sku != "datazonestandard":
 		return "", "", "", false
-	}
-	switch strings.ToLower(trimJS(c.locations[strings.ToLower(trimJS(c.accountLocation))].geographyGroup)) {
-	case "us":
-		deploymentType, processing = "data_zone_standard_us", "US"
-	case "europe":
-		deploymentType, processing = "data_zone_standard_eu", "europe"
-	case "asia pacific":
-		deploymentType, processing = "data_zone_standard_apac", "apac"
 	default:
-		return "", "", "", false
+		switch strings.ToLower(trimJS(c.locations[strings.ToLower(trimJS(c.accountLocation))].geographyGroup)) {
+		case "us":
+			deploymentType, processing = "data_zone_standard_us", "US"
+		case "europe":
+			deploymentType, processing = "data_zone_standard_eu", "europe"
+		case "asia pacific":
+			deploymentType, processing = "data_zone_standard_apac", "apac"
+		default:
+			return "", "", "", false
+		}
 	}
-	if external {
+	if hosting == "anthropic" {
 		processing = "unknown"
+	}
+	storage = "unknown"
+	if hosting == "azure" {
+		storage = c.storageLocation()
 	}
 	return deploymentType, processing, storage, true
 }
