@@ -277,10 +277,19 @@ func literalSecret(value string) schemas.SecretVar {
 	return schemas.SecretVar{Val: value, SecretType: schemas.SecretTypePlainText}
 }
 
+// fastCapable tells core that a model takes speed. The catalog decides which deployments run at
+// Fast, and the adapters send speed for no others. Core's own list of Fast models names them one
+// by one and drops speed from a model it does not name, which would run a Fast deployment of a
+// newer model at Standard.
+var fastCapable = schemas.ModelCapabilities{SupportsFastMode: schemas.Ptr(true)}
+
 func init() {
 	// Every upstream credential comes from the request's binding. Core must
 	// never fall back to an AWS, Google or Azure identity the machine holds.
 	schemas.UseHostCloudCredentials = false
+	schemas.SetCapabilityResolver(func(schemas.ModelProvider, string) *schemas.ModelCapabilities {
+		return &fastCapable
+	})
 }
 
 func FinalizeState(ctx context.Context, billing billingAuthorizer, state *State) {
