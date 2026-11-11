@@ -3784,6 +3784,15 @@ func TestOpenAIProviderHoldAddsSearchMeters(t *testing.T) {
 	if state.Hold.EstimatedUpstreamCostUSD == "" || state.Hold.EstimatedUpstreamCostUSD == "0" {
 		t.Fatalf("expected non-zero hold after search meter, got %#v", state.Hold)
 	}
+	// A live reply to a 17-word prompt at low context reported 16,467 prompt
+	// tokens, the pages that the model read (July 28, 2026).
+	state.Signals = &StandardSignals{Prompt: 16467, Completion: 33}
+	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
+		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
+	}
+	if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD) < 0 {
+		t.Fatalf("hold must cover the search content that the model bills as input: hold=%s final=%s", state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD)
+	}
 }
 
 func TestOpenAIChatSearchModelHoldAndFinalMetersUseContextRate(t *testing.T) {

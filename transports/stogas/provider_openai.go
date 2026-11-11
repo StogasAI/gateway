@@ -741,10 +741,19 @@ func openAIResponsesHostedToolFinalMeters(req openAIAdapterContext) []billing.Me
 }
 
 func openAIChatSearchModelHoldMeters(req openAIAdapterContext) []billing.MeterEstimate {
-	if meterKey, rateKey := chatSearchMeter(req); meterKey != "" {
-		return billing.AppendCallMeterCostWithRate(nil, req.Deployment.Pricing, meterKey, rateKey, searchCallQuantity, true)
+	meterKey, rateKey := chatSearchMeter(req)
+	if meterKey == "" {
+		return nil
 	}
-	return nil
+	var meters []billing.MeterEstimate
+	// GPT-5 Search API reports the pages it reads as prompt tokens at the model's
+	// input price: 16,467 for a 17-word prompt at low context (live, July 28, 2026).
+	// The preview search models read them free.
+	if meterKey == MeterOpenAIChatCompletionSearchModelCalls {
+		contentTokens := min(webSearchContextWindowTokens, req.Deployment.MaxInputTokens)
+		meters = billing.AppendTokenMeterCost(meters, req.Deployment.Pricing, billing.MeterInputTokens, contentTokens*searchCallQuantity, true, billing.TokenRateHighest)
+	}
+	return billing.AppendCallMeterCostWithRate(meters, req.Deployment.Pricing, meterKey, rateKey, searchCallQuantity, true)
 }
 
 func openAIChatSearchModelFinalMeters(req openAIAdapterContext) []billing.MeterEstimate {
