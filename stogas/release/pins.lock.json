@@ -18,9 +18,9 @@
 			"narSha256": "0ks088b671b97qk9snyh3apbswriz0i6hx25bdjvk1hhwnjpi7vq"
 		},
 		"go": {
-			"version": "1.27.3",
-			"commit": "2aae1000ea1d4b28923b96db28acf4e3b99d6aff",
-			"narSha256": "13lbf60l6iadf09452z39j2k68ksa2mxphmjc72k5067471hzipn"
+			"version": "1.27.4",
+			"commit": "7b2881024c95a11ddb86663a616340aa3a88b67f",
+			"narSha256": "0s2r7j6fa4nwkrsqarbp5jwb0p87zh6cihidr46476my1989wy78"
 		},
 		"linux": {
 			"version": "6.18.62"
@@ -32,8 +32,8 @@
 			"narSha256": "0lkd9mvii7k5qrgicaypzarrchmg71kcvil9lph2bz5s0gdwcs1c"
 		},
 		"stogasVerifier": {
-			"commit": "0075f8d42849c8964b8ea0a3b0ed35314953f502",
-			"narSha256": "1mvm8x8kwy58pqbkz33kzcvg1h8gdj7vhqfq6psa1x8x53k09434"
+			"commit": "e98bb704e442ee9f7de4db7f4693c797b9898b23",
+			"narSha256": "1570k0yj7qnq8gj160nvfvggscrbbz6z9g67s30v3azga6ql2yhr"
 		},
 		"svsm": {
 			"version": "2026.09-devel",

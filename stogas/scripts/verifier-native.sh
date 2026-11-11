@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the pinned verifier's static gateway archive and print its directory.
+# Build the pinned verifier's static gateway archive and print a directory that holds only it.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -18,4 +18,7 @@ if [ "$(git -C "$source" rev-parse HEAD 2>/dev/null)" != "$commit" ]; then
   git -C "$source" checkout --quiet FETCH_HEAD
 fi
 (cd "$source" && cargo build --quiet --locked --package stogas-ffi --no-default-features --features staging,gateway >&2)
-echo "$source/target/debug"
+# -lstogas_ffi would choose the shared library that Cargo builds beside the archive.
+mkdir -p "$source/target/cgo"
+cp "$source/target/debug/libstogas_ffi.a" "$source/target/cgo/"
+echo "$source/target/cgo"
