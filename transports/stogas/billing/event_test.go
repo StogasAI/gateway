@@ -471,15 +471,19 @@ func TestProviderAttemptStatusUsesCanonicalResponseTerminal(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := providerAttemptStatus(nil, tt.response); got != tt.want {
+			if got := providerAttemptStatus(nil, tt.response, false); got != tt.want {
 				t.Fatalf("providerAttemptStatus = %s, want %s", got, tt.want)
 			}
 		})
 	}
 
+	// OpenAI ends a reply that carries a refusal with the finish reason stop.
+	if got := providerAttemptStatus(nil, tests[0].response, true); got != "content_filter" {
+		t.Fatalf("refusal content must count as a refusal, got %s", got)
+	}
 	status := 502
 	err := &schemas.BifrostError{StatusCode: &status}
-	if got := providerAttemptStatus(err, tests[1].response); got != "provider_error" {
+	if got := providerAttemptStatus(err, tests[1].response, true); got != "provider_error" {
 		t.Fatalf("terminal error must take precedence over response metadata, got %s", got)
 	}
 }

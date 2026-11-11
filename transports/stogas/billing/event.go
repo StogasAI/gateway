@@ -62,9 +62,12 @@ type ProviderAttemptInput struct {
 	StartedAt                time.Time
 	CompletedAt              time.Time
 	OutputObserved           bool
-	Response                 *schemas.BifrostResponse
-	Error                    *schemas.BifrostError
-	Upstream                 UpstreamRecord
+	// Refusal is set when the reply carries refusal content, which its finish reason need not
+	// show.
+	Refusal  bool
+	Response *schemas.BifrostResponse
+	Error    *schemas.BifrostError
+	Upstream UpstreamRecord
 }
 
 // UpstreamRecord is what a provider said about one call, as far as it says it: the request ID
@@ -244,7 +247,7 @@ func requestProviderAttempts(input EventInput, startedAt time.Time, totalTimeMS 
 			Provider:                 boundedTelemetryValue(observed.Provider, maxProviderNameBytes),
 			CatalogChainHash:         observed.CatalogChainHash,
 			ResolvedCatalogChainHash: changedCatalogResolution(observed.ResolvedCatalogChainHash, observed.CatalogChainHash),
-			Status:                   providerAttemptStatus(observed.Error, observed.Response),
+			Status:                   providerAttemptStatus(observed.Error, observed.Response, observed.Refusal),
 			StatusCode:               providerStatusCode(observed.Error),
 			StartMS:                  startMS,
 			LatencyMS:                min(uint32Duration(observed.CompletedAt.Sub(observed.StartedAt)), totalTimeMS-startMS),
@@ -267,11 +270,13 @@ func changedCatalogResolution(resolved, settled string) string {
 	return resolved
 }
 
-func providerAttemptStatus(bifrostErr *schemas.BifrostError, response *schemas.BifrostResponse) string {
+// providerAttemptStatus is content_filter for a reply that stopped for a content filter and for
+// one that carries a refusal, which OpenAI ends with an ordinary finish reason.
+func providerAttemptStatus(bifrostErr *schemas.BifrostError, response *schemas.BifrostResponse, refusal bool) string {
 	if bifrostErr != nil {
 		return NormalizeUpstreamStatus(bifrostErr)
 	}
-	if providerResponseContentFiltered(response) {
+	if refusal || providerResponseContentFiltered(response) {
 		return "content_filter"
 	}
 	return "success"

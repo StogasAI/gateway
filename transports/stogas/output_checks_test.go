@@ -477,3 +477,44 @@ func TestBoundedNumberLimitsExponents(t *testing.T) {
 		}
 	}
 }
+
+// OpenAI ends a reply that refuses with an ordinary finish reason, so the request's record reads
+// the refusal from the reply itself.
+func TestResponseRefusalReadsTheReply(t *testing.T) {
+	chat := func(refusal *string) *State {
+		response := validUnaryChatProviderResponse()
+		if refusal != nil {
+			response.Choices[0].ChatNonStreamResponseChoice.Message.ChatAssistantMessage = &schemas.ChatAssistantMessage{Refusal: refusal}
+		}
+		return &State{Response: &schemas.BifrostResponse{ChatResponse: response}}
+	}
+	responses := func(block schemas.ResponsesMessageContentBlock) *schemas.BifrostResponsesResponse {
+		response := validUnaryResponsesProviderResponse("resp_1")
+		response.Output = []schemas.ResponsesMessage{responsesMessageItem("msg_1", block)}
+		return response
+	}
+	refusal := schemas.ResponsesMessageContentBlock{
+		Type:                                 schemas.ResponsesOutputMessageContentTypeRefusal,
+		ResponsesOutputMessageContentRefusal: &schemas.ResponsesOutputMessageContentRefusal{Refusal: "No."},
+	}
+	for _, tc := range []struct {
+		name  string
+		state *State
+		want  bool
+	}{
+		{"no reply", &State{}, false},
+		{"Chat answer", chat(nil), false},
+		{"Chat empty refusal", chat(schemas.Ptr("")), false},
+		{"Chat refusal", chat(schemas.Ptr("I can't help with that.")), true},
+		{"streamed Chat refusal", &State{chatRefusal: true}, true},
+		{"Responses answer", &State{Response: &schemas.BifrostResponse{ResponsesResponse: responses(responsesText("4"))}}, false},
+		{"Responses refusal", &State{Response: &schemas.BifrostResponse{ResponsesResponse: responses(refusal)}}, true},
+		{"streamed Responses refusal", &State{Response: &schemas.BifrostResponse{ResponsesStreamResponse: &schemas.BifrostResponsesStreamResponse{Response: responses(refusal)}}}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.state.responseRefusal(); got != tc.want {
+				t.Fatalf("responseRefusal = %t, want %t", got, tc.want)
+			}
+		})
+	}
+}

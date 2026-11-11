@@ -462,6 +462,7 @@ func (s *State) providerAttemptInputs() []billing.ProviderAttemptInput {
 	if s.Response != nil {
 		finalAttempt.Response = s.Response
 	}
+	finalAttempt.Refusal = s.responseRefusal()
 	// A streamed call ends without the hook that reads its reply, so its model comes from the
 	// final response. Azure names the model only in the header read as the stream started.
 	if finalAttempt.Upstream.Model == "" && finalAttempt.Provider != string(schemas.Azure) {

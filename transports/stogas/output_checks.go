@@ -194,6 +194,46 @@ func (s *State) checkChatOutputs(checker *outputChecker, checks *outputChecks) {
 	}
 }
 
+// responseRefusal reports whether the final reply carries refusal content: a Chat message's
+// refusal, streamed or whole, or a refusal part of a Responses message.
+func (s *State) responseRefusal() bool {
+	if s.chatRefusal {
+		return true
+	}
+	if s.Response == nil {
+		return false
+	}
+	if chat := s.Response.ChatResponse; chat != nil {
+		for index := range chat.Choices {
+			if choice := chat.Choices[index].ChatNonStreamResponseChoice; choice != nil {
+				if _, refusal := chatMessageOutput(choice.Message); refusal {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	response := s.Response.ResponsesResponse
+	if stream := s.Response.ResponsesStreamResponse; stream != nil {
+		response = stream.Response
+	}
+	if response == nil {
+		return false
+	}
+	for index := range response.Output {
+		content := response.Output[index].Content
+		if content == nil {
+			continue
+		}
+		for _, block := range content.ContentBlocks {
+			if block.Type == schemas.ResponsesOutputMessageContentTypeRefusal {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func chatMessageOutput(message *schemas.ChatMessage) (text string, refusal bool) {
 	if message == nil {
 		return "", false
