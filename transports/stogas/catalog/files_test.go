@@ -349,10 +349,10 @@ const (
 	unsupportedDeployment = "openai-gpt-5.5-2026-04-23-batch"
 )
 
-// A model field that names only what Stogas does not serve gets model_unavailable with Stogas's
+// A model field that names only what Stogas does not serve gets model_unavailable, without a
 // reason, while a model that Stogas serves elsewhere goes on. The gateway never reads the part
 // that holds these records, so a release loads without it.
-func TestUnsupportedSelectionsGiveTheReason(t *testing.T) {
+func TestUnservedSelectionsAreRefused(t *testing.T) {
 	root, parts := testFiles(t)
 	files, err := partFiles(root)
 	if err != nil {
