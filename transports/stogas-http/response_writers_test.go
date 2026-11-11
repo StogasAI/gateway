@@ -8,6 +8,7 @@ import (
 	"maps"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -94,7 +95,7 @@ func TestWriteProviderErrorTellsClientsWhenToRetry(t *testing.T) {
 				ctx := newTestRequest(t)
 				bifrostCtx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 				bifrostCtx.SetValue(schemas.BifrostContextKeyProviderResponseHeaders, tc.headers)
-				(&Server{}).writeProviderError(ctx, bifrostCtx, tc.err)
+				(&Server{}).writeProviderError(ctx, nil, bifrostCtx, tc.err)
 				header := ctx.writer.Header()
 				if header.Get("X-Should-Retry") != tc.wantRetry {
 					t.Fatalf("X-Should-Retry = %q", header.Get("X-Should-Retry"))
@@ -148,6 +149,59 @@ func TestPublicBifrostErrorKeepsProviderLimitAndPolicyDetails(t *testing.T) {
 				t.Fatalf("status = %d, error = %#v", status, errorObject)
 			}
 		})
+	}
+}
+
+// A provider's words about the customer's own account are the customer's to
+// read, so a call with their credential carries them where a managed account's
+// refusal names nothing.
+func TestProviderErrorCarriesProviderWordsForACustomerCredential(t *testing.T) {
+	const keyMessage = "Incorrect API key provided: sk-proj-****abcd. You can find your API key at https://platform.openai.com/account/api-keys."
+	long := strings.Repeat("é", maxProviderMessageBytes)
+	gatewayMade := testBifrostError(http.StatusBadRequest, "failed to marshal the internal request", "invalid_request_error", "")
+	gatewayMade.IsBifrostError = true
+	for _, tc := range []struct {
+		name        string
+		err         *schemas.BifrostError
+		customer    bool
+		wantStatus  int
+		wantCode    any
+		wantMessage string
+	}{
+		{"customer credential refused", testBifrostError(http.StatusUnauthorized, keyMessage, "invalid_request_error", "invalid_api_key"), true,
+			http.StatusFailedDependency, "upstream_authentication_failed", "The configured provider credential was rejected: " + keyMessage},
+		{"managed credential refused", testBifrostError(http.StatusUnauthorized, keyMessage, "invalid_request_error", "invalid_api_key"), false,
+			http.StatusFailedDependency, "upstream_authentication_failed", "The configured provider credential was rejected"},
+		{"customer rate limit", testBifrostError(http.StatusTooManyRequests, "Rate limit reached for gpt-5 in organization org-1 on tokens per min (TPM): Limit 30000.", "", ""), true,
+			http.StatusTooManyRequests, "upstream_rate_limit_error", "The upstream provider rate limit was exceeded: Rate limit reached for gpt-5 in organization org-1 on tokens per min (TPM): Limit 30000."},
+		{"customer message with a withheld word", testBifrostError(http.StatusBadRequest, "The stack of tool definitions is invalid.", "invalid_request_error", ""), true,
+			http.StatusBadRequest, nil, "The stack of tool definitions is invalid."},
+		{"managed message with a withheld word", testBifrostError(http.StatusBadRequest, "The stack of tool definitions is invalid.", "invalid_request_error", ""), false,
+			http.StatusBadRequest, nil, "Invalid request"},
+		{"customer message over the bound", testBifrostError(http.StatusBadRequest, long, "invalid_request_error", ""), true,
+			http.StatusBadRequest, nil, strings.Repeat("é", maxProviderMessageBytes/2) + "…"},
+		{"gateway's own failure", gatewayMade, true,
+			http.StatusBadRequest, nil, "Invalid request"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			status, payload := publicProviderError(tc.err, tc.customer)
+			errorObject := publicErrorObject(t, payload)
+			if status != tc.wantStatus || errorObject["code"] != tc.wantCode || errorObject["message"] != tc.wantMessage {
+				t.Fatalf("status = %d, error = %#v", status, errorObject)
+			}
+		})
+	}
+}
+
+func TestUsesCustomerCredential(t *testing.T) {
+	for byok, want := range map[string]bool{"": false, billing.ManagedUpstreamByok: false, "byok_1": true} {
+		state := &stogas.State{Authorization: &billing.Authorization{UpstreamByok: byok}}
+		if got := usesCustomerCredential(state); got != want {
+			t.Fatalf("usesCustomerCredential(%q) = %t, want %t", byok, got, want)
+		}
+	}
+	if usesCustomerCredential(nil) || usesCustomerCredential(&stogas.State{}) {
+		t.Fatal("a request without a bound pair uses no customer credential")
 	}
 }
 

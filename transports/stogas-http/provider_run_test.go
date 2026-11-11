@@ -637,7 +637,7 @@ func TestRunReportsTheFailureThatPassesSoonest(t *testing.T) {
 						failure.ExtraFields.BilledUsage = &schemas.BifrostLLMUsage{PromptTokens: 3}
 					}
 					run.last, run.lastCtx = failure, attempt
-					run.note(callFailure(failure, attempt, failureActionFor(failure, attempt, nil), f.pair, 1+f.pair, "deployment"))
+					run.note(callFailure(run.state, failure, attempt, failureActionFor(failure, attempt, nil), f.pair, 1+f.pair, "deployment"))
 				}
 				if run.reportsLocal() != test.gateway {
 					t.Fatalf("gateway error = %v", run.reportsLocal())

@@ -100,7 +100,7 @@ func TestFailedCallRecordsItsPairsWait(t *testing.T) {
 			}
 			attempt := retryAfterContext(test.headers)
 			run.action = failureActionFor(failure, attempt, nil)
-			run.recordWait(callFailure(failure, attempt, run.action, 0, 1, "openai-gpt-5.6-sol"), failure)
+			run.recordWait(callFailure(run.state, failure, attempt, run.action, 0, 1, "openai-gpt-5.6-sol"), failure)
 			key := pairKey{"byok", "openai-gpt-5.6-sol"}
 			answer := ""
 			if refusal := server.pairWaits.refusal(key); refusal != nil {
@@ -130,7 +130,7 @@ func TestWaitingPairRanksLikeItsCall(t *testing.T) {
 		run.noteLocal(waits.refusal(key), -1)
 		failure := &schemas.BifrostError{StatusCode: schemas.Ptr(401), Error: &schemas.ErrorField{Message: "bad key"}}
 		run.last, run.lastCtx = failure, retryAfterContext(nil)
-		run.note(callFailure(failure, run.lastCtx, nextPair, 1, 2, "deployment"))
+		run.note(callFailure(run.state, failure, run.lastCtx, nextPair, 1, 2, "deployment"))
 		response := run.response()
 		var refusal interface{ RetryAfter() time.Duration }
 		if response.status != 429 || response.retryAfter != "25" && response.retryAfter != "26" || response.final ||

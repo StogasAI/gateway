@@ -289,7 +289,7 @@ func (s *Server) inference(ctx *requestContext) {
 	}
 	if failure != nil {
 		captureUnaryResult(run.state, reply, outcome)
-		s.writeProviderError(ctx, result.ctx, failure)
+		s.writeProviderError(ctx, run.state, result.ctx, failure)
 		return
 	}
 	s.writeInferenceJSON(ctx, result.ctx, run.state, http.StatusOK, unaryResponsePayload(reply, servedModel(run.state)))
@@ -346,7 +346,7 @@ func (s *Server) failRun(ctx *requestContext, run *providerRun, respond bool) {
 	if ctx.responseWait.timedOut() {
 		failure := requestTimeoutError()
 		retainResponseFailure(run.state, failure)
-		response = providerErrorResponse(failure, outcome)
+		response = providerErrorResponse(run.state, failure, outcome)
 	}
 	s.finalizeAfterResponse(ctx, run, outcome)
 	if respond {
@@ -359,7 +359,7 @@ func (s *Server) failRun(ctx *requestContext, run *providerRun, respond bool) {
 func (r *providerRun) report(memory *requestMemoryLease, outcome *schemas.BifrostContext, last *schemas.BifrostError) errorResponse {
 	_, _, failure := ingestProviderResult(memory, r.request, r.state, nil, last)
 	if failure != last {
-		return providerErrorResponse(failure, outcome)
+		return providerErrorResponse(r.state, failure, outcome)
 	}
 	response := r.response()
 	if r.reportsLocal() {
@@ -546,7 +546,7 @@ func (s *Server) startSSEStream(ctx *requestContext, run *providerRun, started p
 			if !clientConnected {
 				return
 			}
-			encoded, err := marshalPayload(bifrostErrorPayload(bifrostErr))
+			encoded, err := marshalPayload(bifrostErrorPayload(state, bifrostErr))
 			if err == nil {
 				_ = reader.sendErrorEvent(request, "", encoded)
 				clear(encoded)
@@ -558,7 +558,7 @@ func (s *Server) startSSEStream(ctx *requestContext, run *providerRun, started p
 		sendStreamError := func(bifrostErr *schemas.BifrostError) {
 			wait.stop()
 			if state.Export.Active() {
-				encoded, err := marshalPayload(bifrostErrorPayload(providerResponseMemoryError(memory, state, bifrostErr)))
+				encoded, err := marshalPayload(bifrostErrorPayload(state, providerResponseMemoryError(memory, state, bifrostErr)))
 				if err == nil {
 					state.Export.Event(encoded)
 					clear(encoded)

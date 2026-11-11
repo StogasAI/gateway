@@ -24,8 +24,8 @@ func (s *Server) writeBifrostError(ctx *requestContext, bifrostErr *schemas.Bifr
 	s.writeError(ctx, statusCode, payload)
 }
 
-func (s *Server) writeProviderError(ctx *requestContext, bifrostCtx *schemas.BifrostContext, bifrostErr *schemas.BifrostError) {
-	s.writeErrorResponse(ctx, providerErrorResponse(bifrostErr, bifrostCtx))
+func (s *Server) writeProviderError(ctx *requestContext, state *stogas.State, bifrostCtx *schemas.BifrostContext, bifrostErr *schemas.BifrostError) {
+	s.writeErrorResponse(ctx, providerErrorResponse(state, bifrostErr, bifrostCtx))
 }
 
 // providerErrorResponse passes on the provider's wait, which SDKs wait for
@@ -35,8 +35,8 @@ func (s *Server) writeProviderError(ctx *requestContext, bifrostCtx *schemas.Bif
 // openai-node and the AI SDK retry at once on Retry-After: 0, while without it
 // they wait their randomized backoff. A wait over a minute tells them not to
 // retry, as the gateway's own refusals do (billingErrorResponse).
-func providerErrorResponse(bifrostErr *schemas.BifrostError, bifrostCtx *schemas.BifrostContext) errorResponse {
-	statusCode, payload := publicBifrostError(bifrostErr)
+func providerErrorResponse(state *stogas.State, bifrostErr *schemas.BifrostError, bifrostCtx *schemas.BifrostContext) errorResponse {
+	statusCode, payload := publicProviderError(bifrostErr, usesCustomerCredential(state))
 	response := errorResponse{status: statusCode, payload: payload}
 	if wait := providerErrorWait(statusCode, bifrostCtx); wait > 0 {
 		response.retryAfter, response.final = spreadRetryAfter(wait), wait > time.Minute
@@ -116,13 +116,41 @@ func spreadRetryAfter(wait time.Duration) string {
 	return strconv.FormatInt(seconds, 10)
 }
 
-func bifrostErrorPayload(bifrostErr *schemas.BifrostError) any {
-	_, payload := publicBifrostError(bifrostErr)
+func bifrostErrorPayload(state *stogas.State, bifrostErr *schemas.BifrostError) any {
+	_, payload := publicProviderError(bifrostErr, usesCustomerCredential(state))
 	return payload
 }
 
+// usesCustomerCredential reports whether the request's bound pair calls the
+// provider with the customer's own credential.
+func usesCustomerCredential(state *stogas.State) bool {
+	if state == nil || state.Authorization == nil {
+		return false
+	}
+	byok := state.Authorization.UpstreamByok
+	return byok != "" && byok != stogasbilling.ManagedUpstreamByok
+}
+
+// publicBifrostError is the public form of a failure of the gateway itself.
 func publicBifrostError(bifrostErr *schemas.BifrostError) (int, map[string]any) {
+	return publicProviderError(bifrostErr, false)
+}
+
+// publicProviderError is the public form of a failed provider call. customer
+// says that the call used the customer's own provider credential, so what the
+// provider said about the account is theirs to read: a refusal of the
+// credential, its quota, its access or its rate limit then carries the
+// provider's message after the stable one, and no message is withheld for its
+// words. OpenRouter, LiteLLM and Portkey pass that text on as well; a managed
+// account's refusal stays ours.
+func publicProviderError(bifrostErr *schemas.BifrostError, customer bool) (int, map[string]any) {
+	said := customer && bifrostErr != nil && bifrostErr.StatusCode != nil && !bifrostErr.IsBifrostError
 	if statusCode, errorType, code, message, ok := publicStableGatewayError(bifrostErr); ok {
+		if said && providerAccountRefusal(code) {
+			if detail := boundedProviderMessage(bifrostErrorMessage(bifrostErr)); detail != "" {
+				message += ": " + detail
+			}
+		}
 		return statusCode, map[string]any{
 			"error": map[string]any{
 				"code":    code,
@@ -134,7 +162,7 @@ func publicBifrostError(bifrostErr *schemas.BifrostError) (int, map[string]any) 
 	}
 	statusCode := publicBifrostStatus(bifrostErr)
 	errorType := publicBifrostType(statusCode, bifrostErr)
-	message := publicBifrostMessage(statusCode, errorType, bifrostErr)
+	message := publicBifrostMessage(statusCode, errorType, bifrostErr, said)
 	code := publicBifrostCode(statusCode, bifrostErr)
 	param := publicBifrostParam(statusCode, bifrostErr)
 
@@ -297,13 +325,21 @@ func publicBifrostType(statusCode int, bifrostErr *schemas.BifrostError) string 
 	}
 }
 
-func publicBifrostMessage(statusCode int, errorType string, bifrostErr *schemas.BifrostError) string {
+// publicBifrostMessage passes on the message of a 4xx failure. said marks the
+// provider's own words about a call with the customer's credential, which pass
+// whole up to a bound; any other message passes only when it is short and
+// names nothing internal.
+func publicBifrostMessage(statusCode int, errorType string, bifrostErr *schemas.BifrostError, said bool) string {
 	switch {
 	case bifrostErr == nil:
 		return "Internal server error"
 	case statusCode >= 400 && statusCode < 500:
 		message := bifrostErrorMessage(bifrostErr)
-		if safeProviderClientMessage(message) {
+		if said {
+			if message = boundedProviderMessage(message); message != "" {
+				return message
+			}
+		} else if safeProviderClientMessage(message) {
 			return message
 		}
 	}
@@ -426,6 +462,38 @@ func messageLooksSensitive(message string) bool {
 		}
 	}
 	return false
+}
+
+// providerAccountRefusal reports whether code is the stable code of a provider
+// that refused the account behind the credential.
+func providerAccountRefusal(code string) bool {
+	switch code {
+	case "upstream_authentication_failed", "upstream_quota_exceeded", "upstream_access_denied", "upstream_rate_limit_error":
+		return true
+	default:
+		return false
+	}
+}
+
+// maxProviderMessageBytes bounds a provider's message in a client error. OpenAI
+// and Anthropic messages stay well under it; a longer one, such as a schema
+// that Vertex echoes, is cut instead of withheld.
+const maxProviderMessageBytes = 2048
+
+// boundedProviderMessage is a provider's message as a client reads it: valid
+// text, cut at maxProviderMessageBytes, or empty when it is not text.
+func boundedProviderMessage(message string) string {
+	if !utf8.ValidString(message) || strings.ContainsRune(message, '\x00') {
+		return ""
+	}
+	if len(message) <= maxProviderMessageBytes {
+		return message
+	}
+	cut := maxProviderMessageBytes
+	for cut > 0 && !utf8.RuneStart(message[cut]) {
+		cut--
+	}
+	return message[:cut] + "…"
 }
 
 func safeProviderClientMessage(message string) bool {
@@ -593,7 +661,7 @@ func localErrorResponse(err error) errorResponse {
 	var refusal billingFailure
 	switch {
 	case errors.As(err, &unsent):
-		return providerErrorResponse(unsent.failure, unsent.ctx)
+		return providerErrorResponse(nil, unsent.failure, unsent.ctx)
 	case errors.Is(err, errRequestMemoryCapacity):
 		return capacityErrorResponse()
 	case errors.As(err, &refusal), errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):

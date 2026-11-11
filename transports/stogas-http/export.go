@@ -35,7 +35,7 @@ func captureExportError(state *stogas.State, failure *schemas.BifrostError) {
 	if state == nil || !state.Export.Active() {
 		return
 	}
-	captureExportPayload(state, bifrostErrorPayload(failure))
+	captureExportPayload(state, bifrostErrorPayload(state, failure))
 }
 
 func captureExportPayload(state *stogas.State, payload any) {

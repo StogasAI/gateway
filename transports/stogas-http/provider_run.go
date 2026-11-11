@@ -285,7 +285,7 @@ func (r *providerRun) failed(failure *schemas.BifrostError, attempt *schemas.Bif
 	if providerMayHaveRun(failure, attempt) {
 		r.client.providerRan.Store(true)
 	}
-	f := callFailure(failure, attempt, r.action, r.pair.number, count, r.pair.Resolution.Deployment.ID)
+	f := callFailure(r.state, failure, attempt, r.action, r.pair.number, count, r.pair.Resolution.Deployment.ID)
 	r.recordWait(f, failure)
 	r.note(f)
 	return true
@@ -755,8 +755,8 @@ type runFailure struct {
 // answers with what the caller needs to know before sending the request again,
 // and a failure after the provider ran part of the request tells clients not
 // to retry, since a retry runs that part again.
-func callFailure(failure *schemas.BifrostError, attempt *schemas.BifrostContext, action failureAction, pair, call int, deployment string) *runFailure {
-	f := &runFailure{pair: pair, response: providerErrorResponse(failure, attempt), at: time.Now(), ends: action == stopRun}
+func callFailure(state *stogas.State, failure *schemas.BifrostError, attempt *schemas.BifrostContext, action failureAction, pair, call int, deployment string) *runFailure {
+	f := &runFailure{pair: pair, response: providerErrorResponse(state, failure, attempt), at: time.Now(), ends: action == stopRun}
 	if wait := providerErrorWait(f.response.status, attempt); wait > 0 {
 		f.until = f.at.Add(wait)
 	}
@@ -859,7 +859,7 @@ func (r *providerRun) response() errorResponse {
 	case reported != nil && (r.last != nil || !endsWait(r.local)):
 		return reported.answer()
 	case r.last != nil:
-		return providerErrorResponse(r.last, r.lastCtx)
+		return providerErrorResponse(r.state, r.last, r.lastCtx)
 	}
 	return localErrorResponse(r.local)
 }
