@@ -721,7 +721,7 @@ func (provider *VertexProvider) ChatCompletion(ctx *schemas.BifrostContext, key 
 		jsonBody, bifrostErr = providerUtils.CheckContextAndGetRequestBody(
 			ctx,
 			request,
-			func() (providerUtils.RequestBodyWithExtraParams, error) {
+			func() (*VertexRawRequestBody, error) {
 				// Format messages for Vertex API, preserving key order for prompt caching
 				var rawBody []byte
 				var extraParams map[string]interface{}
@@ -1126,7 +1126,7 @@ func (provider *VertexProvider) ChatCompletionStream(ctx *schemas.BifrostContext
 		jsonData, bifrostErr := providerUtils.CheckContextAndGetRequestBody(
 			ctx,
 			request,
-			func() (providerUtils.RequestBodyWithExtraParams, error) {
+			func() (*gemini.GeminiGenerationRequest, error) {
 				reqBody, err := gemini.ToGeminiChatCompletionRequestWithImageURLSchemes(ctx, request, geminiImageURLSchemes...)
 				if err != nil {
 					return nil, err
@@ -1421,7 +1421,7 @@ func (provider *VertexProvider) Responses(ctx *schemas.BifrostContext, key schem
 		jsonBody, bifrostErr := providerUtils.CheckContextAndGetRequestBody(
 			ctx,
 			request,
-			func() (providerUtils.RequestBodyWithExtraParams, error) {
+			func() (*gemini.GeminiGenerationRequest, error) {
 				reqBody, err := gemini.ToGeminiResponsesRequestWithImageURLSchemes(ctx, request, geminiImageURLSchemes...)
 				if err != nil {
 					return nil, err
@@ -1676,7 +1676,7 @@ func (provider *VertexProvider) ResponsesStream(ctx *schemas.BifrostContext, pos
 		jsonData, bifrostErr := providerUtils.CheckContextAndGetRequestBody(
 			ctx,
 			request,
-			func() (providerUtils.RequestBodyWithExtraParams, error) {
+			func() (*gemini.GeminiGenerationRequest, error) {
 				reqBody, err := gemini.ToGeminiResponsesRequestWithImageURLSchemes(ctx, request, geminiImageURLSchemes...)
 				if err != nil {
 					return nil, err
@@ -1797,19 +1797,23 @@ func (provider *VertexProvider) Embedding(ctx *schemas.BifrostContext, key schem
 	isGeminiEmbedding2Request := isVertexGeminiEmbeddingModel(request.Model)
 	isNativeMultimodalRequest := isVertexNativeMultimodalEmbeddingModel(request.Model)
 
-	jsonBody, bifrostErr := providerUtils.CheckContextAndGetRequestBody(
-		ctx,
-		request,
-		func() (providerUtils.RequestBodyWithExtraParams, error) {
-			if isGeminiEmbedding2Request {
-				return ToVertexGeminiEmbeddingRequest(request)
-			}
-			if isNativeMultimodalRequest {
-				return ToVertexMultimodalEmbeddingRequest(request)
-			}
+	// Branch before the call so each converter keeps its concrete body type.
+	var jsonBody []byte
+	var bifrostErr *schemas.BifrostError
+	switch {
+	case isGeminiEmbedding2Request:
+		jsonBody, bifrostErr = providerUtils.CheckContextAndGetRequestBody(ctx, request, func() (*VertexGeminiEmbeddingRequest, error) {
+			return ToVertexGeminiEmbeddingRequest(request)
+		})
+	case isNativeMultimodalRequest:
+		jsonBody, bifrostErr = providerUtils.CheckContextAndGetRequestBody(ctx, request, func() (*VertexEmbeddingRequest, error) {
+			return ToVertexMultimodalEmbeddingRequest(request)
+		})
+	default:
+		jsonBody, bifrostErr = providerUtils.CheckContextAndGetRequestBody(ctx, request, func() (*VertexEmbeddingRequest, error) {
 			return ToVertexEmbeddingRequest(request)
-		},
-	)
+		})
+	}
 	if bifrostErr != nil {
 		return nil, bifrostErr
 	}
@@ -1995,7 +1999,7 @@ func (provider *VertexProvider) Rerank(ctx *schemas.BifrostContext, key schemas.
 	jsonBody, bifrostErr := providerUtils.CheckContextAndGetRequestBody(
 		ctx,
 		request,
-		func() (providerUtils.RequestBodyWithExtraParams, error) {
+		func() (*VertexRankRequest, error) {
 			return ToVertexRankRequest(request, options)
 		},
 	)
@@ -2153,7 +2157,7 @@ func (provider *VertexProvider) ImageGeneration(ctx *schemas.BifrostContext, key
 	jsonBody, bifrostErr := providerUtils.CheckContextAndGetRequestBody(
 		ctx,
 		request,
-		func() (providerUtils.RequestBodyWithExtraParams, error) {
+		func() (*VertexRawRequestBody, error) {
 			var rawBody []byte
 			var extraParams map[string]interface{}
 			var err error
@@ -2373,7 +2377,7 @@ func (provider *VertexProvider) ImageEdit(ctx *schemas.BifrostContext, key schem
 	jsonBody, bifrostErr := providerUtils.CheckContextAndGetRequestBody(
 		ctx,
 		request,
-		func() (providerUtils.RequestBodyWithExtraParams, error) {
+		func() (*VertexRawRequestBody, error) {
 			var rawBody []byte
 			var extraParams map[string]interface{}
 			var err error
@@ -2589,7 +2593,7 @@ func (provider *VertexProvider) VideoGeneration(ctx *schemas.BifrostContext, key
 	jsonData, bifrostErr := providerUtils.CheckContextAndGetRequestBody(
 		ctx,
 		bifrostReq,
-		func() (providerUtils.RequestBodyWithExtraParams, error) {
+		func() (*gemini.GeminiVideoGenerationRequest, error) {
 			return gemini.ToGeminiVideoGenerationRequest(bifrostReq)
 		},
 	)
@@ -2934,6 +2938,9 @@ func stripVertexGeminiUnsupportedFields(requestBody *gemini.GeminiGenerationRequ
 	requestBody.ServiceTier = ""
 	for _, content := range requestBody.Contents {
 		for _, part := range content.Parts {
+			if part == nil {
+				continue
+			}
 			// Remove id from function_call
 			if part.FunctionCall != nil {
 				part.FunctionCall.ID = ""
@@ -3101,7 +3108,7 @@ func (provider *VertexProvider) BatchCreate(ctx *schemas.BifrostContext, key sch
 	jsonData, bodyErr := providerUtils.CheckContextAndGetRequestBody(
 		ctx,
 		request,
-		func() (providerUtils.RequestBodyWithExtraParams, error) {
+		func() (*VertexBatchCreateRequest, error) {
 			return ToVertexBatchCreateRequest(ctx, request, jobName, inputFileID, outputURI), nil
 		},
 	)
@@ -4446,7 +4453,7 @@ func (provider *VertexProvider) CountTokens(ctx *schemas.BifrostContext, key sch
 		jsonBody, bifrostErr = providerUtils.CheckContextAndGetRequestBody(
 			ctx,
 			request,
-			func() (providerUtils.RequestBodyWithExtraParams, error) {
+			func() (*gemini.GeminiGenerationRequest, error) {
 				return gemini.ToGeminiResponsesRequestWithImageURLSchemes(ctx, request, geminiImageURLSchemes...)
 			},
 		)
@@ -4797,6 +4804,8 @@ func (provider *VertexProvider) Passthrough(
 	}
 
 	var passthroughUsage *schemas.BifrostPassthroughUsage
+	var servedModel string
+	var providerJob *schemas.BifrostPassthroughJob
 	if resp.StatusCode() >= 200 && resp.StatusCode() < 300 {
 		switch PassthroughWireFormat(req.Path) {
 		case schemas.Anthropic:
@@ -4806,7 +4815,11 @@ func (provider *VertexProvider) Passthrough(
 		case schemas.OpenAI:
 			passthroughUsage = openai.ExtractOpenAIPassthroughUsage(req.Method, req.Path, req.Body, body)
 		default:
-			passthroughUsage = gemini.ExtractGeminiPassthroughUsage(req.Path, req.Body, body)
+			if gemini.IsInteractionsPassthroughPath(req.Path) {
+				passthroughUsage, servedModel, providerJob = gemini.InteractionsPassthroughResult(req, body)
+			} else {
+				passthroughUsage = gemini.ExtractGeminiPassthroughUsage(req.Path, req.Body, body)
+			}
 		}
 	}
 
@@ -4821,6 +4834,8 @@ func (provider *VertexProvider) Passthrough(
 			RawRequest:              req.Body,
 		},
 		PassthroughUsage: passthroughUsage,
+		ServedModel:      servedModel,
+		ProviderJob:      providerJob,
 	}
 
 	return bifrostResponse, nil
@@ -4979,6 +4994,7 @@ func (provider *VertexProvider) PassthroughStream(
 	observe := func(event []byte) *schemas.BifrostPassthroughUsage {
 		return gemini.ExtractGeminiPassthroughUsage(req.Path, req.Body, event)
 	}
+	var finalize func(*schemas.BifrostPassthroughResponse)
 	switch PassthroughWireFormat(req.Path) {
 	case schemas.Anthropic:
 		messagesUsage := &anthropic.AnthropicPassthroughStreamUsage{}
@@ -4993,6 +5009,12 @@ func (provider *VertexProvider) PassthroughStream(
 		hasUsage = openai.HasOpenAIPassthroughUsage
 		observe = func(event []byte) *schemas.BifrostPassthroughUsage {
 			return openai.ExtractOpenAIPassthroughUsage(req.Method, req.Path, req.Body, event)
+		}
+	default:
+		if gemini.IsInteractionsPassthroughPath(req.Path) {
+			observer := gemini.NewInteractionsStreamObserver(req)
+			observe, finalize = observer.Observe, observer.Finalize
+			hasUsage = gemini.HasInteractionsStreamInfo
 		}
 	}
 
@@ -5009,6 +5031,7 @@ func (provider *VertexProvider) PassthroughStream(
 			Logger:              provider.logger,
 			HasUsage:            hasUsage,
 			Observe:             observe,
+			Finalize:            finalize,
 		},
 	), nil
 }

@@ -17,19 +17,29 @@ func TestCheckContextAndGetRequestBodyUsesPreparedBodyWithoutConversion(t *testi
 		t.Fatal("failed to install prepared request")
 	}
 	converted := false
-
-	body, bifrostErr := CheckContextAndGetRequestBody(ctx, request, func() (RequestBodyWithExtraParams, error) {
-		converted = true
-		return nil, nil
-	})
-	if bifrostErr != nil {
-		t.Fatalf("CheckContextAndGetRequestBody returned error: %v", bifrostErr)
+	typed := func() ([]byte, *schemas.BifrostError) {
+		return CheckContextAndGetRequestBody(ctx, request, func() (*testPreparedRequestBody, error) {
+			converted = true
+			return nil, nil
+		})
 	}
-	if converted {
-		t.Fatal("prepared request invoked the provider converter")
+	custom := func() ([]byte, *schemas.BifrostError) {
+		return CheckContextAndGetRequestBodyFromInterface(ctx, request, func() (RequestBodyWithExtraParams, error) {
+			converted = true
+			return nil, nil
+		})
 	}
-	if !bytes.Equal(body, prepared) {
-		t.Fatalf("prepared body changed: got %q want %q", body, prepared)
+	for name, get := range map[string]func() ([]byte, *schemas.BifrostError){"typed": typed, "custom converter": custom} {
+		body, bifrostErr := get()
+		if bifrostErr != nil {
+			t.Fatalf("%s: returned error: %v", name, bifrostErr)
+		}
+		if converted {
+			t.Fatalf("%s: prepared request invoked the provider converter", name)
+		}
+		if !bytes.Equal(body, prepared) {
+			t.Fatalf("%s: prepared body changed: got %q want %q", name, body, prepared)
+		}
 	}
 }
 
@@ -41,7 +51,7 @@ func TestCheckContextAndGetRequestBodyIgnoresEmptyPreparedBody(t *testing.T) {
 	}
 	converted := false
 
-	_, bifrostErr := CheckContextAndGetRequestBody(ctx, request, func() (RequestBodyWithExtraParams, error) {
+	_, bifrostErr := CheckContextAndGetRequestBody(ctx, request, func() (*testPreparedRequestBody, error) {
 		converted = true
 		return &testPreparedRequestBody{}, nil
 	})
@@ -74,7 +84,7 @@ func TestCheckContextAndGetRequestBodyRejectsStalePreparedIdentity(t *testing.T)
 				ctx.SetValue(schemas.BifrostContextKeyHTTPRequestType, schemas.ChatCompletionRequest)
 			}
 			converted := false
-			_, bifrostErr := CheckContextAndGetRequestBody(ctx, test.request, func() (RequestBodyWithExtraParams, error) {
+			_, bifrostErr := CheckContextAndGetRequestBody(ctx, test.request, func() (*testPreparedRequestBody, error) {
 				converted = true
 				return &testPreparedRequestBody{}, nil
 			})

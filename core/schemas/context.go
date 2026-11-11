@@ -43,6 +43,14 @@ var reservedKeys = map[BifrostContextKey]struct{}{
 	BifrostContextKeyStreamAttemptAbort:      {},
 	BifrostContextKeyStreamCommitWatch:       {},
 	BifrostContextKeyMCPHealthCheckRequest:   {},
+	BifrostContextKeyMCPCallerCapabilities:   {},
+	BifrostContextKeyMCPInputResumption:      {},
+	BifrostContextKeyMCPRoundTripID:          {},
+	BifrostContextKeyMCPRequestedToolName:    {},
+	BifrostContextKeyMCPToolUIResourceURI:    {},
+	BifrostContextKeyMCPToolAppOnly:          {},
+	BifrostContextKeyMCPGatewayClient:        {},
+	BifrostContextKeyMCPToolListing:          {},
 	BifrostContextKeyMCPUnattendedExecution:  {},
 	BifrostContextKeyInjectedToolsExecuted:   {},
 	BifrostContextKeyUpstreamLatency:         {},
@@ -55,6 +63,7 @@ var reservedKeys = map[BifrostContextKey]struct{}{
 	BifrostContextKeyAuthCredential:          {},
 	BifrostContextKeyMCPAgentServedRoute:     {},
 	BifrostContextKeyMCPInstructionsText:     {},
+	BifrostContextKeyClientIP:                {},
 }
 
 // isReservedKey reports whether key is a reserved context key whose writes are

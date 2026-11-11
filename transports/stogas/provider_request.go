@@ -395,7 +395,7 @@ func usesAnthropicWireFormat(ctx *schemas.BifrostContext, provider schemas.Model
 }
 
 func prepareOpenAIChatBody(ctx *schemas.BifrostContext, request *schemas.BifrostChatRequest, streaming bool) ([]byte, *schemas.BifrostError) {
-	return providerutils.CheckContextAndGetRequestBody(ctx, request, func() (providerutils.RequestBodyWithExtraParams, error) {
+	return providerutils.CheckContextAndGetRequestBody(ctx, request, func() (*openaiprovider.OpenAIChatRequest, error) {
 		wire := openaiprovider.ToOpenAIChatRequest(ctx, request)
 		if wire != nil && streaming {
 			wire.Stream = schemas.Ptr(true)
@@ -406,7 +406,7 @@ func prepareOpenAIChatBody(ctx *schemas.BifrostContext, request *schemas.Bifrost
 }
 
 func prepareOpenAIResponsesBody(ctx *schemas.BifrostContext, request *schemas.BifrostResponsesRequest, streaming bool) ([]byte, *schemas.BifrostError) {
-	return providerutils.CheckContextAndGetRequestBody(ctx, request, func() (providerutils.RequestBodyWithExtraParams, error) {
+	return providerutils.CheckContextAndGetRequestBody(ctx, request, func() (*openaiprovider.OpenAIResponsesRequest, error) {
 		wire := openaiprovider.ToOpenAIResponsesRequest(ctx, request)
 		if wire != nil && streaming {
 			wire.Stream = schemas.Ptr(true)

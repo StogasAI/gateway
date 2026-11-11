@@ -142,6 +142,11 @@ var reviewedSites = map[string]siteReview{
 		status: elementSized,
 		reason: "rewrites each choice-sized delta once, then replaces the choices array outside the loop",
 	},
+	"schemas.applyObjects": {
+		status: elementSized,
+		reason: "each write rewrites one provider stream frame's own bytes (frames are capped at their own end by " +
+			"splitRawJSONFrames); the reassembled raw response is never rewritten inside the loop",
+	},
 	"anthropic.BuildAnthropicChatRequestBody": {
 		status: bounded,
 		reason: "loops over cfg.ExcludeFields, which is provider config and does not grow with the request payload",

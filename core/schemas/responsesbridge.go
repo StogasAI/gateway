@@ -646,6 +646,7 @@ func (r *BifrostResponsesResponse) ToBifrostChatResponse() *BifrostChatResponse 
 	chat.ExtraFields.RequestType = ChatCompletionRequest
 	if r.Usage != nil {
 		chat.Usage = r.Usage.ToBifrostLLMUsage()
+		chat.Usage.ToolUsage = chat.Usage.ToolUsage.withoutZeroImageGen()
 	}
 	var reply chatReplyParts
 	for i := range r.Output {
@@ -969,6 +970,7 @@ func (rsr *BifrostResponsesStreamResponse) ToBifrostChatResponse(state *Response
 	chunk.ExtraFields.RequestType = ChatCompletionStreamRequest
 	if choice.FinishReason != nil && rsr.Response != nil && rsr.Response.Usage != nil {
 		chunk.Usage = rsr.Response.Usage.ToBifrostLLMUsage()
+		chunk.Usage.ToolUsage = chunk.Usage.ToolUsage.withoutZeroImageGen()
 	}
 	return chunk
 }

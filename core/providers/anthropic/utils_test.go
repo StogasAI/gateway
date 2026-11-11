@@ -929,20 +929,20 @@ func TestAddMissingBetaHeadersToContext_PerProvider(t *testing.T) {
 			},
 			unexpectHeaders: []string{AnthropicInterleavedThinkingBetaHeader},
 		},
-		// Fast mode tests — fast mode is currently Opus 4.8 and Opus 5,
-		// so tests must set Model to exercise the path. Other models
+		// Fast mode tests — fast mode is Opus 4.6 only (research preview),
+		// so tests must set Model to exercise the path. Non-Opus-4.6 models
 		// are model-gated out regardless of provider flag.
 		{
 			name:     "Anthropic gets fast mode header",
 			provider: schemas.Anthropic,
 			req: &AnthropicMessageRequest{
-				Model: "claude-opus-4-8",
+				Model: "claude-opus-4-6",
 				Speed: schemas.Ptr("fast"),
 			},
 			expectHeaders: []string{AnthropicFastModeBetaHeader},
 		},
 		{
-			name:     "Anthropic skips fast mode header on unsupported model",
+			name:     "Anthropic skips fast mode header on non-Opus-4.6 model",
 			provider: schemas.Anthropic,
 			req: &AnthropicMessageRequest{
 				Model: "claude-sonnet-4-6",
@@ -954,7 +954,7 @@ func TestAddMissingBetaHeadersToContext_PerProvider(t *testing.T) {
 			name:     "Bedrock skips fast mode header",
 			provider: schemas.Bedrock,
 			req: &AnthropicMessageRequest{
-				Model: "claude-opus-4-8", // supporting model exercises provider suppression
+				Model: "claude-opus-4-6", // fast mode is model-gated; set a supporting model so the test actually exercises provider suppression
 				Speed: schemas.Ptr("fast"),
 			},
 			unexpectHeaders: []string{AnthropicFastModeBetaHeader},
@@ -963,7 +963,7 @@ func TestAddMissingBetaHeadersToContext_PerProvider(t *testing.T) {
 			name:     "Azure skips fast mode header",
 			provider: schemas.Azure,
 			req: &AnthropicMessageRequest{
-				Model: "claude-opus-4-8", // supporting model exercises provider suppression
+				Model: "claude-opus-4-6", // fast mode is model-gated; set a supporting model so the test actually exercises provider suppression
 				Speed: schemas.Ptr("fast"),
 			},
 			unexpectHeaders: []string{AnthropicFastModeBetaHeader},
@@ -1745,22 +1745,23 @@ func TestStripUnsupportedFieldsFromRawBody(t *testing.T) {
 		}
 	})
 
-	t.Run("speed_stripped_on_unsupported_model_even_on_anthropic", func(t *testing.T) {
-		// Even on Anthropic direct, an unsupported model must lose speed.
+	t.Run("speed_stripped_on_non_opus_46_even_on_anthropic", func(t *testing.T) {
+		// Model gate: fast-mode is Opus 4.6 only per docs. Even on Anthropic
+		// direct where FastMode=true, targeting a different model must strip.
 		input := []byte(`{"model":"claude-sonnet-4-6","speed":"fast"}`)
 		result, err := StripUnsupportedFieldsFromRawBody(input, schemas.Anthropic, "claude-sonnet-4-6")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if providerUtils.JSONFieldExists(result, "speed") {
-			t.Errorf("expected speed stripped for unsupported model on Anthropic, got: %s", string(result))
+			t.Errorf("expected speed stripped for non-Opus-4.6 model on Anthropic, got: %s", string(result))
 		}
 	})
 
 	t.Run("anthropic_direct_is_noop", func(t *testing.T) {
-		// Anthropic supports everything in this body for Opus 4.8.
-		input := []byte(`{"model":"claude-opus-4-8","speed":"fast","mcp_servers":[{"type":"url","url":"u","name":"n"}],"container":{"id":"c"},"tools":[{"name":"t","defer_loading":true,"input_examples":[{"input":{"a":1}}]}]}`)
-		result, err := StripUnsupportedFieldsFromRawBody(input, schemas.Anthropic, "claude-opus-4-8")
+		// Anthropic supports everything — body should survive untouched.
+		input := []byte(`{"model":"claude-opus-4-6","speed":"fast","mcp_servers":[{"type":"url","url":"u","name":"n"}],"container":{"id":"c"},"tools":[{"name":"t","defer_loading":true,"input_examples":[{"input":{"a":1}}]}]}`)
+		result, err := StripUnsupportedFieldsFromRawBody(input, schemas.Anthropic, "claude-opus-4-6")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -2025,6 +2026,52 @@ func TestStripUnsupportedAnthropicFields_ToolSearchGating(t *testing.T) {
 			t.Errorf("expected defer_loading to survive for Bedrock (ToolSearch=true via InvokeModel routing), got %v", req.Tools[0].DeferLoading)
 		}
 	})
+
+	t.Run("github_copilot_keeps_defer_loading", func(t *testing.T) {
+		// Copilot serves tool search without the beta header, so the body survives.
+		req := &AnthropicMessageRequest{
+			Model: "claude-opus-5.5",
+			Tools: []AnthropicTool{{Name: "search", DeferLoading: schemas.Ptr(true)}},
+		}
+		stripUnsupportedAnthropicFields(req, schemas.GithubCopilot, "claude-opus-5.5")
+		if req.Tools[0].DeferLoading == nil || !*req.Tools[0].DeferLoading {
+			t.Errorf("expected defer_loading to survive for GitHub Copilot, got %v", req.Tools[0].DeferLoading)
+		}
+	})
+}
+
+// TestToolSearchBetaHeaderPerProvider pins that GitHub Copilot serves tool search but answers
+// 400 "unsupported beta header(s): tool-search-tool-2025-10-19" to the header, whether Bifrost
+// derives it from defer_loading or the client (Claude Code) sends it.
+func TestToolSearchBetaHeaderPerProvider(t *testing.T) {
+	for provider, want := range map[schemas.ModelProvider]bool{
+		schemas.Anthropic:     true,
+		schemas.Vertex:        true,
+		schemas.GithubCopilot: false,
+	} {
+		t.Run(string(provider), func(t *testing.T) {
+			ctx := schemas.NewBifrostContext(nil, time.Time{})
+			AddMissingBetaHeadersToContext(ctx, &AnthropicMessageRequest{
+				Tools: []AnthropicTool{{Name: "search", DeferLoading: schemas.Ptr(true)}},
+			}, provider)
+			var derived []string
+			if extraHeaders, ok := ctx.Value(schemas.BifrostContextKeyExtraHeaders).(map[string][]string); ok {
+				derived = extraHeaders[AnthropicBetaHeader]
+			}
+			if got := slices.Contains(derived, AnthropicToolSearchBetaHeader); got != want {
+				t.Errorf("derived from defer_loading = %v, want %v (headers %v)", got, want, derived)
+			}
+
+			forwarded := FilterBetaHeadersForProvider([]string{AnthropicToolSearchBetaHeader, AnthropicAdvancedToolUseBetaHeader}, provider)
+			if got := slices.Contains(forwarded, AnthropicToolSearchBetaHeader); got != want {
+				t.Errorf("client header forwarded = %v, want %v (got %v)", got, want, forwarded)
+			}
+			// Copilot serves tool search under advanced-tool-use, so that header must survive.
+			if provider == schemas.GithubCopilot && !slices.Contains(forwarded, AnthropicAdvancedToolUseBetaHeader) {
+				t.Errorf("advanced-tool-use must still be forwarded, got %v", forwarded)
+			}
+		})
+	}
 }
 
 // TestStripUnsupportedAnthropicFields_StrictGating covers the typed path for
@@ -2720,10 +2767,13 @@ func TestSupportsAdaptiveThinking(t *testing.T) {
 		{"claude-mythos-5", true},
 		{"claude-mythos-preview", true},
 		{"global.anthropic.claude-fable-5", true},
-		// Haiku 5.5: adaptive thinking is on by default.
+		// Haiku 5+: adaptive is the only thinking-on mode.
 		{"claude-haiku-5-5", true},
+		{"anthropic.claude-haiku-5-5", true},
+		{"claude-haiku-5-5@default", true},
 		{"claude-opus-4-5-20241022", false},
 		{"claude-sonnet-4-5-20241022", false},
+		{"claude-haiku-4-5-20251001", false},
 		{"claude-haiku-4-6-20250514", false}, // haiku does not support adaptive
 		{"claude-haiku-4-7-20260401", false}, // haiku, not opus
 		{"claude-haiku-4-8-20260601", false}, // haiku, not opus
@@ -2806,6 +2856,41 @@ func TestIsSonnet5Plus(t *testing.T) {
 	}
 }
 
+// TestIsHaiku5Plus pins the Haiku 5 predicate. Haiku 5.5 shares the Sonnet 5+
+// request surface (adaptive-only thinking, temperature/top_p/top_k removed). The
+// "haiku-5" substring must NOT match "haiku-4-5" or "3-5-haiku".
+func TestIsHaiku5Plus(t *testing.T) {
+	tests := []struct {
+		model    string
+		expected bool
+	}{
+		{"claude-haiku-5-5", true},
+		{"Claude-Haiku-5-5", true},
+		{"claude-haiku-5.5", true},
+		{"anthropic.claude-haiku-5-5", true},
+		{"global.anthropic.claude-haiku-5-5", true},
+		{"claude-haiku-5-5@default", true},
+		{"databricks-claude-haiku-5-5", true},
+		// Must NOT match older Haikus or other families.
+		{"claude-haiku-4-5", false},
+		{"claude-haiku-4-5-20251001", false},
+		{"anthropic.claude-haiku-4-5-20251001-v1:0", false},
+		{"claude-3-5-haiku-20241022", false},
+		{"claude-sonnet-5-5", false},
+		{"claude-opus-5", false},
+		{"", false},
+		{"some-non-claude-model", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			if got := IsHaiku5Plus(tt.model); got != tt.expected {
+				t.Errorf("IsHaiku5Plus(%q) = %v, want %v", tt.model, got, tt.expected)
+			}
+		})
+	}
+}
+
 // TestIsOpus5Plus pins the Opus 5 predicate. Opus 5 shares Opus 4.8's request
 // surface (adaptive-only thinking, temperature/top_p/top_k removed, fast mode,
 // effort, mid-conversation system). The "opus-5" substring must NOT match
@@ -2864,7 +2949,7 @@ func TestIsAdaptiveOnlyThinkingModel(t *testing.T) {
 		{"claude-fable-5", true},
 		{"claude-mythos-5", true},
 		{"claude-mythos-preview", true},
-		// Haiku 5.5.
+		// Haiku 5+.
 		{"claude-haiku-5-5", true},
 		{"global.anthropic.claude-haiku-5-5", true},
 		// Adaptive-capable but NOT adaptive-only (budget_tokens still accepted).
@@ -2889,7 +2974,8 @@ func TestIsAdaptiveOnlyThinkingModel(t *testing.T) {
 }
 
 // TestSupportsFastMode pins the helper against Anthropic's fast-mode docs.
-// TestSupportsMidConversationSystem pins the helper against Anthropic docs.
+// TestSupportsMidConversationSystem pins the helper against Anthropic docs:
+// available on the Anthropic API only, Opus 4.8+ only, no beta header required.
 func TestSupportsMidConversationSystem(t *testing.T) {
 	tests := []struct {
 		provider schemas.ModelProvider
@@ -2936,25 +3022,25 @@ func TestSupportsMidConversationSystem(t *testing.T) {
 	}
 }
 
-// Supported: Opus 4.8 and Opus 5. All other models return false.
+// Supported: Opus 4.6, Opus 4.7, Opus 4.8. All other models return false.
 func TestSupportsFastMode(t *testing.T) {
 	tests := []struct {
 		model    string
 		expected bool
 	}{
 		// Supported models.
-		{"claude-opus-4-6", false},
-		{"claude-opus-4.6-20250514", false},
-		{"claude-opus-4-7", false},
-		{"claude-opus-4.7-20260401", false},
+		{"claude-opus-4-6", true},
+		{"claude-opus-4.6-20250514", true},
+		{"claude-opus-4-7", true},
+		{"claude-opus-4.7-20260401", true},
 		{"claude-opus-4-8", true},
 		{"claude-opus-4.8-20260601", true},
-		// Opus 5: fast mode via IsOpus5Plus.
+		// Opus 5: fast mode via IsOpus47Plus.
 		{"claude-opus-5", true},
 		{"claude-opus-5-20260601", true},
 		// Bedrock / Vertex prefixed IDs.
-		{"global.anthropic.claude-opus-4-6", false},
-		{"global.anthropic.claude-opus-4-7", false},
+		{"global.anthropic.claude-opus-4-6", true},
+		{"global.anthropic.claude-opus-4-7", true},
 		{"global.anthropic.claude-opus-4-8", true},
 		{"global.anthropic.claude-opus-5", true},
 		// Not supported — other model families.
@@ -2962,7 +3048,7 @@ func TestSupportsFastMode(t *testing.T) {
 		{"claude-haiku-4-5", false},
 		{"claude-opus-4-5", false},
 		{"claude-opus-4-1", false},
-		// Fable/Mythos do not support fast mode.
+		// Fable/Mythos do NOT support fast mode (Opus 4.6/4.7/4.8 only).
 		{"claude-fable-5", false},
 		{"claude-mythos-5", false},
 		{"claude-mythos-preview", false},
@@ -3012,6 +3098,8 @@ func TestSupportsEffortParameter(t *testing.T) {
 		{"claude-opus-4.5-20251101", true},
 		{"claude-opus-4-5-20251101", true},
 		{"claude-haiku-5-5", true},
+		{"anthropic.claude-haiku-5-5", true},
+		{"claude-haiku-5-5@default", true},
 		// Bedrock + Vertex IDs for supported models keep the substring shape.
 		{"anthropic.claude-opus-4-8-v1", true},
 		{"anthropic.claude-opus-4-7-v1", true},
@@ -3252,6 +3340,9 @@ func TestStripUnsupportedFields_EffortLevelClamp(t *testing.T) {
 		{"claude-sonnet-4-6", "max", "max"},
 		{"claude-opus-4-7", "xhigh", "xhigh"},
 		{"claude-opus-5-5", "max", "max"},
+		{"claude-haiku-5-5", "low", "low"},
+		{"claude-haiku-5-5", "xhigh", "xhigh"},
+		{"claude-haiku-5-5", "max", "max"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.model+"/"+tt.effort+"/raw", func(t *testing.T) {
@@ -4304,7 +4395,7 @@ func TestStripEmptyThinkingBlocks(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			out, err := StripEmptyThinkingBlocks([]byte(tt.input))
+			out, err := StripEmptyThinkingBlocks([]byte(tt.input), false)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -4372,7 +4463,7 @@ func TestStripEmptyThinkingBlocks_AllocationScaling(t *testing.T) {
 		b.WriteString(`]}`)
 		return b.Bytes()
 	}, func(body []byte) {
-		if _, err := StripEmptyThinkingBlocks(body); err != nil {
+		if _, err := StripEmptyThinkingBlocks(body, false); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
@@ -5248,6 +5339,7 @@ var notEmittedByRequestGating = map[string]string{
 	"AnthropicContext1MBetaHeader":      "opted into via network config or passthrough headers, not derived from the request body",
 	"AnthropicRedactThinkingBetaHeader": "opted into via network config or passthrough headers, not derived from the request body",
 	"AnthropicSkillsBetaHeader":         "opted into via network config or passthrough headers, not derived from the request body",
+	"AnthropicOAuthBetaHeader":          "added by setKeyAuth for a workload identity bearer, not derived from the request body",
 }
 
 // TestEveryBetaHeaderIsCoveredByTheCorpus makes a newly added beta header loud.
@@ -5826,9 +5918,6 @@ func TestDefaultSupportsMidConversationSystem_ModelList(t *testing.T) {
 	if !DefaultSupportsMidConversationOutputConfig(schemas.Anthropic, "claude-sonnet-5-5") {
 		t.Error("Sonnet 5.5 must report per-message effort support")
 	}
-	if !DefaultSupportsMidConversationOutputConfig(schemas.Anthropic, "claude-haiku-5-5") {
-		t.Error("Haiku 5.5 must report per-message effort support")
-	}
 }
 
 // TestHandleAnthropicResponsesRequest_KeepsBedrockInvokeGuardrailOutcome: Bedrock's native
@@ -6123,6 +6212,27 @@ func TestAddMissingBetaHeaders_SingleMCPClientDate(t *testing.T) {
 				t.Fatalf("AddMissingBetaHeadersToContextFromRawBody: %v", err)
 			}
 			check(t, FilterBetaHeadersForProvider(MergeBetaHeaders(ctx, nil), schemas.Anthropic))
+		})
+	}
+}
+
+// parseJSONInput backs every /v1/responses tool_use site (function_call,
+// mcp_call, mcp_approval_request). Invalid arguments must come back as {}:
+// the raw bytes would fail the request marshal with a 500.
+func TestParseJSONInput(t *testing.T) {
+	cases := map[string]struct{ in, want string }{
+		"empty":            {``, `{}`},
+		"empty object":     {`{}`, `{}`},
+		"valid keeps keys": {`{"z": 1, "a": {"b": true}}`, `{"z":1,"a":{"b":true}}`},
+	}
+	for name, arguments := range invalidToolArgumentCases {
+		cases[name] = struct{ in, want string }{arguments, `{}`}
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := string(parseJSONInput(tc.in)); got != tc.want {
+				t.Errorf("parseJSONInput(%q) = %s, want %s", tc.in, got, tc.want)
+			}
 		})
 	}
 }

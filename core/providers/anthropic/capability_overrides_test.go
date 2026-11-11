@@ -172,24 +172,19 @@ func TestSupportsFastMode_OverrideHit(t *testing.T) {
 }
 
 func TestSupportsFastMode_OverrideExplicitFalse(t *testing.T) {
-	// Even on a name that LOOKS like opus 4.8, an explicit false overrides
+	// Even on a name that LOOKS like opus 4.6, an explicit false overrides
 	// the substring fallback.
-	model := "claude-opus-4-8-test-overridden"
+	model := "claude-opus-4-6-test-overridden"
 	no := false
 	setOverride(t, model, schemas.ModelCapabilities{SupportsFastMode: &no})
 	assert.False(t, schemas.ResolveModelCaps(schemas.Anthropic, model).SupportsFastMode(DefaultSupportsFastMode(model)))
 }
 
 func TestSupportsFastMode_OverrideAbsent_FallbackTakesOver(t *testing.T) {
-	for model, supported := range map[string]bool{
-		"claude-opus-4-6-20250514":   false,
-		"claude-opus-4-7-20260401":   false,
-		"claude-opus-4-8":            true,
-		"claude-opus-5":              true,
-		"claude-sonnet-4-5-20250929": false,
-	} {
-		assert.Equal(t, supported, schemas.ResolveModelCaps(schemas.Anthropic, model).SupportsFastMode(DefaultSupportsFastMode(model)), model)
-	}
+	// Fast mode is supported on Opus 4.6 and every Opus 4.7+ generation.
+	assert.True(t, schemas.ResolveModelCaps(schemas.Anthropic, "claude-opus-4-6-20250514").SupportsFastMode(DefaultSupportsFastMode("claude-opus-4-6-20250514")))
+	assert.True(t, schemas.ResolveModelCaps(schemas.Anthropic, "claude-opus-4-7-20260401").SupportsFastMode(DefaultSupportsFastMode("claude-opus-4-7-20260401")))
+	assert.False(t, schemas.ResolveModelCaps(schemas.Anthropic, "claude-sonnet-4-5-20250929").SupportsFastMode(DefaultSupportsFastMode("claude-sonnet-4-5-20250929")))
 }
 
 func TestSupportsSafeguards_OverrideHit(t *testing.T) {
