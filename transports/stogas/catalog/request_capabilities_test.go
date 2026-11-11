@@ -104,6 +104,17 @@ func TestNeutralControlsDoNotRequireCatalogCapabilities(t *testing.T) {
 	}
 }
 
+func TestNamespaceToolsRequireFunctionCalling(t *testing.T) {
+	raw, err := DecodeRequestBody([]byte(`{"input":"hello","tools":[{"type":"namespace","name":"crm","description":"CRM tools.","tools":[{"type":"function","name":"find"}]}]}`), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	required, err := requestCapabilities(raw, RouteResponses, Capabilities{})
+	if err != nil || !required.FunctionCalling {
+		t.Fatalf("required %+v, %v", required, err)
+	}
+}
+
 func TestCapabilityProjectionSkipsOnlyUniversallySupportedFeatures(t *testing.T) {
 	for _, route := range []Route{RouteChat, RouteResponses} {
 		body := `{"stream":true,"parallel_tool_calls":true,"tool_choice":"required","tools":[{"type":"function"}],"response_format":{"type":"json_schema"},"text":{"format":{"type":"json_schema"}},"messages":[{"role":"system","content":"hello"}],"input":[{"role":"developer","content":"hello"}]}`

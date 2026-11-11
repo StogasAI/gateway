@@ -764,6 +764,52 @@ func TestProviderResponsesToolCallsMustMatchAuthorizedRequest(t *testing.T) {
 	}
 }
 
+// A call to a tool in a namespace must name both, since tools in different namespaces can share a
+// name. The namespace functions holds top-level tools.
+func TestProviderNamespaceToolCallsMustNameTheirNamespace(t *testing.T) {
+	request := `{"model":"provider:openai gpt-5.5","input":"hi","tools":[` +
+		`{"type":"function","name":"lookup"},` +
+		`{"type":"namespace","name":"crm","description":"CRM tools.","tools":[{"type":"function","name":"find"},{"type":"custom","name":"note"}]}]}`
+	call := func(itemType schemas.ResponsesMessageType, namespace, name string) *schemas.BifrostResponsesResponse {
+		status := schemas.ResponsesResponseStatusCompleted
+		tool := &schemas.ResponsesToolMessage{CallID: schemas.Ptr("call_1"), Name: schemas.Ptr(name)}
+		if namespace != "" {
+			tool.Namespace = schemas.Ptr(namespace)
+		}
+		if itemType == schemas.ResponsesMessageTypeCustomToolCall {
+			tool.ResponsesCustomToolCall = &schemas.ResponsesCustomToolCall{Input: "Call back."}
+		} else {
+			tool.Arguments = schemas.Ptr(`{}`)
+		}
+		return &schemas.BifrostResponsesResponse{
+			ID: schemas.Ptr("resp_tool"), Object: "response", Status: &status,
+			Output: []schemas.ResponsesMessage{{ID: schemas.Ptr("fc_1"), Type: &itemType, Status: &status, ResponsesToolMessage: tool}},
+		}
+	}
+	function, custom := schemas.ResponsesMessageTypeFunctionCall, schemas.ResponsesMessageTypeCustomToolCall
+	for _, test := range []struct {
+		name     string
+		response *schemas.BifrostResponsesResponse
+		accepted bool
+	}{
+		{"namespace function", call(function, "crm", "find"), true},
+		{"namespace custom tool", call(custom, "crm", "note"), true},
+		{"top-level function", call(function, "", "lookup"), true},
+		{"top-level function in the namespace functions", call(function, "functions", "lookup"), true},
+		{"namespace function without its namespace", call(function, "", "find"), false},
+		{"another namespace", call(function, "erp", "find"), false},
+		{"top-level function in a namespace", call(function, "crm", "lookup"), false},
+		{"function called as a custom tool", call(custom, "crm", "find"), false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateProviderResponsesResponse(resolvedResponseValidationState(t, request), test.response)
+			if test.accepted && err != nil || !test.accepted && !errors.Is(err, ErrProviderResponseMalformed) {
+				t.Fatalf("error = %v, accepted %v", err, test.accepted)
+			}
+		})
+	}
+}
+
 func TestProviderHostedToolPayloadsUseExactSafeUnions(t *testing.T) {
 	query := "current weather"
 	pageURL := "https://example.com/weather"

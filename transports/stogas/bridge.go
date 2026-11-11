@@ -1,6 +1,7 @@
 package stogas
 
 import (
+	providerutils "github.com/maximhq/bifrost/core/providers/utils"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
@@ -14,6 +15,9 @@ import (
 //
 // Bifrost names why a reply converted to Responses ended in its stop reason too, which a Responses
 // reply carries only from Anthropic's interface. Its status and incomplete details say the same.
+//
+// The translation to Chat Completions flattens namespace tools into function tools, so a converted
+// call to one gets its namespace and name back before the checks.
 
 // convertedChecks is the state on which the checks of the client's interface check a bridged
 // request's converted reply.
@@ -48,6 +52,7 @@ func BridgedResponse(state *State, response *schemas.BifrostResponse) (*schemas.
 		return nil, ErrProviderResponseMalformed
 	}
 	converted.StopReason = nil
+	providerutils.RestoreResponsesNamespaceToolCalls(state.Resolution.NamespaceToolAliases(), &schemas.BifrostResponse{ResponsesResponse: converted})
 	if err := validateProviderResponsesResponse(convertedChecks(state), converted); err != nil {
 		return nil, err
 	}
@@ -157,6 +162,7 @@ func (s *BridgedStream) responsesEvents(chunk *schemas.BifrostChatResponse) ([]*
 	}
 	converted := make([]*schemas.BifrostStreamChunk, len(events))
 	for i, event := range events {
+		providerutils.RestoreResponsesNamespaceToolCalls(s.state.Resolution.NamespaceToolAliases(), &schemas.BifrostResponse{ResponsesStreamResponse: event})
 		if err := validateProviderResponsesStream(s.checks, event); err != nil {
 			return nil, err
 		}

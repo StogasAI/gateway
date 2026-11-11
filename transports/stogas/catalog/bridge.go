@@ -11,6 +11,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	openaiprovider "github.com/maximhq/bifrost/core/providers/openai"
+	providerutils "github.com/maximhq/bifrost/core/providers/utils"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/rawjson"
 )
@@ -193,6 +194,11 @@ func (r *ResolvedRequest) translateToChat() error {
 	if err := conversionGapError(responses.ChatCompletionsGap(), "Chat Completions"); err != nil {
 		return err
 	}
+	responses, err := FlattenNamespaces(nil, responses)
+	if err != nil {
+		return err
+	}
+	r.namespaceAliases = responses.NamespaceToolAliases
 	converted := responses.ToChatRequest()
 	fields, err := chatWireFields(converted, r.responses.Stream, chatReasoning(r.responses.Reasoning), r.pricing.RawBody)
 	if err != nil {
@@ -218,6 +224,50 @@ func (r *ResolvedRequest) translateToChat() error {
 	}
 	r.chat, r.responses, r.wireBody = request, nil, fields
 	return nil
+}
+
+// UnwrapDefaultNamespace gives a Responses request the tools of its namespace functions as top-level
+// tools, which is how OpenAI's models call them.
+func UnwrapDefaultNamespace(request *schemas.BifrostResponsesRequest) (*schemas.BifrostResponsesRequest, error) {
+	request, bifrostErr := providerutils.UnwrapDefaultNamespaceTools(request)
+	return request, namespaceToolsError(bifrostErr)
+}
+
+// FlattenNamespaces gives a Responses request the tools of an interface without namespaces, as
+// core's flattening does: each function in a namespace becomes a top-level function named
+// <namespace>__<name>, or a hash and the name when that is too long for the interface, with the
+// namespace's description before its own, and an input call to it takes that name. The tools of the
+// namespace functions, in which OpenAI's models call top-level tools, keep their names. The request
+// that comes back maps each new name to the namespace and name that a call returns with
+// (NamespaceToolAliases). ctx may be nil, which gives the 64-character name limit of OpenAI's
+// interfaces.
+func FlattenNamespaces(ctx *schemas.BifrostContext, request *schemas.BifrostResponsesRequest) (*schemas.BifrostResponsesRequest, error) {
+	request, err := UnwrapDefaultNamespace(request)
+	if err != nil {
+		return nil, err
+	}
+	request, bifrostErr := providerutils.FlattenResponsesNamespaceTools(ctx, request)
+	return request, namespaceToolsError(bifrostErr)
+}
+
+func namespaceToolsError(bifrostErr *schemas.BifrostError) error {
+	if bifrostErr == nil {
+		return nil
+	}
+	message := "tools cannot be flattened"
+	if bifrostErr.Error != nil {
+		message = bifrostErr.Error.Message
+	}
+	return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Param: "tools", Message: message}
+}
+
+// NamespaceToolAliases maps each name that a bridged request's flattened namespace tools take on
+// Chat Completions to the namespace and name that a call to it returns with.
+func (r *ResolvedRequest) NamespaceToolAliases() map[string]schemas.NamespaceToolAlias {
+	if r == nil {
+		return nil
+	}
+	return r.namespaceAliases
 }
 
 // translateToResponses gives a Chat Completions request the Responses body of a deployment that

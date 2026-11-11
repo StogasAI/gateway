@@ -369,5 +369,5 @@ func validProviderFinishReason(state *State, value string) bool {
 
 func providerChatToolNameAllowed(state *State, name string) bool {
 	return state != nil && state.Resolution != nil && state.Resolution.WireView().Route == catalog.RouteChat &&
-		state.providerTools().names[providerToolName{schemas.ResponsesToolTypeFunction, name}]
+		state.providerTools().names[providerToolName{kind: schemas.ResponsesToolTypeFunction, name: name}]
 }

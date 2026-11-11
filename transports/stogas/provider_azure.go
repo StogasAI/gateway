@@ -69,13 +69,13 @@ func (AzureAdapter) ValidateRawResponsesToolType(state *State, tool map[string]j
 		return (AnthropicAdapter{}).ValidateRawResponsesToolType(state, tool)
 	}
 	switch toolType := catalog.CanonicalResponsesToolType(rawString(tool["type"])); toolType {
-	case schemas.ResponsesToolTypeFunction, schemas.ResponsesToolTypeCustom:
+	case schemas.ResponsesToolTypeFunction, schemas.ResponsesToolTypeCustom, schemas.ResponsesToolTypeNamespace:
 		return nil
 	default:
 		// The catalog offers no hosted tool on Azure's own routes.
 		if err := hostedToolOffered(state, string(toolType)); err != nil {
 			return err
 		}
-		return invalidRequest("Only function and custom tools are supported for Azure deployments")
+		return invalidRequest("Only function, custom, and namespace tools are supported for Azure deployments")
 	}
 }

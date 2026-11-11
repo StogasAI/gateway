@@ -46,6 +46,22 @@ func TestRequestInputHoldStatsIncludesToolArgumentsAndAnthropicControls(t *testi
 	}
 }
 
+// An interface without namespaces gets each tool of a namespace with the namespace's name and
+// description, so the hold counts them for each tool.
+func TestInputHoldCountsEachToolOfANamespace(t *testing.T) {
+	description := strings.Repeat("Customer records. ", 64)
+	raw, err := DecodeRequestBody([]byte(`{"input":"hi","tools":[{"type":"namespace","name":"crm","description":"`+description+`",`+
+		`"tools":[{"type":"function","name":"find","description":"Find a customer."},{"type":"custom","name":"note"}]}]}`), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stats := requestInputHoldStats(raw, RouteResponses)
+	fields := strings.Join(stats.TextFields, "\n")
+	if stats.ToolDefinitions != 2 || strings.Count(fields, description) != 2 || !strings.Contains(fields, "Find a customer.") || !strings.Contains(fields, `"note"`) {
+		t.Fatalf("tools %d, fields %q", stats.ToolDefinitions, fields)
+	}
+}
+
 func TestInputHoldSupportsTwoMillionTokenCatalogLimit(t *testing.T) {
 	text := strings.Repeat("\ufdd0", 1_000_000)
 	body := []byte(fmt.Sprintf(`{"messages":[{"role":"user","content":%q}]}`, text))

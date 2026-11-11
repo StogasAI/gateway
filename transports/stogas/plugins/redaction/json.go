@@ -614,7 +614,7 @@ func classifyJSONKey(encoded []byte, escaped bool) (jsonKeyKind, error) {
 		return jsonKeyMCPSetting, nil
 	case "id", "item_id", "call_id", "tool_call_id", "file_id", "container_id", "conversation_id",
 		"request_id", "session_id", "previous_response_id", "prompt_cache_key", "prompt_cache_isolation_key",
-		"model", "name", "role", "server_label", "approval_request_id":
+		"model", "name", "namespace", "role", "server_label", "approval_request_id":
 		return jsonKeySkipScalar, nil
 	default:
 		return jsonKeyOther, nil

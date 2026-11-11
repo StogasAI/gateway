@@ -150,6 +150,9 @@ func TestBridgedRequestsRefuseWhatChatCompletionsLacks(t *testing.T) {
 		{"hosted tool", `"tools":[{"type":"web_search"}]`, "web_search"},
 		{"reasoning summary", `"reasoning":{"summary":"detailed"}`, "reasoning.summary: Chat Completions deployments do not support reasoning summaries"},
 		{"file URL", `"input":[{"role":"user","content":[{"type":"input_file","file_url":"https://example.com/a.pdf"}]}]`, "file URLs are not supported"},
+		{"custom tool in a namespace", `"tools":[{"type":"namespace","name":"crm","description":"CRM tools.","tools":[{"type":"custom","name":"note"}]}]`, "custom tools"},
+		{"empty namespace", `"tools":[{"type":"namespace","name":"crm","description":"CRM tools.","tools":[]}]`, "tools[0].tools must be a non-empty array"},
+		{"call to an undeclared namespace", `"input":[{"type":"function_call","call_id":"call_1","namespace":"crm","name":"find","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":"none"}]`, "calls to namespace tools that tools does not list"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			body := `{"model":"chutes-glm-5.2","input":"hi",` + test.body + `}`
@@ -161,6 +164,65 @@ func TestBridgedRequestsRefuseWhatChatCompletionsLacks(t *testing.T) {
 				t.Fatalf("error = %v, want %q", err, test.want)
 			}
 		})
+	}
+}
+
+const bridgedNamespaceTools = `"tools":[{"type":"namespace","name":"crm","description":"CRM tools.","tools":[` +
+	`{"type":"function","name":"find","description":"Find a customer.","parameters":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}}]}]`
+
+// Chat Completions has no namespaces, so the tools of a namespace reach a bridged deployment as
+// function tools with flat names, which a call in the input takes too, and a call in the reply
+// comes back with its namespace and name.
+func TestBridgedNamespaceToolsComeBackNamed(t *testing.T) {
+	state := bridgedState(t, `{"model":"chutes-glm-5.2","input":[`+
+		`{"type":"function_call","call_id":"call_0","namespace":"crm","name":"find","arguments":"{\"id\":\"a0\"}"},`+
+		`{"type":"function_call_output","call_id":"call_0","output":"none"},{"role":"user","content":"Find a1."}],`+bridgedNamespaceTools+`}`)
+	var tools []struct {
+		Function struct{ Name, Description string } `json:"function"`
+	}
+	if err := json.Unmarshal(state.Resolution.WireView().RawBody()["tools"], &tools); err != nil {
+		t.Fatal(err)
+	}
+	messages := wireMessages(t, state)
+	if len(tools) != 1 || tools[0].Function.Name != "crm__find" || tools[0].Function.Description != "CRM tools.\n\nFind a customer." ||
+		!strings.Contains(string(messages[0]["tool_calls"]), `"name":"crm__find"`) {
+		t.Fatalf("tools %+v, messages %s", tools, messagesText(messages))
+	}
+	reply := ingestBridgedReply(t, state, bridgedChatReply(state, "tool_calls", &schemas.ChatMessage{
+		Role: schemas.ChatMessageRoleAssistant,
+		ChatAssistantMessage: &schemas.ChatAssistantMessage{ToolCalls: []schemas.ChatAssistantMessageToolCall{{
+			Type: schemas.Ptr("function"), ID: schemas.Ptr("call_1"),
+			Function: schemas.ChatAssistantMessageToolCallFunction{Name: schemas.Ptr("crm__find"), Arguments: `{"id":"a1"}`},
+		}}},
+	}))
+	if call := reply.Output[len(reply.Output)-1].ResponsesToolMessage; call == nil || *call.Name != "find" || call.Namespace == nil || *call.Namespace != "crm" {
+		t.Fatalf("output = %+v", reply.Output)
+	}
+
+	s := newBridgedStream(t, `{"model":"chutes-glm-5.2","input":"Find a1.","stream":true,`+bridgedNamespaceTools+`}`)
+	s.send(callDelta(0, "call_1", "crm__find", `{"id":"a1"}`), "", false)
+	s.send(schemas.ChatStreamResponseChoiceDelta{}, "tool_calls", true)
+	items := 0
+	for _, event := range s.events {
+		calls := []*schemas.ResponsesMessage{event.Item}
+		if event.Response != nil {
+			for index := range event.Response.Output {
+				calls = append(calls, &event.Response.Output[index])
+			}
+		}
+		for _, item := range calls {
+			if item == nil || item.ResponsesToolMessage == nil || item.ResponsesToolMessage.Name == nil {
+				continue
+			}
+			items++
+			if *item.ResponsesToolMessage.Name != "find" || item.ResponsesToolMessage.Namespace == nil || *item.ResponsesToolMessage.Namespace != "crm" {
+				t.Fatalf("%s carries %+v", event.Type, item.ResponsesToolMessage)
+			}
+		}
+	}
+	// The call is added, done, and in the completed response.
+	if items != 3 {
+		t.Fatalf("calls in the stream = %d, events %s", items, s.types())
 	}
 }
 

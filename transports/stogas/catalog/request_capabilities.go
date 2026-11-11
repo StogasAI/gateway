@@ -38,7 +38,8 @@ func requestCapabilities(raw map[string]json.RawMessage, route Route, shared Cap
 			return required, ErrInvalidJSON
 		}
 		for _, tool := range tools {
-			if tool.Type == "function" || tool.Type == "custom" {
+			// A namespace holds function and custom tools.
+			if tool.Type == "function" || tool.Type == "custom" || tool.Type == "namespace" {
 				required.FunctionCalling = true
 			}
 		}

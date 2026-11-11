@@ -591,7 +591,7 @@ func validateOpenAIGuardrails(req openAIAdapterContext) error {
 
 func openAIResponsesToolTypeSupported(rawType string) bool {
 	switch strings.TrimSpace(rawType) {
-	case "function", "custom", "mcp":
+	case "function", "custom", "namespace", "mcp":
 		return true
 	default:
 		return openAIWebSearchToolType(rawType)
@@ -616,10 +616,10 @@ func openAIUnsupportedResponsesToolMessage(rawType string) string {
 		return "computer tools are not supported by the current tool execution contract"
 	case normalized == "image_generation":
 		return "image_generation output and its pricing are not supported"
-	case normalized == "tool_search" || normalized == "namespace" || normalized == "memory":
+	case normalized == "tool_search" || normalized == "memory":
 		return rawType + " is not supported because it needs tool loading or provider-held state that we do not offer"
 	default:
-		return "Only function, custom, remote MCP, and priced hosted web search tools are supported"
+		return "Only function, custom, namespace, remote MCP, and priced hosted web search tools are supported"
 	}
 }
 
@@ -838,6 +838,7 @@ func validateTool(route openAIAdapterRoute, tool map[string]json.RawMessage) err
 		switch responsesTool.Type {
 		case schemas.ResponsesToolTypeFunction,
 			schemas.ResponsesToolTypeCustom,
+			schemas.ResponsesToolTypeNamespace,
 			schemas.ResponsesToolTypeWebSearch,
 			schemas.ResponsesToolTypeWebSearchPreview,
 			schemas.ResponsesToolTypeMCP:

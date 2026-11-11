@@ -166,7 +166,7 @@ func (s *State) checkChatOutputs(checker *outputChecker, checks *outputChecks) {
 	case string(schemas.BifrostFinishReasonToolCalls):
 		for index := range len(s.chatToolCalls) {
 			if call, ok := s.chatToolCalls[uint16(index)]; ok && call.arguments != nil {
-				checks.addToolCall(checker.toolCall(call.name, call.arguments.Bytes()))
+				checks.addToolCall(checker.toolCall("", call.name, call.arguments.Bytes()))
 			}
 		}
 	case string(schemas.BifrostFinishReasonStop):
@@ -246,7 +246,7 @@ func (s *State) checkResponsesOutputs(checker *outputChecker, checks *outputChec
 		case schemas.ResponsesMessageTypeFunctionCall:
 			toolCalls = true
 			if tool := item.ResponsesToolMessage; tool != nil && tool.Name != nil && tool.Arguments != nil {
-				checks.addToolCall(checker.toolCall(*tool.Name, []byte(*tool.Arguments)))
+				checks.addToolCall(checker.toolCall(providerCallNamespace(tool), *tool.Name, []byte(*tool.Arguments)))
 			}
 		case schemas.ResponsesMessageTypeCustomToolCall:
 			toolCalls = true
@@ -279,8 +279,8 @@ func (s *State) checkResponsesOutputs(checker *outputChecker, checks *outputChec
 // and charges all of its work to one budget.
 type outputChecker struct {
 	resolution *catalog.ResolvedRequest
-	parameters map[string]json.RawMessage
-	compiled   map[string]*checkedSchema
+	parameters map[checkedTool]json.RawMessage
+	compiled   map[checkedTool]*checkedSchema
 	budget     int
 	// step is what one subschema evaluation costs in the current validation.
 	step int
@@ -294,22 +294,30 @@ type checkedSchema struct {
 	skip   bool
 }
 
-func (c *outputChecker) toolCall(name string, arguments []byte) checkResult {
+// checkedTool names a function tool by its namespace, which is empty for a top-level tool, and its
+// name.
+type checkedTool struct {
+	namespace, name string
+}
+
+func (c *outputChecker) toolCall(namespace, name string, arguments []byte) checkResult {
 	if c.parameters == nil {
-		c.parameters = make(map[string]json.RawMessage)
+		c.parameters = make(map[checkedTool]json.RawMessage)
 		chat := c.resolution.Route == catalog.RouteChat
-		for _, tool := range c.resolution.RawTools() {
+		for _, entry := range catalog.ResponsesToolList(c.resolution.RawTools()) {
+			tool := entry.Tool
 			if rawString(tool["type"]) != "function" {
 				continue
 			}
 			if !chat {
-				c.parameters[rawString(tool["name"])] = tool["parameters"]
+				c.parameters[checkedTool{entry.Namespace, rawString(tool["name"])}] = tool["parameters"]
 			} else if function, ok := rawObject(tool["function"]); ok {
-				c.parameters[rawString(function["name"])] = function["parameters"]
+				c.parameters[checkedTool{name: rawString(function["name"])}] = function["parameters"]
 			}
 		}
 	}
-	parameters, declared := c.parameters[name]
+	key := checkedTool{namespace, name}
+	parameters, declared := c.parameters[key]
 	if !declared {
 		return checkInvalid
 	}
@@ -321,12 +329,12 @@ func (c *outputChecker) toolCall(name string, arguments []byte) checkResult {
 		return checkInvalid
 	}
 	if c.compiled == nil {
-		c.compiled = make(map[string]*checkedSchema)
+		c.compiled = make(map[checkedTool]*checkedSchema)
 	}
-	schema, ok := c.compiled[name]
+	schema, ok := c.compiled[key]
 	if !ok {
 		schema = c.compile(parameters)
-		c.compiled[name] = schema
+		c.compiled[key] = schema
 	}
 	return c.validate(schema, value, depth)
 }

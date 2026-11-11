@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	providerutils "github.com/maximhq/bifrost/core/providers/utils"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/rawjson"
 	"golang.org/x/net/idna"
@@ -60,9 +61,11 @@ func readRequestTools(route Route, raw map[string]json.RawMessage) requestTools 
 	}
 	switch route {
 	case RouteResponses:
-		declared := make([]string, 0, len(tools))
-		for _, tool := range tools {
-			if kind := rawStringValue(tool["type"]); kind != "" {
+		// A tool in a namespace counts by its own name.
+		list := ResponsesToolList(tools)
+		declared := make([]string, 0, len(list))
+		for _, entry := range list {
+			if kind := rawStringValue(entry.Tool["type"]); kind != "" {
 				declared = append(declared, kind)
 			}
 		}
@@ -72,13 +75,13 @@ func readRequestTools(route Route, raw map[string]json.RawMessage) requestTools 
 		for _, kind := range callable {
 			types[CanonicalResponsesToolType(kind)] = true
 		}
-		for _, tool := range tools {
-			switch kind := CanonicalResponsesToolType(rawStringValue(tool["type"])); {
+		for _, entry := range list {
+			switch kind := CanonicalResponsesToolType(rawStringValue(entry.Tool["type"])); {
 			case !types[kind]:
 			case kind == schemas.ResponsesToolTypeFunction || kind == schemas.ResponsesToolTypeCustom:
-				facts.clientTools = append(facts.clientTools, rawStringValue(tool["name"]))
+				facts.clientTools = append(facts.clientTools, rawStringValue(entry.Tool["name"]))
 			case kind == schemas.ResponsesToolTypeMCP:
-				facts.addMCPServer(tool)
+				facts.addMCPServer(entry.Tool)
 			}
 		}
 	case RouteChat:
@@ -101,6 +104,37 @@ func readRequestTools(route Route, raw map[string]json.RawMessage) requestTools 
 	facts.mcpServers = sortedNames(facts.mcpServers)
 	facts.mcpTools = sortedNames(facts.mcpTools)
 	return result
+}
+
+// NamespacedTool is a tool that a Responses request declares, at the top level or in a namespace.
+type NamespacedTool struct {
+	// Namespace names the namespace that holds the tool. It is empty for a top-level tool and for a
+	// tool in the namespace functions, in which OpenAI's models call top-level tools.
+	Namespace string
+	Tool      map[string]json.RawMessage
+}
+
+// ResponsesToolList lists a Responses request's tools with the tools of each namespace in its
+// place, which are the tools that the model calls.
+func ResponsesToolList(tools []map[string]json.RawMessage) []NamespacedTool {
+	list := make([]NamespacedTool, 0, len(tools))
+	for _, tool := range tools {
+		if CanonicalResponsesToolType(rawStringValue(tool["type"])) != schemas.ResponsesToolTypeNamespace {
+			list = append(list, NamespacedTool{Tool: tool})
+			continue
+		}
+		namespace := rawStringValue(tool["name"])
+		if namespace == providerutils.DefaultToolNamespace {
+			namespace = ""
+		}
+		members, _ := rawjson.Array(tool["tools"])
+		for _, raw := range members {
+			if member, err := rawjson.Object(raw); err == nil {
+				list = append(list, NamespacedTool{Namespace: namespace, Tool: member})
+			}
+		}
+	}
+	return list
 }
 
 // addMCPServer adds an MCP tool's servers and the tools that it allows on them.

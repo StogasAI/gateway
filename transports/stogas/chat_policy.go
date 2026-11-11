@@ -249,9 +249,9 @@ func validateStructuredOutputDefinitionMap(definition map[string]json.RawMessage
 	if !onlyRawKeysOptional(definition, "name", "description", "schema", "strict") {
 		return invalidRequest(path + " must contain only name, description, schema, and strict")
 	}
-	name, ok := rawStringValue(definition["name"])
-	if !ok || !validClientToolName(name) {
-		return invalidRequest(path + ".name must contain 1 to 64 letters, digits, underscores, or hyphens")
+	name, _ := rawStringValue(definition["name"])
+	if err := validateToolName(name, path+".name", maxClientToolName); err != nil {
+		return err
 	}
 	if description, exists := definition["description"]; exists {
 		if _, ok := rawStringValue(description); !ok {
@@ -816,8 +816,8 @@ func validateChatToolCalls(state *State, raw json.RawMessage, path string, valid
 		if err != nil {
 			return err
 		}
-		if !validClientToolName(name) {
-			return invalidRequest(callPath + ".function.name must contain 1 to 64 letters, digits, underscores, or hyphens")
+		if err := validateToolName(name, callPath+".function.name", maxClientToolName); err != nil {
+			return err
 		}
 		arguments, err := requiredInputString(function, "arguments", callPath+".function", true)
 		if err != nil {
@@ -1122,8 +1122,8 @@ func validateChatTools(raw json.RawMessage) ([]chatToolRef, error) {
 			if err != nil {
 				return nil, err
 			}
-			if !validClientToolName(name) {
-				return nil, invalidRequest(path + ".function.name must contain 1 to 64 letters, digits, underscores, or hyphens")
+			if err := validateToolName(name, path+".function.name", maxClientToolName); err != nil {
+				return nil, err
 			}
 			if seenNames[name] {
 				return nil, invalidRequest(path + ".function.name duplicates another tool")
@@ -1154,8 +1154,28 @@ func validateChatTools(raw json.RawMessage) ([]chatToolRef, error) {
 	return refs, nil
 }
 
+const (
+	// maxClientToolName is the longest top-level tool name that every provider takes.
+	maxClientToolName = 64
+	// maxNamespacedToolName is the longest name that OpenAI takes for a tool in a namespace.
+	maxNamespacedToolName = 128
+)
+
+// validateToolName refuses a tool name that is empty, longer than maxLength, or holds a character
+// other than a letter, digit, underscore, or hyphen.
+func validateToolName(name, path string, maxLength int) error {
+	if !validToolName(name, maxLength) {
+		return invalidRequest(fmt.Sprintf("%s must contain 1 to %d letters, digits, underscores, or hyphens", path, maxLength))
+	}
+	return nil
+}
+
 func validClientToolName(name string) bool {
-	if len(name) == 0 || len(name) > 64 {
+	return validToolName(name, maxClientToolName)
+}
+
+func validToolName(name string, maxLength int) bool {
+	if len(name) == 0 || len(name) > maxLength {
 		return false
 	}
 	for index := 0; index < len(name); index++ {

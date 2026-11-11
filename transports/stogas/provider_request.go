@@ -78,12 +78,26 @@ func PrepareProviderRequest(ctx *schemas.BifrostContext, state *State, request *
 		}
 		sanitizeResponsesProviderFields(ctx, responses, customerAccount)
 		applyRequiredResponsesOutputLimit(ctx, resolution, responses)
+		// Every interface takes the tools of the namespace functions as top-level tools. Anthropic's
+		// has no namespaces, so their tools get flat names, which core turns back into the namespace
+		// and name in the reply through the map that the request carries.
+		anthropicWire := usesAnthropicWireFormat(ctx, resolution.Provider, resolution.Model)
+		var err error
+		if anthropicWire {
+			responses, err = catalog.FlattenNamespaces(ctx, responses)
+		} else {
+			responses, err = catalog.UnwrapDefaultNamespace(responses)
+		}
+		if err != nil {
+			return err
+		}
+		request.ResponsesRequest = responses
 		body, bifrostErr = prepareResponsesProviderBody(ctx, responses, request.RequestType == schemas.ResponsesStreamRequest, resolution.Deployment.Hosting)
 		program := ""
 		if bifrostErr == nil && resolution.Provider == schemas.OpenAI {
 			body, program, bifrostErr = setOpenAIAccessPrograms(body, resolution.RawBody()["access_programs"])
 		}
-		if bifrostErr == nil && !usesAnthropicWireFormat(ctx, resolution.Provider, resolution.Model) {
+		if bifrostErr == nil && !anthropicWire {
 			body, bifrostErr = keepDefaultStrict(body, resolution.RawTools())
 		}
 		settings = billing.ResponsesRequestSettings(responses.Params)
@@ -365,24 +379,42 @@ func restoreStrictTools(body []byte, hosting string, strict map[string]bool) ([]
 
 // keepDefaultStrict leaves `strict` out of each function tool where the client
 // left it out of a Responses request. OpenAI then makes the tool strict when its
-// schema allows, as it does for a direct call. Core sends `"strict": false`,
-// which turns that off.
+// schema allows, as it does for a direct call. Core sends `"strict": false` for a
+// top-level tool and `"strict": null` for one in a namespace, which OpenAI reads
+// as false. The tools of the namespace functions are top-level tools in the body.
 func keepDefaultStrict(body []byte, rawTools []map[string]json.RawMessage) ([]byte, *schemas.BifrostError) {
-	omitted := map[string]bool{}
-	for _, tool := range rawTools {
+	type toolName struct{ namespace, name string }
+	omitted := map[toolName]bool{}
+	for _, entry := range catalog.ResponsesToolList(rawTools) {
+		tool := entry.Tool
 		if _, ok := tool["strict"]; !ok && strings.TrimSpace(rawString(tool["type"])) == string(schemas.ResponsesToolTypeFunction) {
-			omitted[rawString(tool["name"])] = true
+			omitted[toolName{entry.Namespace, rawString(tool["name"])}] = true
 		}
 	}
 	if len(omitted) == 0 {
 		return body, nil
 	}
+	var paths []string
 	for index, tool := range providerutils.GetJSONField(body, "tools").Array() {
-		if tool.Get("type").String() != string(schemas.ResponsesToolTypeFunction) || !omitted[tool.Get("name").String()] || !tool.Get("strict").Exists() {
-			continue
+		path := "tools." + strconv.Itoa(index)
+		switch tool.Get("type").String() {
+		case string(schemas.ResponsesToolTypeFunction):
+			if omitted[toolName{"", tool.Get("name").String()}] && tool.Get("strict").Exists() {
+				paths = append(paths, path+".strict")
+			}
+		case string(schemas.ResponsesToolTypeNamespace):
+			namespace := tool.Get("name").String()
+			for member, nested := range tool.Get("tools").Array() {
+				if nested.Get("type").String() == string(schemas.ResponsesToolTypeFunction) &&
+					omitted[toolName{namespace, nested.Get("name").String()}] && nested.Get("strict").Exists() {
+					paths = append(paths, path+".tools."+strconv.Itoa(member)+".strict")
+				}
+			}
 		}
+	}
+	for _, path := range paths {
 		var err error
-		if body, err = providerutils.DeleteJSONField(body, "tools."+strconv.Itoa(index)+".strict"); err != nil {
+		if body, err = providerutils.DeleteJSONField(body, path); err != nil {
 			return nil, providerutils.NewBifrostOperationError(schemas.ErrProviderRequestMarshal, err)
 		}
 	}

@@ -61,7 +61,7 @@ func BenchmarkProviderToolChecks(b *testing.B) {
 		})
 		b.Run(fmt.Sprintf("responses_name/%d", count), func(b *testing.B) {
 			for b.Loop() {
-				if !providerResponsesToolNameAllowed(responses, schemas.ResponsesToolTypeFunction, last) {
+				if !providerResponsesToolNameAllowed(responses, schemas.ResponsesToolTypeFunction, "", last) {
 					b.Fatal("allowed tool rejected")
 				}
 			}

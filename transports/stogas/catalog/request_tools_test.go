@@ -30,6 +30,10 @@ func TestRequestFactsListToolsServersAndSystemMessages(t *testing.T) {
 			tools: []string{"/*", "allowed.example/read", "connector_googledrive/*", "mcp.example.com/fetch", "mcp.example.com/search",
 				"tun_1/*", "tun_2/read", "xn--bcher-kva.example/find"}},
 		{name: "no callable tool", route: RouteResponses, body: `{"tools":` + responsesTools + `,"tool_choice":"none"}`},
+		{name: "namespace tools by their own names", route: RouteResponses,
+			body: `{"tools":[{"type":"function","name":"lookup"},{"type":"namespace","name":"functions","description":"","tools":[{"type":"function","name":"exec"}]},` +
+				`{"type":"namespace","name":"crm","description":"CRM tools.","tools":[{"type":"function","name":"find"},{"type":"custom","name":"note"}]}]}`,
+			client: []string{"exec", "find", "lookup", "note"}},
 		{name: "a forced function counts every function", route: RouteResponses,
 			body: `{"tools":` + responsesTools + `,"tool_choice":{"type":"function","name":"lookup"}}`, client: []string{"lookup"}},
 		{name: "allowed MCP tools count every server", route: RouteResponses,

@@ -147,6 +147,7 @@ type providerResponsesItem struct {
 	callID            string
 	itemType          schemas.ResponsesMessageType
 	name              string
+	namespace         string
 	compactionPayload string
 	toolCallerPayload string
 	toolActionPayload string

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/bytedance/sonic"
+	providerutils "github.com/maximhq/bifrost/core/providers/utils"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 	"github.com/maximhq/bifrost/transports/stogas/rawjson"
@@ -48,6 +49,9 @@ func validateCommonResponsesPolicy(state *State) error {
 		if rawJSONValueSet(raw["tools"]) {
 			if err := sonic.Unmarshal(raw["tools"], &tools); err != nil {
 				return invalidRequest("tools must be an array")
+			}
+			if err := validateBridgedResponsesNamespaces(raw["tools"]); err != nil {
+				return err
 			}
 		}
 		if err := validateResponsesToolChoice(state, raw["tool_choice"], tools); err != nil {
@@ -96,6 +100,30 @@ func validateCommonResponsesPolicy(state *State) error {
 		return err
 	}
 	return validateResponsesInput(state, raw["input"])
+}
+
+// validateBridgedResponsesNamespaces checks the namespaces of a request that its deployment takes
+// through Chat Completions. The translation turns their tools into function tools, whose checks
+// cannot tell what the namespaces held.
+func validateBridgedResponsesNamespaces(raw json.RawMessage) error {
+	tools, _ := rawjson.Array(raw)
+	seen := make(map[string]bool)
+	for index, rawTool := range tools {
+		tool, err := rawjson.Object(rawTool)
+		if err != nil || catalog.CanonicalResponsesToolType(rawString(tool["type"])) != schemas.ResponsesToolTypeNamespace {
+			continue
+		}
+		path := fmt.Sprintf("tools[%d]", index)
+		name, err := validateResponsesNamespaceTool(tool, path)
+		if err != nil {
+			return err
+		}
+		if seen[name] {
+			return invalidRequest(path + ".name duplicates another namespace")
+		}
+		seen[name] = true
+	}
+	return nil
 }
 
 // validateResponsesAccessPrograms accepts OpenAI's cyber access program
@@ -265,6 +293,7 @@ func parseResponsesTools(state *State, raw json.RawMessage) ([]schemas.Responses
 		return nil, invalidRequest("tools must be an array")
 	}
 	seenNames := make(map[string]bool, len(rawTools))
+	seenNamespaces := make(map[string]bool)
 	seenHostedTypes := make(map[schemas.ResponsesToolType]bool, len(rawTools))
 	seenServers := make(map[string]bool)
 	for index, rawTool := range rawTools {
@@ -281,6 +310,25 @@ func parseResponsesTools(state *State, raw json.RawMessage) ([]schemas.Responses
 				return nil, invalidRequest(fmt.Sprintf("tools[%d].name duplicates another client tool", index))
 			}
 			seenNames[name] = true
+		case schemas.ResponsesToolTypeNamespace:
+			if seenNamespaces[name] {
+				return nil, invalidRequest(fmt.Sprintf("tools[%d].name duplicates another namespace", index))
+			}
+			seenNamespaces[name] = true
+			for member, entry := range catalog.ResponsesToolList([]map[string]json.RawMessage{rawTool}) {
+				if err := validateRawResponsesToolType(state, entry.Tool); err != nil {
+					return nil, err
+				}
+				if entry.Namespace != "" {
+					continue
+				}
+				// The namespace functions holds top-level tools, so its tools share their names.
+				memberName := rawString(entry.Tool["name"])
+				if seenNames[memberName] {
+					return nil, invalidRequest(fmt.Sprintf("tools[%d].tools[%d].name duplicates another client tool", index, member))
+				}
+				seenNames[memberName] = true
+			}
 		case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview, schemas.ResponsesToolTypeWebFetch:
 			if seenHostedTypes[toolType] {
 				return nil, invalidRequest(fmt.Sprintf("tools[%d].type duplicates another hosted tool", index))
@@ -300,11 +348,11 @@ func parseResponsesTools(state *State, raw json.RawMessage) ([]schemas.Responses
 	}
 	for _, tool := range tools {
 		switch tool.Type {
-		case schemas.ResponsesToolTypeFunction, schemas.ResponsesToolTypeCustom:
+		case schemas.ResponsesToolTypeFunction, schemas.ResponsesToolTypeCustom, schemas.ResponsesToolTypeNamespace:
 		case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview, schemas.ResponsesToolTypeWebFetch:
 		case schemas.ResponsesToolTypeMCP:
 		default:
-			return nil, invalidRequest("Only function, custom, web_fetch, and priced hosted web search tools are supported")
+			return nil, invalidRequest("Only function, custom, namespace, web_fetch, and priced hosted web search tools are supported")
 		}
 	}
 	return tools, nil
@@ -334,10 +382,13 @@ func validateRawResponsesToolShape(state *State, tool map[string]json.RawMessage
 	toolType := catalog.CanonicalResponsesToolType(rawString(tool["type"]))
 	switch toolType {
 	case schemas.ResponsesToolTypeFunction:
-		name, err := validateResponsesFunctionTool(tool, path)
+		name, err := validateResponsesFunctionTool(tool, path, maxClientToolName)
 		return toolType, name, err
 	case schemas.ResponsesToolTypeCustom:
-		name, err := validateResponsesCustomTool(tool, path)
+		name, err := validateResponsesCustomTool(tool, path, maxClientToolName)
+		return toolType, name, err
+	case schemas.ResponsesToolTypeNamespace:
+		name, err := validateResponsesNamespaceTool(tool, path)
 		return toolType, name, err
 	case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview:
 		return toolType, "", validateResponsesWebSearchTool(state, tool, path, toolType)
@@ -351,8 +402,57 @@ func validateRawResponsesToolShape(state *State, tool map[string]json.RawMessage
 	}
 }
 
-func validateResponsesFunctionTool(tool map[string]json.RawMessage, path string) (string, error) {
-	name, err := validateNamedResponsesTool(tool, path, "parameters", "strict")
+// validateResponsesNamespaceTool checks a namespace and its tools. A namespace holds only function
+// and custom tools, as on OpenAI, whose names may be longer than top-level ones. The tools of a
+// namespace need different names, so that a call names one of them.
+func validateResponsesNamespaceTool(tool map[string]json.RawMessage, path string) (string, error) {
+	if err := rejectUnsupportedResponsesToolKeys(tool, path, "type", "name", "description", "tools"); err != nil {
+		return "", err
+	}
+	name, err := requiredInputString(tool, "name", path, false)
+	if err != nil {
+		return "", err
+	}
+	if err := validateResponsesToolDescription(tool["description"], path+".description"); err != nil {
+		return "", err
+	}
+	members, err := rawjson.Array(tool["tools"])
+	if err != nil || len(members) == 0 {
+		return "", invalidRequest(path + ".tools must be a non-empty array")
+	}
+	seen := make(map[string]bool, len(members))
+	for index, raw := range members {
+		memberPath := fmt.Sprintf("%s.tools[%d]", path, index)
+		member, err := rawjson.Object(raw)
+		if err != nil {
+			return "", invalidRequest(memberPath + " must be an object")
+		}
+		memberType := rawString(member["type"])
+		if memberType != "function" && memberType != "custom" {
+			return "", invalidRequest(memberPath + ".type must be function or custom")
+		}
+		if _, ok := member["cache_control"]; ok {
+			return "", invalidRequest(memberPath + ".cache_control is not supported")
+		}
+		var memberName string
+		if memberType == "function" {
+			memberName, err = validateResponsesFunctionTool(member, memberPath, maxNamespacedToolName)
+		} else {
+			memberName, err = validateResponsesCustomTool(member, memberPath, maxNamespacedToolName)
+		}
+		if err != nil {
+			return "", err
+		}
+		if seen[memberName] {
+			return "", invalidRequest(memberPath + ".name duplicates another tool in the namespace")
+		}
+		seen[memberName] = true
+	}
+	return name, nil
+}
+
+func validateResponsesFunctionTool(tool map[string]json.RawMessage, path string, maxName int) (string, error) {
+	name, err := validateNamedResponsesTool(tool, path, maxName, "parameters", "strict")
 	if err != nil {
 		return "", err
 	}
@@ -374,8 +474,8 @@ func validateResponsesFunctionTool(tool map[string]json.RawMessage, path string)
 	return name, nil
 }
 
-func validateResponsesCustomTool(tool map[string]json.RawMessage, path string) (string, error) {
-	name, err := validateNamedResponsesTool(tool, path, "format")
+func validateResponsesCustomTool(tool map[string]json.RawMessage, path string, maxName int) (string, error) {
+	name, err := validateNamedResponsesTool(tool, path, maxName, "format")
 	if err != nil {
 		return "", err
 	}
@@ -413,7 +513,7 @@ func validateResponsesCustomTool(tool map[string]json.RawMessage, path string) (
 	return name, nil
 }
 
-func validateNamedResponsesTool(tool map[string]json.RawMessage, path string, additionalKeys ...string) (string, error) {
+func validateNamedResponsesTool(tool map[string]json.RawMessage, path string, maxName int, additionalKeys ...string) (string, error) {
 	keys := append([]string{"type", "name", "description", "cache_control"}, additionalKeys...)
 	if err := rejectUnsupportedResponsesToolKeys(tool, path, keys...); err != nil {
 		return "", err
@@ -422,8 +522,8 @@ func validateNamedResponsesTool(tool map[string]json.RawMessage, path string, ad
 	if err != nil {
 		return "", err
 	}
-	if !validClientToolName(name) {
-		return "", invalidRequest(path + ".name must contain 1 to 64 letters, digits, underscores, or hyphens")
+	if err := validateToolName(name, path+".name", maxName); err != nil {
+		return "", err
 	}
 	if err := validateResponsesToolDescription(tool["description"], path+".description"); err != nil {
 		return "", err
@@ -972,13 +1072,22 @@ func responsesToolTypeExists(tools []schemas.ResponsesTool, toolType schemas.Res
 	return false
 }
 
-// responsesNamedTools maps each function or custom tool name to its type. The two
-// types share one name space, so a name finds at most one declared tool.
+// responsesNamedTools maps the name of each top-level function or custom tool, including those in
+// the namespace functions, to its type. The two types share one name space, so a name finds at most
+// one declared tool. tool_choice can name only these tools, as on OpenAI.
 func responsesNamedTools(tools []schemas.ResponsesTool) map[string]schemas.ResponsesToolType {
 	named := make(map[string]schemas.ResponsesToolType, len(tools))
 	for _, tool := range tools {
-		if tool.Name != nil && (tool.Type == schemas.ResponsesToolTypeFunction || tool.Type == schemas.ResponsesToolTypeCustom) {
+		switch {
+		case tool.Name == nil:
+		case tool.Type == schemas.ResponsesToolTypeFunction || tool.Type == schemas.ResponsesToolTypeCustom:
 			named[*tool.Name] = tool.Type
+		case tool.Type == schemas.ResponsesToolTypeNamespace && *tool.Name == providerutils.DefaultToolNamespace && tool.ResponsesToolNamespace != nil:
+			for _, member := range tool.ResponsesToolNamespace.Tools {
+				if member.Name != nil {
+					named[*member.Name] = member.Type
+				}
+			}
 		}
 	}
 	return named
@@ -1400,7 +1509,7 @@ func validateResponsesOutputLogProb(entry map[string]json.RawMessage, path strin
 }
 
 func validateResponsesToolCallInput(state *State, item map[string]json.RawMessage, path string, kind string, validation *responsesInputValidation) error {
-	allowed := []string{"type", "id", "status", "call_id", "name"}
+	allowed := []string{"type", "id", "status", "call_id", "name", "namespace"}
 	payloadField := "arguments"
 	if kind == "custom" {
 		payloadField = "input"
@@ -1426,8 +1535,17 @@ func validateResponsesToolCallInput(state *State, item map[string]json.RawMessag
 	if err != nil {
 		return err
 	}
-	if !validClientToolName(name) {
-		return invalidRequest(path + ".name must contain 1 to 64 letters, digits, underscores, or hyphens")
+	namespace := responsesCallNamespace(item)
+	maxName := maxClientToolName
+	if namespace != "" {
+		maxName = maxNamespacedToolName
+	}
+	if err := validateToolName(name, path+".name", maxName); err != nil {
+		return err
+	}
+	// The flattened tools keep no namespace, so a call to an undeclared one would lose its own.
+	if namespace != "" && responsesUsesAnthropicWire(state) && !responsesNamespaceDeclares(state, namespace, name) {
+		return invalidRequest(path + ".name must name a tool in namespace " + namespace + " in tools for Anthropic-format deployments")
 	}
 	payload, err := requiredInputString(item, payloadField, path, true)
 	if err != nil {
@@ -1441,6 +1559,27 @@ func validateResponsesToolCallInput(state *State, item map[string]json.RawMessag
 	validation.calls[callID] = kind
 	validation.pendingCalls++
 	return nil
+}
+
+// responsesCallNamespace reads the namespace of a call to a client tool, which the request's parse
+// found to be a string. The namespace functions holds top-level tools, so it reads as none, as an
+// empty one does.
+func responsesCallNamespace(item map[string]json.RawMessage) string {
+	namespace, _ := rawStringValue(item["namespace"])
+	if namespace == providerutils.DefaultToolNamespace {
+		return ""
+	}
+	return namespace
+}
+
+// responsesNamespaceDeclares reports whether a request declares a function tool in a namespace.
+func responsesNamespaceDeclares(state *State, namespace, name string) bool {
+	for _, entry := range catalog.ResponsesToolList(state.Resolution.RawTools()) {
+		if entry.Namespace == namespace && rawString(entry.Tool["name"]) == name && rawString(entry.Tool["type"]) == "function" {
+			return true
+		}
+	}
+	return false
 }
 
 func responsesInputCreatesAnthropicAssistantTurn(raw json.RawMessage) bool {

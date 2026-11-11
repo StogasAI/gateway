@@ -52,8 +52,16 @@ func TestChatCompletionsGapNamesWhatChatCompletionsCannotCarry(t *testing.T) {
 			{Type: Ptr(ResponsesMessageTypeItemReference)}}}, "input[1].type", "item_reference items"},
 		{"custom tool call", BifrostResponsesRequest{Input: []ResponsesMessage{{Type: Ptr(ResponsesMessageTypeCustomToolCall)}}},
 			"input[0].type", "custom_tool_call items"},
-		{"namespaced call", BifrostResponsesRequest{Input: []ResponsesMessage{{Type: Ptr(ResponsesMessageTypeFunctionCall),
-			ResponsesToolMessage: &ResponsesToolMessage{Name: Ptr("f"), Namespace: Ptr("crm")}}}}, "input[0].namespace", "tool namespaces"},
+		{"custom tool in a namespace", BifrostResponsesRequest{Params: &ResponsesParameters{Tools: []ResponsesTool{function, {
+			Type: ResponsesToolTypeNamespace, Name: Ptr("crm"), ResponsesToolNamespace: &ResponsesToolNamespace{Tools: []ResponsesTool{
+				{Type: ResponsesToolTypeFunction, Name: Ptr("find")}, {Type: ResponsesToolTypeCustom, Name: Ptr("query")},
+			}},
+		}}}}, "tools[1].tools[1].type", "custom tools"},
+		{"call to an undeclared namespace", BifrostResponsesRequest{
+			Params: &ResponsesParameters{Tools: []ResponsesTool{{Type: ResponsesToolTypeNamespace, Name: Ptr("crm"),
+				ResponsesToolNamespace: &ResponsesToolNamespace{Tools: []ResponsesTool{{Type: ResponsesToolTypeFunction, Name: Ptr("find")}}}}}},
+			Input: []ResponsesMessage{{Type: Ptr(ResponsesMessageTypeFunctionCall), ResponsesToolMessage: &ResponsesToolMessage{Name: Ptr("f"), Namespace: Ptr("crm")}}},
+		}, "input[0].namespace", "calls to namespace tools that tools does not list"},
 		{"output text in a user message", BifrostResponsesRequest{Input: []ResponsesMessage{message(ResponsesInputMessageRoleUser, text(ResponsesOutputMessageContentTypeText))}},
 			"input[0].content[0].type", "output_text parts in input messages"},
 		{"image in an assistant message", BifrostResponsesRequest{Input: []ResponsesMessage{message(ResponsesInputMessageRoleAssistant,
@@ -82,7 +90,8 @@ func TestChatCompletionsGapAcceptsWhatChatCompletionsCarry(t *testing.T) {
 			Include:    []string{responsesIncludeLogProbs, responsesIncludeEncryptedReasoning},
 			Truncation: Ptr("disabled"),
 			Reasoning:  &ResponsesParametersReasoning{Effort: Ptr("high"), Summary: Ptr("auto"), Context: Ptr("auto")},
-			Tools:      []ResponsesTool{{Type: ResponsesToolTypeFunction, Name: Ptr("lookup")}},
+			Tools: []ResponsesTool{{Type: ResponsesToolTypeFunction, Name: Ptr("lookup")}, {Type: ResponsesToolTypeNamespace, Name: Ptr("crm"),
+				ResponsesToolNamespace: &ResponsesToolNamespace{Tools: []ResponsesTool{{Type: ResponsesToolTypeFunction, Name: Ptr("find")}}}}},
 			ToolChoice: &ResponsesToolChoice{ResponsesToolChoiceStruct: &ResponsesToolChoiceStruct{
 				Type: ResponsesToolChoiceTypeAllowedTools, Tools: []ResponsesToolChoiceAllowedToolDef{{Type: "function", Name: Ptr("lookup")}},
 			}},
@@ -105,6 +114,9 @@ func TestChatCompletionsGapAcceptsWhatChatCompletionsCarry(t *testing.T) {
 			{Type: Ptr(ResponsesMessageTypeFunctionCall), ResponsesToolMessage: &ResponsesToolMessage{CallID: Ptr("c1"), Name: Ptr("lookup"), Arguments: Ptr("{}")}},
 			{Type: Ptr(ResponsesMessageTypeFunctionCallOutput), ResponsesToolMessage: &ResponsesToolMessage{CallID: Ptr("c1"),
 				Output: &ResponsesToolMessageOutputStruct{ResponsesToolCallOutputStr: Ptr("42")}}},
+			// The flattening renames a call to a declared namespace tool, and functions holds top-level tools.
+			{Type: Ptr(ResponsesMessageTypeFunctionCall), ResponsesToolMessage: &ResponsesToolMessage{CallID: Ptr("c2"), Name: Ptr("find"), Namespace: Ptr("crm"), Arguments: Ptr("{}")}},
+			{Type: Ptr(ResponsesMessageTypeFunctionCall), ResponsesToolMessage: &ResponsesToolMessage{CallID: Ptr("c3"), Name: Ptr("lookup"), Namespace: Ptr("functions"), Arguments: Ptr("{}")}},
 		},
 	}
 	if gap := request.ChatCompletionsGap(); gap != nil {

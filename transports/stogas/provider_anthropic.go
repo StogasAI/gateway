@@ -764,7 +764,7 @@ func (AnthropicAdapter) ValidateRawResponsesToolType(state *State, tool map[stri
 		}
 		return nil
 	}
-	return invalidRequest("Only function, web_fetch, and priced hosted web search tools are supported")
+	return invalidRequest("Only function, namespace, web_fetch, and priced hosted web search tools are supported")
 }
 
 func ensureAnthropicResponsesHostedToolCap(state *State) {
@@ -1097,7 +1097,7 @@ func anthropicFinalMeters(req anthropicAdapterContext) []billing.MeterEstimate {
 func anthropicResponsesToolTypeSupported(rawType string) bool {
 	rawType = strings.TrimSpace(rawType)
 	switch rawType {
-	case "function":
+	case "function", "namespace":
 		return true
 	default:
 		return anthropicResponsesWebSearchToolType(rawType) || anthropicResponsesWebFetchToolType(rawType)

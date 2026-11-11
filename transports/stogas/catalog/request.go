@@ -203,8 +203,11 @@ type ResolvedRequest struct {
 	responses          *openaiprovider.OpenAIResponsesRequest
 	// wireBody is the body of a bridged request on the interface that its provider takes, and wire
 	// is the request as its provider gets it. Translate makes both.
-	wireBody          map[string]json.RawMessage
-	wire              *ResolvedRequest
+	wireBody map[string]json.RawMessage
+	wire     *ResolvedRequest
+	// namespaceAliases maps each name that a bridged request's flattened namespace tools take on
+	// Chat Completions to the namespace and name that a call to it returns with.
+	namespaceAliases  map[string]schemas.NamespaceToolAlias
 	policy            *policy.Config
 	activePolicyRules []policy.RuleMatch
 	retries           int
@@ -1344,6 +1347,15 @@ func requestPricingContextForRaw(route Route, rawData map[string]json.RawMessage
 		var normalizedTools []schemas.ResponsesTool
 		if err := sonic.Unmarshal(rawTools, &normalizedTools); err == nil {
 			for _, tool := range normalizedTools {
+				// The model calls a namespace's tools, not the namespace.
+				if tool.Type == schemas.ResponsesToolTypeNamespace && tool.ResponsesToolNamespace != nil {
+					for _, member := range tool.ResponsesToolNamespace.Tools {
+						if member.Type != "" {
+							toolTypes = append(toolTypes, string(member.Type))
+						}
+					}
+					continue
+				}
 				if tool.Type != "" {
 					toolTypes = append(toolTypes, string(tool.Type))
 				}

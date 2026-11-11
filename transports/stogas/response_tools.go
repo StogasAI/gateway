@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	providerutils "github.com/maximhq/bifrost/core/providers/utils"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 	"golang.org/x/net/idna"
@@ -971,10 +972,11 @@ func validateProviderResponsesItem(state *State, item *schemas.ResponsesMessage)
 		if item.Role != nil || item.Phase != nil || item.Content != nil || item.ResponsesReasoning != nil ||
 			item.ResponsesToolMessage == nil || item.ResponsesToolMessage.Name == nil ||
 			validateProviderResponsesToolMessage(state, item.ResponsesToolMessage, *item.Type) != nil ||
-			!providerResponsesToolNameAllowed(state, kind, *item.ResponsesToolMessage.Name) {
+			!providerResponsesToolNameAllowed(state, kind, providerCallNamespace(item.ResponsesToolMessage), *item.ResponsesToolMessage.Name) {
 			return providerResponsesItem{}, ErrProviderResponseMalformed
 		}
 		observed.name = *item.ResponsesToolMessage.Name
+		observed.namespace = providerCallNamespace(item.ResponsesToolMessage)
 		observed.value = &bytes.Buffer{}
 		if err := validateAndRecordProviderResponsesToolCall(state, item, &observed, true); err != nil {
 			return providerResponsesItem{}, err
@@ -1105,7 +1107,7 @@ func validateProviderResponsesToolMessage(state *State, tool *schemas.ResponsesT
 	if tool == nil {
 		return ErrProviderResponseMalformed
 	}
-	if tool.Namespace != nil || tool.Execution != nil || tool.Output != nil || tool.Error != nil ||
+	if tool.Execution != nil || tool.Output != nil || tool.Error != nil ||
 		tool.ResponsesFileSearchToolCall != nil || tool.ResponsesComputerToolCall != nil ||
 		tool.ResponsesComputerToolCallOutput != nil || tool.ServerLabel != nil ||
 		tool.ResponsesImageGenerationCall != nil || tool.ResponsesMCPListTools != nil ||
@@ -1128,13 +1130,13 @@ func validateProviderResponsesToolMessage(state *State, tool *schemas.ResponsesT
 			return ErrProviderResponseMalformed
 		}
 	case schemas.ResponsesMessageTypeWebSearchCall:
-		if tool.Name != nil || tool.Arguments != nil || tool.ResponsesCustomToolCall != nil ||
+		if tool.Name != nil || tool.Namespace != nil || tool.Arguments != nil || tool.ResponsesCustomToolCall != nil ||
 			tool.ResponsesWebFetchCall != nil || !validProviderWebSearchAction(state, tool.Action) ||
 			!validProviderToolCaller(tool.Caller) {
 			return ErrProviderResponseMalformed
 		}
 	case schemas.ResponsesMessageTypeWebFetchCall:
-		if tool.Name != nil || tool.Arguments != nil || tool.ResponsesCustomToolCall != nil ||
+		if tool.Name != nil || tool.Namespace != nil || tool.Arguments != nil || tool.ResponsesCustomToolCall != nil ||
 			!validProviderWebFetchAction(state, tool.Action) || !validProviderToolCaller(tool.Caller) ||
 			!validProviderWebFetchResult(state, tool.ResponsesWebFetchCall) {
 			return ErrProviderResponseMalformed
@@ -1907,9 +1909,12 @@ type providerToolSet struct {
 	mcp map[string]bool
 }
 
+// providerToolName names a declared tool. A tool in a namespace other than functions goes by its
+// namespace too, since tools in different namespaces can share a name.
 type providerToolName struct {
-	kind schemas.ResponsesToolType
-	name string
+	kind      schemas.ResponsesToolType
+	namespace string
+	name      string
 }
 
 type providerWebTool struct {
@@ -1947,16 +1952,17 @@ func readProviderTools(resolution *catalog.ResolvedRequest) *providerToolSet {
 			tools.types[catalog.CanonicalResponsesToolType(rawType)] = true
 		}
 	}
-	for _, tool := range resolution.RawTools() {
+	for _, entry := range catalog.ResponsesToolList(resolution.RawTools()) {
+		tool := entry.Tool
 		var name providerToolName
 		if chat {
 			function, ok := rawObject(tool["function"])
 			if !ok || rawString(tool["type"]) != "function" {
 				continue
 			}
-			name = providerToolName{schemas.ResponsesToolTypeFunction, rawString(function["name"])}
+			name = providerToolName{kind: schemas.ResponsesToolTypeFunction, name: rawString(function["name"])}
 		} else {
-			name = providerToolName{catalog.CanonicalResponsesToolType(rawString(tool["type"])), rawString(tool["name"])}
+			name = providerToolName{kind: catalog.CanonicalResponsesToolType(rawString(tool["type"])), namespace: entry.Namespace, name: rawString(tool["name"])}
 			switch name.kind {
 			case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview, schemas.ResponsesToolTypeWebFetch:
 				if tools.types[name.kind] {
@@ -1964,7 +1970,7 @@ func readProviderTools(resolution *catalog.ResolvedRequest) *providerToolSet {
 				}
 				continue
 			case schemas.ResponsesToolTypeMCP:
-				label := providerToolName{schemas.ResponsesToolTypeMCP, rawString(tool["server_label"])}
+				label := providerToolName{kind: schemas.ResponsesToolTypeMCP, name: rawString(tool["server_label"])}
 				if tools.types[label.kind] && (selected == nil || selected[label]) {
 					tools.mcp[label.name] = true
 				}
@@ -1984,7 +1990,7 @@ func selectedProviderTools(chat bool, object map[string]json.RawMessage) map[pro
 		if !ok {
 			return nil
 		}
-		return map[providerToolName]bool{{schemas.ResponsesToolTypeFunction, rawString(function["name"])}: true}
+		return map[providerToolName]bool{{kind: schemas.ResponsesToolTypeFunction, name: rawString(function["name"])}: true}
 	}
 	if rawString(object["type"]) == "allowed_tools" {
 		selected := map[providerToolName]bool{}
@@ -2003,16 +2009,17 @@ func selectedProviderTools(chat bool, object map[string]json.RawMessage) map[pro
 	if kind != schemas.ResponsesToolTypeFunction && kind != schemas.ResponsesToolTypeCustom {
 		return nil
 	}
-	return map[providerToolName]bool{{kind, rawString(object["name"])}: true}
+	return map[providerToolName]bool{{kind: kind, name: rawString(object["name"])}: true}
 }
 
-// selectedProviderToolName names a tool that tool_choice selects. An MCP server goes by its label.
+// selectedProviderToolName names a tool that tool_choice selects, which is never in a namespace
+// other than functions. An MCP server goes by its label.
 func selectedProviderToolName(selector map[string]json.RawMessage) providerToolName {
 	kind := catalog.CanonicalResponsesToolType(rawString(selector["type"]))
 	if kind == schemas.ResponsesToolTypeMCP {
-		return providerToolName{kind, rawString(selector["server_label"])}
+		return providerToolName{kind: kind, name: rawString(selector["server_label"])}
 	}
-	return providerToolName{kind, rawString(selector["name"])}
+	return providerToolName{kind: kind, name: rawString(selector["name"])}
 }
 
 func providerResponsesToolTypeAllowed(state *State, wanted schemas.ResponsesToolType) bool {
@@ -2023,13 +2030,27 @@ func providerResponsesToolTypeAllowed(state *State, wanted schemas.ResponsesTool
 	return types[wanted] || wanted == schemas.ResponsesToolTypeWebSearch && types[schemas.ResponsesToolTypeWebSearchPreview]
 }
 
-func providerResponsesToolNameAllowed(state *State, kind schemas.ResponsesToolType, name string) bool {
-	return validClientToolName(name) && providerResponsesToolTypeAllowed(state, kind) &&
-		state.providerTools().names[providerToolName{kind, name}]
+func providerResponsesToolNameAllowed(state *State, kind schemas.ResponsesToolType, namespace, name string) bool {
+	maxName := maxClientToolName
+	if namespace != "" {
+		maxName = maxNamespacedToolName
+	}
+	return validToolName(name, maxName) && providerResponsesToolTypeAllowed(state, kind) &&
+		state.providerTools().names[providerToolName{kind, namespace, name}]
+}
+
+// providerCallNamespace returns the namespace of a provider's call to a client tool. The namespace
+// functions holds top-level tools, so it reads as none, as an empty one does.
+func providerCallNamespace(tool *schemas.ResponsesToolMessage) string {
+	if tool == nil || tool.Namespace == nil || *tool.Namespace == providerutils.DefaultToolNamespace {
+		return ""
+	}
+	return *tool.Namespace
 }
 
 func sameProviderResponsesItem(left, right providerResponsesItem) bool {
 	return left.id == right.id && left.callID == right.callID && left.itemType == right.itemType && left.name == right.name &&
+		left.namespace == right.namespace &&
 		left.toolCallerPayload == right.toolCallerPayload &&
 		(left.toolActionPayload == "" || left.toolActionPayload == right.toolActionPayload)
 }

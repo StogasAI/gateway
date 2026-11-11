@@ -309,6 +309,37 @@ func TestResponsesChecksReadTheCompletedOutput(t *testing.T) {
 	})
 }
 
+// A call to a tool in a namespace is checked against that tool's schema, not that of a tool with
+// its name elsewhere.
+func TestResponsesChecksFollowTheSchemaOfTheNamespaceTool(t *testing.T) {
+	request := `{"model":"provider:openai gpt-5.5","input":"hi","tools":[` +
+		`{"type":"function","name":"find","parameters":{"type":"object","properties":{"q":{"type":"string"}},"required":["q"]}},` +
+		`{"type":"namespace","name":"crm","description":"CRM tools.","tools":[{"type":"function","name":"find","parameters":{"type":"object","properties":{"id":{"type":"integer"}},"required":["id"]}}]}]}`
+	for _, tc := range []struct{ name, namespace, arguments, want string }{
+		{"namespace tool", "crm", `{"id":4}`, "1 0 - -"},
+		{"namespace tool with the top-level schema", "crm", `{"q":"a"}`, "1 1 - -"},
+		{"top-level tool", "", `{"q":"a"}`, "1 0 - -"},
+		{"top-level tool with the namespace schema", "", `{"id":4}`, "1 1 - -"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			state := resolvedResponseValidationState(t, request)
+			state.RequestType = string(schemas.ResponsesRequest)
+			item := responsesFunctionItem("fc_1", "find", tc.arguments)
+			if tc.namespace != "" {
+				item.ResponsesToolMessage.Namespace = schemas.Ptr(tc.namespace)
+			}
+			response := validUnaryResponsesProviderResponse("resp_1")
+			response.Output = []schemas.ResponsesMessage{item}
+			if err := state.Adapter.IngestResponse(state, &schemas.BifrostResponse{ResponsesResponse: response}, nil); err != nil {
+				t.Fatalf("provider response rejected: %v", err)
+			}
+			if got := checkMeters(state); got != tc.want {
+				t.Fatalf("checks = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func checkWith(t *testing.T, schema, value string) checkResult {
 	t.Helper()
 	checker := &outputChecker{resolution: &catalog.ResolvedRequest{Route: catalog.RouteChat}, budget: checkBudgetSteps}

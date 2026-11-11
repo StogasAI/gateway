@@ -1055,3 +1055,73 @@ func providerRequestTestModel(provider schemas.ModelProvider) string {
 	}
 	return "gpt-5.6-terra"
 }
+
+// OpenAI's interface takes namespaces, so they reach it whole, apart from the namespace functions,
+// whose tools reach it as top-level tools. Anthropic's has none, so the tools of a namespace get
+// flat names, which a call in the input takes too, and the request carries the map back to the
+// namespace and name, from which core names the reply's calls.
+func TestNamespaceToolsReachEachInterface(t *testing.T) {
+	const parameters = `{"type":"object","properties":{"id":{"type":"string"}},"required":["id"],"additionalProperties":false}`
+	body := `"input":[` +
+		`{"type":"function_call","call_id":"call_1","namespace":"crm","name":"find","arguments":"{\"id\":\"a0\"}"},` +
+		`{"type":"function_call_output","call_id":"call_1","output":"none"},{"role":"user","content":"Find a1."}],` +
+		`"max_output_tokens":64,"tools":[` +
+		`{"type":"namespace","name":"functions","description":"","tools":[{"type":"function","name":"exec","parameters":` + parameters + `}]},` +
+		`{"type":"namespace","name":"crm","description":"CRM tools.","tools":[{"type":"function","name":"find","description":"Find a customer.","parameters":` + parameters + `}]}]}`
+	prepare := func(t *testing.T, model string) (*schemas.BifrostResponsesRequest, []byte) {
+		t.Helper()
+		resolved, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/responses", Body: []byte(`{"model":"` + model + `",` + body)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		state := NewState(resolved, "sk-test", nil, AdapterFor(resolved.Provider))
+		if err := state.Adapter.ValidateRequest(state); err != nil {
+			t.Fatal(err)
+		}
+		ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+		ctx.SetValue(schemas.BifrostContextKeyHTTPRequestType, resolved.RequestType)
+		request, err := resolved.ToBifrost(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := PrepareProviderRequest(ctx, state, request); err != nil {
+			t.Fatal(err)
+		}
+		return request.ResponsesRequest, preparedProviderBody(t, ctx, request.ResponsesRequest)
+	}
+	for _, model := range []string{"provider:openai gpt-5.5", "azure-gpt-5.6-sol"} {
+		t.Run(model, func(t *testing.T) {
+			request, wire := prepare(t, model)
+			tools := providerutils.GetJSONField(wire, "tools").Array()
+			if len(tools) != 2 || len(request.NamespaceToolAliases) != 0 {
+				t.Fatalf("tools %s, aliases %v", wire, request.NamespaceToolAliases)
+			}
+			exec, crm := tools[0], tools[1]
+			// The client left strict out of both tools, so OpenAI decides it.
+			if exec.Get("type").String() != "function" || exec.Get("name").String() != "exec" || exec.Get("strict").Exists() ||
+				crm.Get("type").String() != "namespace" || crm.Get("name").String() != "crm" || crm.Get("description").String() != "CRM tools." ||
+				crm.Get("tools.0.name").String() != "find" || crm.Get("tools.0.strict").Exists() {
+				t.Fatalf("tools = %s", wire)
+			}
+			call := providerutils.GetJSONField(wire, "input.0")
+			if call.Get("namespace").String() != "crm" || call.Get("name").String() != "find" {
+				t.Fatalf("input call = %s", call.Raw)
+			}
+		})
+	}
+	t.Run("anthropic", func(t *testing.T) {
+		request, wire := prepare(t, "anthropic-claude-sonnet-4-6")
+		tools := providerutils.GetJSONField(wire, "tools").Array()
+		if len(tools) != 2 || tools[0].Get("name").String() != "exec" || tools[1].Get("name").String() != "crm__find" ||
+			tools[1].Get("description").String() != "CRM tools.\n\nFind a customer." {
+			t.Fatalf("tools = %s", wire)
+		}
+		if use := providerutils.GetJSONField(wire, "messages.0.content.0"); use.Get("type").String() != "tool_use" || use.Get("name").String() != "crm__find" {
+			t.Fatalf("input call = %s", use.Raw)
+		}
+		want := schemas.NamespaceToolAlias{Namespace: "crm", Name: "find"}
+		if request.NamespaceToolAliases["crm__find"] != want || request.NamespaceToolAliases["find"] != want {
+			t.Fatalf("aliases = %v", request.NamespaceToolAliases)
+		}
+	})
+}

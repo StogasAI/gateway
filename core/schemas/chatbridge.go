@@ -38,8 +38,16 @@ func (g *ConversionGap) Error() string {
 	return g.Param + ": the conversion cannot carry " + g.Feature
 }
 
+// defaultToolNamespace is the namespace that holds top-level tools, as DefaultToolNamespace in
+// providers/utils, which this package cannot import.
+const defaultToolNamespace = "functions"
+
 // ChatCompletionsGap returns the first part of the request that ToChatRequest cannot carry, in the
 // order of the request's fields and then of its input, or nil when it carries the whole request.
+// Chat Completions has no namespaces, so the caller flattens namespace tools into function tools
+// before the conversion (UnwrapDefaultNamespaceTools and FlattenResponsesNamespaceTools in
+// providers/utils), which renames each input call to a declared namespace tool. A namespace tool
+// therefore counts by its tools, and a call in input by the tool that it names.
 func (brr *BifrostResponsesRequest) ChatCompletionsGap() *ConversionGap {
 	if brr == nil {
 		return nil
@@ -47,8 +55,12 @@ func (brr *BifrostResponsesRequest) ChatCompletionsGap() *ConversionGap {
 	if gap := responsesParamsChatGap(brr.Params); gap != nil {
 		return gap
 	}
+	var tools []ResponsesTool
+	if brr.Params != nil {
+		tools = brr.Params.Tools
+	}
 	for i := range brr.Input {
-		if gap := responsesItemChatGap(&brr.Input[i], "input["+strconv.Itoa(i)+"]"); gap != nil {
+		if gap := responsesItemChatGap(&brr.Input[i], "input["+strconv.Itoa(i)+"]", tools); gap != nil {
 			return gap
 		}
 	}
@@ -92,13 +104,16 @@ func responsesParamsChatGap(p *ResponsesParameters) *ConversionGap {
 	for i := range p.Tools {
 		path := "tools[" + strconv.Itoa(i) + "]"
 		tool := &p.Tools[i]
-		switch {
-		case tool.Type != ResponsesToolTypeFunction:
-			return &ConversionGap{path + ".type", string(tool.Type) + " tools"}
-		case tool.Async != nil && *tool.Async:
-			return &ConversionGap{path + ".async", "async tools"}
-		case tool.ResponsesToolFunction != nil && tool.ResponsesToolFunction.OutputSchema != nil:
-			return &ConversionGap{path + ".output_schema", "function output schemas"}
+		if tool.Type == ResponsesToolTypeNamespace && tool.ResponsesToolNamespace != nil {
+			for j := range tool.ResponsesToolNamespace.Tools {
+				if gap := responsesToolChatGap(&tool.ResponsesToolNamespace.Tools[j], path+".tools["+strconv.Itoa(j)+"]"); gap != nil {
+					return gap
+				}
+			}
+			continue
+		}
+		if gap := responsesToolChatGap(tool, path); gap != nil {
+			return gap
 		}
 	}
 	if choice := p.ToolChoice; choice != nil && choice.ResponsesToolChoiceStruct != nil {
@@ -125,7 +140,39 @@ func responsesParamsChatGap(p *ResponsesParameters) *ConversionGap {
 	return nil
 }
 
-func responsesItemChatGap(item *ResponsesMessage, path string) *ConversionGap {
+// responsesToolChatGap returns the part of a tool that a Chat Completions function cannot carry.
+func responsesToolChatGap(tool *ResponsesTool, path string) *ConversionGap {
+	switch {
+	case tool.Type != ResponsesToolTypeFunction:
+		return &ConversionGap{path + ".type", string(tool.Type) + " tools"}
+	case tool.Async != nil && *tool.Async:
+		return &ConversionGap{path + ".async", "async tools"}
+	case tool.ResponsesToolFunction != nil && tool.ResponsesToolFunction.OutputSchema != nil:
+		return &ConversionGap{path + ".output_schema", "function output schemas"}
+	}
+	return nil
+}
+
+// namespacedCallDeclared reports whether a call's namespace holds top-level tools or is a namespace
+// in tools with a function of the call's name, which the flattening renames the call to.
+func namespacedCallDeclared(tools []ResponsesTool, namespace string, name *string) bool {
+	if namespace == "" || namespace == defaultToolNamespace {
+		return true
+	}
+	for _, tool := range tools {
+		if tool.Type != ResponsesToolTypeNamespace || tool.Name == nil || *tool.Name != namespace || tool.ResponsesToolNamespace == nil {
+			continue
+		}
+		for _, member := range tool.ResponsesToolNamespace.Tools {
+			if member.Type == ResponsesToolTypeFunction && member.Name != nil && name != nil && *member.Name == *name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func responsesItemChatGap(item *ResponsesMessage, path string, tools []ResponsesTool) *ConversionGap {
 	switch kind := responsesItemType(item); kind {
 	case ResponsesMessageTypeMessage, ResponsesMessageTypeRefusal:
 		place := inputParts
@@ -144,8 +191,8 @@ func responsesItemChatGap(item *ResponsesMessage, path string) *ConversionGap {
 		}
 	case ResponsesMessageTypeFunctionCall:
 		if call := item.ResponsesToolMessage; call != nil {
-			if call.Namespace != nil {
-				return &ConversionGap{path + ".namespace", "tool namespaces"}
+			if call.Namespace != nil && !namespacedCallDeclared(tools, *call.Namespace, call.Name) {
+				return &ConversionGap{path + ".namespace", "calls to namespace tools that tools does not list"}
 			}
 			if call.Async != nil && *call.Async {
 				return &ConversionGap{path + ".async", "async tools"}
@@ -217,7 +264,8 @@ func responsesItemType(item *ResponsesMessage) ResponsesMessageType {
 }
 
 // ToChatRequest converts the request to Chat Completions. It carries every part that
-// ChatCompletionsGap accepts, and leaves out the parts that it reports.
+// ChatCompletionsGap accepts once namespace tools are flattened, and leaves out the parts that it
+// reports.
 func (brr *BifrostResponsesRequest) ToChatRequest() *BifrostChatRequest {
 	if brr == nil {
 		return &BifrostChatRequest{}

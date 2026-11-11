@@ -3,6 +3,7 @@ package catalog
 import (
 	"encoding/json"
 
+	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/rawjson"
 	"github.com/maximhq/bifrost/transports/stogas/tokenizer"
 )
@@ -330,13 +331,36 @@ func appendToolDefinitions(raw json.RawMessage, stats *inputHoldStats) {
 	}
 	if tools, err := rawjson.Array(raw); err == nil {
 		for _, tool := range tools {
-			stats.ToolDefinitions++
-			appendCompactJSONText(tool, stats)
+			if !appendNamespaceToolDefinitions(tool, stats) {
+				stats.ToolDefinitions++
+				appendCompactJSONText(tool, stats)
+			}
 		}
 		return
 	}
 	stats.ToolDefinitions++
 	appendCompactJSONText(raw, stats)
+}
+
+// appendNamespaceToolDefinitions counts each tool of a namespace as a tool with the namespace's
+// name and description, as an interface without namespaces gets it, and reports whether the tool
+// is a namespace.
+func appendNamespaceToolDefinitions(raw json.RawMessage, stats *inputHoldStats) bool {
+	namespace, err := rawjson.Object(raw)
+	if err != nil || CanonicalResponsesToolType(rawStringValue(namespace["type"])) != schemas.ResponsesToolTypeNamespace {
+		return false
+	}
+	members, err := rawjson.Array(namespace["tools"])
+	if err != nil {
+		return false
+	}
+	for _, member := range members {
+		stats.ToolDefinitions++
+		appendCompactJSONText(member, stats)
+		appendStringValue(namespace["name"], stats)
+		appendStringValue(namespace["description"], stats)
+	}
+	return true
 }
 
 func appendCompactJSONText(raw json.RawMessage, stats *inputHoldStats) {
