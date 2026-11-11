@@ -119,7 +119,10 @@ func TestChatReachesDeploymentsThatTakeBothInterfacesOnOne(t *testing.T) {
 	for name, test := range map[string]struct{ body, route string }{
 		"plain request":           {`"model":"provider:openai gpt-6-luna",` + user, "openai-chat-completions"},
 		"tools":                   {`"model":"provider:openai gpt-6-luna",` + user + `,` + chatBridgeTools, "openai-responses"},
-		"tools without reasoning": {`"model":"provider:openai gpt-6-luna",` + user + `,` + chatBridgeTools + `,"reasoning_effort":"none"`, "openai-responses"},
+		"tools without reasoning": {`"model":"provider:openai gpt-6-luna",` + user + `,` + chatBridgeTools + `,"reasoning_effort":"none"`, "openai-chat-completions"},
+		"tools, reasoning off":    {`"model":"provider:openai gpt-6-luna",` + user + `,` + chatBridgeTools + `,"reasoning":{"enabled":false}`, "openai-chat-completions"},
+		"tools, reasoning low":    {`"model":"provider:openai gpt-6-luna",` + user + `,` + chatBridgeTools + `,"reasoning":{"effort":"low"}`, "openai-responses"},
+		"tools without reasoning, with reasoning history": {`"model":"provider:openai gpt-6-luna",` + history + `,` + chatBridgeTools + `,"reasoning_effort":"none"`, "openai-responses"},
 		"tools on Azure":          {`"model":"azure-gpt-5.6-sol",` + user + `,` + chatBridgeTools, "azure-responses"},
 		"reasoning history":       {`"model":"provider:openai gpt-6-luna",` + history, "openai-responses"},
 		"empty tools":             {`"model":"provider:openai gpt-6-luna",` + user + `,"tools":[]`, "openai-chat-completions"},

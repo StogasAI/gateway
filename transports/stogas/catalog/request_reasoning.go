@@ -295,9 +295,9 @@ var (
 	}
 )
 
-// Decode only the small reasoning controls with the same codecs used for the
-// final request. Candidate filtering must not materialize messages or tools.
-func requestReasoningValidation(raw map[string]json.RawMessage, route Route) (func(Deployment, int) error, error) {
+// rawReasoningFields holds only the small reasoning controls of a request, so that they decode
+// with the same codecs used for the final request without materializing messages or tools.
+func rawReasoningFields(raw map[string]json.RawMessage) ([]byte, map[string]json.RawMessage, error) {
 	fields := make(map[string]json.RawMessage)
 	for _, name := range []string{"reasoning", "reasoning_effort", "reasoning_max_tokens", "reasoning_display", "reasoning.effort"} {
 		if value, ok := raw[name]; ok {
@@ -305,22 +305,37 @@ func requestReasoningValidation(raw map[string]json.RawMessage, route Route) (fu
 		}
 	}
 	if len(fields) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	data, err := sonic.Marshal(fields)
 	if err != nil {
+		return nil, nil, ErrInvalidJSON
+	}
+	return data, fields, nil
+}
+
+// chatRawReasoning decodes the reasoning controls of a Chat Completions request, aliases included.
+func chatRawReasoning(raw map[string]json.RawMessage) (*schemas.ChatReasoning, error) {
+	data, _, err := rawReasoningFields(raw)
+	if data == nil || err != nil {
+		return nil, err
+	}
+	var parameters schemas.ChatParameters
+	if err := sonic.Unmarshal(data, &parameters); err != nil {
 		return nil, ErrInvalidJSON
 	}
+	return parameters.Reasoning, nil
+}
+
+// requestReasoningValidation checks the reasoning controls against each candidate deployment.
+func requestReasoningValidation(raw map[string]json.RawMessage, route Route) (func(Deployment, int) error, error) {
 	if route == RouteChat {
-		var parameters schemas.ChatParameters
-		if err := sonic.Unmarshal(data, &parameters); err != nil {
-			return nil, ErrInvalidJSON
+		parsed, err := chatRawReasoning(raw)
+		if parsed == nil || err != nil {
+			return nil, err
 		}
 		return func(deployment Deployment, outputLimit int) error {
-			if parameters.Reasoning == nil {
-				return nil
-			}
-			reasoning := *parameters.Reasoning
+			reasoning := *parsed
 			if err := normalizeChatReasoning(&reasoning, deployment, outputLimit); err != nil || !deployment.bridges(RouteChat) {
 				return err
 			}
@@ -328,6 +343,10 @@ func requestReasoningValidation(raw map[string]json.RawMessage, route Route) (fu
 			request := schemas.BifrostChatRequest{Params: &schemas.ChatParameters{Reasoning: &reasoning}}
 			return conversionGapError(request.ResponsesGap(), "Responses")
 		}, nil
+	}
+	data, fields, err := rawReasoningFields(raw)
+	if data == nil || err != nil {
+		return nil, err
 	}
 	var parameters schemas.ResponsesParameters
 	if err := sonic.Unmarshal(data, &parameters); err != nil {

@@ -520,15 +520,23 @@ func (s *snapshot) servedElsewhere(sel modelSelection, route Route, bridging boo
 }
 
 // chatThroughResponses reports whether the OpenAI and Azure deployments that take both interfaces
-// serve a Chat Completions request through Responses: one that declares tools or carries reasoning
-// history, when Responses carry it whole. From GPT-5.4 on, OpenAI's Chat Completions refuse
-// function tools while the model reasons, and OpenAI documents tool calling for its newest models
-// only on Responses. Only Responses take back the encrypted reasoning of a reply that came through
-// Responses. A request that Responses cannot carry whole keeps Chat Completions, and its provider
-// decides.
+// serve a Chat Completions request through Responses: one that declares tools while the model
+// reasons, or that carries reasoning history, when Responses carry it whole. OpenAI's Chat
+// Completions refuse function tools while the newest models reason, and only Responses return the
+// encrypted reasoning that a tool turn needs back, and take it back. A request that turns reasoning
+// off has neither need, so Chat Completions serve its tools as the client sent them. A request that
+// Responses cannot carry whole keeps Chat Completions, and its provider decides.
 func chatThroughResponses(raw map[string]json.RawMessage, gap func() error) bool {
 	tools := len(raw["tools"]) > 0 && !rawJSONNullOrEmptyArray(raw["tools"])
-	return (tools || chatReasoningHistory(raw["messages"])) && gap() == nil
+	return (tools && !chatReasoningOff(raw) || chatReasoningHistory(raw["messages"])) && gap() == nil
+}
+
+// chatReasoningOff reports whether a Chat Completions request turns reasoning off, with effort
+// none or enabled false.
+func chatReasoningOff(raw map[string]json.RawMessage) bool {
+	reasoning, err := chatRawReasoning(raw)
+	return err == nil && reasoning != nil &&
+		(reasoning.Effort != nil && *reasoning.Effort == "none" || reasoning.Enabled != nil && !*reasoning.Enabled)
 }
 
 // chatReasoningHistory reports whether a message of a Chat Completions request carries reasoning
