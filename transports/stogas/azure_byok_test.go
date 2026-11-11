@@ -131,6 +131,57 @@ func TestAzureCredentialEligibilityRetainsMultipleTargetsAndRequestVariants(t *t
 	}
 }
 
+// An Azure pair takes back the encrypted reasoning of the resource that serves it: the one of the
+// deployment that the cached credential selects, until its hold chooses a deployment in another
+// resource, which then binds what the pair returns.
+func TestAzureReasoningFollowsTheResourceOfTheHeldDeployment(t *testing.T) {
+	cached, moved := azureTestBinding(), azureTestBinding()
+	moved.Endpoint = "https://moved.openai.azure.com"
+	snapshot := &billing.KeyConfigSnapshot{Credentials: map[string][]billing.CredentialSelection{
+		"azure": {{Mode: "stored", ID: "credential", Credential: &billing.CachedCredential{
+			ID: "credential", EncryptedSecret: "sealed", Bindings: []billing.AzureCredentialBinding{{AzureBinding: cached}},
+		}}},
+	}}
+	tag := func(binding billing.AzureBinding) string { return snapshot.AccountTag("azure", 0, binding.Endpoint) }
+	body := `{"model":"gpt-5.6-sol","input":[{"role":"user","content":"hi"},` +
+		`{"type":"reasoning","id":"rs_cached","summary":[],"encrypted_content":"openai:` + tag(cached) + `:from-cached"},` +
+		`{"type":"reasoning","id":"rs_moved","summary":[],"encrypted_content":"openai:` + tag(moved) + `:from-moved"},` +
+		`{"role":"assistant","content":"Hello."},{"role":"user","content":"again"}]}`
+	for held, want := range map[*billing.AzureBinding]string{&cached: "from-cached", &moved: ""} {
+		resolution, err := catalog.ResolveRequest(catalog.RequestInput{
+			Body: []byte(body), Method: "POST", Path: "/v1/responses",
+			AvailableCredentials: map[string][]int{"azure": {0}},
+			DeploymentEligible:   CredentialDeploymentFilter(snapshot, time.Now()),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		BindAccount(snapshot, resolution)
+		state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
+		if err := state.Adapter.ValidateRequest(state); err != nil {
+			t.Fatal(err)
+		}
+		state.Authorization = &billing.Authorization{AzureBinding: held}
+		BindHeldAccount(snapshot, state)
+		request, err := resolution.ToBifrost(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var kept []string
+		for _, item := range request.ResponsesRequest.Input {
+			if item.ResponsesReasoning != nil && item.ResponsesReasoning.EncryptedContent != nil {
+				kept = append(kept, *item.ResponsesReasoning.EncryptedContent)
+			}
+		}
+		if strings.Join(kept, ",") != want {
+			t.Fatalf("held %s: reasoning %v, want %q", held.Endpoint, kept, want)
+		}
+		if bound := resolution.BindEncryptedReasoning("next"); bound != "openai:"+tag(*held)+":next" {
+			t.Fatalf("held %s: reply reasoning %q", held.Endpoint, bound)
+		}
+	}
+}
+
 func TestAzureOnlyCredentialSelectsItsConfiguredDeploymentWithoutSecretAccess(t *testing.T) {
 	snapshot := &billing.KeyConfigSnapshot{Credentials: map[string][]billing.CredentialSelection{
 		"azure": {{Mode: "stored", Credential: &billing.CachedCredential{Bindings: []billing.AzureCredentialBinding{{AzureBinding: azureTestBinding()}}}}},

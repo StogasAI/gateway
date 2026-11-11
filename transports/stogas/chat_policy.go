@@ -48,6 +48,9 @@ func validateCommonChatCompletionPolicy(state *State) error {
 	if err := validateJSONBool(raw, "parallel_tool_calls"); err != nil {
 		return err
 	}
+	if err := validatePromptCacheKey(raw["prompt_cache_key"]); err != nil {
+		return err
+	}
 	if err := validateStreamOptions(raw, true, false); err != nil {
 		return err
 	}
@@ -508,16 +511,18 @@ func validateN(raw json.RawMessage) error {
 	return nil
 }
 
-func validatePromptCacheKey(raw json.RawMessage, name string) error {
+// validatePromptCacheKey checks a prompt cache key on every deployment, although only the
+// deployments that route by it receive it (catalog.ResolvedRequest.ToBifrost).
+func validatePromptCacheKey(raw json.RawMessage) error {
 	if len(raw) == 0 {
 		return nil
 	}
 	var value string
 	if err := sonic.Unmarshal(raw, &value); err != nil {
-		return invalidRequest(name + " must be a string")
+		return invalidRequest("prompt_cache_key must be a string")
 	}
 	if value == "" || len(value) > maxPromptCacheKeyBytes || strings.ContainsAny(value, "\x00\r\n") || !utf8.ValidString(value) {
-		return invalidRequest(name + " must be a non-empty string up to 256 bytes without control line breaks")
+		return invalidRequest("prompt_cache_key must be a non-empty string up to 256 bytes without control line breaks")
 	}
 	return nil
 }
@@ -715,23 +720,16 @@ func validateChatAssistantInput(state *State, message map[string]json.RawMessage
 	if _, ok := message["reasoning_content"]; ok {
 		return invalidRequest(path + ".reasoning_content is not supported; use reasoning")
 	}
-	reasoningDetailsSet := false
+	// Reasoning history passes these checks on every deployment, and each deployment gets only the
+	// history that it takes back (catalog.ResolvedRequest.KeepReadableReasoning).
 	if details, ok := message["reasoning_details"]; ok {
-		replay := chatReasoningReplayFor(state)
-		if replay == noChatReasoningReplay {
-			return invalidRequest("reasoning_details history is not supported for the selected deployment")
-		}
-		if err := validateChatReasoningDetails(details, path+".reasoning_details", replay); err != nil {
+		if err := validateChatReasoningDetails(details, path+".reasoning_details"); err != nil {
 			return err
 		}
 		if reasoningSet && !chatReasoningMatchesDetails(reasoningValue, details) {
 			return invalidRequest(path + ".reasoning must match the visible text in reasoning_details")
 		}
-		reasoningDetailsSet = true
 		hasPayload = true
-	}
-	if reasoningSet && !reasoningDetailsSet && !chatPlainReasoningInputSupported(state) {
-		return invalidRequest(path + ".reasoning requires signed reasoning_details for the selected deployment")
 	}
 	if annotations, ok := message["annotations"]; ok {
 		if !chatAnnotationsInputSupported(state) {
@@ -926,7 +924,10 @@ func validateChatMessageContent(state *State, raw json.RawMessage, path string, 
 	return meaningful, nil
 }
 
-func validateChatReasoningDetails(raw json.RawMessage, path string, replay chatReasoningReplay) error {
+// validateChatReasoningDetails checks the reasoning details that replies return: text, with
+// Claude's signature or plain, and encrypted data, under the ID of OpenAI's reasoning item or as
+// Claude's redacted thinking.
+func validateChatReasoningDetails(raw json.RawMessage, path string) error {
 	var details []map[string]json.RawMessage
 	if err := sonic.Unmarshal(raw, &details); err != nil || len(details) == 0 {
 		return invalidRequest(path + " must be a non-empty array")
@@ -940,26 +941,32 @@ func validateChatReasoningDetails(raw json.RawMessage, path string, replay chatR
 		if value != index {
 			return invalidRequest(detailPath + ".index must match its array position")
 		}
-		switch detailType := rawString(detail["type"]); {
-		case detailType == string(schemas.BifrostReasoningDetailsTypeText) && replay == signedChatReasoningReplay:
+		switch rawString(detail["type"]) {
+		case string(schemas.BifrostReasoningDetailsTypeText):
 			if err := rejectUnsupportedInputKeys(detail, detailPath, "id", "index", "type", "text", "signature"); err != nil {
 				return err
 			}
 			if _, err := requiredInputString(detail, "text", detailPath, true); err != nil {
 				return err
 			}
-			if _, err := requiredInputString(detail, "signature", detailPath, false); err != nil {
-				return err
+			if _, ok := detail["signature"]; ok {
+				if _, err := requiredInputString(detail, "signature", detailPath, false); err != nil {
+					return err
+				}
 			}
-		case detailType == string(schemas.BifrostReasoningDetailsTypeEncrypted):
+		case string(schemas.BifrostReasoningDetailsTypeEncrypted):
 			if err := rejectUnsupportedInputKeys(detail, detailPath, "id", "index", "type", "data"); err != nil {
 				return err
 			}
-			if _, err := requiredInputString(detail, "data", detailPath, false); err != nil {
+			data, err := requiredInputString(detail, "data", detailPath, false)
+			if err != nil {
 				return err
 			}
+			if !catalog.IntactEncryptedReasoning(data) {
+				return invalidRequest(detailPath + ".data must be sent back unchanged")
+			}
 		default:
-			return invalidRequest(detailPath + ".type is not supported for the selected deployment")
+			return invalidRequest(detailPath + ".type must be reasoning.text or reasoning.encrypted")
 		}
 		if id, ok := detail["id"]; ok {
 			if _, ok := rawStringValue(id); !ok {
@@ -1031,34 +1038,6 @@ func validateOptionalChatMessageName(state *State, message map[string]json.RawMe
 	}
 	_, err := requiredInputString(message, "name", path, false)
 	return err
-}
-
-// chatReasoningReplay is the reasoning history that a deployment takes back in reasoning_details.
-type chatReasoningReplay uint8
-
-const (
-	noChatReasoningReplay chatReasoningReplay = iota
-	// signedChatReasoningReplay takes reasoning text with its signature, and encrypted reasoning, as
-	// Anthropic's format does.
-	signedChatReasoningReplay
-	// encryptedChatReasoningReplay takes only encrypted reasoning, as OpenAI's Responses do, which
-	// a request that its deployment serves through Responses gets through the translation.
-	encryptedChatReasoningReplay
-)
-
-func chatReasoningReplayFor(state *State) chatReasoningReplay {
-	switch {
-	case stateUsesClaudeWire(state):
-		return signedChatReasoningReplay
-	case state != nil && state.Resolution.Bridged() && catalog.EncryptedReasoningReplay(state.Resolution.Provider, state.Resolution.Deployment):
-		return encryptedChatReasoningReplay
-	default:
-		return noChatReasoningReplay
-	}
-}
-
-func chatPlainReasoningInputSupported(state *State) bool {
-	return state != nil && state.Resolution != nil && catalog.PlainReasoningHistory(state.Resolution.Provider)
 }
 
 func chatAnnotationsInputSupported(state *State) bool {

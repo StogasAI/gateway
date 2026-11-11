@@ -84,13 +84,8 @@ func responsesItemTextMaterial(item *schemas.ResponsesMessage) textMaterial {
 					material.output += len(block.Refusal)
 				}
 			case schemas.ResponsesOutputMessageContentTypeReasoning:
-				if block.Text != nil {
-					material.reasoning += len(*block.Text)
-					material.visible = 1
-				}
-				if block.EncryptedContent != nil {
-					material.opaque = 1
-				}
+				material.reasoning += textBytes(block.Text)
+				material.visible = 1
 			}
 		}
 	}
@@ -148,24 +143,14 @@ func (s *State) observeResponsesStreamTextMaterial(event *schemas.BifrostRespons
 		schemas.ResponsesStreamResponseTypeCustomToolCallInputDelta:
 		current.output += textBytes(event.Delta)
 	case schemas.ResponsesStreamResponseTypeReasoningSummaryPartAdded,
-		schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta,
-		schemas.ResponsesStreamResponseTypeReasoningTextDelta:
-		// Core uses the summary events for both summaries and raw content blocks.
-		// ContentIndex identifies content; SummaryIndex alone identifies summaries.
-		if event.ContentIndex != nil {
-			current.reasoning += textBytes(event.Delta)
-			current.visible = 1
-		} else if event.SummaryIndex != nil {
-			current.opaque = 1
-		}
+		schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta:
+		current.opaque = 1
+	case schemas.ResponsesStreamResponseTypeReasoningTextDelta:
+		current.reasoning += textBytes(event.Delta)
+		current.visible = 1
 	case schemas.ResponsesStreamResponseTypeContentPartAdded:
 		if event.Part != nil && event.Part.Type == schemas.ResponsesOutputMessageContentTypeReasoning {
-			if event.Part.Text != nil {
-				current.visible = 1
-			}
-			if event.Part.EncryptedContent != nil {
-				current.opaque = 1
-			}
+			current.visible = 1
 		}
 	default:
 		return

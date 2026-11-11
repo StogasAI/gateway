@@ -107,7 +107,7 @@ func TestResponsesReasoningContentAndSummaries(t *testing.T) {
 	state.Resolution.Deployment.ReasoningSupported = true
 	index := 0
 	state.observeResponsesStreamTextMaterial(&schemas.BifrostResponsesStreamResponse{
-		Type:        schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta,
+		Type:        schemas.ResponsesStreamResponseTypeReasoningTextDelta,
 		OutputIndex: &index, ContentIndex: &index, Delta: schemas.Ptr("推理"),
 	})
 	if bytes, known := state.reasoningTextBytes(); !known || bytes != 6 {

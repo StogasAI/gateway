@@ -17,11 +17,10 @@ func TestCatalogCapabilitiesFilterBeforeCredentialPreparation(t *testing.T) {
 		}{
 			{"stream", `"stream":true`, `"stream":true`, func(c *Capabilities) { c.Streaming = false }},
 			{"functions", `"tools":[{"type":"function","function":{"name":"test","parameters":{"type":"object"}}}]`, `"tools":[{"type":"function","name":"test","parameters":{"type":"object"}}]`, func(c *Capabilities) { c.FunctionCalling = false }},
-			{"parallel calls", `"tools":[{"type":"function","function":{"name":"test","parameters":{"type":"object"}}}],"parallel_tool_calls":true`, `"tools":[{"type":"function","name":"test","parameters":{"type":"object"}}],"parallel_tool_calls":true`, func(c *Capabilities) { c.ParallelFunctionCalling = false }},
 			{"tool choice", `"tool_choice":"required"`, `"tool_choice":"required"`, func(c *Capabilities) { c.ToolChoice = false }},
 			{"structured output", `"response_format":{"type":"json_schema","json_schema":{"name":"test","schema":{"type":"object"}}}`, `"text":{"format":{"type":"json_schema","name":"test","schema":{"type":"object"}}}`, func(c *Capabilities) { c.StructuredOutputs = false }},
 			{"system message", `"messages":[{"role":"developer","content":"hello"}]`, `"instructions":"hello"`, func(c *Capabilities) { c.SystemMessages = false }},
-			{"prompt caching", `"prompt_cache_key":"test"`, `"prompt_cache_key":"test"`, func(c *Capabilities) { c.ImplicitPromptCaching = false }},
+			{"prompt cache retention", `"prompt_cache_retention":"24h"`, `"prompt_cache_retention":"24h"`, func(c *Capabilities) { c.ImplicitPromptCaching = false }},
 			{"explicit prompt caching", `"prompt_cache_options":{"mode":"explicit"}`, `"prompt_cache_options":{"mode":"explicit"}`, func(c *Capabilities) { c.ExplicitPromptCaching = false }},
 		} {
 			for _, pinned := range []bool{false, true} {
@@ -117,18 +116,18 @@ func TestNamespaceToolsRequireFunctionCalling(t *testing.T) {
 
 func TestCapabilityProjectionSkipsOnlyUniversallySupportedFeatures(t *testing.T) {
 	for _, route := range []Route{RouteChat, RouteResponses} {
-		body := `{"stream":true,"parallel_tool_calls":true,"tool_choice":"required","tools":[{"type":"function"}],"response_format":{"type":"json_schema"},"text":{"format":{"type":"json_schema"}},"messages":[{"role":"system","content":"hello"}],"input":[{"role":"developer","content":"hello"}]}`
+		body := `{"stream":true,"tool_choice":"required","tools":[{"type":"function"}],"response_format":{"type":"json_schema"},"text":{"format":{"type":"json_schema"}},"messages":[{"role":"system","content":"hello"}],"input":[{"role":"developer","content":"hello"}]}`
 		raw, err := DecodeRequestBody([]byte(body), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		all := Capabilities{Streaming: true, ParallelFunctionCalling: true, ToolChoice: true, FunctionCalling: true, StructuredOutputs: true, SystemMessages: true}
+		all := Capabilities{Streaming: true, ToolChoice: true, FunctionCalling: true, StructuredOutputs: true, SystemMessages: true}
 		for _, shared := range []Capabilities{{}, all} {
 			required, err := requestCapabilities(raw, route, shared)
 			if err != nil || validateRequestCapabilities(required, all) != nil {
 				t.Fatalf("supported request failed: %+v, %v", required, err)
 			}
-			if !shared.Streaming && (!required.Streaming || !required.ParallelFunctionCalling || !required.ToolChoice || !required.FunctionCalling || !required.StructuredOutputs || !required.SystemMessages) {
+			if !shared.Streaming && (!required.Streaming || !required.ToolChoice || !required.FunctionCalling || !required.StructuredOutputs || !required.SystemMessages) {
 				t.Fatalf("projection omitted a requested feature: %+v", required)
 			}
 		}

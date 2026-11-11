@@ -1798,66 +1798,6 @@ func TestProviderResponsesStreamBindsCompletedItemPayload(t *testing.T) {
 	}
 }
 
-func TestProviderResponsesStreamBindsReasoningSignatureToCompletedPart(t *testing.T) {
-	state := responsesValidationState()
-	if err := validateProviderResponsesStream(state, validResponsesProviderEvent(schemas.ResponsesStreamResponseTypeCreated, 0, "resp_reasoning")); err != nil {
-		t.Fatal(err)
-	}
-	outputIndex := 0
-	contentIndex := 0
-	itemID := "reasoning_1"
-	itemType := schemas.ResponsesMessageTypeReasoning
-	inProgress := "in_progress"
-	if err := validateProviderResponsesStream(state, &schemas.BifrostResponsesStreamResponse{
-		Type: schemas.ResponsesStreamResponseTypeOutputItemAdded, SequenceNumber: 1,
-		OutputIndex: &outputIndex,
-		Item: &schemas.ResponsesMessage{
-			ID: &itemID, Type: &itemType, Status: &inProgress,
-			ResponsesReasoning: &schemas.ResponsesReasoning{Summary: []schemas.ResponsesReasoningSummary{}},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	empty := ""
-	if err := validateProviderResponsesStream(state, &schemas.BifrostResponsesStreamResponse{
-		Type: schemas.ResponsesStreamResponseTypeContentPartAdded, SequenceNumber: 2,
-		OutputIndex: &outputIndex, ContentIndex: &contentIndex, ItemID: &itemID,
-		Part: &schemas.ResponsesMessageContentBlock{Type: schemas.ResponsesOutputMessageContentTypeReasoning, Text: &empty},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	text := "private reasoning"
-	if err := validateProviderResponsesStream(state, &schemas.BifrostResponsesStreamResponse{
-		Type: schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta, SequenceNumber: 3,
-		OutputIndex: &outputIndex, ContentIndex: &contentIndex, ItemID: &itemID, Delta: &text,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	signature := "signature_safe"
-	if err := validateProviderResponsesStream(state, &schemas.BifrostResponsesStreamResponse{
-		Type: schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta, SequenceNumber: 4,
-		OutputIndex: &outputIndex, ContentIndex: &contentIndex, ItemID: &itemID, Signature: &signature,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := validateProviderResponsesStream(state, &schemas.BifrostResponsesStreamResponse{
-		Type: schemas.ResponsesStreamResponseTypeReasoningSummaryTextDone, SequenceNumber: 5,
-		OutputIndex: &outputIndex, ContentIndex: &contentIndex, ItemID: &itemID, Text: &text,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	changed := "signature_changed"
-	if err := validateProviderResponsesStream(state, &schemas.BifrostResponsesStreamResponse{
-		Type: schemas.ResponsesStreamResponseTypeContentPartDone, SequenceNumber: 6,
-		OutputIndex: &outputIndex, ContentIndex: &contentIndex, ItemID: &itemID,
-		Part: &schemas.ResponsesMessageContentBlock{
-			Type: schemas.ResponsesOutputMessageContentTypeReasoning, Text: &text, Signature: &changed,
-		},
-	}); !errors.Is(err, ErrProviderResponseMalformed) {
-		t.Fatalf("changed reasoning signature error = %v, want malformed provider response", err)
-	}
-}
-
 func TestProviderStreamRejectsAggregatePayloadAboveCap(t *testing.T) {
 	state := chatResponseValidationState()
 	state.providerStreamBytes = maxProviderResponseBodySize

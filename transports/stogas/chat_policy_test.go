@@ -54,11 +54,7 @@ func TestChatPolicyRejectsUnsupportedFields(t *testing.T) {
 		{"empty assistant", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":null}]}`, "must contain content, refusal, reasoning history, annotations, or tool calls"},
 		{"empty annotations", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","annotations":[]}]}`, "annotations must be a non-empty array"},
 		{"citation reversed range", `{"model":"provider:openai gpt-5.5","messages":[{"role":"assistant","content":"answer","annotations":[{"type":"url_citation","url_citation":{"start_index":5,"end_index":2,"title":"source","url":"https://example.com"}}]},{"role":"user","content":"continue"}]}`, "end_index must be an integer at or after start_index"},
-		{"signed reasoning on OpenAI", `{"model":"provider:openai gpt-5.5","messages":[{"role":"assistant","content":"answer","reasoning_details":[{"index":0,"type":"reasoning.text","text":"thought","signature":"sig"}]},{"role":"user","content":"continue"}]}`, "reasoning_details[0].type is not supported for the selected deployment"},
-		{"reasoning details on OpenAI Chat Completions", `{"model":"route:openai-chat-completions gpt-5.5","messages":[{"role":"assistant","content":"answer","reasoning_details":[{"index":0,"type":"reasoning.encrypted","data":"opaque"}]},{"role":"user","content":"continue"}]}`, "reasoning_details history is not supported for the selected deployment"},
-		{"unsigned Anthropic reasoning", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"assistant","content":"answer","reasoning":"thought"},{"role":"user","content":"continue"}]}`, "requires signed reasoning_details"},
 		{"Anthropic reasoning detail index gap", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"assistant","content":"answer","reasoning_details":[{"index":1,"type":"reasoning.text","text":"thought","signature":"sig"}]},{"role":"user","content":"continue"}]}`, "must match its array position"},
-		{"Anthropic reasoning detail missing signature", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"assistant","content":"answer","reasoning_details":[{"index":0,"type":"reasoning.text","text":"thought"}]},{"role":"user","content":"continue"}]}`, "signature is required"},
 		{"Anthropic reasoning detail unknown field", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"assistant","content":"answer","reasoning_details":[{"index":0,"type":"reasoning.encrypted","data":"opaque","future":true}]},{"role":"user","content":"continue"}]}`, "reasoning_details[0].future is not supported"},
 		{"Anthropic reasoning text mismatch", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"assistant","content":"answer","reasoning":"different","reasoning_details":[{"index":0,"type":"reasoning.text","text":"thought","signature":"sig"}]},{"role":"user","content":"continue"}]}`, "reasoning must match the visible text"},
 		{"message audio", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi","audio":{"data":"abc"}}]}`, "Only text message content"},
@@ -122,7 +118,6 @@ func TestChatPolicyRejectsUnsupportedFields(t *testing.T) {
 		{"anthropic logprobs", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"logprobs":true}`, "logprobs is not supported for Anthropic-format"},
 		{"anthropic prediction", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"prediction":{"type":"content","content":"hi"}}`, "prediction is not supported for Anthropic-format"},
 		{"anthropic presence penalty", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"presence_penalty":0.1}`, "presence_penalty is not supported for Anthropic-format"},
-		{"anthropic prompt cache key", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"prompt_cache_key":"tenant-a"}`, "prompt caching is not supported for the selected deployment"},
 		{"prompt cache isolation key", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"prompt_cache_isolation_key":"tenant-a"}`, "prompt_cache_isolation_key is not supported"},
 		{"moderation", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"moderation":{"model":"omni-moderation-latest","policy":{"input":{"mode":"block"}}}}`, "moderation is not supported; no request or response is moderated"},
 		{"speed", `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"speed":"fast"}`, `speed is not supported; use service_tier "fast"`},
@@ -1684,7 +1679,6 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 		{"inference geo", `{"model":"anthropic-claude-opus-4-8","input":"hi","inference_geo":"us"}`, "inference_geo is not supported; use a regional deployment ID or a routing filter"},
 		{"moderation", `{"model":"provider:openai gpt-5.5","input":"hi","moderation":{"model":"omni-moderation-latest","policy":{"output":{"mode":"block"}}}}`, "moderation is not supported; no request or response is moderated"},
 		{"reasoning input item without encrypted content", `{"model":"provider:openai gpt-5.5","input":[{"type":"reasoning","summary":[]}]}`, "reasoning input items require encrypted_content"},
-		{"reasoning input item on Anthropic", `{"model":"anthropic-claude-sonnet-4-6","input":[{"type":"reasoning","encrypted_content":"opaque"}]}`, "reasoning input items are only supported for OpenAI reasoning deployments"},
 		{"prompt cache options anthropic", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","prompt_cache_options":{"mode":"explicit"}}`, "prompt_cache_options is not supported for Anthropic-format"},
 		{"openai cache control", `{"model":"provider:openai gpt-5.5","input":"hi","cache_control":{"type":"ephemeral"}}`, "cache_control is not supported for OpenAI-format"},
 		{"openai input cache control", `{"model":"provider:openai gpt-5.5","input":[{"role":"user","content":[{"type":"input_text","text":"hi","cache_control":{"type":"ephemeral"}}]}]}`, "cache_control is not supported for OpenAI-format"},
@@ -1692,9 +1686,9 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 		{"anthropic cache control bad ttl", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","cache_control":{"type":"ephemeral","ttl":"24h"}}`, "cache_control.ttl must be 5m or 1h"},
 		{"anthropic message cache control unsupported", `{"model":"anthropic-claude-sonnet-4-6","input":[{"role":"user","cache_control":{"type":"ephemeral"},"content":"hi"}]}`, "input[0].cache_control is not supported"},
 		{"anthropic responses frequency penalty", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","frequency_penalty":0.1}`, "frequency_penalty is not supported for Anthropic-format"},
-		{"anthropic responses include", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","include":["message.output_text.logprobs"]}`, "include is not supported for Anthropic-format"},
+		{"anthropic responses include", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","include":["message.output_text.logprobs"]}`, "include contains a value that is not supported for the selected deployment"},
 		{"anthropic responses presence penalty", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","presence_penalty":0.1}`, "presence_penalty is not supported for Anthropic-format"},
-		{"responses include unknown value", `{"model":"provider:openai gpt-5.5","input":"hi","include":["file_search_call.results"]}`, "not supported by the current response contract"},
+		{"responses include unknown value", `{"model":"provider:openai gpt-5.5","input":"hi","include":["file_search_call.results"]}`, "include contains a value that is not supported for the selected deployment"},
 		{"responses duplicate include", `{"model":"provider:openai gpt-5.5","input":"hi","include":["reasoning.encrypted_content","reasoning.encrypted_content"]}`, "must not contain duplicate values"},
 		{"responses text unknown field", `{"model":"provider:openai gpt-5.5","input":"hi","text":{"future":true}}`, "text must contain only format and verbosity"},
 		{"responses text format unknown field", `{"model":"provider:openai gpt-5.5","input":"hi","text":{"format":{"type":"text","future":true}}}`, "supports only type"},
@@ -1704,7 +1698,6 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 		{"anthropic responses stream obfuscation", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","stream":true,"stream_options":{"include_obfuscation":true}}`, "cannot be preserved on Anthropic-format"},
 		{"anthropic detailed reasoning summary", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","reasoning":{"summary":"detailed"}}`, "must be auto or none for Anthropic-format"},
 		{"anthropic truncation", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","truncation":"auto"}`, "truncation is not supported for Anthropic-format"},
-		{"anthropic prompt cache key", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","prompt_cache_key":"tenant-a"}`, "prompt caching is not supported for the selected deployment"},
 		{"top k openai", `{"model":"provider:openai gpt-5.5","input":"hi","top_k":40}`, "top_k is not supported for OpenAI-format"},
 		{"stop sequences openai", `{"model":"provider:openai gpt-5.5","input":"hi","stop_sequences":["END"]}`, "stop_sequences is not supported for OpenAI-format"},
 		{"responses stop unsupported before stop sequences conflict", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","stop":["DONE"],"stop_sequences":["END"]}`, "stop is not supported"},
@@ -1794,7 +1787,6 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 		{"anthropic web search domain path", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search","filters":{"allowed_domains":["example.com/blog"]}}]}`, "contains an invalid domain"},
 		{"openai web search cached access not boolean", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"web_search","external_web_access":"no"}]}`, "Invalid JSON body"},
 		{"openai web search preview cached access", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"web_search_preview","external_web_access":false}]}`, "tools[0].external_web_access is not supported"},
-		{"anthropic web search cached access", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search","external_web_access":false}]}`, "tools[0].external_web_access is not supported"},
 		{"openai web search address filter", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"web_search","filters":{"blocked_domains":["127.0.0.1"]}}]}`, "contains an invalid domain"},
 		{"anthropic web search numeric address filter", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search","filters":{"blocked_domains":["intranet.0x7f"]}}]}`, "contains an invalid domain"},
 		{"openai web search bad location country", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"web_search","user_location":{"type":"approximate","country":"USA"}}]}`, "country must be a two-letter country code"},
@@ -2914,17 +2906,17 @@ func TestOpenAIResponsesEncryptedReasoningSharesInputEstimate(t *testing.T) {
 	}{
 		{
 			name:        "standard reasoning model",
-			body:        `{"model":"provider:openai gpt-5.5","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]},{"type":"reasoning","id":"rs_123","summary":[],"encrypted_content":"opaque-ciphertext"}],"max_output_tokens":16}`,
+			body:        `{"model":"provider:openai gpt-5.5","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]},{"type":"reasoning","id":"rs_123","summary":[],"encrypted_content":"openai:acct-test:opaque-ciphertext"}],"max_output_tokens":16}`,
 			wantContext: 1050000,
 		},
 		{
 			name:        "Fast deployment context cap",
-			body:        `{"model":"openai-gpt-5.5-2026-04-23-fast","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]},{"type":"reasoning","encrypted_content":"opaque-ciphertext"}],"max_output_tokens":16}`,
+			body:        `{"model":"openai-gpt-5.5-2026-04-23-fast","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]},{"type":"reasoning","encrypted_content":"openai:acct-test:opaque-ciphertext"}],"max_output_tokens":16}`,
 			wantContext: 272000,
 		},
 		{
 			name:          "hosted tool content is reserved per call",
-			body:          `{"model":"provider:openai gpt-5.5","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"search and continue"}]},{"type":"reasoning","encrypted_content":"opaque-ciphertext"}],"tools":[{"type":"web_search"}],"max_tool_calls":3,"max_output_tokens":16}`,
+			body:          `{"model":"provider:openai gpt-5.5","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"search and continue"}]},{"type":"reasoning","encrypted_content":"openai:acct-test:opaque-ciphertext"}],"tools":[{"type":"web_search"}],"max_tool_calls":3,"max_output_tokens":16}`,
 			wantContext:   1050000,
 			wantSearchCap: true,
 		},
@@ -2948,7 +2940,7 @@ func TestOpenAIResponsesEncryptedReasoningSharesInputEstimate(t *testing.T) {
 				t.Fatalf("encrypted reasoning must use the shared local estimate, got %d", resolution.InputTokenLimit())
 			}
 
-			state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
+			state := testPair(resolution)
 			if err := state.Adapter.ValidateRequest(state); err != nil {
 				t.Fatalf("ValidateRequest returned error: %v", err)
 			}
@@ -3310,11 +3302,11 @@ func TestOpenAIPromptCachingRejectsUnrepresentableShapes(t *testing.T) {
 		})
 	}
 
-	t.Run("cache key on uncached deployment", func(t *testing.T) {
+	t.Run("cache retention on uncached deployment", func(t *testing.T) {
 		resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 			Method: "POST",
 			Path:   "/v1/chat/completions",
-			Body:   []byte(`{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"prompt_cache_key":"tenant-a"}`),
+			Body:   []byte(`{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"prompt_cache_retention":"24h"}`),
 		})
 		if err != nil {
 			t.Fatalf("ResolveRequest returned error: %v", err)
@@ -3323,9 +3315,67 @@ func TestOpenAIPromptCachingRejectsUnrepresentableShapes(t *testing.T) {
 		state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
 		err = state.Adapter.ValidateRequest(state)
 		if err == nil || !strings.Contains(err.Error(), "prompt caching is not supported") {
-			t.Fatalf("expected the deployment capability gate to reject the cache key, got %v", err)
+			t.Fatalf("expected the deployment capability gate to reject the cache retention, got %v", err)
 		}
 	})
+}
+
+// Codex sends a prompt cache key and parallel_tool_calls: true with every request. Every
+// deployment takes both, and only OpenAI's models, which OpenAI routes by the key, receive it.
+func TestCodexCacheKeyAndParallelCallsWorkOnEveryDeployment(t *testing.T) {
+	tool := `{"type":"function","name":"lookup","parameters":{"type":"object"}}`
+	chatTool := `{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}`
+	for _, tc := range []struct {
+		model string
+		keyed bool
+	}{
+		{"provider:openai gpt-5.5", true},
+		{"azure-gpt-5.6-sol", true},
+		{"azure-deepseek-v4-pro", false},
+		{"azure-minimax-m3-fireworks-hosted-us", false},
+		{"azure-gpt-oss-120b", false},
+		{"anthropic-claude-sonnet-4-6", false},
+		{"azure-claude-opus-4-8-anthropic-hosted", false},
+		{"chutes-glm-5.2", false},
+	} {
+		for _, request := range []struct{ path, body string }{
+			{"/v1/responses", `{"model":"` + tc.model + `","input":"hi","tools":[` + tool + `],"parallel_tool_calls":true,"prompt_cache_key":"tenant-a","max_output_tokens":64}`},
+			{"/v1/chat/completions", `{"model":"` + tc.model + `","messages":[{"role":"user","content":"hi"}],"tools":[` + chatTool + `],"parallel_tool_calls":true,"prompt_cache_key":"tenant-a","max_completion_tokens":64}`},
+		} {
+			t.Run(tc.model+request.path, func(t *testing.T) {
+				fields, _, _ := providerBody(t, request.path, request.body)
+				if _, sent := fields["prompt_cache_key"]; sent != tc.keyed {
+					t.Fatalf("prompt_cache_key sent: %t", sent)
+				}
+				// true is every provider's default.
+				if _, sent := fields["parallel_tool_calls"]; sent {
+					t.Fatal("parallel_tool_calls: true reached the provider")
+				}
+			})
+		}
+	}
+	if err := requestCheckError(t, "/v1/responses", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","prompt_cache_key":""}`); err == nil || !strings.Contains(err.Error(), "prompt_cache_key must be a non-empty string") {
+		t.Fatalf("an empty cache key on a deployment that does not take it: %v", err)
+	}
+}
+
+// Codex's web search asks for cached pages unless live search is on. Claude searches only the live
+// web, so it takes the tool only with live access.
+func TestClaudeWebSearchTakesOnlyLiveAccess(t *testing.T) {
+	body := func(access string) string {
+		return `{"model":"anthropic-claude-sonnet-5","input":"hi","tools":[{"type":"web_search","external_web_access":` + access + `}],"max_output_tokens":64}`
+	}
+	fields, _, _ := providerBody(t, "/v1/responses", body("true"))
+	var tools []map[string]json.RawMessage
+	if err := json.Unmarshal(fields["tools"], &tools); err != nil || len(tools) != 1 {
+		t.Fatalf("tools: %s", fields["tools"])
+	}
+	if _, sent := tools[0]["external_web_access"]; sent || string(tools[0]["type"]) != `"web_search_20250305"` {
+		t.Fatalf("web search tool: %v", tools[0])
+	}
+	if err := requestCheckError(t, "/v1/responses", body("false")); err == nil || !strings.Contains(err.Error(), "tools[0].external_web_access must be true for Anthropic-format deployments") {
+		t.Fatalf("cached-only web search on Claude: %v", err)
+	}
 }
 
 func TestAnthropicSamplingParametersReachProviderRequestUnchanged(t *testing.T) {

@@ -108,6 +108,37 @@ func TestEncryptedCredentialsKeepTheirPlaceAndNameMissingRoots(t *testing.T) {
 	}
 }
 
+// A tag names the provider account that a customer credential reaches. It changes with the
+// credential, its secret and the endpoint of an Azure resource, whose case Azure ignores. Stogas's
+// own credentials have none.
+func TestAccountTagFollowsTheAccountThatACredentialReaches(t *testing.T) {
+	credential := func(id, secret string) CredentialSelection {
+		return CredentialSelection{Mode: "stored", ID: id, Credential: &CachedCredential{ID: id, EncryptedSecret: secret}}
+	}
+	snapshot := &KeyConfigSnapshot{Credentials: map[string][]CredentialSelection{
+		"azure": {credential("a", "sealed"), credential("b", "sealed"), credential("a", "resealed"), {Mode: "managed"}},
+	}}
+	const endpoint = "https://one.openai.azure.com"
+	tag := snapshot.AccountTag("azure", 0, endpoint)
+	if len(tag) != 16 || tag != snapshot.AccountTag("azure", 0, "https://ONE.openai.azure.com") {
+		t.Fatalf("tag = %q", tag)
+	}
+	for name, other := range map[string]string{
+		"another endpoint":   snapshot.AccountTag("azure", 0, "https://two.openai.azure.com"),
+		"another credential": snapshot.AccountTag("azure", 1, endpoint),
+		"another secret":     snapshot.AccountTag("azure", 2, endpoint),
+	} {
+		if other == "" || other == tag {
+			t.Errorf("%s: tag %q, first %q", name, other, tag)
+		}
+	}
+	for _, index := range []int{3, 4, -1} {
+		if other := snapshot.AccountTag("azure", index, endpoint); other != "" {
+			t.Errorf("credential %d: tag %q", index, other)
+		}
+	}
+}
+
 // A key that holds a credential of a provider or mode that a later release
 // added keeps serving on this release, as if that credential were not assigned.
 func TestCredentialsOfALaterReleaseAreLeftOut(t *testing.T) {

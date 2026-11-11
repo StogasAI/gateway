@@ -245,7 +245,6 @@ func TestChutesRejectsUnaccountedAndNonTextFeatures(t *testing.T) {
 		`"modalities":["text","audio"]`,
 		`"n":2`,
 		`"parallel_tool_calls":false,"tools":[{"type":"function","function":{"name":"lookup"}}]`,
-		`"prompt_cache_key":"tenant"`,
 		`"service_tier":"priority"`,
 		`"top_logprobs":1`,
 		`"web_search_options":{}`,

@@ -64,6 +64,7 @@ func (DefaultAdapter) ValidateRequest(state *State) error {
 	if err := validateCommonResponsesPolicy(state); err != nil {
 		return err
 	}
+	state.Resolution.KeepReadableReasoning()
 	return translate(state)
 }
 
@@ -198,6 +199,12 @@ func (DefaultAdapter) IngestChunk(state *State, chunk *schemas.BifrostStreamChun
 		}
 		state.observeResponsesProviderOutputEmitted(streamResp)
 		state.observeResponsesStreamTextMaterial(streamResp)
+		bindEncryptedReasoning(state.Resolution, streamResp.Item)
+		if streamResp.Response != nil {
+			for index := range streamResp.Response.Output {
+				bindEncryptedReasoning(state.Resolution, &streamResp.Response.Output[index])
+			}
+		}
 		state.Response = &schemas.BifrostResponse{ResponsesStreamResponse: streamResp}
 	}
 	return nil
@@ -228,6 +235,11 @@ func (DefaultAdapter) IngestResponse(state *State, resp *schemas.BifrostResponse
 		if resp != nil {
 			state.observeChatTextMaterial(resp.ChatResponse)
 			state.observeResponsesTextMaterial(resp.ResponsesResponse)
+			if resp.ResponsesResponse != nil {
+				for index := range resp.ResponsesResponse.Output {
+					bindEncryptedReasoning(state.Resolution, &resp.ResponsesResponse.Output[index])
+				}
+			}
 		}
 	}
 	if bifrostErr != nil {
@@ -239,6 +251,16 @@ func (DefaultAdapter) IngestResponse(state *State, resp *schemas.BifrostResponse
 	}
 	state.Response = resp
 	return nil
+}
+
+// bindEncryptedReasoning binds the encrypted reasoning of an output item to the account of the
+// pair that returned it (catalog.ResolvedRequest.BindEncryptedReasoning), before the client, an
+// export or a translation to Chat Completions reads it.
+func bindEncryptedReasoning(resolution *catalog.ResolvedRequest, item *schemas.ResponsesMessage) {
+	if item != nil && item.ResponsesReasoning != nil && item.ResponsesReasoning.EncryptedContent != nil {
+		bound := resolution.BindEncryptedReasoning(*item.ResponsesReasoning.EncryptedContent)
+		item.ResponsesReasoning.EncryptedContent = &bound
+	}
 }
 
 func ingestReportedUsage(state *State, usage *schemas.BifrostLLMUsage) error {

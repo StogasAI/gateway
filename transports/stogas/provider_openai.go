@@ -103,12 +103,6 @@ func validateOpenAIPromptCaching(state *State) error {
 	}
 	raw := state.Resolution.RawBody()
 	capabilities := state.Resolution.Deployment.Capabilities
-	if err := validatePromptCacheKey(raw["prompt_cache_key"], "prompt_cache_key"); err != nil {
-		return err
-	}
-	if rawJSONValueSet(raw["prompt_cache_key"]) && !capabilities.ImplicitPromptCaching {
-		return invalidRequest("prompt caching is not supported for the selected deployment")
-	}
 	if retentionRaw := raw["prompt_cache_retention"]; rawJSONValueSet(retentionRaw) {
 		if !capabilities.ImplicitPromptCaching {
 			return invalidRequest("prompt caching is not supported for the selected deployment")
@@ -242,7 +236,8 @@ func validateOpenAIWireResponsesPolicy(state *State) error {
 		return nil
 	}
 	raw := state.Resolution.RawBody()
-	if err := validateOpenAIResponsesInclude(raw["include"]); err != nil {
+	if err := validateResponsesInclude(raw["include"], "web_search_call.action.sources", "web_search_call.results",
+		"message.output_text.logprobs", "reasoning.encrypted_content"); err != nil {
 		return err
 	}
 	for _, name := range []string{"cache_control", "context_management", "stop_sequences", "task_budget", "top_k"} {
@@ -279,7 +274,8 @@ func validateOpenAIChatScalarPolicy(raw map[string]json.RawMessage) error {
 	return validateChatPrediction(raw["prediction"])
 }
 
-func validateOpenAIResponsesInclude(raw json.RawMessage) error {
+// validateResponsesInclude accepts the include values whose extras the deployment's replies carry.
+func validateResponsesInclude(raw json.RawMessage, supported ...string) error {
 	values, err := validateStringArray(raw, "include", 0)
 	if err != nil {
 		return err
@@ -290,13 +286,8 @@ func validateOpenAIResponsesInclude(raw json.RawMessage) error {
 			return invalidRequest("include must not contain duplicate values")
 		}
 		seen[value] = true
-		if !stringInSet(value,
-			"web_search_call.action.sources",
-			"web_search_call.results",
-			"message.output_text.logprobs",
-			"reasoning.encrypted_content",
-		) {
-			return invalidRequest("include contains a value that is not supported by the current response contract")
+		if !stringInSet(value, supported...) {
+			return invalidRequest("include contains a value that is not supported for the selected deployment")
 		}
 	}
 	return nil

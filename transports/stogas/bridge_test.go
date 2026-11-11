@@ -639,11 +639,21 @@ func messagesText(messages []map[string]json.RawMessage) string {
 	return string(encoded)
 }
 
-func TestAzureBridgedRequestsRefuseReasoningHistory(t *testing.T) {
-	err := bridgedValidationError(t, `{"model":"azure-minimax-m3-fireworks-hosted-us","input":[{"role":"user","content":"hi"},`+
-		`{"type":"reasoning","id":"rs_1","summary":[],"content":[{"type":"reasoning_text","text":"Thinking."}]},`+
-		`{"role":"assistant","content":[{"type":"output_text","text":"Hello."}]},{"role":"user","content":"again"}]}`)
-	if err == nil || !strings.Contains(err.Error(), "reasoning input items") {
-		t.Fatalf("error = %v", err)
+// A Chat Completions deployment gets the reasoning that it takes back: Chutes takes plain reasoning
+// text, and Azure's MiniMax takes none. Neither reads Claude's or OpenAI's encrypted reasoning.
+func TestBridgedRequestsKeepOnlyReasoningTheDeploymentTakesBack(t *testing.T) {
+	input := `"input":[{"role":"user","content":"hi"},` +
+		`{"type":"reasoning","id":"rs_1","summary":[],"content":[{"type":"reasoning_text","text":"Thinking."}]},` +
+		`{"type":"reasoning","id":"rs_2","summary":[],"encrypted_content":"opaque"},` +
+		`{"type":"reasoning","id":"rs_3","summary":[{"type":"summary_text","text":"Plan."}],"encrypted_content":"` + claudeThinkingContent(t, "Plan.") + `"},` +
+		`{"role":"assistant","content":[{"type":"output_text","text":"Hello."}]},{"role":"user","content":"again"}]`
+	for model, reasoning := range map[string]string{"chutes-glm-5.2": `"Thinking."`, "azure-minimax-m3-fireworks-hosted-us": ""} {
+		t.Run(model, func(t *testing.T) {
+			messages := wireMessages(t, bridgedState(t, `{"model":"`+model+`",`+input+`}`))
+			if len(messages) != 3 || string(messages[1]["content"]) != `"Hello."` || string(messages[1]["reasoning"]) != reasoning ||
+				messages[1]["reasoning_details"] != nil {
+				t.Fatalf("messages = %s", messagesText(messages))
+			}
+		})
 	}
 }

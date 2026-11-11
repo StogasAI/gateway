@@ -163,7 +163,6 @@ type providerResponsesItem struct {
 type providerResponsesPart struct {
 	blockType   schemas.ResponsesMessageContentBlockType
 	value       bytes.Buffer
-	signature   *string
 	annotations map[int]providerResponsesAnnotation
 	valueDone   bool
 	done        bool

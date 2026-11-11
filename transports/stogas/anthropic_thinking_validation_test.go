@@ -25,7 +25,7 @@ var anthropicTruncatedThinkingStream = []string{
 }
 
 func TestAnthropicThinkingResponsesStreamPassesValidation(t *testing.T) {
-	state := resolvedResponseValidationState(t, `{"model":"anthropic-claude-sonnet-4-6","input":"hi","reasoning":{"effort":"medium"},"max_output_tokens":2048}`)
+	_, ctx, state := providerBody(t, "/v1/responses", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","reasoning":{"effort":"medium"},"max_output_tokens":2048,"stream":true}`)
 	streamState := anthropic.AcquireAnthropicResponsesStreamState()
 	defer anthropic.ReleaseAnthropicResponsesStreamState(streamState)
 
@@ -36,7 +36,7 @@ func TestAnthropicThinkingResponsesStreamPassesValidation(t *testing.T) {
 		if err := json.Unmarshal([]byte(line), &event); err != nil {
 			t.Fatal(err)
 		}
-		chunks, bifrostErr, _ := event.ToBifrostResponsesStream(context.Background(), sequence, streamState)
+		chunks, bifrostErr, _ := event.ToBifrostResponsesStream(ctx, sequence, streamState)
 		if bifrostErr != nil {
 			t.Fatalf("convert %s: %v", event.Type, bifrostErr.Error)
 		}

@@ -135,6 +135,7 @@ func (r *providerRun) prepare(pair *providerPair, resolution *catalog.ResolvedRe
 	if r.held == nil {
 		r.client.policyVersions = selected.Logged
 	}
+	stogas.BindAccount(r.keyConfig, resolution)
 	if err := state.Adapter.ValidateRequest(state); err != nil {
 		return err
 	}
@@ -176,6 +177,7 @@ func (r *providerRun) prepare(pair *providerPair, resolution *catalog.ResolvedRe
 		return billingFailure{err}
 	}
 	if resolution.Provider == schemas.Azure {
+		stogas.BindHeldAccount(r.keyConfig, state)
 		// The credential names the Azure deployment that the body addresses.
 		if request, err = resolution.ToBifrost(pair.ctx); err != nil {
 			return err

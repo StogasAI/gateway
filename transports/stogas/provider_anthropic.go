@@ -320,9 +320,6 @@ func validateAnthropicChatCompletionPolicy(state *State) error {
 	if format, ok := rawObject(raw["response_format"]); ok && rawJSONValueSet(raw["response_format"]) && rawString(format["type"]) != "json_schema" {
 		return invalidRequest("response_format.type must be json_schema for Anthropic-format deployments")
 	}
-	if rawJSONValueSet(raw["prompt_cache_key"]) {
-		return invalidRequest("prompt_cache_key is not supported for Anthropic-format deployments")
-	}
 	if rawJSONValueSet(raw["prompt_cache_retention"]) {
 		return invalidRequest("prompt_cache_retention is not supported for Anthropic-format deployments")
 	}
@@ -382,19 +379,19 @@ func validateAnthropicResponsesPolicy(state *State) error {
 			}
 		}
 	}
-	if rawJSONValueSet(raw["prompt_cache_key"]) {
-		return invalidRequest("prompt_cache_key is not supported for Anthropic-format deployments")
-	}
 	if rawJSONValueSet(raw["prompt_cache_retention"]) {
 		return invalidRequest("prompt_cache_retention is not supported for Anthropic-format deployments")
 	}
 	if err := rejectAnthropicUnsupportedParameters(raw,
 		"frequency_penalty",
-		"include",
 		"presence_penalty",
 		"prompt_cache_options",
 		"top_logprobs",
 	); err != nil {
+		return err
+	}
+	// Each Claude block comes back whole in a reasoning item's encrypted content.
+	if err := validateResponsesInclude(raw["include"], "reasoning.encrypted_content"); err != nil {
 		return err
 	}
 	if count, err := validatePromptCacheBreakpoints(raw["input"]); err != nil {

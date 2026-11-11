@@ -64,13 +64,7 @@ func CredentialDeploymentFilter(snapshot *billing.KeyConfigSnapshot, now time.Ti
 			return false
 		}
 		unreported := !azureRepliesNameVersion(route, deployment)
-		for _, item := range lookups[index](billing.UpstreamTarget{
-			ModelFormat:    deployment.Upstream.ModelFormat,
-			Model:          deployment.Upstream.Model,
-			ModelVersion:   deployment.Upstream.ModelVersion,
-			Hosting:        deployment.Hosting,
-			DeploymentType: deployment.Upstream.DeploymentType,
-		}) {
+		for _, item := range lookups[index](credentialTarget(deployment)) {
 			if item.ModelDeprecationAt != nil && !now.Before(*item.ModelDeprecationAt) ||
 				unreported && !azureKeepsVersion(item.AzureBinding, now) {
 				continue
@@ -92,12 +86,45 @@ func CredentialTargetChanged(snapshot *billing.KeyConfigSnapshot) func(schemas.M
 		if provider != schemas.Azure || index < 0 || index >= len(selections) || selections[index].Credential == nil {
 			return false
 		}
-		upstream := deployment.Upstream
-		return selections[index].Credential.AzureTargetChanged(billing.UpstreamTarget{
-			ModelFormat: upstream.ModelFormat, Model: upstream.Model, ModelVersion: upstream.ModelVersion,
-			Hosting: deployment.Hosting, DeploymentType: upstream.DeploymentType,
-		})
+		return selections[index].Credential.AzureTargetChanged(credentialTarget(deployment))
 	}
+}
+
+// credentialTarget names a catalog deployment by the fields that select an Azure credential's
+// deployments for it.
+func credentialTarget(deployment catalog.Deployment) billing.UpstreamTarget {
+	upstream := deployment.Upstream
+	return billing.UpstreamTarget{
+		ModelFormat: upstream.ModelFormat, Model: upstream.Model, ModelVersion: upstream.ModelVersion,
+		Hosting: deployment.Hosting, DeploymentType: upstream.DeploymentType,
+	}
+}
+
+// BindAccount gives a pair the tag of the provider account that its credential reaches
+// (billing.KeyConfigSnapshot.AccountTag), which binds the encrypted reasoning that the pair returns
+// and takes back. An Azure pair reaches the deployment that the cached credential selects for it,
+// of which the database allows one, until its hold chooses the live one (BindHeldAccount).
+func BindAccount(snapshot *billing.KeyConfigSnapshot, resolution *catalog.ResolvedRequest) {
+	provider, index, endpoint := string(resolution.Provider), resolution.CredentialIndex, ""
+	if provider == "azure" && snapshot.UsesBYOK(provider, index) {
+		if credential := snapshot.Credentials[provider][index].Credential; credential != nil {
+			if bindings := credential.AzureBindingLookup()(credentialTarget(resolution.Deployment)); len(bindings) > 0 {
+				endpoint = bindings[0].Endpoint
+			}
+		}
+	}
+	resolution.SetAccountTag(snapshot.AccountTag(provider, index, endpoint))
+}
+
+// BindHeldAccount binds an Azure pair to the deployment that its hold chose. After its owner selects
+// a deployment in another resource, the cache can name the previous one for up to the cache's
+// lifetime, and the pair then leaves out the encrypted reasoning that it kept for that one.
+func BindHeldAccount(snapshot *billing.KeyConfigSnapshot, state *State) {
+	if state.Authorization == nil || state.Authorization.AzureBinding == nil {
+		return
+	}
+	resolution := state.Resolution
+	resolution.RebindAccount(snapshot.AccountTag(string(resolution.Provider), resolution.CredentialIndex, state.Authorization.AzureBinding.Endpoint))
 }
 
 // ValidatePreparedCredential checks the selected secret before input work. An

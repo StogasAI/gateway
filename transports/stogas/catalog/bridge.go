@@ -58,18 +58,6 @@ var ResponsesRefusedFields = []string{
 // checks normalize for each deployment before the translation reads them.
 var chatReasoningFields = []string{"reasoning", "reasoning_display", "reasoning_effort", "reasoning_max_tokens"}
 
-// PlainReasoningHistory reports whether the provider's Chat Completions take earlier reasoning as
-// plain text in assistant messages.
-func PlainReasoningHistory(provider schemas.ModelProvider) bool {
-	return provider == ProviderChutes
-}
-
-// EncryptedReasoningReplay reports whether the deployment takes back the encrypted reasoning of its
-// replies: OpenAI's reasoning deployments do, and Azure refuses it.
-func EncryptedReasoningReplay(provider schemas.ModelProvider, deployment Deployment) bool {
-	return provider == schemas.OpenAI && deployment.ReasoningSupported
-}
-
 // routeBridges reports whether a route serves requests on route only through the translation.
 func routeBridges(node compiledRoute, route Route) bool {
 	wire, ok := bridgeWire[route]
@@ -287,7 +275,7 @@ func (r *ResolvedRequest) translateToResponses() error {
 	params.Reasoning = deploymentReasoning(params.Reasoning, r.Deployment)
 	// A Chat Completions client cannot ask for the encrypted reasoning that the deployment takes
 	// back in a later turn, so the gateway asks for it.
-	if EncryptedReasoningReplay(r.Provider, r.Deployment) && !slices.Contains(params.Include, responsesIncludeEncryptedReasoning) {
+	if r.ReadsReasoning(EncryptedReasoning) && !slices.Contains(params.Include, responsesIncludeEncryptedReasoning) {
 		params.Include = append(params.Include, responsesIncludeEncryptedReasoning)
 	}
 	fields, err := responsesWireFields(converted, r.chat.Stream, r.pricing.RawBody)
@@ -571,14 +559,14 @@ func (s *snapshot) servedElsewhere(sel modelSelection, route Route, bridging boo
 
 // chatThroughResponses reports whether the OpenAI and Azure deployments that take both interfaces
 // serve a Chat Completions request through Responses: one that declares tools while the model
-// reasons, or that carries reasoning history, when Responses carry it whole. OpenAI's Chat
-// Completions refuse function tools while the newest models reason, and only Responses return the
-// encrypted reasoning that a tool turn needs back, and take it back. A request that turns reasoning
-// off has neither need, so Chat Completions serve its tools as the client sent them. A request that
-// Responses cannot carry whole keeps Chat Completions, and its provider decides.
+// reasons, or that carries OpenAI's encrypted reasoning, when Responses carry it whole. OpenAI's
+// Chat Completions refuse function tools while the newest models reason, and only Responses return
+// the encrypted reasoning that a tool turn needs back, and take it back. A request that turns
+// reasoning off has neither need, so Chat Completions serve its tools as the client sent them. A
+// request that Responses cannot carry whole keeps Chat Completions, and its provider decides.
 func chatThroughResponses(raw map[string]json.RawMessage, gap func() error) bool {
 	tools := len(raw["tools"]) > 0 && !rawJSONNullOrEmptyArray(raw["tools"])
-	return (tools && !chatReasoningOff(raw) || chatReasoningHistory(raw["messages"])) && gap() == nil
+	return (tools && !chatReasoningOff(raw) || chatEncryptedReasoningHistory(raw["messages"])) && gap() == nil
 }
 
 // chatReasoningOff reports whether a Chat Completions request turns reasoning off, with effort
@@ -587,20 +575,4 @@ func chatReasoningOff(raw map[string]json.RawMessage) bool {
 	reasoning, err := chatRawReasoning(raw)
 	return err == nil && reasoning != nil &&
 		(reasoning.Effort != nil && *reasoning.Effort == "none" || reasoning.Enabled != nil && !*reasoning.Enabled)
-}
-
-// chatReasoningHistory reports whether a message of a Chat Completions request carries reasoning
-// details.
-func chatReasoningHistory(raw json.RawMessage) bool {
-	messages, err := rawjson.Array(raw)
-	if err != nil {
-		return false
-	}
-	for _, message := range messages {
-		object, err := rawjson.Object(message)
-		if details := object["reasoning_details"]; err == nil && len(details) > 0 && !rawJSONNullOrEmptyArray(details) {
-			return true
-		}
-	}
-	return false
 }

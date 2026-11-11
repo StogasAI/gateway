@@ -9,27 +9,17 @@ import (
 // Read only feature selectors. Large prompt strings and tool schemas are skipped
 // by the JSON decoder, rather than decoded into provider request types here.
 func requestCapabilities(raw map[string]json.RawMessage, route Route, shared Capabilities) (Capabilities, error) {
+	// Neither a prompt cache key nor parallel_tool_calls needs a capability. A cache key only tunes
+	// how a provider routes requests to its cache, and a deployment that does not take it never
+	// receives it (ResolvedRequest.ToBifrost). parallel_tool_calls either allows parallel calls,
+	// the default that dropNoOpCompatibilityFields drops, or asks the provider for one call per turn.
 	var required Capabilities
-	for _, name := range []string{"prompt_cache_key", "prompt_cache_retention", "prompt_cache_options"} {
-		value := bytes.TrimSpace(raw[name])
-		if len(value) == 0 || bytes.Equal(value, []byte("null")) {
-			continue
-		}
-		if name == "prompt_cache_options" {
-			required.ExplicitPromptCaching = true
-		} else {
-			required.ImplicitPromptCaching = true
-		}
+	for name, target := range map[string]*bool{"prompt_cache_retention": &required.ImplicitPromptCaching, "prompt_cache_options": &required.ExplicitPromptCaching} {
+		*target = len(raw[name]) != 0 && !rawJSONNull(raw[name])
 	}
-	for _, field := range []struct {
-		name      string
-		supported bool
-		target    *bool
-	}{{"stream", shared.Streaming, &required.Streaming}, {"parallel_tool_calls", shared.ParallelFunctionCalling, &required.ParallelFunctionCalling}} {
-		if value, ok := raw[field.name]; ok && !field.supported {
-			if err := json.Unmarshal(value, field.target); err != nil {
-				return required, ErrInvalidJSON
-			}
+	if value, ok := raw["stream"]; ok && !shared.Streaming {
+		if err := json.Unmarshal(value, &required.Streaming); err != nil {
+			return required, ErrInvalidJSON
 		}
 	}
 	var tools []struct{ Type string }
@@ -89,12 +79,11 @@ func requestCapabilities(raw map[string]json.RawMessage, route Route, shared Cap
 // Features supported by every candidate cannot narrow the selection. Avoid
 // traversing prompt containers merely to rediscover that they are acceptable.
 func sharedRequestCapabilities(selections []routingSelection) Capabilities {
-	shared := Capabilities{Streaming: true, FunctionCalling: true, ParallelFunctionCalling: true, ToolChoice: true, StructuredOutputs: true, SystemMessages: true}
+	shared := Capabilities{Streaming: true, FunctionCalling: true, ToolChoice: true, StructuredOutputs: true, SystemMessages: true}
 	for _, selection := range selections {
 		c := selection.deployment.Capabilities
 		shared.Streaming = shared.Streaming && c.Streaming
 		shared.FunctionCalling = shared.FunctionCalling && c.FunctionCalling
-		shared.ParallelFunctionCalling = shared.ParallelFunctionCalling && c.ParallelFunctionCalling
 		shared.ToolChoice = shared.ToolChoice && c.ToolChoice
 		shared.StructuredOutputs = shared.StructuredOutputs && c.StructuredOutputs
 		shared.SystemMessages = shared.SystemMessages && c.SystemMessages
@@ -109,7 +98,6 @@ func validateRequestCapabilities(required, supported Capabilities) error {
 	}{
 		{"streaming", required.Streaming, supported.Streaming},
 		{"function calling", required.FunctionCalling, supported.FunctionCalling},
-		{"parallel function calling", required.ParallelFunctionCalling, supported.ParallelFunctionCalling},
 		{"tool choice", required.ToolChoice, supported.ToolChoice},
 		{"structured outputs", required.StructuredOutputs, supported.StructuredOutputs},
 		{"system messages", required.SystemMessages, supported.SystemMessages},

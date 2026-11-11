@@ -189,6 +189,8 @@ type ResolvedRequest struct {
 
 	// The catalog model that Model named before SetWireModel bound a customer's deployment.
 	reportedModel string
+	// accountTag names the provider account that the pair's credential reaches (SetAccountTag).
+	accountTag string
 	// hostedTools are the hosted tools that the request lets the model call.
 	hostedTools []HostedTool
 
@@ -340,6 +342,11 @@ func (r *ResolvedRequest) ToBifrost(ctx *schemas.BifrostContext) (*schemas.Bifro
 		body.Provider = r.Provider
 		body.Model = r.Model
 		body.Fallbacks = nil
+		if params := body.Params; params != nil && params.PromptCacheKey != nil && !r.takesPromptCacheKey() {
+			withoutKey := *params
+			withoutKey.PromptCacheKey = nil
+			body.Params = &withoutKey
+		}
 		converted = true
 		return &schemas.BifrostRequest{RequestType: r.WireRequestType(), ChatRequest: body}, nil
 	case r.responses != nil:
@@ -350,11 +357,31 @@ func (r *ResolvedRequest) ToBifrost(ctx *schemas.BifrostContext) (*schemas.Bifro
 		body.Provider = r.Provider
 		body.Model = r.Model
 		body.Fallbacks = nil
+		if params := body.Params; params != nil && params.PromptCacheKey != nil && !r.takesPromptCacheKey() {
+			withoutKey := *params
+			withoutKey.PromptCacheKey = nil
+			body.Params = &withoutKey
+		}
 		converted = true
 		return &schemas.BifrostRequest{RequestType: r.WireRequestType(), ResponsesRequest: body}, nil
 	default:
 		return nil, ErrUnsupportedRequest
 	}
+}
+
+// takesPromptCacheKey reports whether the deployment takes a prompt cache key, which only tunes how
+// OpenAI routes requests to its cache: one of OpenAI's models that caches implicitly. Claude caches
+// only what a request marks, and other models have no use for OpenAI's routing. ToBifrost leaves
+// the key out of a copy of the parameters, which can belong to the typed request that other pairs
+// share.
+func (r *ResolvedRequest) takesPromptCacheKey() bool {
+	return r.runsOpenAIModel() && r.Deployment.Capabilities.ImplicitPromptCaching
+}
+
+// runsOpenAIModel reports whether the deployment runs one of OpenAI's own models: on OpenAI, or on
+// Azure in the OpenAI model format.
+func (r *ResolvedRequest) runsOpenAIModel() bool {
+	return r.Provider == schemas.OpenAI || r.Provider == schemas.Azure && r.Deployment.Upstream.ModelFormat == "OpenAI"
 }
 
 // Retries is how many more times this pair may be called after a failure
@@ -1464,8 +1491,10 @@ func dropClientMetadata(rawData map[string]json.RawMessage) error {
 // those fields select provider storage, routing, or non-text output. JSON null
 // is omission for every optional top-level request field, and an empty
 // end-user ID names no user. Explicit defaults go too, because some providers
-// reject them, as do tool controls without tools: OpenAI rejects tool_choice
-// and parallel_tool_calls there, and agent frameworks send them anyway.
+// reject them, such as parallel_tool_calls: true, which only allows parallel
+// calls and which Codex sends for every model. So do tool controls without
+// tools: OpenAI rejects tool_choice and parallel_tool_calls there, and agent
+// frameworks send them anyway.
 // Required fields remain so the normal request validator can report them
 // accurately. Meaningful unsupported values remain and are rejected by route
 // policy.
@@ -1479,12 +1508,13 @@ func dropNoOpCompatibilityFields(rawData map[string]json.RawMessage, route Route
 	dropRawFieldIf(rawData, "safety_identifier", rawJSONNullOrEmptyString)
 	dropRawFieldIf(rawData, "fallbacks", rawJSONNullOrEmptyArray)
 	dropRawFieldIf(rawData, "tools", rawJSONNullOrEmptyArray)
+	dropRawFieldIf(rawData, "parallel_tool_calls", rawJSONTrue)
 	if _, ok := rawData["tools"]; !ok {
 		dropRawFieldIf(rawData, "tool_choice", func(raw json.RawMessage) bool {
 			choice := rawStringValue(raw)
 			return choice == "auto" || choice == "none"
 		})
-		dropRawFieldIf(rawData, "parallel_tool_calls", rawJSONBool)
+		dropRawFieldIf(rawData, "parallel_tool_calls", rawJSONFalse)
 	}
 
 	switch route {
@@ -1527,9 +1557,8 @@ func rawJSONFalse(raw json.RawMessage) bool {
 	return bytes.Equal(bytes.TrimSpace(raw), []byte("false"))
 }
 
-func rawJSONBool(raw json.RawMessage) bool {
-	trimmed := bytes.TrimSpace(raw)
-	return bytes.Equal(trimmed, []byte("true")) || bytes.Equal(trimmed, []byte("false"))
+func rawJSONTrue(raw json.RawMessage) bool {
+	return bytes.Equal(bytes.TrimSpace(raw), []byte("true"))
 }
 
 // rawJSONTextFormat reports a plain-text output format, every provider's

@@ -354,10 +354,6 @@ func TestAzureClaudeRejectsOpenAIOnlyCacheAndMCPFields(t *testing.T) {
 		body string
 	}{
 		{
-			name: "prompt cache key",
-			body: `{"model":"azure-claude-opus-4-8-anthropic-hosted","input":"hi","prompt_cache_key":"tenant","max_output_tokens":64}`,
-		},
-		{
 			name: "prompt cache options",
 			body: `{"model":"azure-claude-opus-4-8-anthropic-hosted","input":"hi","prompt_cache_options":{"mode":"explicit"},"max_output_tokens":64}`,
 		},

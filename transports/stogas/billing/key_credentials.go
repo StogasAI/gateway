@@ -3,8 +3,10 @@ package billing
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"time"
 
@@ -143,6 +145,28 @@ func (s *KeyConfigSnapshot) CustomerCredentialID(provider string, index int) str
 		return ""
 	}
 	return s.Credentials[provider][index].ID
+}
+
+// AccountTag names the provider account that an assigned customer credential reaches, to bind what
+// only that account can read, such as OpenAI's encrypted reasoning. A new secret can point the
+// credential at another account, so the tag changes with the secret. An Azure credential reaches
+// the resource at the endpoint of the deployment that serves the request, and other providers have
+// no endpoint. The secret keeps a client from confirming a guessed endpoint with its tag. Stogas's
+// own credentials have no tag.
+func (s *KeyConfigSnapshot) AccountTag(provider string, index int, endpoint string) string {
+	if !s.UsesBYOK(provider, index) {
+		return ""
+	}
+	credential := s.Credentials[provider][index].Credential
+	if credential == nil {
+		return ""
+	}
+	hash := sha256.New()
+	for _, part := range []string{credential.ID, credential.EncryptedSecret, strings.ToLower(endpoint)} {
+		hash.Write([]byte(part))
+		hash.Write([]byte{0})
+	}
+	return base64.RawURLEncoding.EncodeToString(hash.Sum(nil)[:12])
 }
 
 func (s CredentialSelection) customerOwned() bool {

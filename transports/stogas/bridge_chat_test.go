@@ -26,7 +26,7 @@ func chatBridgeValidation(t *testing.T, body string) (*State, error) {
 	if !resolution.Bridged() {
 		t.Fatalf("deployment %s serves the request on Chat Completions", resolution.Deployment.ID)
 	}
-	state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
+	state := testPair(resolution)
 	return state, state.Adapter.ValidateRequest(state)
 }
 
@@ -67,13 +67,10 @@ func chatBridgeProviderBody(t *testing.T, state *State) map[string]json.RawMessa
 }
 
 func TestChatReachesResponsesOnlyDeploymentsThroughResponses(t *testing.T) {
-	for _, test := range []struct{ model, include string }{
-		// OpenAI takes back the encrypted reasoning of its replies, which Azure refuses.
-		{"openai-gpt-5.6-sol-pro", `["reasoning.encrypted_content"]`},
-		{"azure-gpt-6-astra-pro", ""},
-	} {
-		t.Run(test.model, func(t *testing.T) {
-			state := chatBridgeState(t, `{"model":"`+test.model+`","messages":[{"role":"system","content":"Be brief."},{"role":"user","content":"Find a1."},`+
+	// Both take back the encrypted reasoning of their replies, which a Chat client cannot ask for.
+	for _, model := range []string{"openai-gpt-5.6-sol-pro", "azure-gpt-6-astra-pro"} {
+		t.Run(model, func(t *testing.T) {
+			state := chatBridgeState(t, `{"model":"`+model+`","messages":[{"role":"system","content":"Be brief."},{"role":"user","content":"Find a1."},`+
 				`{"role":"assistant","content":"Looking.","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{\"id\":\"a1\"}"}}]},`+
 				`{"role":"tool","tool_call_id":"call_1","content":"42"},{"role":"user","content":"Answer."}],`+chatBridgeTools+
 				`,"tool_choice":"auto","max_completion_tokens":300,"reasoning_effort":"high","stream":true,"stream_options":{"include_usage":true},`+
@@ -95,7 +92,7 @@ func TestChatReachesResponsesOnlyDeploymentsThroughResponses(t *testing.T) {
 				"store":             `false`,
 				"stream":            `true`,
 				"service_tier":      `"default"`,
-				"include":           test.include,
+				"include":           `["reasoning.encrypted_content"]`,
 			}
 			for name, value := range want {
 				if string(body[name]) != value {
@@ -114,7 +111,9 @@ func TestChatReachesResponsesOnlyDeploymentsThroughResponses(t *testing.T) {
 func TestChatReachesDeploymentsThatTakeBothInterfacesOnOne(t *testing.T) {
 	const (
 		user    = `"messages":[{"role":"user","content":"hi"}]`
-		history = `"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"Hi.","reasoning_details":[{"index":0,"type":"reasoning.encrypted","data":"opaque"}]},{"role":"user","content":"Go on."}]`
+		history = `"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"Hi.","reasoning_details":[{"index":0,"type":"reasoning.encrypted","id":"rs_1","data":"opaque"}]},{"role":"user","content":"Go on."}]`
+		// Claude's reasoning, which OpenAI's deployments leave out on either interface.
+		claudeHistory = `"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"Hi.","reasoning_details":[{"index":0,"type":"reasoning.text","text":"Greet.","signature":"sig"},{"index":1,"type":"reasoning.encrypted","data":"redacted"}]},{"role":"user","content":"Go on."}]`
 	)
 	for name, test := range map[string]struct{ body, route string }{
 		"plain request":           {`"model":"provider:openai gpt-6-luna",` + user, "openai-chat-completions"},
@@ -123,11 +122,12 @@ func TestChatReachesDeploymentsThatTakeBothInterfacesOnOne(t *testing.T) {
 		"tools, reasoning off":    {`"model":"provider:openai gpt-6-luna",` + user + `,` + chatBridgeTools + `,"reasoning":{"enabled":false}`, "openai-chat-completions"},
 		"tools, reasoning low":    {`"model":"provider:openai gpt-6-luna",` + user + `,` + chatBridgeTools + `,"reasoning":{"effort":"low"}`, "openai-responses"},
 		"tools without reasoning, with reasoning history": {`"model":"provider:openai gpt-6-luna",` + history + `,` + chatBridgeTools + `,"reasoning_effort":"none"`, "openai-responses"},
-		"tools on Azure":          {`"model":"azure-gpt-5.6-sol",` + user + `,` + chatBridgeTools, "azure-responses"},
-		"reasoning history":       {`"model":"provider:openai gpt-6-luna",` + history, "openai-responses"},
-		"empty tools":             {`"model":"provider:openai gpt-6-luna",` + user + `,"tools":[]`, "openai-chat-completions"},
-		"tools with a seed":       {`"model":"provider:openai gpt-6-luna",` + user + `,` + chatBridgeTools + `,"seed":1`, "openai-chat-completions"},
-		"tools on the Chat route": {`"model":"route:openai-chat-completions gpt-6-luna",` + user + `,` + chatBridgeTools, "openai-chat-completions"},
+		"tools on Azure":           {`"model":"azure-gpt-5.6-sol",` + user + `,` + chatBridgeTools, "azure-responses"},
+		"reasoning history":        {`"model":"provider:openai gpt-6-luna",` + history, "openai-responses"},
+		"Claude reasoning history": {`"model":"provider:openai gpt-6-luna",` + claudeHistory, "openai-chat-completions"},
+		"empty tools":              {`"model":"provider:openai gpt-6-luna",` + user + `,"tools":[]`, "openai-chat-completions"},
+		"tools with a seed":        {`"model":"provider:openai gpt-6-luna",` + user + `,` + chatBridgeTools + `,"seed":1`, "openai-chat-completions"},
+		"tools on the Chat route":  {`"model":"route:openai-chat-completions gpt-6-luna",` + user + `,` + chatBridgeTools, "openai-chat-completions"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/chat/completions", Body: []byte("{" + test.body + "}")})
@@ -174,25 +174,36 @@ func TestChatBridgeRefusesWhatResponsesLackOrTheFormatRefuses(t *testing.T) {
 	}
 }
 
-// A Chat Completions client gets an OpenAI deployment's reasoning as encrypted reasoning_details,
-// which it sends back so that the model keeps its reasoning across turns. Azure refuses reasoning
-// that comes back.
+// A Chat Completions client gets an OpenAI-format deployment's reasoning as encrypted
+// reasoning_details, which it sends back so that the model keeps its reasoning across turns. A
+// deployment gets only the reasoning that it takes back: encrypted reasoning that its own account
+// produced, never another account's, and neither Claude's nor plain reasoning.
 func TestChatBridgeTakesBackEncryptedReasoning(t *testing.T) {
-	history := `"messages":[{"role":"user","content":"Find a1."},{"role":"assistant","reasoning_details":[{"index":0,"type":"reasoning.encrypted","id":"rs_1","data":"opaque"}],` +
-		`"tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{\"id\":\"a1\"}"}}]},{"role":"tool","tool_call_id":"call_1","content":"42"}],` + chatBridgeTools
-	state := chatBridgeState(t, `{"model":"openai-gpt-5.6-sol-pro",`+history+`}`)
-	input := string(chatBridgeProviderBody(t, state)["input"])
-	if !strings.Contains(input, `{"id":"rs_1","type":"reasoning","summary":[],"encrypted_content":"opaque"}`) {
-		t.Fatalf("input = %s", input)
+	history := func(data string) string {
+		return `"messages":[{"role":"user","content":"Find a1."},{"role":"assistant","reasoning_details":[{"index":0,"type":"reasoning.encrypted","id":"rs_1","data":"` + data + `"}],` +
+			`"tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{\"id\":\"a1\"}"}}]},{"role":"tool","tool_call_id":"call_1","content":"42"}],` + chatBridgeTools
+	}
+	for _, model := range []string{"openai-gpt-5.6-sol-pro", "azure-gpt-6-astra-pro"} {
+		input := string(chatBridgeProviderBody(t, chatBridgeState(t, `{"model":"`+model+`",`+history(boundReasoning("opaque"))+`}`))["input"])
+		if !strings.Contains(input, `{"id":"rs_1","type":"reasoning","summary":[],"encrypted_content":"opaque"}`) {
+			t.Fatalf("%s input = %s", model, input)
+		}
+	}
+	// OpenAI takes back its reasoning without the ID too, which a client can drop.
+	withoutID := strings.Replace(history(boundReasoning("opaque")), `"id":"rs_1",`, "", 1)
+	if input := string(chatBridgeProviderBody(t, chatBridgeState(t, `{"model":"openai-gpt-5.6-sol-pro",`+withoutID+`}`))["input"]); !strings.Contains(input, `{"type":"reasoning","summary":[],"encrypted_content":"opaque"}`) {
+		t.Fatalf("input without the ID = %s", input)
 	}
 	for _, test := range []struct{ name, body, want string }{
-		{"Azure", `{"model":"azure-gpt-6-astra-pro",` + history + `}`, "reasoning_details history is not supported for the selected deployment"},
-		{"reasoning text", `{"model":"openai-gpt-5.6-sol-pro","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"Hello.","reasoning_details":[{"index":0,"type":"reasoning.text","text":"Thinking.","signature":"sig"}]},{"role":"user","content":"again"}]}`, "reasoning_details[0].type is not supported for the selected deployment"},
-		{"plain reasoning", `{"model":"openai-gpt-5.6-sol-pro","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"Hello.","reasoning":"Thinking."},{"role":"user","content":"again"}]}`, "requires signed reasoning_details"},
+		{"another account", `{"model":"openai-gpt-5.6-sol-pro",` + history("openai:acct-other:opaque") + `}`, `"type":"function_call"`},
+		{"unbound", `{"model":"azure-gpt-6-astra-pro",` + history("opaque") + `}`, `"type":"function_call"`},
+		{"Claude reasoning", `{"model":"openai-gpt-5.6-sol-pro","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"Hello.","reasoning":"Thinking.","reasoning_details":[{"index":0,"type":"reasoning.text","text":"Thinking.","signature":"sig"},{"index":1,"type":"reasoning.encrypted","data":"redacted"}]},{"role":"user","content":"again"}]}`, `"Hello."`},
+		{"plain reasoning", `{"model":"openai-gpt-5.6-sol-pro","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"Hello.","reasoning":"Thinking."},{"role":"user","content":"again"}]}`, `"Hello."`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := chatBridgeValidation(t, test.body); err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("error = %v, want %q", err, test.want)
+			input := string(chatBridgeProviderBody(t, chatBridgeState(t, test.body))["input"])
+			if strings.Contains(input, "reasoning") || !strings.Contains(input, test.want) {
+				t.Fatalf("input = %s", input)
 			}
 		})
 	}
@@ -264,7 +275,7 @@ func TestChatBridgeReplyBecomesChatCompletions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"role":"assistant","content":"Looking it up.","refusal":null,"reasoning_details":[{"id":"rs_1","index":0,"type":"reasoning.encrypted","data":"opaque"}],` +
+	want := `{"role":"assistant","content":"Looking it up.","refusal":null,"reasoning_details":[{"id":"rs_1","index":0,"type":"reasoning.encrypted","data":"openai:acct-test:opaque"}],` +
 		`"tool_calls":[{"index":0,"type":"function","id":"call_1","function":{"name":"lookup","arguments":"{\"id\":\"a1\"}"}}]}`
 	if *choice.FinishReason != "tool_calls" || string(message) != want {
 		t.Fatalf("finish reason %s, message =\n%s\nwant\n%s", *choice.FinishReason, message, want)
@@ -446,7 +457,7 @@ func TestChatBridgeStreamBecomesChatChunks(t *testing.T) {
 	// Chunks that carry nothing stay out, and the usage follows the finish reason in its own chunk.
 	want := strings.Join([]string{
 		`{"role":"assistant"}`,
-		`{"reasoning_details":[{"id":"rs_1","index":0,"type":"reasoning.encrypted","data":"opaque"}]}`,
+		`{"reasoning_details":[{"id":"rs_1","index":0,"type":"reasoning.encrypted","data":"openai:acct-test:opaque"}]}`,
 		`{"content":"Looking"}`,
 		`{"content":" it up."}`,
 		`{"tool_calls":[{"index":0,"type":"function","id":"call_1","function":{"name":"lookup","arguments":""}}]}`,

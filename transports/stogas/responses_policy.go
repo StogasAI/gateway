@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/bytedance/sonic"
+	anthropicprovider "github.com/maximhq/bifrost/core/providers/anthropic"
 	providerutils "github.com/maximhq/bifrost/core/providers/utils"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
@@ -68,6 +69,9 @@ func validateCommonResponsesPolicy(state *State) error {
 		return err
 	}
 	if err := validateJSONBool(raw, "parallel_tool_calls"); err != nil {
+		return err
+	}
+	if err := validatePromptCacheKey(raw["prompt_cache_key"]); err != nil {
 		return err
 	}
 	if err := validateString(raw, "instructions"); err != nil {
@@ -536,8 +540,13 @@ func validateResponsesWebSearchTool(state *State, tool map[string]json.RawMessag
 		if toolType == schemas.ResponsesToolTypeWebSearchPreview {
 			return invalidRequest("web_search_preview tools are not supported for Anthropic-format deployments")
 		}
-		if err := rejectUnsupportedResponsesToolKeys(tool, path, "type", "name", "max_uses", "filters", "user_location", "cache_control"); err != nil {
+		if err := rejectUnsupportedResponsesToolKeys(tool, path, "type", "name", "max_uses", "filters", "user_location", "cache_control", "external_web_access"); err != nil {
 			return err
+		}
+		// Claude searches only the live web. Codex asks for cached pages by default, which keep
+		// live pages and the instructions they can hold away from the model.
+		if access, ok := tool["external_web_access"]; ok && !rawBool(access) {
+			return invalidRequest(path + ".external_web_access must be true for Anthropic-format deployments, which search only the live web")
 		}
 		if err := validateHostedToolName(tool["name"], path+".name", "web_search"); err != nil {
 			return err
@@ -1212,7 +1221,7 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 			}
 			turn.result(rawString(item["call_id"]))
 		case "reasoning":
-			if err := validateResponsesReasoningInput(state, item, path); err != nil {
+			if err := validateResponsesReasoningInput(item, path); err != nil {
 				return err
 			}
 			turn.output()
@@ -1236,7 +1245,7 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 			if err := validateTextOnlyMediaFields(item, "Only text input is supported"); err != nil {
 				return err
 			}
-			return invalidRequest("Only text messages, client tool calls and outputs, and encrypted reasoning input are supported")
+			return invalidRequest("Only text messages, client tool calls and outputs, and reasoning items are supported")
 		}
 		if responsesUsesAnthropicWire(state) {
 			if isSystemMessage && validation.seenConversation {
@@ -1627,21 +1636,16 @@ func validateResponsesToolCallOutputInput(item map[string]json.RawMessage, path 
 	return nil
 }
 
-func validateResponsesReasoningInput(state *State, item map[string]json.RawMessage, path string) error {
-	if state != nil && state.Resolution.Bridged() && chatPlainReasoningInputSupported(state) {
-		return validateResponsesPlainReasoningInput(item, path)
-	}
-	if state == nil || state.Resolution == nil || !catalog.EncryptedReasoningReplay(state.Resolution.Provider, state.Resolution.Deployment) {
-		return invalidRequest("reasoning input items are only supported for OpenAI reasoning deployments")
-	}
+// validateResponsesReasoningInput checks a reasoning item that a reply returned. Its encrypted
+// content holds OpenAI's encrypted reasoning or a Claude block, and without it, its content holds
+// plain reasoning text. The checks are the same on every deployment, and each deployment gets only
+// the items that it takes back (catalog.ResolvedRequest.KeepReadableReasoning).
+func validateResponsesReasoningInput(item map[string]json.RawMessage, path string) error {
 	if err := rejectUnsupportedInputKeys(item, path, "type", "id", "status", "summary", "content", "encrypted_content"); err != nil {
 		return err
 	}
 	if err := validateResponsesInputItemIdentity(item, path); err != nil {
 		return err
-	}
-	if _, err := requiredInputString(item, "encrypted_content", path, false); err != nil {
-		return invalidRequest("reasoning input items require encrypted_content")
 	}
 	if raw, ok := item["summary"]; ok {
 		if err := validateResponsesReasoningTextBlocks(raw, path+".summary", "summary_text"); err != nil {
@@ -1653,34 +1657,31 @@ func validateResponsesReasoningInput(state *State, item map[string]json.RawMessa
 			return err
 		}
 	}
-	return nil
-}
-
-// validateResponsesPlainReasoningInput accepts the reasoning that a bridged deployment returned, for
-// a provider whose Chat Completions take it back as text. Its summary is empty, as the reply's
-// was.
-func validateResponsesPlainReasoningInput(item map[string]json.RawMessage, path string) error {
 	if rawJSONValueSet(item["encrypted_content"]) {
-		return invalidRequest(path + ".encrypted_content is not supported for Chat Completions deployments")
-	}
-	if err := rejectUnsupportedInputKeys(item, path, "type", "id", "status", "summary", "content", "encrypted_content"); err != nil {
-		return err
-	}
-	if err := validateResponsesInputItemIdentity(item, path); err != nil {
-		return err
-	}
-	if raw, ok := item["summary"]; ok {
-		var summary []json.RawMessage
-		if err := sonic.Unmarshal(raw, &summary); err != nil {
-			return invalidRequest(path + ".summary must be an array")
+		encrypted, err := requiredInputString(item, "encrypted_content", path, false)
+		if err != nil {
+			return err
 		}
-		if len(summary) > 0 {
-			return invalidRequest(path + ".summary must be empty for Chat Completions deployments, which take the reasoning text")
+		// A Claude block and OpenAI's bound encrypted reasoning come back as a reply returned them.
+		intact := catalog.IntactEncryptedReasoning(encrypted)
+		if anthropicprovider.HoldsThinkingBlock(encrypted) {
+			_, intact = anthropicprovider.DecodeThinkingBlock(encrypted)
 		}
+		if !intact {
+			return invalidRequest(path + ".encrypted_content must be sent back unchanged")
+		}
+		return nil
 	}
-	// Like a Chat Completions message's reasoning, the text can be blank: a reply can return
-	// blank reasoning, and its client can send it back.
-	return validateResponsesReasoningTextBlocks(item["content"], path+".content", "reasoning_text")
+	// Like a Chat Completions message's reasoning, plain reasoning text can be blank: a reply can
+	// return blank reasoning, and its client can send it back.
+	if !rawJSONValueSet(item["content"]) {
+		return invalidRequest("reasoning input items require encrypted_content")
+	}
+	var summary []json.RawMessage
+	if err := sonic.Unmarshal(item["summary"], &summary); err == nil && len(summary) > 0 {
+		return invalidRequest(path + ".summary must be empty when the item has no encrypted_content")
+	}
+	return nil
 }
 
 func validateResponsesReasoningTextBlocks(raw json.RawMessage, path string, expectedType string) error {
