@@ -52,8 +52,8 @@ type requestVariants struct {
 	budget        policy.SourceBudget
 	// attachments are the request's attachments, where they can narrow the candidates.
 	attachments []Attachment
-	// textFiles are its inline text files, of which auto text extraction keeps those that a
-	// pair's deployment reads as files.
+	// textFiles are its inline text files, which stay files where a pair's deployment reads
+	// them, unless the pair's policy extracts every text file.
 	textFiles []Attachment
 	// hostedTools are the hosted tools that the request lets the model call, whose data
 	// handling joins each candidate's.
@@ -634,16 +634,19 @@ func (v *requestVariants) prepareBody(selection routingSelection, value RequestP
 		check = "plugins.redaction"
 	}
 	options := inputfiles.Options{Extract: extraction != policy.TextExtractionOff, Reserve: reserveExpansion}
-	// Auto keeps a text file that the deployment reads as a file, unless the check must read it.
-	if extraction == policy.TextExtractionAuto && check == "" {
-		options.Native = func(path string) bool {
+	// A text file that the deployment reads stays a file, unless the policy extracts every text
+	// file or the check must read it. fileTexts are the texts of those files, for the token hold.
+	var fileTexts []string
+	if extraction != policy.TextExtractionAlways && check == "" {
+		options.File = func(path string) (string, bool) {
 			for _, attachment := range v.textFiles {
 				if attachment.Path == path {
-					return attachmentError(selection.provider, selection.deployment, attachment, routingSubject) == nil
+					return textFileDeclaration(selection.provider, selection.deployment, attachment)
 				}
 			}
-			return false
+			return "", false
 		}
+		options.Text = func(text string) { fileTexts = append(fileTexts, text) }
 	}
 	if types := value.Config.MediaTypes(); types != nil {
 		options.Check = func(path string, mediaType inputfiles.MediaType) error {
@@ -688,7 +691,7 @@ func (v *requestVariants) prepareBody(selection routingSelection, value RequestP
 	if files.Opaque != "" {
 		variant.estimate = func(deployment Deployment) (int, error) { return deployment.MaxInputTokens, nil }
 	} else {
-		variant.estimate = requestTokenEstimator(fields, v.route, v.selections)
+		variant.estimate = requestTokenEstimator(fields, fileTexts, v.route, v.selections)
 	}
 	if v.route == RouteChat {
 		variant.chat = &openaiprovider.OpenAIChatRequest{}

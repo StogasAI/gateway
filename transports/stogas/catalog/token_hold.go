@@ -66,8 +66,12 @@ func estimateInputContent(stats inputHoldStats, limit int) (int, error) {
 // Each immutable post-redaction body shares one content estimate across all
 // routing candidates. Candidate-specific framing and input ceilings are cheap
 // additions; a small candidate's ceiling must not cap a later larger candidate.
-func requestTokenEstimator(rawData map[string]json.RawMessage, route Route, selections []routingSelection) func(Deployment) (int, error) {
+//
+// fileTexts are the texts of the text files that stay files, which the provider reads as prompt
+// text.
+func requestTokenEstimator(rawData map[string]json.RawMessage, fileTexts []string, route Route, selections []routingSelection) func(Deployment) (int, error) {
 	stats := requestInputHoldStats(rawData, route)
+	stats.TextFields = append(stats.TextFields, fileTexts...)
 	maxInput := 0
 	for _, selection := range selections {
 		limit := selection.deployment.MaxInputTokens

@@ -256,6 +256,16 @@ func TextMediaType(value string) bool {
 		slices.Contains(textApplicationTypes, value)
 }
 
+// TextFile reports whether an inline document is a text file: one that declares a text type,
+// or that declares no type, or only application/octet-stream, as browsers do for source files,
+// and whose base64 payload starts as text.
+func TextFile(declared, payload string) bool {
+	if declared == "" || strings.EqualFold(declared, "application/octet-stream") {
+		return strings.HasPrefix(Sniff(payload), "text/")
+	}
+	return TextMediaType(declared)
+}
+
 // textApplicationTypes are the application types of plain text formats. Formats that hold
 // binary data or other encoded parts, such as RTF, Protocol Buffers and email messages, are left
 // out.

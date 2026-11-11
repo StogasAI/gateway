@@ -57,7 +57,8 @@ type Attachment struct {
 	URL, Data, ID string
 	Filename      string
 	FileType      string
-	// text marks an inline text file, which text extraction turns into prompt text.
+	// text marks an inline text file, which a deployment that reads text files gets as a file,
+	// and which text extraction turns into prompt text.
 	text bool
 	// mediaType is what the part and the start of its content say of its type, for the
 	// policy's input.mediaTypes, and mediaTypeErr why the two disagree.
@@ -131,6 +132,11 @@ func documentError(claude bool, formats DocumentFormats, attachment Attachment, 
 	if err != nil {
 		return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: path + " " + err.Error(), Param: path}
 	}
+	if attachment.text {
+		if _, ok := textDeclaration(claude, formats, mediaType, extension, strings.HasPrefix(attachment.Data, "data:")); ok {
+			return nil
+		}
+	}
 	if mediaType != "" && mediaType != "application/octet-stream" {
 		if !slices.Contains(formats.MediaTypes, mediaType) {
 			return attachmentRefusal(path, " is "+mediaType+", which is not supported by "+subject)
@@ -144,6 +150,41 @@ func documentError(claude bool, formats DocumentFormats, attachment Attachment, 
 		return attachmentRefusal(path, " needs a base64 data URL that names its media type, such as application/pdf, for "+subject)
 	}
 	return nil
+}
+
+// textDeclaration reports whether a deployment with the document formats reads an inline text
+// file as a file, and the media type that the file must then declare, or "" where its own
+// declaration serves. mediaType and extension are what the file declares, and dataURL whether
+// it is a data URL.
+//
+// A provider that reads text/plain reads any UTF-8 text under it, whatever the file's name:
+// Anthropic takes no other text type, and OpenAI refuses the text types and extensions that it
+// does not list, such as text/x-zig, but reads the same files as text/plain. Core reads a text
+// file for Claude from a data URL alone.
+func textDeclaration(claude bool, formats DocumentFormats, mediaType, extension string, dataURL bool) (string, bool) {
+	typed := mediaType != "" && mediaType != "application/octet-stream"
+	listed := slices.Contains(formats.Extensions, extension)
+	if typed {
+		listed = slices.Contains(formats.MediaTypes, mediaType)
+	}
+	switch {
+	case listed && (!claude || typed && dataURL):
+		return "", true
+	case slices.Contains(formats.MediaTypes, "text/plain"):
+		return "text/plain", true
+	}
+	return "", false
+}
+
+// textFileDeclaration reports whether the deployment reads an inline text file as a file, as
+// textDeclaration does.
+func textFileDeclaration(provider schemas.ModelProvider, deployment Deployment, attachment Attachment) (string, bool) {
+	if attachmentError(provider, deployment, attachment, routingSubject) != nil {
+		return "", false
+	}
+	mediaType, _, _ := inputfiles.ParseInline(attachment.Data, attachment.FileType)
+	return textDeclaration(UsesClaudeWire(provider, deployment.ModelID), deployment.DocumentFormats, mediaType,
+		strings.ToLower(filepath.Ext(attachment.Filename)), strings.HasPrefix(attachment.Data, "data:"))
 }
 
 // AttachmentUnsupported is the code of a request whose attachment no candidate deployment reads.
@@ -476,7 +517,7 @@ func readAttachment(block map[string]json.RawMessage, path string, responses boo
 		if declared, payload, err = inputfiles.ParseInline(inline, attachment.FileType); err != nil {
 			return Attachment{}, false
 		}
-		attachment.text = document && inputfiles.TextMediaType(declared)
+		attachment.text = document && inputfiles.TextFile(declared, payload)
 	}
 	if format != "" {
 		declared = inputfiles.AudioMediaType(format)

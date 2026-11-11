@@ -301,10 +301,11 @@ type Plugins struct {
 // Text extraction modes, from the weakest to the strongest: a policy that sets a stronger one
 // overrides a weaker one.
 const (
-	// TextExtractionOff sends text files as they are.
+	// TextExtractionOff sends every text file as a file, which only a deployment that reads
+	// text files takes.
 	TextExtractionOff = "off"
-	// TextExtractionAuto turns a text file into prompt text where the deployment does not read
-	// it as a file, or where input checks or redaction must read it.
+	// TextExtractionAuto turns a text file into prompt text where the deployment reads no text
+	// file, or where input checks or redaction must read it.
 	TextExtractionAuto = "auto"
 	// TextExtractionAlways turns every text file into prompt text.
 	TextExtractionAlways = "always"

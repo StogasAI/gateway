@@ -17,7 +17,7 @@ func TestEveryRuntimeDeploymentHasUniversalInputEstimate(t *testing.T) {
 			for _, input := range []string{"Hello world", "你好 👩🏽‍💻 a\u0344", strings.Repeat("x", 20000)} {
 				body, _ := json.Marshal(map[string]string{"input": input})
 				raw, _ := DecodeRequestBody(body, nil)
-				estimate := requestTokenEstimator(raw, RouteResponses, []routingSelection{{deployment: deployment}})
+				estimate := requestTokenEstimator(raw, nil, RouteResponses, []routingSelection{{deployment: deployment}})
 				got, err := estimate(deployment)
 				if err != nil || got <= 0 || got > deployment.MaxInputTokens {
 					t.Fatalf("%s/%s: invalid hold %d (%v)", id, routeID, got, err)
@@ -53,7 +53,7 @@ func TestUniversalContentKeepsCandidateFramingSeparate(t *testing.T) {
 		for i, tc := range cases {
 			selections[i].deployment = Deployment{ModelID: tc.model, MaxInputTokens: 10000, snapshot: snap}
 		}
-		estimate := requestTokenEstimator(raw, RouteResponses, selections)
+		estimate := requestTokenEstimator(raw, nil, RouteResponses, selections)
 		for i := range cases {
 			if reverse {
 				i = len(cases) - 1 - i
@@ -137,7 +137,7 @@ func TestSharedContentEstimateDoesNotReuseSmallContextCap(t *testing.T) {
 	raw, _ := DecodeRequestBody(body, nil)
 	small := Deployment{ModelID: "gpt-5.6-sol", ContextWindowTokens: 100, MaxInputTokens: 100, snapshot: snap}
 	large := Deployment{ModelID: "gpt-5.6-terra", ContextWindowTokens: 10000, MaxInputTokens: 10000, snapshot: snap}
-	estimate := requestTokenEstimator(raw, RouteResponses, []routingSelection{{deployment: small}, {deployment: large}})
+	estimate := requestTokenEstimator(raw, nil, RouteResponses, []routingSelection{{deployment: small}, {deployment: large}})
 	if got, err := estimate(small); err != nil || got != 100 {
 		t.Fatalf("small context: %d %v", got, err)
 	}

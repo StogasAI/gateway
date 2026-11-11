@@ -179,7 +179,7 @@ func TestRequestEstimatorUsesEachDeploymentsIndependentInputCeiling(t *testing.T
 	model := "gpt-5.6-sol"
 	small := Deployment{ModelID: model, ContextWindowTokens: 10000, MaxInputTokens: 100, snapshot: snap}
 	large := Deployment{ModelID: model, ContextWindowTokens: 10000, MaxInputTokens: 300, snapshot: snap}
-	estimate := requestTokenEstimator(raw, RouteResponses, []routingSelection{{deployment: small}, {deployment: large}})
+	estimate := requestTokenEstimator(raw, nil, RouteResponses, []routingSelection{{deployment: small}, {deployment: large}})
 	for _, deployment := range []Deployment{small, large, small} {
 		got, err := estimate(deployment)
 		if err != nil || got != deployment.MaxInputTokens {

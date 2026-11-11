@@ -143,20 +143,33 @@ func TestExtractionKeepsTheFilesMetadataAndOnlyTextTypes(t *testing.T) {
 	}
 }
 
-func TestNativeTextFilesStayFiles(t *testing.T) {
-	fields := map[string]json.RawMessage{"input": json.RawMessage(`[{"role":"user","content":[{"type":"input_file","file_data":"data:text/plain;base64,aGk=","filename":"a.txt"},{"type":"input_file","file_data":"data:text/plain;base64,aGk=","filename":"b.txt"}]}]`)}
-	var asked []string
-	stats, err := Process(fields, true, Options{Extract: true, Native: func(path string) bool {
+func TestKeptTextFilesStayFilesAndGiveTheirText(t *testing.T) {
+	fields := map[string]json.RawMessage{"input": json.RawMessage(`[{"role":"user","content":[` +
+		`{"type":"input_file","file_data":"data:text/plain;base64,aGk=","filename":"a.txt"},` +
+		`{"type":"input_file","file_data":"data:text/plain;base64,aGk=","filename":"b.txt"},` +
+		`{"type":"input_file","file_data":"aGk=","filename":"c.zig","prompt_cache_breakpoint":{"mode":"explicit"}}]}]`)}
+	var asked, texts []string
+	stats, err := Process(fields, true, Options{Extract: true, File: func(path string) (string, bool) {
 		asked = append(asked, path)
-		return path == "input[0].content[0]"
-	}})
+		if path == "input[0].content[2]" {
+			return "text/plain", true
+		}
+		return "", path == "input[0].content[0]"
+	}, Text: func(text string) { texts = append(texts, text) }})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(asked, []string{"input[0].content[0]", "input[0].content[1]"}) || stats.Opaque != "input[0].content[0]" {
-		t.Fatalf("asked %v, stats %+v", asked, stats)
+	if !reflect.DeepEqual(asked, []string{"input[0].content[0]", "input[0].content[1]", "input[0].content[2]"}) || !reflect.DeepEqual(texts, []string{"hi", "hi"}) ||
+		stats.Opaque != "" || stats.InlineBytes != 6 {
+		t.Fatalf("asked %v, texts %v, stats %+v", asked, texts, stats)
 	}
-	if !strings.Contains(string(fields["input"]), `"type":"input_file","file_data":"data:text/plain;base64,aGk=","filename":"a.txt"`) || !strings.Contains(string(fields["input"]), `"text":"b.txt (text/plain)\nhi"`) {
+	var got, want any
+	_ = json.Unmarshal(fields["input"], &got)
+	_ = json.Unmarshal([]byte(`[{"role":"user","content":[`+
+		`{"type":"input_file","file_data":"data:text/plain;base64,aGk=","filename":"a.txt"},`+
+		`{"type":"input_text","text":"b.txt (text/plain)\nhi"},`+
+		`{"type":"input_file","file_data":"data:text/plain;base64,aGk=","filename":"c.zig","prompt_cache_breakpoint":{"mode":"explicit"}}]}]`), &want)
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %s", fields["input"])
 	}
 }

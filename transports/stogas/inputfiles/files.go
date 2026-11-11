@@ -27,8 +27,9 @@ type Stats struct {
 	URLs        int
 	IDs         int
 	InlineBytes int
-	// Opaque names the first attachment that stays a file, a URL or a file ID, whose content the
-	// gateway does not read, or is "" when there is none.
+	// Opaque names the first attachment whose content the gateway does not read, or is "" when
+	// there is none: a URL, a file ID, or a file that stays one, unless it is a text file, which
+	// Text reads.
 	Opaque string
 }
 
@@ -44,9 +45,13 @@ func (e *PartError) Error() string { return e.Path + " " + e.Reason }
 type Options struct {
 	// Extract turns inline text files into prompt text.
 	Extract bool
-	// Native reports whether the deployment reads the text file at a path, such as
-	// messages[0].content[1], as a file, which then stays one. Nil extracts every text file.
-	Native func(path string) bool
+	// File reports whether the deployment reads the text file at a path, such as
+	// messages[0].content[1], as a file, which then stays one, and the media type that the file
+	// must declare for it, or "" for its own. Nil keeps no text file.
+	File func(path string) (mediaType string, ok bool)
+	// Text receives the text of each text file that stays a file, which the provider reads as
+	// prompt text, so that the caller can count it.
+	Text func(text string)
 	// Check refuses an attachment at a path by its media type. Nil checks nothing, and leaves
 	// the content unsniffed.
 	Check func(path string, mediaType MediaType) error
@@ -282,63 +287,17 @@ func (p *processor) block(path string, block map[string]json.RawMessage, respons
 		p.opaque(path)
 		return nil, nil
 	}
-	if document && p.Extract && TextMediaType(mediaType) && (p.Native == nil || !p.Native(path)) {
-		// Every UTF-8 byte may require six JSON bytes. The existing request lease
-		// also covers simultaneous encoded and decoded representations.
-		p.expansion += base64.StdEncoding.DecodedLen(len(payload)) * 6
-		if p.Reserve != nil {
-			if err := p.Reserve(p.expansion); err != nil {
-				return nil, err
+	if document && TextFile(mediaType, payload) {
+		fileType, kept := "", false
+		if p.File != nil {
+			fileType, kept = p.File(path)
+		}
+		if kept || p.Extract {
+			replacement, text, err := p.text(path, block, file, responses, mediaType, payload, fileType, kept)
+			if text || err != nil {
+				return replacement, err
 			}
 		}
-		decoded, err := base64.StdEncoding.Strict().DecodeString(payload)
-		if err != nil {
-			return nil, refuse("has invalid base64")
-		}
-		if !utf8.Valid(decoded) || bytes.IndexByte(decoded, 0) >= 0 {
-			return nil, refuse("is not UTF-8 text without NUL bytes, which text extraction requires")
-		}
-		p.stats.InlineBytes += len(decoded)
-		// Reject extra members rather than silently removing request semantics. Sorted keys name
-		// the same member each time.
-		for _, key := range slices.Sorted(maps.Keys(file)) {
-			if key != "type" && key != "file_data" && key != "filename" && key != "file_type" && key != "cache_control" && key != "prompt_cache_breakpoint" ||
-				!responses && (key == "type" || key == "cache_control" || key == "prompt_cache_breakpoint") {
-				return nil, refuse("has " + key + ", which text extraction cannot keep")
-			}
-		}
-		for _, key := range slices.Sorted(maps.Keys(block)) {
-			if !responses && key != "type" && key != "file" && key != "cache_control" && key != "prompt_cache_breakpoint" {
-				return nil, refuse("has " + key + ", which text extraction cannot keep")
-			}
-		}
-		if raw, exists := file["filename"]; exists {
-			var name string
-			if err := sonic.Unmarshal(raw, &name); err != nil || strings.TrimSpace(name) == "" {
-				return nil, refuse("filename must be a non-empty string")
-			}
-		}
-		// The first line keeps what the file part said of the file: its name and media type.
-		header := "(" + mediaType + ")"
-		if name := stringField(file, "filename"); name != "" {
-			header = name + " " + header
-		}
-		text := header + "\n" + string(decoded)
-		replacement := map[string]json.RawMessage{}
-		for _, key := range []string{"cache_control", "prompt_cache_breakpoint"} {
-			if raw, ok := block[key]; ok {
-				replacement[key] = raw
-			}
-		}
-		replacement["type"] = json.RawMessage(`"text"`)
-		if responses {
-			replacement["type"] = json.RawMessage(`"input_text"`)
-		}
-		replacement["text"], err = sonic.Marshal(text)
-		if err != nil {
-			return nil, err
-		}
-		return sonic.Marshal(replacement)
 	}
 	// A bounded decoder validates and counts binary input without retaining a
 	// second decoded file. No image, archive, document, or media parser runs here.
@@ -349,6 +308,115 @@ func (p *processor) block(path string, block map[string]json.RawMessage, respons
 	p.stats.InlineBytes += int(count)
 	p.opaque(path)
 	return nil, nil
+}
+
+// text reads the inline text file of a block. A kept file stays a file: its text goes to Text,
+// and it declares fileType where that is not "". Any other file becomes a text block, except
+// one that names no text type and is not UTF-8 text, which stays an opaque file: text then
+// reports false.
+func (p *processor) text(path string, block, file map[string]json.RawMessage, responses bool, mediaType, payload, fileType string, kept bool) (json.RawMessage, bool, error) {
+	refuse := func(reason string) (json.RawMessage, bool, error) {
+		return nil, false, &PartError{Path: path, Reason: reason}
+	}
+	// The request lease covers the decoded text beside the encoded file, and what replaces the
+	// file: a data URL of the same payload, or text, where every UTF-8 byte may require six
+	// JSON bytes.
+	size := base64.StdEncoding.DecodedLen(len(payload))
+	switch {
+	case !kept:
+		size *= 6
+	case fileType != "":
+		size += len(payload) + len(fileType) + len("data:;base64,")
+	}
+	p.expansion += size
+	if p.Reserve != nil {
+		if err := p.Reserve(p.expansion); err != nil {
+			return nil, false, err
+		}
+	}
+	decoded, err := base64.StdEncoding.Strict().DecodeString(payload)
+	if err != nil {
+		return refuse("has invalid base64")
+	}
+	valid := utf8.Valid(decoded) && bytes.IndexByte(decoded, 0) < 0
+	if !valid && !kept {
+		if TextMediaType(mediaType) {
+			return refuse("is not UTF-8 text without NUL bytes, which text extraction requires")
+		}
+		return nil, false, nil
+	}
+	p.stats.InlineBytes += len(decoded)
+	if kept {
+		// The provider decides whether it reads text in another encoding, which the gateway
+		// cannot count.
+		if !valid {
+			p.opaque(path)
+		} else if p.Text != nil {
+			p.Text(string(decoded))
+		}
+		if fileType == "" {
+			return nil, true, nil
+		}
+		delete(file, "file_type")
+		if file["file_data"], err = sonic.Marshal("data:" + fileType + ";base64," + payload); err != nil {
+			return nil, false, err
+		}
+		replacement := file
+		if !responses {
+			if block["file"], err = sonic.Marshal(file); err != nil {
+				return nil, false, err
+			}
+			replacement = block
+		}
+		encoded, err := sonic.Marshal(replacement)
+		return encoded, true, err
+	}
+	// Reject extra members rather than silently removing request semantics. Sorted keys name
+	// the same member each time.
+	for _, key := range slices.Sorted(maps.Keys(file)) {
+		if key != "type" && key != "file_data" && key != "filename" && key != "file_type" && key != "cache_control" && key != "prompt_cache_breakpoint" ||
+			!responses && (key == "type" || key == "cache_control" || key == "prompt_cache_breakpoint") {
+			return refuse("has " + key + ", which text extraction cannot keep")
+		}
+	}
+	for _, key := range slices.Sorted(maps.Keys(block)) {
+		if !responses && key != "type" && key != "file" && key != "cache_control" && key != "prompt_cache_breakpoint" {
+			return refuse("has " + key + ", which text extraction cannot keep")
+		}
+	}
+	if raw, exists := file["filename"]; exists {
+		var name string
+		if err := sonic.Unmarshal(raw, &name); err != nil || strings.TrimSpace(name) == "" {
+			return refuse("filename must be a non-empty string")
+		}
+	}
+	// The first line keeps what the file part said of the file: its name and media type.
+	header := ""
+	if TextMediaType(mediaType) {
+		header = "(" + mediaType + ")"
+	}
+	if name := stringField(file, "filename"); name != "" {
+		header = strings.TrimSpace(name + " " + header)
+	}
+	text := string(decoded)
+	if header != "" {
+		text = header + "\n" + text
+	}
+	replacement := map[string]json.RawMessage{}
+	for _, key := range []string{"cache_control", "prompt_cache_breakpoint"} {
+		if raw, ok := block[key]; ok {
+			replacement[key] = raw
+		}
+	}
+	replacement["type"] = json.RawMessage(`"text"`)
+	if responses {
+		replacement["type"] = json.RawMessage(`"input_text"`)
+	}
+	if replacement["text"], err = sonic.Marshal(text); err != nil {
+		return nil, false, err
+	}
+	encoded, err := sonic.Marshal(replacement)
+	return encoded, true, err
 }
 
 func (p *processor) opaque(path string) {
