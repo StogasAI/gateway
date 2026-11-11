@@ -1047,7 +1047,7 @@ func TestProviderHostedToolTerminalItemsRequireCompleteEvidence(t *testing.T) {
 // Requests reach only the basic web tool versions, which never run code
 // execution, so code execution output means the provider kept container data.
 func TestProviderResponsesRejectsCodeExecutionOutput(t *testing.T) {
-	request := `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20260209","name":"web_search"}]}`
+	request := `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}]}`
 	code := "print(1)"
 	expiresAt := "2026-09-20T12:34:56Z"
 	codeItem := schemas.ResponsesMessage{
@@ -1727,7 +1727,7 @@ func TestProviderResponsesEnforcesTerminalItemStatusAndDomainFilters(t *testing.
 	}
 
 	for _, blockedRequest := range []string{
-		`{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20260209","name":"web_search","filters":{"allowed_domains":["example.com"],"blocked_domains":["blocked.example.com"]}}]}`,
+		`{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search","filters":{"allowed_domains":["example.com"],"blocked_domains":["blocked.example.com"]}}]}`,
 		`{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"web_search","filters":{"allowed_domains":["example.com"],"blocked_domains":["blocked.example.com"]}}]}`,
 		`{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"web_search","filters":{"blocked_domains":["blocked.example.com"]}}]}`,
 	} {

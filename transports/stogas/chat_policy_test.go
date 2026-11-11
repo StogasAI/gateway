@@ -1753,18 +1753,18 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 		{"anthropic custom", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"custom","name":"shell"}]}`, "free-form input formats are not preserved"},
 		{"anthropic local shell", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"local_shell"}]}`, "Only function, namespace, web_fetch"},
 		{"anthropic max uses too large", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search","max_uses":129}]}`, "max_uses is outside the supported range"},
-		{"anthropic web fetch max uses too large", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_fetch_20260309","name":"web_fetch","max_uses":129}]}`, "max_uses is outside the supported range"},
-		{"anthropic web fetch negative content cap", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_fetch_20260309","name":"web_fetch","max_content_tokens":-1}]}`, "max_content_tokens is outside the supported range"},
+		{"anthropic web fetch max uses too large", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_fetch_20250910","name":"web_fetch","max_uses":129}]}`, "max_uses is outside the supported range"},
+		{"anthropic web fetch negative content cap", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_fetch_20250910","name":"web_fetch","max_content_tokens":-1}]}`, "max_content_tokens is outside the supported range"},
 		{"anthropic hosted tool wrong name", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"lookup"}]}`, "name must be web_search"},
 		{"anthropic advanced function flag", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"function","name":"lookup","defer_loading":true}]}`, "defer_loading is not supported"},
-		{"anthropic unsupported fetch flag", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_fetch_20260309","name":"web_fetch","allowed_callers":["direct"]}]}`, "allowed_callers is not supported"},
+		{"anthropic unsupported fetch flag", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_fetch_20250910","name":"web_fetch","allowed_callers":["direct"]}]}`, "allowed_callers is not supported"},
 		{"anthropic overlapping domain filters", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search","filters":{"allowed_domains":["example.com"],"blocked_domains":["EXAMPLE.COM"]}}]}`, "duplicates a domain"},
 		{"anthropic max tool calls conflicts with max uses", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","max_tool_calls":2,"tools":[{"type":"web_search_20250305","name":"web_search","max_uses":3}]}`, "max_tool_calls conflicts with tools[].max_uses"},
-		{"anthropic web fetch max tool calls conflicts with max uses", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","max_tool_calls":2,"tools":[{"type":"web_fetch_20260309","name":"web_fetch","max_uses":3}]}`, "max_tool_calls conflicts with tools[].max_uses"},
-		{"anthropic multiple hosted tools", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20260318","name":"web_search","max_uses":2},{"type":"web_fetch_20260318","name":"web_fetch","max_uses":2}]}`, "one hosted tool per request"},
+		{"anthropic web fetch max tool calls conflicts with max uses", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","max_tool_calls":2,"tools":[{"type":"web_fetch_20250910","name":"web_fetch","max_uses":3}]}`, "max_tool_calls conflicts with tools[].max_uses"},
+		{"anthropic multiple hosted tools", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search","max_uses":2},{"type":"web_fetch_20250910","name":"web_fetch","max_uses":2}]}`, "one hosted tool per request"},
 		{"anthropic code execution", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"code_execution_20250825","name":"code_execution"}],"max_tool_calls":1}`, "Only function, namespace, web_fetch, and priced hosted web search tools are supported"},
 		{"anthropic computer use", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"computer_20251124","name":"computer"}],"max_tool_calls":1}`, "Only function, namespace, web_fetch"},
-		{"openai web fetch", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"web_fetch_20260309"}],"max_tool_calls":1}`, "No deployment for this request runs web_fetch."},
+		{"openai web fetch", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"web_fetch_20250910"}],"max_tool_calls":1}`, "No deployment for this request runs web_fetch."},
 		{"openai code execution version", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"code_execution_20250825"}],"max_tool_calls":1}`, "hosted containers have separate pricing and lifecycle"},
 		{"openai empty web search suffix", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"web_search_"}],"max_tool_calls":1}`, "Only function, custom"},
 		{"openai separator-only web search suffix", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"web_search__"}],"max_tool_calls":1}`, "Only function, custom"},
@@ -1796,7 +1796,7 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 		{"allowed tools missing mode", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"allowed_tools","tools":[{"type":"function","name":"lookup"}]}}`, "tool_choice.mode is required"},
 		{"allowed hosted tool choice not declared", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_search_preview"}]},"max_tool_calls":1}`, "max_tool_calls is supported only for priced hosted Responses tools"},
 		{"allowed hosted selector version mismatch", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"web_search_2025_08_26"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_search"}]},"max_tool_calls":1}`, "tool_choice selects an undeclared hosted tool version"},
-		{"allowed tools web fetch", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_fetch_20260309"}]},"max_tool_calls":1}`, "max_tool_calls is supported only for priced hosted Responses tools"},
+		{"allowed tools web fetch", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_fetch_20250910"}]},"max_tool_calls":1}`, "max_tool_calls is supported only for priced hosted Responses tools"},
 		{"anthropic hosted selector", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}],"tool_choice":{"type":"web_search_20250305"}}`, "only string tool_choice modes or named function selectors"},
 		{"anthropic allowed tools selector", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_search_20250305"}]}}`, "allowed_tools is supported only for OpenAI-format"},
 		{"image input", `{"model":"provider:openai gpt-5.5","input":[{"type":"input_image","image_url":"https://example.com/a.png"}]}`, "Only text input"},
@@ -2485,9 +2485,9 @@ func TestResponsesPolicyAllowsTextFunctionAndPricedWebSearch(t *testing.T) {
 		`{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":"auto","max_tool_calls":128}`,
 		`{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}],"tool_choice":"auto","max_tool_calls":2}`,
 		`{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}],"tool_choice":"auto"}`,
-		`{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20260209","name":"web_search","filters":{"allowed_domains":["example.com"],"blocked_domains":["blocked.example.com"]},"user_location":{"type":"approximate","country":"US","timezone":"America/New_York"}}],"tool_choice":"required","max_tool_calls":2}`,
+		`{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search","filters":{"allowed_domains":["example.com"],"blocked_domains":["blocked.example.com"]},"user_location":{"type":"approximate","country":"US","timezone":"America/New_York"}}],"tool_choice":"required","max_tool_calls":2}`,
 		`{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search","name":"web_search"}],"tool_choice":"auto","max_tool_calls":2}`,
-		`{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_fetch_20260309","name":"web_fetch","max_content_tokens":1000}],"tool_choice":"required"}`,
+		`{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_fetch_20250910","name":"web_fetch","max_content_tokens":1000}],"tool_choice":"required"}`,
 		`{"model":"anthropic-claude-sonnet-4-6","input":[{"role":"user","content":[{"type":"input_text","text":"hi","cache_control":{"type":"ephemeral","ttl":"5m"}}]}],"cache_control":{"type":"ephemeral","ttl":"1h"},"tools":[{"type":"function","name":"lookup","cache_control":{"type":"ephemeral"}}]}`,
 		`{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"function","name":"lookup","parameters":{"type":"object","properties":{"cache_control":{"type":"string"}}}}]}`,
 		`{"model":"anthropic-claude-sonnet-4-6","input":"hi","top_p":0.9,"top_k":40,"stop_sequences":["END"]}`,
@@ -3746,7 +3746,7 @@ func TestAnthropicResponsesWebFetchOmittedCapSendsTheDefaultCap(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"anthropic-claude-sonnet-4-6","input":"Fetch https://example.com and summarize it.","cache_control":{"type":"ephemeral","ttl":"1h"},"tools":[{"type":"web_fetch_20260309","name":"web_fetch","max_content_tokens":1000}],"max_output_tokens":64}`),
+		Body:   []byte(`{"model":"anthropic-claude-sonnet-4-6","input":"Fetch https://example.com and summarize it.","cache_control":{"type":"ephemeral","ttl":"1h"},"tools":[{"type":"web_fetch_20250910","name":"web_fetch","max_content_tokens":1000}],"max_output_tokens":64}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -3913,7 +3913,7 @@ func TestAnthropicResponsesWebFetchToolChoiceNoneDoesNotReserveContentHeadroom(t
 		Body: []byte(`{
 			"model":"anthropic-claude-sonnet-4-6",
 			"input":"Summarize https://example.com/article.",
-			"tools":[{"type":"web_fetch_20260309","name":"web_fetch","max_content_tokens":1000}],
+			"tools":[{"type":"web_fetch_20250910","name":"web_fetch","max_content_tokens":1000}],
 			"tool_choice":"none",
 			"max_tool_calls":2,
 			"max_output_tokens":64
@@ -4532,7 +4532,7 @@ func TestAnthropicResponsesWebFetchIsCappedAndTokenPriced(t *testing.T) {
 			"model":"anthropic-claude-sonnet-4-6",
 			"input":"Summarize https://example.com/article in one sentence.",
 			"tools":[{
-				"type":"web_fetch_20260309",
+				"type":"web_fetch_20250910",
 				"name":"web_fetch",
 				"max_content_tokens":1000,
 				"filters":{"allowed_domains":["example.com"]}
@@ -4625,7 +4625,7 @@ func TestAnthropicCompactionHoldCoversEveryBoundedSamplingIteration(t *testing.T
 		},
 		{
 			name:            "compaction can run before every hosted-tool sampling step",
-			body:            `{"model":"anthropic-claude-sonnet-4-6","input":"hi","max_output_tokens":64,"context_management":{"edits":[{"type":"compact_20260112"}]},"tools":[{"type":"web_search_20260318","name":"web_search"}],"max_tool_calls":2}`,
+			body:            `{"model":"anthropic-claude-sonnet-4-6","input":"hi","max_output_tokens":64,"context_management":{"edits":[{"type":"compact_20260112"}]},"tools":[{"type":"web_search_20250305","name":"web_search"}],"max_tool_calls":2}`,
 			wantIterations:  10,
 			wantHostedCalls: "2",
 		},

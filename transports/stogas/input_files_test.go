@@ -230,7 +230,7 @@ func TestProviderFileIDWithPreparedBYOKHoldsFullInput(t *testing.T) {
 
 func TestAnthropicAttachmentLoopHoldAndProviderToolCaps(t *testing.T) {
 	for _, model := range []string{"provider:anthropic anthropic-claude-opus-5-fast-us", "provider:azure azure-claude-opus-4-8"} {
-		for _, tool := range []string{"web_search_20250305", "web_fetch_20260309"} {
+		for _, tool := range []string{"web_search_20250305", "web_fetch_20250910"} {
 			for _, tc := range []struct {
 				name, cap, cache string
 				perTool, want    int

@@ -761,6 +761,9 @@ func (AnthropicAdapter) ValidateRawResponsesToolType(state *State, tool map[stri
 		}
 		return nil
 	}
+	if strings.HasPrefix(rawType, "web_search_") || strings.HasPrefix(rawType, "web_fetch_") {
+		return invalidRequest("Claude runs " + anthropicWebSearchVersion + " and " + anthropicWebFetchVersion + "; name one of them, web_search or web_fetch")
+	}
 	return invalidRequest("Only function, namespace, web_fetch, and priced hosted web search tools are supported")
 }
 
@@ -1091,6 +1094,14 @@ func anthropicFinalMeters(req anthropicAdapterContext) []billing.MeterEstimate {
 	return billing.AppendCallMeterCost(nil, req.Deployment.Pricing, meterAnthropicWebSearchCalls, req.ActualWebSearchCalls, false)
 }
 
+// Claude runs web search and web fetch at these versions, and the unversioned names get them.
+// Later versions filter results with code execution, which is closed, so a request that names
+// one is refused: a request never runs another version than the one it names.
+const (
+	anthropicWebSearchVersion = string(anthropicprovider.AnthropicToolTypeWebSearch20250305)
+	anthropicWebFetchVersion  = string(anthropicprovider.AnthropicToolTypeWebFetch20250910)
+)
+
 func anthropicResponsesToolTypeSupported(rawType string) bool {
 	rawType = strings.TrimSpace(rawType)
 	switch rawType {
@@ -1103,7 +1114,7 @@ func anthropicResponsesToolTypeSupported(rawType string) bool {
 
 func anthropicResponsesWebSearchToolType(rawType string) bool {
 	switch strings.TrimSpace(rawType) {
-	case "web_search", "web_search_20250305", "web_search_20260209", "web_search_20260318":
+	case "web_search", anthropicWebSearchVersion:
 		return true
 	default:
 		return false
@@ -1112,7 +1123,7 @@ func anthropicResponsesWebSearchToolType(rawType string) bool {
 
 func anthropicResponsesWebFetchToolType(rawType string) bool {
 	switch strings.TrimSpace(rawType) {
-	case "web_fetch", "web_fetch_20250910", "web_fetch_20260209", "web_fetch_20260309", "web_fetch_20260318":
+	case "web_fetch", anthropicWebFetchVersion:
 		return true
 	default:
 		return false

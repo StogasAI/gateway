@@ -96,7 +96,7 @@ func TestRoutingKeepsDeploymentsThatRunListedHostedTools(t *testing.T) {
 	loadTestCatalog(t)
 	aws := map[string][]int{"aws": {0}}
 	simulation := SimulateRouting(RequestInput{AvailableCredentials: aws}, RouteResponses, "claude-fable-5-1", "", "",
-		[]string{"function", "web_fetch_20260309"}, nil)
+		[]string{"function", "web_fetch_20250910"}, nil)
 	if simulation.Err != nil {
 		t.Fatal(simulation.Err)
 	}

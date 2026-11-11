@@ -3,6 +3,7 @@ package stogas
 import (
 	"encoding/json"
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/maximhq/bifrost/core/schemas"
@@ -18,7 +19,7 @@ func TestAnthropicCumulativeInputAndRequestWideOutput(t *testing.T) {
 		InputTokenLimit: 900, OutputTokenLimit: 100, ToolChoiceAllowsCalls: true,
 		ToolTypes: []string{"web_fetch"},
 		RawBody:   mustObject(t, `{"max_tool_calls":2}`),
-		RawTools:  []map[string]json.RawMessage{mustObject(t, `{"type":"web_fetch_20260309","max_content_tokens":700}`)},
+		RawTools:  []map[string]json.RawMessage{mustObject(t, `{"type":"web_fetch_20250910","max_content_tokens":700}`)},
 	}
 	for _, tc := range []struct {
 		name          string
@@ -59,7 +60,7 @@ func TestHostedToolHoldQuantity(t *testing.T) {
 		{
 			name: "default omitted cap",
 			body: `{}`,
-			tool: `{"type":"web_search_20260209"}`,
+			tool: `{"type":"web_search_20250305"}`,
 			want: 10,
 		},
 		{
@@ -112,15 +113,26 @@ func TestAnthropicResponsesToolAdmission(t *testing.T) {
 	}
 	for _, raw := range []string{
 		`{"type":"web_search_20250305"}`,
-		`{"type":"web_search_20260209"}`,
-		`{"type":"web_search_20260318"}`,
 		`{"type":"web_search"}`,
-		`{"type":"web_fetch_20260309","name":"web_fetch","max_content_tokens":1000}`,
-		`{"type":"web_fetch_20260318","name":"web_fetch","max_content_tokens":1000}`,
-		`{"type":"web_fetch_20260309","name":"web_fetch","filters":{"allowed_domains":["example.com"]}}`,
+		`{"type":"web_fetch","max_content_tokens":1000}`,
+		`{"type":"web_fetch_20250910","name":"web_fetch","max_content_tokens":1000}`,
+		`{"type":"web_fetch_20250910","name":"web_fetch","filters":{"allowed_domains":["example.com"]}}`,
 	} {
 		if err := adapter.ValidateRawResponsesToolType(state, mustObject(t, raw)); err != nil {
 			t.Fatalf("expected Anthropic tool %s to pass, got %v", raw, err)
+		}
+	}
+	// A request never runs another version than the one it names.
+	for _, raw := range []string{
+		`{"type":"web_search_20260209"}`,
+		`{"type":"web_search_20260318"}`,
+		`{"type":"web_fetch_20260209"}`,
+		`{"type":"web_fetch_20260309"}`,
+		`{"type":"web_fetch_latest"}`,
+	} {
+		err := adapter.ValidateRawResponsesToolType(state, mustObject(t, raw))
+		if err == nil || !strings.Contains(err.Error(), "web_search_20250305 and web_fetch_20250910") {
+			t.Fatalf("expected Anthropic tool %s to be refused with the versions Claude runs, got %v", raw, err)
 		}
 	}
 	for _, raw := range []string{
@@ -145,7 +157,7 @@ func TestAnthropicResponsesToolAdmission(t *testing.T) {
 	// reaches it anyway.
 	state.Resolution.Deployment.Pricing = testPricing()
 	delete(state.Resolution.Deployment.HostedTools, catalog.HostedToolWebFetch)
-	err := adapter.ValidateRawResponsesToolType(state, mustObject(t, `{"type":"web_fetch_20260309","name":"web_fetch"}`))
+	err := adapter.ValidateRawResponsesToolType(state, mustObject(t, `{"type":"web_fetch_20250910","name":"web_fetch"}`))
 	if err == nil || err.Error() != "web_fetch is not available on deployment anthropic-test. Remove the tool or choose another deployment." {
 		t.Fatalf("web fetch on a deployment that does not run it: %v", err)
 	}
@@ -189,31 +201,31 @@ func TestAnthropicWebFetchContentHoldTokens(t *testing.T) {
 		{
 			name: "explicit max uses and content tokens",
 			body: `{}`,
-			tool: `{"type":"web_fetch_20260309","max_uses":3,"max_content_tokens":700}`,
+			tool: `{"type":"web_fetch_20250910","max_uses":3,"max_content_tokens":700}`,
 			want: 2100,
 		},
 		{
-			name: "dynamic fetch version uses same token hold",
+			name: "unversioned fetch uses same token hold",
 			body: `{"max_tool_calls":2}`,
-			tool: `{"type":"web_fetch_20260318","max_content_tokens":700}`,
+			tool: `{"type":"web_fetch","max_content_tokens":700}`,
 			want: 1400,
 		},
 		{
 			name: "top level cap supplies max uses",
 			body: `{"max_tool_calls":4}`,
-			tool: `{"type":"web_fetch_20260309","max_content_tokens":600}`,
+			tool: `{"type":"web_fetch_20250910","max_content_tokens":600}`,
 			want: 2400,
 		},
 		{
 			name: "omitted cap defaults then caps to remaining context",
 			body: `{}`,
-			tool: `{"type":"web_fetch_20260309","max_content_tokens":1000}`,
+			tool: `{"type":"web_fetch_20250910","max_content_tokens":1000}`,
 			want: 3511,
 		},
 		{
 			name: "omitted content limit reserves remaining context",
 			body: `{"max_tool_calls":2}`,
-			tool: `{"type":"web_fetch_20260309"}`,
+			tool: `{"type":"web_fetch_20250910"}`,
 			want: 3511,
 		},
 	}
@@ -246,7 +258,7 @@ func TestAnthropicHostedContentHoldMetersIncludeCacheWrite(t *testing.T) {
 		ToolChoiceAllowsCalls: true,
 		ToolTypes:             []string{"web_fetch"},
 		RawBody:               mustObject(t, `{"cache_control":{"type":"ephemeral","ttl":"1h"},"max_tool_calls":2}`),
-		RawTools:              []map[string]json.RawMessage{mustObject(t, `{"type":"web_fetch_20260309","max_content_tokens":700}`)},
+		RawTools:              []map[string]json.RawMessage{mustObject(t, `{"type":"web_fetch_20250910","max_content_tokens":700}`)},
 	}
 	req.Deployment.Pricing[billing.MeterCachedInputTokens] = map[string]string{billing.RatePerMillionTokens: "100000"}
 	input, _, err := anthropicTokenHoldQuantities(req)
@@ -263,7 +275,7 @@ func TestAnthropicHostedContentHoldMetersIncludeCacheWrite(t *testing.T) {
 	}
 
 	req.ToolTypes = []string{"web_search"}
-	req.RawTools = []map[string]json.RawMessage{mustObject(t, `{"type":"web_search_20260318"}`)}
+	req.RawTools = []map[string]json.RawMessage{mustObject(t, `{"type":"web_search_20250305"}`)}
 	input, _, err = anthropicTokenHoldQuantities(req)
 	if err != nil {
 		t.Fatal(err)
@@ -299,7 +311,7 @@ func TestAnthropicInternalLoopCacheReuseRequiresEnabledUneditedContext(t *testin
 				Deployment:      anthropicAdapterDeployment{Model: "claude-sonnet-4-6", MaxInputTokens: 5000, MaxOutputTokens: 2000, Pricing: pricing},
 				InputTokenLimit: 5000, OutputTokenLimit: 100, ToolChoiceAllowsCalls: true,
 				ToolTypes: []string{"web_search"}, RawBody: mustObject(t, tc.body),
-				RawTools: []map[string]json.RawMessage{mustObject(t, `{"type":"web_search_20260318"}`)},
+				RawTools: []map[string]json.RawMessage{mustObject(t, `{"type":"web_search_20250305"}`)},
 			}
 			input, _, err := anthropicTokenHoldQuantities(req)
 			if err != nil {
@@ -335,8 +347,8 @@ func TestAnthropicHostedContentHoldDoesNotDoubleCountSearchAndFetch(t *testing.T
 		ToolTypes:             []string{"web_search", "web_fetch"},
 		RawBody:               mustObject(t, `{"max_tool_calls":2}`),
 		RawTools: []map[string]json.RawMessage{
-			mustObject(t, `{"type":"web_search_20260318"}`),
-			mustObject(t, `{"type":"web_fetch_20260309","max_content_tokens":700}`),
+			mustObject(t, `{"type":"web_search_20250305"}`),
+			mustObject(t, `{"type":"web_fetch_20250910","max_content_tokens":700}`),
 		},
 	}
 	if got := anthropicHostedContentHoldTokens(req); got != 3511 {
@@ -467,12 +479,12 @@ func TestResponsesHostedToolChoiceAllowsCallsCanonicalizesVersionedTypes(t *test
 		},
 		{
 			name: "anthropic versioned selected web fetch",
-			body: `{"tool_choice":{"type":"web_fetch_20260309"}}`,
+			body: `{"tool_choice":{"type":"web_fetch_20250910"}}`,
 			want: true,
 		},
 		{
 			name: "anthropic versioned allowed web fetch",
-			body: `{"tool_choice":{"type":"allowed_tools","tools":[{"type":"web_fetch_20260309"}]}}`,
+			body: `{"tool_choice":{"type":"allowed_tools","tools":[{"type":"web_fetch_20250910"}]}}`,
 			want: true,
 		},
 		{
