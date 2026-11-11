@@ -178,8 +178,8 @@ func TestReleaseLeavesRecordsOutOnceTheyRetire(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Parts of what Stogas does not serve come last and are never in effect.
-	served := slices.DeleteFunc(slices.Clone(files), func(file PartFile) bool { return file.StogasUnsupported })
-	if len(served) == len(files) || !files[len(files)-1].StogasUnsupported {
+	served := slices.DeleteFunc(slices.Clone(files), func(file PartFile) bool { return !file.StogasSupported })
+	if len(served) == len(files) || files[len(files)-1].StogasSupported {
 		t.Fatal("the test catalog's last part does not list what Stogas does not serve")
 	}
 	dated := served[len(served)-1]
@@ -347,7 +347,6 @@ func TestRetiredSelectionsNameTheirDayWheneverTheyRetired(t *testing.T) {
 // The test catalog's one deployment that Stogas does not serve, through its one route of the same.
 const (
 	unsupportedDeployment = "openai-gpt-5.5-2026-04-23-batch"
-	unsupportedReason     = "The gateway has no batch API and serves each request as it arrives."
 )
 
 // A model field that names only what Stogas does not serve gets model_unavailable with Stogas's
@@ -361,7 +360,7 @@ func TestUnsupportedSelectionsGiveTheReason(t *testing.T) {
 	}
 	held := maps.Clone(parts)
 	for _, file := range files {
-		if file.StogasUnsupported {
+		if !file.StogasSupported {
 			delete(held, file.SHA256)
 		}
 	}
@@ -388,8 +387,8 @@ func TestUnsupportedSelectionsGiveTheReason(t *testing.T) {
 			"route:openai-responses gpt-5.5-2026-04-23": false,
 		} {
 			_, _, err := routingSelectionsForRequest(time.Now(), RouteResponses, field, variant{}, nil, nil, nil)
-			if got := err == modelUnsupported(unsupportedReason); got != unsupported {
-				t.Fatalf("loaded %s: %q: %v, want Stogas's reason: %t", when, field, err, unsupported)
+			if got := err == modelUnsupported(); got != unsupported {
+				t.Fatalf("loaded %s: %q: %v, want it unserved: %t", when, field, err, unsupported)
 			}
 		}
 	}
@@ -411,21 +410,21 @@ func TestUnsupportedSelectionsGiveTheReason(t *testing.T) {
 }
 
 // A selection whose paths have all retired or are not served names the day on which the last
-// one retired; one whose paths are all not served gives the reason of the first path by
-// deployment and route; one with a path that serves gets neither.
-func TestUnservedSelectionNamesRetirementBeforeReason(t *testing.T) {
+// one retired; one whose paths are all not served says so; one with a path that serves gets
+// neither.
+func TestUnservedSelectionNamesRetirementFirst(t *testing.T) {
 	retired, now := "2127-01-15", time.Date(2128, time.January, 1, 0, 0, 0, 0, time.UTC)
-	path := func(deployment, route, reason string, date *string) servedPath {
-		return servedPath{model: "m", deployment: deployment, route: route, unsupported: reason, retirementDate: date}
+	path := func(deployment string, unsupported bool, date *string) servedPath {
+		return servedPath{model: "m", deployment: deployment, route: "r", unsupported: unsupported, retirementDate: date}
 	}
 	for _, test := range []struct {
 		paths []servedPath
 		want  error
 	}{
-		{[]servedPath{path("b", "r", "Reason B.", nil), path("a", "s", "Reason A2.", nil), path("a", "r", "Reason A.", nil)}, modelUnsupported("Reason A.")},
-		{[]servedPath{path("a", "r", "Reason A.", nil), path("c", "r", "", &retired)}, modelRetired(retired)},
-		{[]servedPath{path("a", "r", "Reason A.", nil), path("c", "r", "", &retired), path("d", "r", "", nil)}, nil},
-		{[]servedPath{path("a", "r", "Reason A.", nil), path("d", "r", "", nil)}, nil},
+		{[]servedPath{path("b", true, nil), path("a", true, nil)}, modelUnsupported()},
+		{[]servedPath{path("a", true, nil), path("c", false, &retired)}, modelRetired(retired)},
+		{[]servedPath{path("a", true, nil), path("c", false, &retired), path("d", false, nil)}, nil},
+		{[]servedPath{path("a", true, nil), path("d", false, nil)}, nil},
 	} {
 		snap := &snapshot{index: &selectorIndex{paths: test.paths}}
 		if err := snap.unservedSelection(modelSelection{model: "m"}, now); err != test.want {
@@ -615,14 +614,14 @@ func TestReleaseRefusesFilesThatDifferFromTheRoot(t *testing.T) {
 		"a deployment whose date differs from its summary": {func(r testRelease) {
 			r.record("deployments", deployment)["retirementDate"] = "2128-03-10"
 		}, "another date than its summary"},
-		"a summary of what Stogas serves that gives a reason why it does not": {func(r testRelease) {
-			r.summary("models", "deepseek-v4-flash-0423")["stogasUnsupported"] = "Stogas does not serve it."
+		"a summary that says Stogas does not serve a record in a part of served records": {func(r testRelease) {
+			r.summary("models", "deepseek-v4-flash-0423")["stogasSupported"] = false
 		}, "differ on whether Stogas serves it"},
-		"a summary of what Stogas does not serve without the reason": {func(r testRelease) {
-			delete(r.summary("deployments", unsupportedDeployment), "stogasUnsupported")
+		"a summary that says Stogas serves a record in a part of unserved records": {func(r testRelease) {
+			r.summary("deployments", unsupportedDeployment)["stogasSupported"] = true
 		}, "differ on whether Stogas serves it"},
 		"a group in the graph that Stogas does not serve": {func(r testRelease) {
-			r.summary("groups", "gpt-5.5")["stogasUnsupported"] = "Stogas does not serve it."
+			r.summary("groups", "gpt-5.5")["stogasSupported"] = false
 		}, "but Stogas does not serve it"},
 		"a change that the root does not list": {func(r testRelease) {
 			r.parts[0]["schedule"] = []any{map[string]any{"start": "2027-01-01T00:00:00Z", "graph": map[string]any{}}}

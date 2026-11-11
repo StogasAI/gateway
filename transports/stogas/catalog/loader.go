@@ -22,8 +22,8 @@ import (
 )
 
 const (
-	catalogSchema     = "stogas.catalog.v14"
-	catalogPartSchema = "stogas.catalog.part.v14"
+	catalogSchema     = "stogas.catalog.v15"
+	catalogPartSchema = "stogas.catalog.part.v15"
 	// Evidence approves a release by the digest of its root, and the root names each part by
 	// digest and size. The build refuses a larger root, part or catalog, so the gateway refuses
 	// one before it downloads it.
@@ -155,13 +155,13 @@ func loadSnapshot() (*snapshot, error) {
 }
 
 // PartFile names a part by the SHA-256, in hex, and size of its bytes, with the latest date
-// that one of its records retires, or none while one of them never does, and whether it holds
-// the records that Stogas does not serve, which the gateway never reads.
+// that one of its records retires, or none while one of them never does, and whether Stogas
+// serves its records; the gateway never reads a part of records that Stogas does not serve.
 type PartFile struct {
-	SHA256            string  `json:"sha256"`
-	Size              int64   `json:"size"`
-	Through           *string `json:"through"`
-	StogasUnsupported bool    `json:"stogasUnsupported"`
+	SHA256          string  `json:"sha256"`
+	Size            int64   `json:"size"`
+	Through         *string `json:"through"`
+	StogasSupported bool    `json:"stogasSupported"`
 }
 
 // partFiles reads the parts that a root names, after checking the root's size and schema, each
@@ -210,7 +210,7 @@ func PartsInEffect(root []byte, at time.Time) ([]PartFile, error) {
 
 // inEffect says whether the gateway reads a part at an instant.
 func inEffect(file PartFile, at time.Time) bool {
-	return !file.StogasUnsupported && !retiredAt(file.Through, at)
+	return file.StogasSupported && !retiredAt(file.Through, at)
 }
 
 // retiredAt says whether a record that retires on a date, or never when there is none, has
@@ -294,7 +294,7 @@ func assemble(rootData []byte, files []PartFile, parts map[string][]byte, at tim
 				return compiledCatalog{}, fmt.Errorf("%s %s retires after its part", kind.name, id)
 			}
 			// A record that Stogas does not serve sits in a part that the gateway never reads.
-			if (summary.StogasUnsupported != "") != files[summary.Part].StogasUnsupported {
+			if summary.StogasSupported != files[summary.Part].StogasSupported {
 				return compiledCatalog{}, fmt.Errorf("%s %s and its part differ on whether Stogas serves it", kind.name, id)
 			}
 			records[summary.Part]++
@@ -416,27 +416,27 @@ func assemble(rootData []byte, files []PartFile, parts map[string][]byte, at tim
 			retired[groupSelector(id)] = *group.RetirementDate
 		}
 	}
-	// Each selector of a deployment, model, group or route that Stogas does not serve keeps the
-	// reason, unless it has retired, which a request learns first.
-	unsupported := make(map[string]string)
-	unserved := func(selector, reason string) {
-		if _, gone := retired[selector]; !gone && reason != "" {
-			unsupported[selector] = reason
+	// Each selector of a deployment, model, group or route that Stogas does not serve is kept,
+	// unless it has retired, which a request learns first.
+	unsupported := make(map[string]bool)
+	unserved := func(selector string, supported bool) {
+		if _, gone := retired[selector]; !gone && !supported {
+			unsupported[selector] = true
 		}
 	}
 	for id, summary := range summaries.Deployments {
-		unserved(id, summary.StogasUnsupported)
+		unserved(id, summary.StogasSupported)
 	}
 	for id, summary := range summaries.Routes {
-		unserved(routeSelector(id), summary.StogasUnsupported)
+		unserved(routeSelector(id), summary.StogasSupported)
 	}
 	for id, summary := range summaries.Models {
 		for _, selector := range append([]string{id}, summary.Aliases...) {
-			unserved(selector, summary.StogasUnsupported)
+			unserved(selector, summary.StogasSupported)
 		}
 	}
 	for id, group := range summaries.Groups {
-		unserved(groupSelector(id), group.StogasUnsupported)
+		unserved(groupSelector(id), group.StogasSupported)
 	}
 	paths, err := servedPaths(summaries)
 	if err != nil {
@@ -502,7 +502,7 @@ func servedPaths(summaries rootSummaries) ([]servedPath, error) {
 			paths = append(paths, servedPath{
 				author: model.AuthorID, provider: route.ProviderID, route: routeID, model: deployment.ModelID,
 				deployment: deploymentID, groups: groups[deployment.ModelID], retirementDate: date,
-				unsupported: deployment.StogasUnsupported,
+				unsupported: !deployment.StogasSupported,
 			})
 		}
 	}
@@ -597,7 +597,7 @@ func validateRetired(retired map[string]string, base *snapshot) error {
 
 // validateUnsupported checks that no request can reach a selector that Stogas does not serve in
 // the graph, as validateRetired does for those that retired.
-func validateUnsupported(unsupported map[string]string, base *snapshot) error {
+func validateUnsupported(unsupported map[string]bool, base *snapshot) error {
 	for selector := range unsupported {
 		if base.live(selector) {
 			return fmt.Errorf("selector %s is in the graph, but Stogas does not serve it", selector)

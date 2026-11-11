@@ -162,11 +162,11 @@ type compiledGraph struct {
 }
 
 // The root holds each author and provider whole. The gateway tells when records retire, and
-// whether Stogas serves them, from their deployments, so it skips their dates and reasons.
+// whether Stogas serves them, from their deployments, so it skips both.
 type compiledAuthor struct {
 	Notes                shown    `json:"notes"`
 	RetirementDate       shown    `json:"retirementDate"`
-	StogasUnsupported    shown    `json:"stogasUnsupported"`
+	StogasSupported      shown    `json:"stogasSupported"`
 	Aliases              []string `json:"aliases"`
 	HeadquarteredCountry string   `json:"headquarteredCountry"`
 	Name                 string   `json:"name"`
@@ -188,7 +188,7 @@ type compiledDeployment struct {
 	ReasoningMaxTokens  *ReasoningMaxTokens                `json:"reasoningMaxTokens"`
 	RetirementDate      *string                            `json:"retirementDate"`
 	Routes              map[string]compiledDeploymentRoute `json:"routes"`
-	StogasUnsupported   shown                              `json:"stogasUnsupported"`
+	StogasSupported     shown                              `json:"stogasSupported"`
 	Upstream            compiledUpstream                   `json:"upstream"`
 	Via                 []string                           `json:"via"`
 	WeightPrecision     string                             `json:"weightPrecision"`
@@ -260,7 +260,7 @@ type compiledProvider struct {
 	AccountLocations     shown    `json:"accountLocations"`
 	Notes                shown    `json:"notes"`
 	RetirementDate       shown    `json:"retirementDate"`
-	StogasUnsupported    shown    `json:"stogasUnsupported"`
+	StogasSupported      shown    `json:"stogasSupported"`
 	Aliases              []string `json:"aliases"`
 	CredentialModes      []string `json:"credentialModes"`
 	HeadquarteredCountry string   `json:"headquarteredCountry"`
@@ -278,7 +278,7 @@ type compiledRoute struct {
 	InputModalities shown `json:"inputModalities"`
 	Notes           shown `json:"notes"`
 	// Stogas does not serve a route, so none of its deployments either.
-	StogasUnsupported shown `json:"stogasUnsupported"`
+	StogasSupported shown `json:"stogasSupported"`
 
 	ID              string          `json:"-"`
 	DeploymentIDs   []string        `json:"-"`

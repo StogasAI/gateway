@@ -85,12 +85,12 @@ func TestFallbackLoadsEveryRecordThatItsRootLists(t *testing.T) {
 	for _, summaries := range listed.Summaries {
 		for id, summary := range summaries {
 			var fields struct {
-				StogasUnsupported string `json:"stogasUnsupported"`
+				StogasSupported bool `json:"stogasSupported"`
 			}
 			if err := json.Unmarshal(summary, &fields); err != nil {
 				t.Fatal(err)
 			}
-			if fields.StogasUnsupported != "" {
+			if !fields.StogasSupported {
 				delete(summaries, id)
 				unserved++
 			}
@@ -268,8 +268,8 @@ func TestSnapshotValidationRejectsEndToEndEncryptionWithoutTEE(t *testing.T) {
 func TestSnapshotReadsOnlyCurrentSchema(t *testing.T) {
 	release := testCatalogRelease(t)
 	for _, schema := range []struct{ root, part string }{
-		{"stogas.catalog.v13", "stogas.catalog.part.v13"},
 		{"stogas.catalog.v14", "stogas.catalog.part.v14"},
+		{"stogas.catalog.v15", "stogas.catalog.part.v15"},
 	} {
 		release.root["schema"] = schema.root
 		for _, part := range release.parts {

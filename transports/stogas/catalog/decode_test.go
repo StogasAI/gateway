@@ -7,8 +7,8 @@ func TestCatalogDecodeRejectsAmbiguousMembers(t *testing.T) {
 		into  any
 		input string
 	}{
-		{&catalogRoot{}, `{"schema":"stogas.catalog.v14","schema":"stogas.catalog.v14"}`},
-		{&catalogRoot{}, `{"schema":"stogas.catalog.v14","Schema":"stogas.catalog.v14"}`},
+		{&catalogRoot{}, `{"schema":"stogas.catalog.v15","schema":"stogas.catalog.v15"}`},
+		{&catalogRoot{}, `{"schema":"stogas.catalog.v15","Schema":"stogas.catalog.v15"}`},
 		{&catalogRoot{}, `{"locations":{"world":{"name":"World","parentIds":[],"name":"Earth"}}}`},
 		{&catalogRoot{}, `{"locations":{"world":{"name":"World","parentIds":[],"childIds":[]}}}`},
 		{&catalogRoot{}, `{"summaries":{"deployments":{"a":{"part":0,"retirementDate":null,"notes":""}}}}`},

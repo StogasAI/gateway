@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"cmp"
+	"errors"
 	"fmt"
 	"maps"
 	"net/http"
@@ -94,9 +95,9 @@ type selectorIndex struct {
 	// retired holds the day that each selector that had retired when the release loaded
 	// retired; a group's is under groupSelector and a route's under routeSelector.
 	retired map[string]string
-	// unsupported holds why Stogas does not serve each selector that names only what it does
-	// not serve, keyed as retired is.
-	unsupported map[string]string
+	// unsupported holds each selector that names only what Stogas does not serve, keyed as
+	// retired is.
+	unsupported map[string]bool
 	// paths holds every deployment through each of its routes, current or retired.
 	paths []servedPath
 }
@@ -139,8 +140,8 @@ func newSelectorIndex(graph compiledGraph) *selectorIndex {
 	return index
 }
 
-func normalizedRetired(retired map[string]string) map[string]string {
-	normalized := make(map[string]string, len(retired))
+func normalizedRetired[Value any](retired map[string]Value) map[string]Value {
+	normalized := make(map[string]Value, len(retired))
 	for selector, date := range retired {
 		normalized[normalizedID(selector)] = date
 	}
@@ -171,7 +172,7 @@ func (s *snapshot) parseModelSelection(field string) (modelSelection, error) {
 	}
 	// A term that names only what Stogas does not serve fails once every term has parsed, so
 	// that a term that retired, or that the field cannot take, goes first whatever the order.
-	unserved := ""
+	unserved := false
 	for _, term := range terms {
 		kind, value, typed := strings.Cut(term, ":")
 		if !typed {
@@ -190,15 +191,15 @@ func (s *snapshot) parseModelSelection(field string) (modelSelection, error) {
 		}
 		kind = strings.ToLower(kind)
 		if err := s.selectTerm(&sel, kind, value, term); err != nil {
-			if reason, ok := err.(unservedTerm); ok {
-				unserved = cmp.Or(unserved, string(reason))
+			if err == errUnservedTerm {
+				unserved = true
 				continue
 			}
 			return sel, err
 		}
 	}
-	if unserved != "" {
-		return sel, modelUnsupported(unserved)
+	if unserved {
+		return sel, modelUnsupported()
 	}
 	if sel.author != "" {
 		modelID := sel.model
@@ -212,10 +213,8 @@ func (s *snapshot) parseModelSelection(field string) (modelSelection, error) {
 	return sel, nil
 }
 
-// unservedTerm is the reason why Stogas does not serve what a term names.
-type unservedTerm string
-
-func (reason unservedTerm) Error() string { return string(reason) }
+// errUnservedTerm says that a term names only what Stogas does not serve.
+var errUnservedTerm = errors.New("Stogas does not serve what the term names")
 
 // selectTerm adds one term to a selection. An empty kind names a model or a deployment.
 func (s *snapshot) selectTerm(sel *modelSelection, kind, value, term string) error {
@@ -300,8 +299,8 @@ func (index *selectorIndex) gone(key string) error {
 	if date, retired := index.retired[key]; retired {
 		return modelRetired(date)
 	}
-	if reason, unserved := index.unsupported[key]; unserved {
-		return unservedTerm(reason)
+	if index.unsupported[key] {
+		return errUnservedTerm
 	}
 	return nil
 }
@@ -325,14 +324,14 @@ func (s *snapshot) selects(sel modelSelection, routeNode compiledRoute, deployme
 // unservedSelection is the error for a selection that names only paths that do not serve now:
 // every path that it selects, of any deployment through any route, has retired by now or is one
 // that Stogas does not serve. A path that retired names the last day on which one did, whether it
-// retired before the release loaded or after; otherwise the error gives Stogas's reason for the
-// first path by deployment and route. A selection of a model, group, deployment, route, provider
+// retired before the release loaded or after; otherwise the error says that Stogas does not serve
+// the model. A selection of a model, group, deployment, route, provider
 // or author, or of several, gets the same error. It is nil while a path serves.
 func (s *snapshot) unservedSelection(sel modelSelection, now time.Time) error {
 	if sel == (modelSelection{}) {
 		return nil
 	}
-	last, reason, first := "", "", ""
+	last, unserved := "", false
 	for _, path := range s.index.paths {
 		if sel.deployment != "" && path.deployment != sel.deployment ||
 			sel.model != "" && path.model != sel.model ||
@@ -342,13 +341,11 @@ func (s *snapshot) unservedSelection(sel modelSelection, now time.Time) error {
 			sel.group != "" && !slices.Contains(path.groups, sel.group) {
 			continue
 		}
-		switch key := path.deployment + "\x00" + path.route; {
+		switch {
 		case retiredAt(path.retirementDate, now):
 			last = max(last, *path.retirementDate)
-		case path.unsupported != "":
-			if reason == "" || key < first {
-				reason, first = path.unsupported, key
-			}
+		case path.unsupported:
+			unserved = true
 		default:
 			return nil
 		}
@@ -356,8 +353,8 @@ func (s *snapshot) unservedSelection(sel modelSelection, now time.Time) error {
 	if last != "" {
 		return modelRetired(last)
 	}
-	if reason != "" {
-		return modelUnsupported(reason)
+	if unserved {
+		return modelUnsupported()
 	}
 	return nil
 }
