@@ -616,7 +616,7 @@ func (a AnthropicAdapter) SanitizeRequest(state *State) error {
 	case "global":
 		state.Resolution.SetExtraParam("inference_geo", "global")
 	}
-	ensureAnthropicResponsesHostedToolCap(state)
+	applyAnthropicResponsesToolCap(state)
 	return nil
 }
 
@@ -776,25 +776,22 @@ func (AnthropicAdapter) ValidateRawResponsesToolType(state *State, tool map[stri
 	return invalidRequest("Only function, namespace, " + catalog.AnthropicBashToolType + ", " + catalog.AnthropicTextEditorToolType + ", web_fetch, and priced hosted web search tools are supported")
 }
 
-func ensureAnthropicResponsesHostedToolCap(state *State) {
+// Messages has no cap across tools, so a max_tool_calls that the client set becomes each hosted
+// tool's max_uses. A request without one sends none.
+func applyAnthropicResponsesToolCap(state *State) {
 	if state == nil || state.Resolution == nil || state.Resolution.Route != catalog.RouteResponses {
 		return
 	}
-	if !responsesHostedToolChoiceAllowsCalls(state.Resolution.RawBody()) {
-		return
-	}
-	// Without a cap from the client, the tool gets the default one, which its
-	// hold covers half of.
 	cap, supplied := responsesExplicitMaxToolCalls(state)
-	if !supplied {
-		cap = defaultResponsesHostedToolCap
+	if !supplied || !responsesHostedToolChoiceAllowsCalls(state.Resolution.RawBody()) {
+		return
 	}
 	toolTypes := catalog.EffectiveResponsesToolTypes(state.Resolution.RawBody(), state.Resolution.ToolTypes())
 	if usesToolType(toolTypes, string(schemas.ResponsesToolTypeWebSearch)) {
-		state.Resolution.EnsureResponsesToolMaxUses(cap, supplied, schemas.ResponsesToolTypeWebSearch)
+		state.Resolution.SetResponsesToolMaxUses(cap, schemas.ResponsesToolTypeWebSearch)
 	}
 	if usesToolType(toolTypes, string(schemas.ResponsesToolTypeWebFetch)) {
-		state.Resolution.EnsureResponsesToolMaxUses(cap, supplied, schemas.ResponsesToolTypeWebFetch)
+		state.Resolution.SetResponsesToolMaxUses(cap, schemas.ResponsesToolTypeWebFetch)
 	}
 }
 

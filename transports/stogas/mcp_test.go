@@ -190,12 +190,12 @@ func TestRemoteMCPHoldsEveryModelPassThatCallsCanAdd(t *testing.T) {
 	}
 }
 
-func TestRemoteMCPCallsWithoutApprovalGetTheDefaultCap(t *testing.T) {
+func TestRemoteMCPRequestsSendOnlyTheClientsCap(t *testing.T) {
 	for body, want := range map[string]*int{
-		`{"model":"provider:openai gpt-5.5","input":"hi","tools":[` + mcpServerTool + `]}`:                                                                                  schemas.Ptr(defaultResponsesHostedToolCap),
+		`{"model":"provider:openai gpt-5.5","input":"hi","tools":[` + mcpServerTool + `]}`:                                                                                  nil,
 		`{"model":"provider:openai gpt-5.5","input":"hi","max_tool_calls":2,"tools":[` + mcpServerTool + `]}`:                                                               schemas.Ptr(2),
 		`{"model":"provider:openai gpt-5.5","input":"hi","tool_choice":"none","tools":[` + mcpServerTool + `]}`:                                                             nil,
-		`{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"wiki","server_url":"https://mcp.example.com","require_approval":"never"}]}`: schemas.Ptr(defaultResponsesHostedToolCap),
+		`{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"wiki","server_url":"https://mcp.example.com","require_approval":"never"}]}`: nil,
 	} {
 		resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/responses", Body: []byte(body)})
 		if err != nil {

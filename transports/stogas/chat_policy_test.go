@@ -3783,17 +3783,15 @@ func TestResponsesHostedToolsWithoutACapSendTwiceTheCallsTheHoldCovers(t *testin
 			if bifrostReq.ResponsesRequest == nil {
 				t.Fatalf("expected responses request, got %#v", bifrostReq)
 			}
-			switch tc.provider {
-			case schemas.OpenAI:
-				if cap := bifrostReq.ResponsesRequest.Params.MaxToolCalls; cap == nil || *cap != defaultResponsesHostedToolCap {
-					t.Fatalf("OpenAI cap = %#v, want %d", cap, defaultResponsesHostedToolCap)
-				}
-			default:
+			// The provider receives no cap that the client did not send.
+			if cap := bifrostReq.ResponsesRequest.Params.MaxToolCalls; cap != nil {
+				t.Fatalf("max_tool_calls = %d, want none", *cap)
+			}
+			if tc.provider != schemas.OpenAI {
 				if len(bifrostReq.ResponsesRequest.Params.Tools) != 1 ||
 					bifrostReq.ResponsesRequest.Params.Tools[0].ResponsesToolWebSearch == nil ||
-					bifrostReq.ResponsesRequest.Params.Tools[0].ResponsesToolWebSearch.MaxUses == nil ||
-					*bifrostReq.ResponsesRequest.Params.Tools[0].ResponsesToolWebSearch.MaxUses != defaultResponsesHostedToolCap {
-					t.Fatalf("Claude search cap = %#v, want max_uses %d", bifrostReq.ResponsesRequest.Params.Tools, defaultResponsesHostedToolCap)
+					bifrostReq.ResponsesRequest.Params.Tools[0].ResponsesToolWebSearch.MaxUses != nil {
+					t.Fatalf("Claude search tools = %#v, want no max_uses", bifrostReq.ResponsesRequest.Params.Tools)
 				}
 				wire, bifrostErr := anthropicprovider.BuildAnthropicResponsesRequestBody(
 					schemas.NewBifrostContext(context.Background(), schemas.NoDeadline),
@@ -3803,8 +3801,8 @@ func TestResponsesHostedToolsWithoutACapSendTwiceTheCallsTheHoldCovers(t *testin
 				if bifrostErr != nil {
 					t.Fatalf("BuildAnthropicResponsesRequestBody returned error: %v", bifrostErr)
 				}
-				if !strings.Contains(string(wire), fmt.Sprintf(`"max_uses":%d`, defaultResponsesHostedToolCap)) {
-					t.Fatalf("Claude wire lacks max_uses %d: %s", defaultResponsesHostedToolCap, string(wire))
+				if strings.Contains(string(wire), `"max_uses"`) {
+					t.Fatalf("Claude wire has a max_uses that the client did not send: %s", string(wire))
 				}
 			}
 			if err := state.Adapter.EstimateHold(state); err != nil {
@@ -3859,7 +3857,7 @@ func testExplicitMaxToolCallsBecomesMaxUses(t *testing.T, model string) {
 	}
 }
 
-func TestAnthropicResponsesWebFetchOmittedCapSendsTheDefaultCap(t *testing.T) {
+func TestAnthropicResponsesWebFetchOmittedCapSendsNoCap(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
@@ -3881,20 +3879,8 @@ func TestAnthropicResponsesWebFetchOmittedCapSendsTheDefaultCap(t *testing.T) {
 	}
 	if len(bifrostReq.ResponsesRequest.Params.Tools) != 1 ||
 		bifrostReq.ResponsesRequest.Params.Tools[0].ResponsesToolWebFetch == nil ||
-		bifrostReq.ResponsesRequest.Params.Tools[0].ResponsesToolWebFetch.MaxUses == nil ||
-		*bifrostReq.ResponsesRequest.Params.Tools[0].ResponsesToolWebFetch.MaxUses != defaultResponsesHostedToolCap {
-		t.Fatalf("Claude fetch cap = %#v, want max_uses %d", bifrostReq.ResponsesRequest.Params.Tools, defaultResponsesHostedToolCap)
-	}
-	wire, bifrostErr := anthropicprovider.BuildAnthropicResponsesRequestBody(
-		schemas.NewBifrostContext(context.Background(), schemas.NoDeadline),
-		bifrostReq.ResponsesRequest,
-		anthropicprovider.AnthropicRequestBuildConfig{Provider: schemas.Anthropic},
-	)
-	if bifrostErr != nil {
-		t.Fatalf("BuildAnthropicResponsesRequestBody returned error: %v", bifrostErr)
-	}
-	if !strings.Contains(string(wire), fmt.Sprintf(`"max_uses":%d`, defaultResponsesHostedToolCap)) {
-		t.Fatalf("Claude wire lacks max_uses %d: %s", defaultResponsesHostedToolCap, string(wire))
+		bifrostReq.ResponsesRequest.Params.Tools[0].ResponsesToolWebFetch.MaxUses != nil {
+		t.Fatalf("Claude fetch tools = %#v, want no max_uses", bifrostReq.ResponsesRequest.Params.Tools)
 	}
 	if err := state.Adapter.EstimateHold(state); err != nil {
 		t.Fatalf("EstimateHold returned error: %v", err)

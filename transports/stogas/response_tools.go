@@ -57,8 +57,10 @@ func validateProviderResponsesOutput(state *State, response *schemas.BifrostResp
 		response.Container != nil || response.Error != nil {
 		return ErrProviderResponseMalformed
 	}
-	if response.MaxToolCalls != nil && (*response.MaxToolCalls < 1 || *response.MaxToolCalls > responsesHostedToolCap(state)) {
-		return ErrProviderResponseMalformed
+	if response.MaxToolCalls != nil {
+		if cap, supplied := responsesExplicitMaxToolCalls(state); *response.MaxToolCalls < 1 || supplied && *response.MaxToolCalls > cap {
+			return ErrProviderResponseMalformed
+		}
 	}
 	seenIDs := make(map[string]struct{}, len(response.Output))
 	for index := range response.Output {
@@ -1533,7 +1535,7 @@ func validateAndRecordProviderResponsesToolCall(state *State, item *schemas.Resp
 		case schemas.ResponsesMessageTypeWebSearchCall, schemas.ResponsesMessageTypeWebFetchCall, schemas.ResponsesMessageTypeMCPCall:
 			state.responsesDeclaredCalls++
 			state.responsesHostedCalls++
-			if !responsesUsesAnthropicWire(state) && state.responsesHostedCalls > responsesHostedToolCap(state) {
+			if cap, supplied := responsesExplicitMaxToolCalls(state); supplied && !responsesUsesAnthropicWire(state) && state.responsesHostedCalls > cap {
 				return ErrProviderResponseMalformed
 			}
 		}

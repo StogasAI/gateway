@@ -33,7 +33,7 @@ func (a AzureAdapter) SanitizeRequest(state *State) error {
 	}
 	if azureDeploymentUsesAnthropicWire(state) {
 		state.Resolution.ApplyProviderSamplingParameters()
-		ensureAnthropicResponsesHostedToolCap(state)
+		applyAnthropicResponsesToolCap(state)
 		return nil
 	}
 	// The OpenAI format carries reasoning only as reasoning_effort, whose "none" turns reasoning

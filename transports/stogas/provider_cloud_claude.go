@@ -55,6 +55,6 @@ func (a CloudClaudeAdapter) SanitizeRequest(state *State) error {
 			state.Resolution.SetExtraParam("inference_geo", geo)
 		}
 	}
-	ensureAnthropicResponsesHostedToolCap(state)
+	applyAnthropicResponsesToolCap(state)
 	return nil
 }

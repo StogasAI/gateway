@@ -696,10 +696,9 @@ func (r *ResolvedRequest) SetSpeed(speed string) {
 	}
 }
 
-// EnsureResponsesToolMaxUses gives hosted tools of the given types that have no
-// max_uses one. A priced cap is also what the hold reserves; a default reaches
-// only the provider, and the hold keeps covering its own quantity.
-func (r *ResolvedRequest) EnsureResponsesToolMaxUses(maxUses int, priced bool, toolTypes ...schemas.ResponsesToolType) {
+// SetResponsesToolMaxUses gives hosted tools of the given types that have no max_uses the cap that
+// the client set for the whole request, which the hold then reserves.
+func (r *ResolvedRequest) SetResponsesToolMaxUses(maxUses int, toolTypes ...schemas.ResponsesToolType) {
 	if r == nil || r.responses == nil || maxUses < 1 {
 		return
 	}
@@ -729,24 +728,12 @@ func (r *ResolvedRequest) EnsureResponsesToolMaxUses(maxUses int, priced bool, t
 			}
 		}
 	}
-	if !priced {
-		return
-	}
 	for _, tool := range r.pricing.RawTools {
 		if _, ok := allowed[rawResponsesServerToolFamily(rawjson.NormalizedStringField(tool, "type"))]; !ok {
 			continue
 		}
 		setRawIntIfMissing(tool, "max_uses", maxUses)
 	}
-}
-
-// EnsureResponsesMaxToolCalls sends a hosted tool call cap when the request has
-// none. Pricing reads the client's body, so the hold keeps its own quantity.
-func (r *ResolvedRequest) EnsureResponsesMaxToolCalls(maxToolCalls int) {
-	if r == nil || r.responses == nil || maxToolCalls < 1 || r.responses.MaxToolCalls != nil {
-		return
-	}
-	r.responses.MaxToolCalls = schemas.Ptr(maxToolCalls)
 }
 
 func rawResponsesServerToolFamily(rawType string) schemas.ResponsesToolType {

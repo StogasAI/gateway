@@ -15,12 +15,10 @@ import (
 )
 
 const (
-	// The hosted tool calls that a hold covers when the client sets no cap.
+	// The hosted tool calls that a hold covers when the client sets no cap. The provider receives
+	// no cap either, so the model decides how many it makes and settlement charges those.
 	defaultResponsesHostedToolCalls = 10
-	// The cap that such a request sends, twice the calls its hold covers, so the
-	// hold is never less than half of what the calls can cost.
-	defaultResponsesHostedToolCap = 2 * defaultResponsesHostedToolCalls
-	maxResponsesToolCalls         = 128
+	maxResponsesToolCalls           = 128
 )
 
 func validateCommonResponsesPolicy(state *State) error {

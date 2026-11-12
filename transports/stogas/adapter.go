@@ -522,22 +522,13 @@ func actualWebSearchCalls(state *State) int {
 	return signals.WebSearchCalls()
 }
 
-// The hosted tool call cap that the caller supplied, if any. The hold covers
-// it; without one, the hold covers defaultResponsesHostedToolCalls and the
-// provider receives defaultResponsesHostedToolCap.
+// The hosted tool call cap that the caller supplied, if any, which the hold covers. Without one
+// the hold covers defaultResponsesHostedToolCalls and the provider receives no cap.
 func responsesExplicitMaxToolCalls(state *State) (int, bool) {
 	if state == nil || state.Resolution == nil {
 		return 0, false
 	}
 	return rawIntegerValue(state.Resolution.RawBody()["max_tool_calls"])
-}
-
-// responsesHostedToolCap is the hosted tool call cap that the provider receives.
-func responsesHostedToolCap(state *State) int {
-	if cap, supplied := responsesExplicitMaxToolCalls(state); supplied {
-		return cap
-	}
-	return defaultResponsesHostedToolCap
 }
 
 func (DefaultAdapter) ValidateRawResponsesToolType(state *State, tool map[string]json.RawMessage) error {

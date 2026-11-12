@@ -403,7 +403,7 @@ func TestPrepareProviderRequestRecordsSettingsWithoutContent(t *testing.T) {
 			body: `{"model":"provider:openai gpt-5.5","input":"secret prompt","max_output_tokens":64,
 				"tools":[{"type":"web_search"},{"type":"mcp","server_label":"secret","server_url":"https://mcp.example.com"}],
 				"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_search"}]}}`,
-			want: `{"max_output_tokens":64,"tool_choice":"allowed_tools","max_tool_calls":20,"hosted_tools":["web_search"]}`,
+			want: `{"max_output_tokens":64,"tool_choice":"allowed_tools","hosted_tools":["web_search"]}`,
 		},
 		{
 			name:  "responses to Anthropic reads extra parameters",
