@@ -5479,6 +5479,9 @@ func ToAnthropicResponsesRequest(ctx *schemas.BifrostContext, bifrostReq *schema
 		}
 
 		// Set regular messages
+		if _, ok := openAIReasoningFrom(ctx); ok {
+			anthropicMessages = leaveOutLaterThinking(anthropicMessages)
+		}
 		anthropicReq.Messages = anthropicMessages
 	}
 
@@ -6110,7 +6113,13 @@ func convertBifrostMessagesToAnthropicMessages(ctx *schemas.BifrostContext, bifr
 		if next == len(bifrostMessages) {
 			return true
 		}
-		return bifrostMessages[next].Role != nil && *bifrostMessages[next].Role == schemas.ResponsesInputMessageRoleAssistant
+		// Reasoning and tool calls open the assistant turn as an assistant message does: they
+		// become its blocks.
+		item := &bifrostMessages[next]
+		if item.Role != nil && *item.Role == schemas.ResponsesInputMessageRoleAssistant {
+			return true
+		}
+		return item.Type != nil && (*item.Type == schemas.ResponsesMessageTypeReasoning || strings.HasSuffix(string(*item.Type), "_call"))
 	}
 
 	// hasConversationTurn reports whether a user or assistant message has been emitted. An

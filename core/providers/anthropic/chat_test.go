@@ -2070,8 +2070,95 @@ func TestToAnthropicChatRequest_MidConversationSystem_InvalidPlacement(t *testin
 	assertInlinedReminder(t, result, "Bad placement.")
 }
 
+// A system message after tool results follows the user message that carries them, and
+// consecutive system messages form one section, so all of them keep role:"system".
+func TestToAnthropicChatRequest_MidConversationSystem_AfterToolResultsAndInGroups(t *testing.T) {
+	text := func(value string) *schemas.ChatMessageContent {
+		return &schemas.ChatMessageContent{ContentStr: schemas.Ptr(value)}
+	}
+	ctx, cancel := schemas.NewBifrostContextWithCancel(context.Background())
+	defer cancel()
+	result, err := ToAnthropicChatRequest(ctx, &schemas.BifrostChatRequest{
+		Provider: schemas.Anthropic,
+		Model:    "claude-opus-5-5",
+		Input: []schemas.ChatMessage{
+			{Role: schemas.ChatMessageRoleUser, Content: text("Weather in Paris?")},
+			{Role: schemas.ChatMessageRoleAssistant, ChatAssistantMessage: &schemas.ChatAssistantMessage{ToolCalls: []schemas.ChatAssistantMessageToolCall{{
+				ID:       schemas.Ptr("toolu_01"),
+				Type:     schemas.Ptr(string(schemas.ChatToolTypeFunction)),
+				Function: schemas.ChatAssistantMessageToolCallFunction{Name: schemas.Ptr("get_weather"), Arguments: `{"city":"Paris"}`},
+			}}}},
+			{Role: schemas.ChatMessageRoleTool, Content: text("18C"), ChatToolMessage: &schemas.ChatToolMessage{ToolCallID: schemas.Ptr("toolu_01")}},
+			{Role: schemas.ChatMessageRoleSystem, Content: text("Answer in French.")},
+			{Role: schemas.ChatMessageRoleDeveloper, Content: text("Keep it short.")},
+			{Role: schemas.ChatMessageRoleAssistant, Content: text("Il fait 18 degrés.")},
+			{Role: schemas.ChatMessageRoleUser, Content: text("Merci")},
+			{Role: schemas.ChatMessageRoleSystem, Content: text("Stay in French.")},
+		},
+		Params: &schemas.ChatParameters{MaxCompletionTokens: schemas.Ptr(1024)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var roles []AnthropicMessageRole
+	for _, message := range result.Messages {
+		roles = append(roles, message.Role)
+	}
+	user, assistant, system := AnthropicMessageRoleUser, AnthropicMessageRoleAssistant, AnthropicMessageRoleSystem
+	assert.Equal(t, []AnthropicMessageRole{user, assistant, user, system, system, assistant, user, system}, roles)
+}
+
+// The assistant turn that follows a system message in Responses input can open with reasoning
+// or a tool call, which become blocks of the assistant message, so the system message keeps
+// role:"system" before them too, as it did when it was the last item.
+func TestToAnthropicResponsesRequest_MidConversationSystem_BeforeReasoningAndToolCalls(t *testing.T) {
+	message := func(role schemas.ResponsesMessageRoleType, text string) schemas.ResponsesMessage {
+		return schemas.ResponsesMessage{
+			Type:    schemas.Ptr(schemas.ResponsesMessageTypeMessage),
+			Role:    schemas.Ptr(role),
+			Content: &schemas.ResponsesMessageContent{ContentStr: schemas.Ptr(text)},
+		}
+	}
+	reasoning := schemas.ResponsesMessage{
+		Type:               schemas.Ptr(schemas.ResponsesMessageTypeReasoning),
+		ResponsesReasoning: &schemas.ResponsesReasoning{Summary: []schemas.ResponsesReasoningSummary{}, EncryptedContent: schemas.Ptr("sig-plan")},
+	}
+	call := schemas.ResponsesMessage{
+		Type:                 schemas.Ptr(schemas.ResponsesMessageTypeFunctionCall),
+		ResponsesToolMessage: &schemas.ResponsesToolMessage{CallID: schemas.Ptr("toolu_01"), Name: schemas.Ptr("get_weather"), Arguments: schemas.Ptr(`{"city":"Paris"}`)},
+	}
+	output := schemas.ResponsesMessage{
+		Type:                 schemas.Ptr(schemas.ResponsesMessageTypeFunctionCallOutput),
+		ResponsesToolMessage: &schemas.ResponsesToolMessage{CallID: schemas.Ptr("toolu_01"), Output: &schemas.ResponsesToolMessageOutputStruct{ResponsesToolCallOutputStr: schemas.Ptr("18C")}},
+	}
+	for name, turn := range map[string][]schemas.ResponsesMessage{
+		"reasoning": {reasoning, call},
+		"tool call": {call},
+	} {
+		t.Run(name, func(t *testing.T) {
+			input := append([]schemas.ResponsesMessage{
+				message(schemas.ResponsesInputMessageRoleUser, "Weather in Paris?"),
+				message(schemas.ResponsesInputMessageRoleDeveloper, "Answer in French."),
+			}, turn...)
+			input = append(input, output)
+			result, err := ToAnthropicResponsesRequest(&schemas.BifrostContext{}, &schemas.BifrostResponsesRequest{
+				Provider: schemas.Anthropic,
+				Model:    "claude-opus-5-5",
+				Input:    input,
+				Params:   &schemas.ResponsesParameters{MaxOutputTokens: schemas.Ptr(1024)},
+			})
+			require.NoError(t, err)
+			var roles []AnthropicMessageRole
+			for _, message := range result.Messages {
+				roles = append(roles, message.Role)
+			}
+			assert.Equal(t, []AnthropicMessageRole{AnthropicMessageRoleUser, AnthropicMessageRoleSystem, AnthropicMessageRoleAssistant, AnthropicMessageRoleUser}, roles)
+		})
+	}
+}
+
 // TestToAnthropicChatRequest_MidConversationSystem_FallbackInlines verifies the fallback for a
-// provider that cannot carry role:"system" at all. Bedrock, Vertex, and Foundry do not expose
+// provider that cannot carry role:"system" at all. Bedrock's Converse API does not expose
 // mid-conversation system messages regardless of model, so every such message takes the fallback
 // path — which inlines rather than hoisting.
 func TestToAnthropicChatRequest_MidConversationSystem_FallbackInlines(t *testing.T) {
@@ -2928,10 +3015,10 @@ func TestToAnthropicChatRequest_ToolResultKeepsImagesNamesOtherMedia(t *testing.
 		Input: []schemas.ChatMessage{
 			{Role: schemas.ChatMessageRoleUser, Content: &schemas.ChatMessageContent{ContentStr: schemas.Ptr("plot it")}},
 			{Role: schemas.ChatMessageRoleTool, ChatToolMessage: &schemas.ChatToolMessage{ToolCallID: schemas.Ptr("toolu_1")}, Content: &schemas.ChatMessageContent{ContentBlocks: []schemas.ChatContentBlock{
-		{Type: schemas.ChatContentBlockTypeText, Text: schemas.Ptr("chart below")},
-		{Type: schemas.ChatContentBlockTypeImage, ImageURLStruct: &schemas.ChatInputImage{URL: "data:image/png;base64,iVBORw0KGgo="}},
-		{Type: schemas.ChatContentBlockTypeInputAudio, InputAudio: &schemas.ChatInputAudio{Data: "SUQz", Format: schemas.Ptr("mp3")}},
-	}}},
+				{Type: schemas.ChatContentBlockTypeText, Text: schemas.Ptr("chart below")},
+				{Type: schemas.ChatContentBlockTypeImage, ImageURLStruct: &schemas.ChatInputImage{URL: "data:image/png;base64,iVBORw0KGgo="}},
+				{Type: schemas.ChatContentBlockTypeInputAudio, InputAudio: &schemas.ChatInputAudio{Data: "SUQz", Format: schemas.Ptr("mp3")}},
+			}}},
 		},
 	}
 	ctx, cancel := schemas.NewBifrostContextWithCancel(context.Background())

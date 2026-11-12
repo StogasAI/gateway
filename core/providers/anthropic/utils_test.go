@@ -2988,11 +2988,13 @@ func TestSupportsMidConversationSystem(t *testing.T) {
 		{schemas.Anthropic, "claude-opus-4-8-20260601", true},
 		{schemas.Anthropic, "claude-opus-5", true},
 		{schemas.Anthropic, "claude-opus-5-20260601", true},
-		// Not supported: Bedrock and Vertex even with Opus 4.8 / Opus 5.
+		// Supported on every Messages API body; not on Bedrock's Converse API, which has
+		// no message-level system role.
 		{schemas.Bedrock, "global.anthropic.claude-opus-4-8", false},
-		{schemas.Vertex, "claude-opus-4-8", false},
+		{schemas.Vertex, "claude-opus-4-8", true},
+		{schemas.BedrockMantle, "global.anthropic.claude-opus-5", true},
 		{schemas.Bedrock, "global.anthropic.claude-opus-5", false},
-		{schemas.Vertex, "claude-opus-5", false},
+		{schemas.Azure, "claude-opus-5", true},
 		// Not supported: Anthropic but Opus 4.7 (feature is 4.8+ only).
 		{schemas.Anthropic, "claude-opus-4-7", false},
 		{schemas.Anthropic, "claude-opus-4.7-20260401", false},
@@ -3003,9 +3005,9 @@ func TestSupportsMidConversationSystem(t *testing.T) {
 		// Opus 4.8 and supports mid-conversation system messages.
 		{schemas.Anthropic, "claude-fable-5", true},
 		{schemas.Anthropic, "claude-mythos-5", true},
-		// Not supported off the Anthropic provider, even for Fable.
+		// Not supported on Converse, even for Fable.
 		{schemas.Bedrock, "claude-fable-5", false},
-		{schemas.Vertex, "claude-fable-5", false},
+		{schemas.Vertex, "claude-fable-5", true},
 		// Defensive cases.
 		{schemas.Anthropic, "", false},
 		{"", "claude-opus-4-8", false},
@@ -5908,8 +5910,8 @@ func TestDefaultSupportsMidConversationSystem_ModelList(t *testing.T) {
 			t.Errorf("DefaultSupportsMidConversationSystem(anthropic, %q) = %v, want %v", tc.model, got, tc.want)
 		}
 	}
-	if DefaultSupportsMidConversationSystem(schemas.Vertex, "claude-sonnet-5-5") {
-		t.Error("mid-conversation system messages are Anthropic-API only; Vertex must stay false")
+	if DefaultSupportsMidConversationSystem(schemas.Bedrock, "claude-sonnet-5-5") {
+		t.Error("Bedrock's Converse API has no message-level system role; it must stay false")
 	}
 	// Per-message effort is the narrower gate: Opus 4.8 has system messages but no per-turn effort.
 	if DefaultSupportsMidConversationOutputConfig(schemas.Anthropic, "claude-opus-4-8") {

@@ -1934,19 +1934,22 @@ func inlineMidConversationSystem(content *AnthropicContent) *AnthropicMessage {
 
 // SupportsMidConversationSystem returns true if the provider+model combination
 // supports role:"system" entries inside the messages array (mid-conversation
-// system messages). Available on the Anthropic API only — not on Bedrock or
-// Vertex. Supported on Claude Opus 4.8+ (including Opus 5 and 5.5), Claude
-// Sonnet 5.5 (not Sonnet 5), Claude Haiku 5.5, and the Claude Fable/Mythos
-// family. No beta header is required.
+// system messages). Available on every Messages API body that runs Claude: the
+// Anthropic API, Bedrock Mantle, Vertex AI and Microsoft Foundry. Bedrock's
+// Converse API has no such role, so schemas.Bedrock stays false. Supported on
+// Claude Opus 4.8+ (including Opus 5 and 5.5), Claude Sonnet 5.5 (not Sonnet 5),
+// Claude Haiku 5.5, and the Claude Fable/Mythos family. No beta header is required.
 //
-// Override-aware on the MODEL gate only: after the hardcoded Anthropic provider
-// gate, prefers the datasheet's supports_mid_conversation_system_messages
-// boolean; falls back to substring detection. The provider gate stays hardcoded
-// because a bare-model override lookup can't distinguish provider.
+// Override-aware on the MODEL gate only: after the hardcoded provider gate,
+// prefers the datasheet's supports_mid_conversation_system_messages boolean;
+// falls back to substring detection. The provider gate stays hardcoded because a
+// bare-model override lookup can't distinguish provider.
 //
 // Source: https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages
 func DefaultSupportsMidConversationSystem(provider schemas.ModelProvider, model string) bool {
-	if provider != schemas.Anthropic {
+	switch provider {
+	case schemas.Anthropic, schemas.BedrockMantle, schemas.Vertex, schemas.Azure:
+	default:
 		return false
 	}
 	m := strings.ToLower(model)

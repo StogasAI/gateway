@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -29,7 +30,8 @@ func openAIReasoningContext(encryptedContent bool) *schemas.BifrostContext {
 }
 
 // replayedAssistantBlocks sends output items back as a client does, after a tool
-// result, and returns the assistant blocks of the request in order. Anthropic joins
+// result, and returns the assistant blocks of the request in order. The request keeps
+// only the thinking that starts the reply (laterthinking.go). Anthropic joins
 // consecutive assistant messages into one turn.
 func replayedAssistantBlocks(t *testing.T, output []schemas.ResponsesMessage, edit func([]schemas.ResponsesMessage)) []AnthropicContentBlock {
 	t.Helper()
@@ -56,7 +58,7 @@ func replayedAssistantBlocks(t *testing.T, output []schemas.ResponsesMessage, ed
 			Output: &schemas.ResponsesToolMessageOutputStruct{ResponsesToolCallOutputStr: schemas.Ptr("18C")},
 		},
 	})
-	request, err := ToAnthropicResponsesRequest(schemas.NewBifrostContext(nil, time.Time{}), &schemas.BifrostResponsesRequest{
+	request, err := ToAnthropicResponsesRequest(openAIReasoningContext(true), &schemas.BifrostResponsesRequest{
 		Provider: schemas.Anthropic,
 		Model:    "claude-opus-5-5",
 		Input:    input,
@@ -73,9 +75,11 @@ func replayedAssistantBlocks(t *testing.T, output []schemas.ResponsesMessage, ed
 	return blocks
 }
 
+// requireReplayedReply wants the reply's blocks without the progress update, which follows
+// the text.
 func requireReplayedReply(t *testing.T, got []AnthropicContentBlock) {
 	t.Helper()
-	want := openAIReasoningReplyBlocks()
+	want := slices.Delete(openAIReasoningReplyBlocks(), 3, 4)
 	if len(got) != len(want) {
 		t.Fatalf("assistant blocks = %d, want %d: %+v", len(got), len(want), got)
 	}
@@ -113,7 +117,7 @@ func requireOpenAIReasoningItem(t *testing.T, item schemas.ResponsesMessage, sum
 	}
 }
 
-func TestOpenAIReasoningReplyRoundTripsEachBlock(t *testing.T) {
+func TestOpenAIReasoningReplyGivesEachBlockAnItem(t *testing.T) {
 	t.Parallel()
 
 	response := &AnthropicMessageResponse{ID: "msg_01", Model: "claude-opus-5-5", Content: openAIReasoningReplyBlocks(), StopReason: AnthropicStopReasonToolUse}
@@ -131,7 +135,7 @@ func TestOpenAIReasoningReplyRoundTripsEachBlock(t *testing.T) {
 		t.Fatalf("output[4] = %+v, want the call", output[4])
 	}
 
-	// The blocks come back exactly, also when the client drops a summary.
+	// The blocks come back unchanged, also when the client drops a summary.
 	requireReplayedReply(t, replayedAssistantBlocks(t, output, func(input []schemas.ResponsesMessage) {
 		input[0].ResponsesReasoning.Summary = []schemas.ResponsesReasoningSummary{}
 	}))

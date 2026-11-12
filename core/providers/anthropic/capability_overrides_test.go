@@ -116,15 +116,16 @@ func TestSupportsMidConversationSystem_OverrideExplicitFalse(t *testing.T) {
 }
 
 func TestSupportsMidConversationSystem_ProviderGateWins(t *testing.T) {
-	// The hardcoded Anthropic-only provider gate runs before the override, so a
-	// non-Anthropic provider stays false even with an explicit true override.
+	// The hardcoded provider gate runs before the override, so Bedrock's Converse API,
+	// which has no message-level system role, stays false even with an explicit true
+	// override. Every Messages API body that runs Claude takes the role.
 	model := "claude-opus-4-8-gatecheck"
 	yes := true
 	setOverride(t, model, schemas.ModelCapabilities{SupportsMidConversationSystem: &yes})
-	assert.True(t, schemas.ResolveModelCaps(schemas.Anthropic, model).SupportsMidConversationSystem(DefaultSupportsMidConversationSystem(schemas.Anthropic, model)))
-	assert.False(t, schemas.ResolveModelCaps(schemas.Vertex, model).SupportsMidConversationSystem(DefaultSupportsMidConversationSystem(schemas.Vertex, model)))
+	for _, provider := range []schemas.ModelProvider{schemas.Anthropic, schemas.BedrockMantle, schemas.Vertex, schemas.Azure} {
+		assert.True(t, schemas.ResolveModelCaps(provider, model).SupportsMidConversationSystem(DefaultSupportsMidConversationSystem(provider, model)), provider)
+	}
 	assert.False(t, schemas.ResolveModelCaps(schemas.Bedrock, model).SupportsMidConversationSystem(DefaultSupportsMidConversationSystem(schemas.Bedrock, model)))
-	assert.False(t, schemas.ResolveModelCaps(schemas.Azure, model).SupportsMidConversationSystem(DefaultSupportsMidConversationSystem(schemas.Azure, model)))
 }
 
 func TestSupportsMidConversationSystem_FallbackTakesOver(t *testing.T) {
@@ -132,7 +133,7 @@ func TestSupportsMidConversationSystem_FallbackTakesOver(t *testing.T) {
 	assert.True(t, schemas.ResolveModelCaps(schemas.Anthropic, "claude-opus-4-8-20260601").SupportsMidConversationSystem(DefaultSupportsMidConversationSystem(schemas.Anthropic, "claude-opus-4-8-20260601")))
 	assert.True(t, schemas.ResolveModelCaps(schemas.Anthropic, "claude-fable-5").SupportsMidConversationSystem(DefaultSupportsMidConversationSystem(schemas.Anthropic, "claude-fable-5")))
 	assert.False(t, schemas.ResolveModelCaps(schemas.Anthropic, "claude-opus-4-7-20260401").SupportsMidConversationSystem(DefaultSupportsMidConversationSystem(schemas.Anthropic, "claude-opus-4-7-20260401")))
-	assert.False(t, schemas.ResolveModelCaps(schemas.Vertex, "claude-opus-4-8-20260601").SupportsMidConversationSystem(DefaultSupportsMidConversationSystem(schemas.Vertex, "claude-opus-4-8-20260601")))
+	assert.False(t, schemas.ResolveModelCaps(schemas.Bedrock, "claude-opus-4-8-20260601").SupportsMidConversationSystem(DefaultSupportsMidConversationSystem(schemas.Bedrock, "claude-opus-4-8-20260601")))
 }
 
 func TestIsAdaptiveOnlyThinkingModel_OverrideHit(t *testing.T) {

@@ -45,12 +45,51 @@ type anthropicAdapterContext struct {
 	ActualWebSearchCalls  int
 }
 
+// anthropicWireSupportsMidConversationSystem reports whether the model keeps a system message
+// in place after the conversation starts. Anthropic documents the role on every platform that
+// runs Claude, so the model alone decides, and a conversation keeps its messages on every hosting.
 func anthropicWireSupportsMidConversationSystem(state *State) bool {
 	return state != nil && state.Resolution != nil &&
-		anthropicprovider.DefaultSupportsMidConversationSystem(
-			state.Resolution.Provider,
-			state.Resolution.Deployment.Upstream.Model,
-		)
+		anthropicprovider.DefaultSupportsMidConversationSystem(schemas.Anthropic, state.Resolution.Deployment.Upstream.Model)
+}
+
+// The side of the conversation that an input item belongs to on Anthropic wire.
+const (
+	claudeSystemItem = iota
+	claudeUserItem
+	claudeAssistantItem
+)
+
+// claudeSystemPlacement checks where a system or developer message stands after the conversation
+// starts on Anthropic wire, which keeps it in place as Claude requires: right after a user message
+// or tool results, and last or right before the assistant's turn. Consecutive system messages count
+// as one. Anywhere else it gets 400, because moving it or turning it into user text would change
+// what it means.
+type claudeSystemPlacement struct {
+	started   bool   // a user or assistant item has come
+	afterUser bool   // the last such item was on the user side
+	pending   string // the path of a system message that waits for the assistant's turn
+}
+
+func (p *claudeSystemPlacement) next(state *State, side int, path string) error {
+	if side == claudeSystemItem {
+		if !p.started {
+			return nil
+		}
+		if !anthropicWireSupportsMidConversationSystem(state) {
+			return invalidRequest(path + ".role cannot be preserved after the conversation starts on this Anthropic-format deployment")
+		}
+		if !p.afterUser {
+			return invalidRequest(path + ".role must immediately follow a user message or tool result on this Anthropic-format deployment")
+		}
+		p.pending = path
+		return nil
+	}
+	if p.pending != "" && side != claudeAssistantItem {
+		return invalidRequest(p.pending + ".role must be last or immediately precede an assistant turn on this Anthropic-format deployment")
+	}
+	p.started, p.afterUser, p.pending = true, side == claudeUserItem, ""
+	return nil
 }
 
 func (a AnthropicAdapter) ValidateRequest(state *State) error {

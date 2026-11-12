@@ -218,6 +218,7 @@ func providerEndUserIDs(ctx *schemas.BifrostContext, provider schemas.ModelProvi
 func prepareChatProviderBody(ctx *schemas.BifrostContext, request *schemas.BifrostChatRequest, streaming bool, hosting string) ([]byte, *schemas.BifrostError) {
 	switch request.Provider {
 	case catalog.ProviderAWS, catalog.ProviderGoogleCloud:
+		setCloudClaudeBase(ctx)
 		body, bifrostErr := anthropicprovider.BuildAnthropicChatRequestBody(ctx, request, cloudClaudeBuildConfig(request.Model, hosting, streaming))
 		if bifrostErr != nil {
 			return nil, bifrostErr
@@ -257,6 +258,7 @@ func prepareChatProviderBody(ctx *schemas.BifrostContext, request *schemas.Bifro
 func prepareResponsesProviderBody(ctx *schemas.BifrostContext, request *schemas.BifrostResponsesRequest, streaming bool, hosting string) ([]byte, *schemas.BifrostError) {
 	switch request.Provider {
 	case catalog.ProviderAWS, catalog.ProviderGoogleCloud:
+		setCloudClaudeBase(ctx)
 		body, bifrostErr := prepareAnthropicResponsesBody(ctx, request, cloudClaudeBuildConfig(request.Model, hosting, streaming))
 		if bifrostErr != nil {
 			return nil, bifrostErr
@@ -341,6 +343,14 @@ func setOpenAIAccessPrograms(body []byte, raw json.RawMessage) ([]byte, string, 
 		return nil, "", providerutils.NewBifrostOperationError(schemas.ErrProviderRequestMarshal, err)
 	}
 	return body, program, nil
+}
+
+// setCloudClaudeBase names Anthropic as the provider behind AWS and Google Cloud while core
+// builds their body, as core names it only when it runs the request (cloudClaudeConfig). Core
+// reads Claude's capabilities by that provider, such as system messages after the conversation
+// starts, which it would otherwise turn into user text.
+func setCloudClaudeBase(ctx *schemas.BifrostContext) {
+	ctx.SetValue(schemas.BifrostContextKeyBaseProviderType, schemas.Anthropic)
 }
 
 // cloudClaudeBuildConfig shapes the Messages body for whoever runs Claude on AWS

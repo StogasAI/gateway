@@ -100,9 +100,10 @@ func TestChatPolicyRejectsUnsupportedFields(t *testing.T) {
 		{"anthropic refusal history", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"assistant","refusal":"no"},{"role":"user","content":"continue"}]}`, "refusal is not supported for Anthropic-format history"},
 		{"anthropic trailing assistant prefill whitespace", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"complete this"},{"role":"assistant","content":"answer: "}]}`, "must not end in whitespace"},
 		{"Anthropic reordered system message", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"role":"user","content":"continue"}]}`, "cannot be preserved after the conversation starts"},
-		{"Azure Claude reordered developer message", `{"model":"azure-claude-opus-4-8-anthropic-hosted","messages":[{"role":"user","content":"first"},{"role":"developer","content":"new policy"},{"role":"assistant","content":"answer"},{"role":"user","content":"continue"}]}`, "cannot be preserved after the conversation starts"},
 		{"Sonnet 5 mid-conversation system", `{"model":"anthropic-claude-sonnet-5","messages":[{"role":"user","content":"first"},{"role":"system","content":"new policy"}]}`, "cannot be preserved after the conversation starts"},
-		{"Anthropic mid-conversation system placement", `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"role":"user","content":"continue"}]}`, "must be last or immediately precede an assistant message"},
+		{"Anthropic mid-conversation system placement", `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"role":"user","content":"continue"}]}`, "must be last or immediately precede an assistant turn"},
+		{"Anthropic system group before user", `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"role":"developer","content":"more"},{"role":"user","content":"continue"}]}`, "messages[2].role must be last or immediately precede an assistant turn"},
+		{"Anthropic system after assistant", `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"first"},{"role":"assistant","content":"answer"},{"role":"system","content":"new policy"}]}`, "messages[2].role must immediately follow a user message or tool result"},
 		{"metadata non-string", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"metadata":{"a":1}}`, "metadata values"},
 		{"metadata control character", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"metadata":{"team":"a\nb"}}`, "metadata values must be valid strings up to 512 bytes without control characters"},
 		{"metadata NUL key", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"metadata":{"a\u0000":"b"}}`, "metadata keys must be valid strings up to 64 bytes without control characters"},
@@ -697,21 +698,56 @@ func TestChatSignedReasoningHistoryReachesAnthropicFamilyWireLosslessly(t *testi
 	}
 }
 
+// A system message keeps its place on every model that takes the role, also after tool
+// results, beside other system messages, and before an assistant turn that opens with
+// reasoning or a tool call, so the next request sends the same history.
 func TestAnthropicMidConversationSystemMessagesReachProviderWireInPlace(t *testing.T) {
+	answer := `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer","annotations":[],"logprobs":[]}]}`
 	tests := []struct {
-		body string
-		name string
-		path string
+		body  string
+		name  string
+		path  string
+		roles []string
 	}{
 		{
-			name: "Opus Chat",
-			path: "/v1/chat/completions",
-			body: `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"role":"assistant","content":"answer"},{"role":"user","content":"continue"}]}`,
+			name:  "Opus Chat",
+			path:  "/v1/chat/completions",
+			body:  `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"role":"assistant","content":"answer"},{"role":"user","content":"continue"}]}`,
+			roles: []string{"user", "system", "assistant", "user"},
 		},
 		{
-			name: "Opus Responses",
+			name:  "Azure Claude Chat",
+			path:  "/v1/chat/completions",
+			body:  `{"model":"azure-claude-opus-4-8-anthropic-hosted","messages":[{"role":"user","content":"first"},{"role":"developer","content":"new policy"},{"role":"assistant","content":"answer"},{"role":"user","content":"continue"}]}`,
+			roles: []string{"user", "system", "assistant", "user"},
+		},
+		{
+			name: "Opus Chat after tool results",
+			path: "/v1/chat/completions",
+			body: `{"model":"anthropic-claude-opus-4-8","tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}],"messages":[{"role":"user","content":"first"},` +
+				`{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_1","content":"done"},` +
+				`{"role":"system","content":"new policy"},{"role":"developer","content":"more"},{"role":"assistant","content":"answer"},{"role":"user","content":"continue"}]}`,
+			roles: []string{"user", "assistant", "user", "system", "system", "assistant", "user"},
+		},
+		{
+			name:  "Opus Responses",
+			path:  "/v1/responses",
+			body:  `{"model":"anthropic-claude-opus-4-8","input":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},` + answer + `,{"role":"user","content":"continue"}]}`,
+			roles: []string{"user", "system", "assistant", "user"},
+		},
+		{
+			name: "Opus Responses before reasoning",
 			path: "/v1/responses",
-			body: `{"model":"anthropic-claude-opus-4-8","input":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer","annotations":[],"logprobs":[]}]},{"role":"user","content":"continue"}]}`,
+			body: `{"model":"anthropic-claude-opus-4-8","input":[{"role":"user","content":"first"},{"role":"developer","content":"new policy"},` +
+				`{"type":"reasoning","id":"rs_1","summary":[],"encrypted_content":"` + claudeThinkingContent(t, "Plan.") + `"},` + answer + `,{"role":"user","content":"continue"}]}`,
+			roles: []string{"user", "system", "assistant", "user"},
+		},
+		{
+			name: "Opus Responses before a tool call",
+			path: "/v1/responses",
+			body: `{"model":"anthropic-claude-opus-4-8","tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}],"input":[{"role":"user","content":"first"},{"role":"developer","content":"new policy"},` +
+				`{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":"done"}]}`,
+			roles: []string{"user", "system", "assistant", "user"},
 		},
 	}
 	for _, tc := range tests {
@@ -747,11 +783,10 @@ func TestAnthropicMidConversationSystemMessagesReachProviderWireInPlace(t *testi
 				t.Fatalf("decode provider request: %v\n%s", err, wireBody)
 			}
 			messages, ok := wire["messages"].([]any)
-			if !ok || len(messages) != 4 {
+			if !ok || len(messages) != len(tc.roles) {
 				t.Fatalf("provider message sequence changed: %#v\n%s", wire["messages"], wireBody)
 			}
-			wantRoles := []string{"user", "system", "assistant", "user"}
-			for index, want := range wantRoles {
+			for index, want := range tc.roles {
 				message, ok := messages[index].(map[string]any)
 				if !ok || message["role"] != want {
 					t.Fatalf("provider message %d role = %#v, want %q\n%s", index, message["role"], want, wireBody)
@@ -1649,6 +1684,7 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 		{"Anthropic reordered Responses system message", `{"model":"anthropic-claude-sonnet-4-6","input":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"role":"user","content":"continue"}]}`, "cannot be preserved after the conversation starts"},
 		{"Sonnet 5 Responses mid-conversation system", `{"model":"anthropic-claude-sonnet-5","input":[{"role":"user","content":"first"},{"role":"system","content":"new policy"}]}`, "cannot be preserved after the conversation starts"},
 		{"Anthropic Responses mid-conversation system placement", `{"model":"anthropic-claude-opus-4-8","input":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"role":"user","content":"continue"}]}`, "must be last or immediately precede an assistant turn"},
+		{"Anthropic Responses system after assistant", `{"model":"anthropic-claude-opus-4-8","input":[{"role":"user","content":"first"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer","annotations":[],"logprobs":[]}]},{"role":"developer","content":"new policy"}]}`, "input[2].role must immediately follow a user message or tool result"},
 		{"output annotation unknown field", `{"model":"provider:openai gpt-5.5","input":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer","annotations":[{"type":"url_citation","start_index":0,"end_index":6,"title":"source","url":"https://example.com","future":true}],"logprobs":[]}]},{"role":"user","content":"continue"}]}`, "annotations[0].future is not supported"},
 		{"output annotation reversed range", `{"model":"provider:openai gpt-5.5","input":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer","annotations":[{"type":"url_citation","start_index":6,"end_index":0,"title":"source","url":"https://example.com"}],"logprobs":[]}]},{"role":"user","content":"continue"}]}`, "end_index must be an integer at or after start_index"},
 		{"output logprob bad byte", `{"model":"provider:openai gpt-5.5","input":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer","annotations":[],"logprobs":[{"token":"a","logprob":-0.1,"bytes":[256],"top_logprobs":[]}]}]},{"role":"user","content":"continue"}]}`, "bytes must contain integers from 0 to 255"},

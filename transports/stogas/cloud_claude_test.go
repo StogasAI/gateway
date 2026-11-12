@@ -613,11 +613,47 @@ func TestCloudClaudeAdapterSendsGeographyOnlyToAnthropic(t *testing.T) {
 	}
 }
 
+// Every hosting keeps a system message in place after the conversation starts, as
+// Anthropic documents on every platform that runs Claude.
+func TestCloudClaudeKeepsMidConversationSystemMessagesInPlace(t *testing.T) {
+	body := `"messages":[{"role":"user","content":"first"},{"role":"developer","content":"new policy"},{"role":"assistant","content":"answer"},{"role":"user","content":"continue"}],`
+	for _, deployment := range []string{
+		"aws-claude-fable-5-1",
+		"google-cloud-claude-fable-5-1",
+		"aws-claude-fable-5-1-anthropic-hosted",
+		"google-cloud-claude-fable-5-1-anthropic-hosted",
+	} {
+		state := resolveCloudState(t, "/v1/chat/completions", deployment, body)
+		if err := state.Adapter.ValidateRequest(state); err != nil {
+			t.Fatalf("%s: %v", deployment, err)
+		}
+		if err := state.Adapter.SanitizeRequest(state); err != nil {
+			t.Fatalf("%s: %v", deployment, err)
+		}
+		ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+		request, err := state.Resolution.ToBifrost(ctx)
+		if err != nil {
+			t.Fatalf("%s: %v", deployment, err)
+		}
+		wire, bifrostErr := prepareChatProviderBody(ctx, request.ChatRequest, false, state.Resolution.Deployment.Hosting)
+		if bifrostErr != nil {
+			t.Fatalf("%s: %v", deployment, bifrostErr.Error)
+		}
+		var roles []string
+		for _, message := range providerutils.GetJSONField(wire, "messages").Array() {
+			roles = append(roles, message.Get("role").String())
+		}
+		if strings.Join(roles, " ") != "user system assistant user" {
+			t.Errorf("%s: roles %v: %s", deployment, roles, wire)
+		}
+	}
+}
+
 // Every hosting gets the output format natively and keeps the client's strict
 // tools, although core's tables drop strict where AWS or Google runs Claude.
-// Core opts Google's tools into fine-grained streaming, streaming or not, and
-// leaves Bedrock's Messages shape alone, which streams tool input finely
-// without it. The edge-cases note describes both; update it when they change.
+// No hosting gets fine-grained tool streaming, which core would add on Google
+// Cloud only, so every hosting sends the same tools. The edge-cases note
+// describes both; update it when they change.
 func TestCloudClaudeKeepsStrictToolsOnEveryHosting(t *testing.T) {
 	format := `"type":"json_schema","strict":true,"schema":{"type":"object","properties":{"a":{"type":"string"}},"required":["a"],"additionalProperties":false}`
 	parameters := `"parameters":{"type":"object","properties":{"q":{"type":"string"}},"required":["q"],"additionalProperties":false}`
@@ -628,12 +664,12 @@ func TestCloudClaudeKeepsStrictToolsOnEveryHosting(t *testing.T) {
 			`"tools":[{"type":"function","name":"lookup","strict":true,` + parameters + `},{"type":"function","name":"loose","strict":false,` + parameters + `}],`,
 	}
 	for path, body := range routes {
-		for deployment, eager := range map[string]bool{
-			"aws-claude-fable-5-1":                           false,
-			"aws-claude-fable-5-1-us":                        false,
-			"google-cloud-claude-fable-5-1":                  true,
-			"aws-claude-fable-5-1-anthropic-hosted":          false,
-			"google-cloud-claude-fable-5-1-anthropic-hosted": false,
+		for _, deployment := range []string{
+			"aws-claude-fable-5-1",
+			"aws-claude-fable-5-1-us",
+			"google-cloud-claude-fable-5-1",
+			"aws-claude-fable-5-1-anthropic-hosted",
+			"google-cloud-claude-fable-5-1-anthropic-hosted",
 		} {
 			for _, streaming := range []bool{false, true} {
 				state := resolveCloudState(t, path, deployment, body)
@@ -667,10 +703,11 @@ func TestCloudClaudeKeepsStrictToolsOnEveryHosting(t *testing.T) {
 				if lookup.Get("name").String() != "lookup" || !lookup.Get("strict").Bool() || loose.Get("strict").Bool() {
 					t.Errorf("%s %s: strict lost or added: %s", path, deployment, wire)
 				}
-				if lookup.Get("eager_input_streaming").Bool() != eager || loose.Get("eager_input_streaming").Bool() != eager {
-					t.Errorf("%s %s streaming %v: eager_input_streaming want %v: %s", path, deployment, streaming, eager, wire)
+				if strings.Contains(string(wire), "eager_input_streaming") {
+					t.Errorf("%s %s streaming %v: eager_input_streaming sent: %s", path, deployment, streaming, wire)
 				}
-				if strings.Contains(string(wire), "structured-outputs-") || hosting == hostingAWS && strings.Contains(string(wire), "anthropic_beta") {
+				if strings.Contains(string(wire), "structured-outputs-") || strings.Contains(string(wire), "fine-grained-tool-streaming-") ||
+					hosting == hostingAWS && strings.Contains(string(wire), "anthropic_beta") {
 					t.Errorf("%s %s: unneeded beta: %s", path, deployment, wire)
 				}
 			}

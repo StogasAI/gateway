@@ -342,6 +342,28 @@ func promoteThinkingFromExtraParams(value interface{}) (*schemas.ChatReasoning, 
 	}
 }
 
+// chatMidConvPlacementOK reports whether the system message at index i sits where Anthropic
+// accepts role:"system". Tool messages become the user message that carries their results,
+// and consecutive system messages form one section that the rule judges as a whole, so both
+// clauses look past the system messages beside it.
+func chatMidConvPlacementOK(messages []schemas.ChatMessage, i int) bool {
+	isSystem := func(role schemas.ChatMessageRole) bool {
+		return role == schemas.ChatMessageRoleSystem || role == schemas.ChatMessageRoleDeveloper
+	}
+	prev := i - 1
+	for prev >= 0 && isSystem(messages[prev].Role) {
+		prev--
+	}
+	if prev < 0 || (messages[prev].Role != schemas.ChatMessageRoleUser && messages[prev].Role != schemas.ChatMessageRoleTool) {
+		return false
+	}
+	next := i + 1
+	for next < len(messages) && isSystem(messages[next].Role) {
+		next++
+	}
+	return next == len(messages) || messages[next].Role == schemas.ChatMessageRoleAssistant
+}
+
 // ToAnthropicChatRequest converts a Bifrost request to Anthropic format
 // This is the reverse of ConvertChatRequestToBifrost for provider-side usage
 func ToAnthropicChatRequest(ctx *schemas.BifrostContext, bifrostReq *schemas.BifrostChatRequest) (*AnthropicMessageRequest, error) {
@@ -905,9 +927,7 @@ func ToAnthropicChatRequest(ctx *schemas.BifrostContext, bifrostReq *schemas.Bif
 			// the trailing clause lets [.., assistant, system, assistant] through to a 400, so
 			// both are checked here; the assistant-ending-in-server-tool-use exception is not
 			// recognized, which only costs a cache-preserving fallback, never a rejection.
-			midConvPlacementOK := (i == len(messages)-1 ||
-				messages[i+1].Role == schemas.ChatMessageRoleAssistant) &&
-				i > 0 && messages[i-1].Role == schemas.ChatMessageRoleUser
+			midConvPlacementOK := chatMidConvPlacementOK(messages, i)
 			if seenConversation && midConvSystemSupported && midConvPlacementOK {
 				// Mid-conversation system message — emit directly as role:"system".
 				var content AnthropicContent
@@ -1253,10 +1273,15 @@ func (response *AnthropicMessageResponse) ToBifrostChatResponse(ctx *schemas.Bif
 	var annotations []schemas.ChatAssistantMessageAnnotation
 	seenAnnotations := make(map[anthropicAnnotationKey]struct{})
 	textOffset := 0
+	// answered turns true at the first block other than thinking. Only the thinking before
+	// it goes to reasoning_details (see laterthinking.go).
+	answered := false
 
 	// Process content and tool calls
 	if response.Content != nil {
 		for _, c := range response.Content {
+			leading := !answered
+			answered = answered || !isAnthropicThinkingBlock(c.Type)
 			switch c.Type {
 			case AnthropicContentBlockTypeText:
 				if c.Text != nil {
@@ -1314,12 +1339,14 @@ func (response *AnthropicMessageResponse) ToBifrostChatResponse(ctx *schemas.Bif
 					})
 				}
 			case AnthropicContentBlockTypeThinking:
-				reasoningDetails = append(reasoningDetails, schemas.ChatReasoningDetails{
-					Index:     len(reasoningDetails),
-					Type:      schemas.BifrostReasoningDetailsTypeText,
-					Text:      c.Thinking,
-					Signature: c.Signature,
-				})
+				if leading {
+					reasoningDetails = append(reasoningDetails, schemas.ChatReasoningDetails{
+						Index:     len(reasoningDetails),
+						Type:      schemas.BifrostReasoningDetailsTypeText,
+						Text:      c.Thinking,
+						Signature: c.Signature,
+					})
+				}
 				// Streaming forwards thinking deltas without a separator.
 				if c.Thinking != nil {
 					reasoningText += *c.Thinking
@@ -1330,7 +1357,7 @@ func (response *AnthropicMessageResponse) ToBifrostChatResponse(ctx *schemas.Bif
 				// redacted_thinking blocks to be replayed unmodified on the next
 				// turn during tool use, and rejects the request when they are
 				// dropped from the latest assistant message.
-				if c.Data != nil && *c.Data != "" {
+				if leading && c.Data != nil && *c.Data != "" {
 					reasoningDetails = append(reasoningDetails, schemas.ChatReasoningDetails{
 						Index: len(reasoningDetails),
 						Type:  schemas.BifrostReasoningDetailsTypeEncrypted,
@@ -1388,7 +1415,7 @@ func (response *AnthropicMessageResponse) ToBifrostChatResponse(ctx *schemas.Bif
 		}
 	}
 
-	if len(reasoningDetails) > 0 {
+	if len(reasoningDetails) > 0 || reasoningText != "" {
 		if assistantMessage == nil {
 			assistantMessage = &schemas.ChatAssistantMessage{}
 		}
@@ -1673,6 +1700,9 @@ type AnthropicStreamState struct {
 	// content_block_start and citations_delta events) until content_block_stop,
 	// when the block's end offset is known.
 	pendingCitations map[int][]AnthropicTextCitation
+	// answered turns true when a block other than thinking starts. Later
+	// thinking streams as reasoning text only (see laterthinking.go).
+	answered bool
 }
 
 // NewAnthropicStreamState returns an initialised stream state for one streaming response.
@@ -1746,6 +1776,10 @@ func (chunk *AnthropicStreamEvent) ToBifrostChatCompletionStream(ctx *schemas.Bi
 
 	case AnthropicStreamEventTypeContentBlockStart:
 		if chunk.Index != nil && chunk.ContentBlock != nil {
+			// Anthropic streams one block at a time, so a thinking block's deltas
+			// arrive before the next block starts.
+			laterThinking := state.answered
+			state.answered = state.answered || !isAnthropicThinkingBlock(chunk.ContentBlock.Type)
 			switch chunk.ContentBlock.Type {
 			case AnthropicContentBlockTypeToolUse:
 				// Check if this is the structured output tool - if so, skip emitting tool call metadata
@@ -1800,7 +1834,7 @@ func (chunk *AnthropicStreamEvent) ToBifrostChatCompletionStream(ctx *schemas.Bi
 				// deltas follow). Surface the encrypted payload as a reasoning.encrypted
 				// detail so clients can replay it on the next turn; Anthropic rejects
 				// tool-use follow-ups whose latest assistant message dropped it.
-				if chunk.ContentBlock.Data == nil || *chunk.ContentBlock.Data == "" {
+				if laterThinking || chunk.ContentBlock.Data == nil || *chunk.ContentBlock.Data == "" {
 					return nil, nil, false
 				}
 				return &schemas.BifrostChatResponse{
@@ -1923,24 +1957,23 @@ func (chunk *AnthropicStreamEvent) ToBifrostChatCompletionStream(ctx *schemas.Bi
 				// Handle thinking content streaming
 				if chunk.Delta.Thinking != nil && *chunk.Delta.Thinking != "" {
 					thinkingText := *chunk.Delta.Thinking
+					delta := &schemas.ChatStreamResponseChoiceDelta{Reasoning: schemas.Ptr(thinkingText)}
+					if !state.answered {
+						delta.ReasoningDetails = []schemas.ChatReasoningDetails{
+							{
+								Index: state.reasoningDetailIndex(*chunk.Index),
+								Type:  schemas.BifrostReasoningDetailsTypeText,
+								Text:  schemas.Ptr(thinkingText),
+							},
+						}
+					}
 					// Create streaming response for thinking delta
 					streamResponse := &schemas.BifrostChatResponse{
 						Object: "chat.completion.chunk",
 						Choices: []schemas.BifrostResponseChoice{
 							{
-								Index: 0,
-								ChatStreamResponseChoice: &schemas.ChatStreamResponseChoice{
-									Delta: &schemas.ChatStreamResponseChoiceDelta{
-										Reasoning: schemas.Ptr(thinkingText),
-										ReasoningDetails: []schemas.ChatReasoningDetails{
-											{
-												Index: state.reasoningDetailIndex(*chunk.Index),
-												Type:  schemas.BifrostReasoningDetailsTypeText,
-												Text:  schemas.Ptr(thinkingText),
-											},
-										},
-									},
-								},
+								Index:                    0,
+								ChatStreamResponseChoice: &schemas.ChatStreamResponseChoice{Delta: delta},
 							},
 						},
 					}
@@ -1949,7 +1982,7 @@ func (chunk *AnthropicStreamEvent) ToBifrostChatCompletionStream(ctx *schemas.Bi
 				}
 
 			case AnthropicStreamDeltaTypeSignature:
-				if chunk.Delta.Signature != nil && *chunk.Delta.Signature != "" {
+				if !state.answered && chunk.Delta.Signature != nil && *chunk.Delta.Signature != "" {
 					// Create streaming response for signature delta
 					streamResponse := &schemas.BifrostChatResponse{
 						Object: "chat.completion.chunk",

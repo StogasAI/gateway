@@ -572,7 +572,7 @@ func validateChatMessagesTextOnly(state *State, raw json.RawMessage) error {
 		allCallIDs: make(map[string]bool),
 		pending:    make(map[string]bool),
 	}
-	seenConversation := false
+	var placement claudeSystemPlacement
 	var turn inputTurn
 	for index, messageRaw := range rawMessages {
 		message, err := rawjson.Object(messageRaw)
@@ -589,15 +589,6 @@ func validateChatMessagesTextOnly(state *State, raw json.RawMessage) error {
 		}
 		if len(validation.pending) > 0 && role != string(schemas.ChatMessageRoleTool) {
 			return invalidRequest(path + " must be a tool result because the preceding assistant tool calls are unresolved")
-		}
-		if responsesUsesAnthropicWire(state) && seenConversation &&
-			(role == string(schemas.ChatMessageRoleSystem) || role == string(schemas.ChatMessageRoleDeveloper)) {
-			if !anthropicWireSupportsMidConversationSystem(state) {
-				return invalidRequest(path + ".role cannot be preserved after the conversation starts on this Anthropic-format deployment")
-			}
-			if index+1 < len(rawMessages) && chatInputRole(rawMessages[index+1]) != string(schemas.ChatMessageRoleAssistant) {
-				return invalidRequest(path + ".role must be last or immediately precede an assistant message on this Anthropic-format deployment")
-			}
 		}
 		switch schemas.ChatMessageRole(role) {
 		case schemas.ChatMessageRoleSystem, schemas.ChatMessageRoleDeveloper, schemas.ChatMessageRoleUser:
@@ -635,8 +626,17 @@ func validateChatMessagesTextOnly(state *State, raw json.RawMessage) error {
 		default:
 			return invalidRequest(path + ".role is not supported")
 		}
-		if role != string(schemas.ChatMessageRoleSystem) && role != string(schemas.ChatMessageRoleDeveloper) {
-			seenConversation = true
+		if responsesUsesAnthropicWire(state) {
+			side := claudeUserItem
+			switch schemas.ChatMessageRole(role) {
+			case schemas.ChatMessageRoleSystem, schemas.ChatMessageRoleDeveloper:
+				side = claudeSystemItem
+			case schemas.ChatMessageRoleAssistant:
+				side = claudeAssistantItem
+			}
+			if err := placement.next(state, side, path); err != nil {
+				return err
+			}
 		}
 	}
 	if len(validation.pending) > 0 {
@@ -828,14 +828,6 @@ func validateChatToolCalls(state *State, raw json.RawMessage, path string, valid
 		validation.pending[callID] = true
 	}
 	return nil
-}
-
-func chatInputRole(raw json.RawMessage) string {
-	var message map[string]json.RawMessage
-	if err := sonic.Unmarshal(raw, &message); err != nil || message == nil {
-		return ""
-	}
-	return rawString(message["role"])
 }
 
 func validateProviderToolCallID(state *State, value string, path string) error {

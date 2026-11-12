@@ -140,8 +140,8 @@ func blockFields(blocks []map[string]json.RawMessage, names ...string) string {
 const weatherTool = `"tools":[{"type":"function","name":"get_weather","description":"Look up the weather.",` +
 	`"parameters":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}]`
 
-// A Claude turn with signed thinking, redacted thinking, text and a tool call, streamed as
-// Anthropic streams it.
+// A Claude turn with signed thinking, redacted thinking, text, an omitted progress update and a
+// tool call, streamed as Anthropic streams it.
 var claudeToolTurnStream = []string{
 	`{"type":"message_start","message":{"id":"msg_01round","type":"message","role":"assistant","model":"claude-sonnet-4-6","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":12,"output_tokens":1}}}`,
 	`{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}`,
@@ -154,16 +154,21 @@ var claudeToolTurnStream = []string{
 	`{"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}}`,
 	`{"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"Checking."}}`,
 	`{"type":"content_block_stop","index":2}`,
-	`{"type":"content_block_start","index":3,"content_block":{"type":"tool_use","id":"toolu_01","name":"get_weather","input":{}}}`,
-	`{"type":"content_block_delta","index":3,"delta":{"type":"input_json_delta","partial_json":"{\"city\":\"Paris\"}"}}`,
+	`{"type":"content_block_start","index":3,"content_block":{"type":"thinking","thinking":"","signature":""}}`,
+	`{"type":"content_block_delta","index":3,"delta":{"type":"thinking_delta","thinking":""}}`,
+	`{"type":"content_block_delta","index":3,"delta":{"type":"signature_delta","signature":"EqQBupdate"}}`,
 	`{"type":"content_block_stop","index":3}`,
+	`{"type":"content_block_start","index":4,"content_block":{"type":"tool_use","id":"toolu_01","name":"get_weather","input":{}}}`,
+	`{"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"{\"city\":\"Paris\"}"}}`,
+	`{"type":"content_block_stop","index":4}`,
 	`{"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":40}}`,
 	`{"type":"message_stop"}`,
 }
 
 // A Responses client, such as Codex, gets each of Claude's thinking blocks as one of OpenAI's
-// reasoning items, which pass the gateway's checks of the reply. The next request sends each block
-// back to Anthropic exactly as Claude returned it, which Anthropic requires of a tool turn.
+// reasoning items, which pass the gateway's checks of the reply. The next request sends the blocks
+// that start the turn back to Anthropic exactly as Claude returned them, with the text and the tool
+// call, and leaves out the progress update after the text, which Anthropic allows.
 func TestClaudeReasoningRoundTripsThroughResponses(t *testing.T) {
 	request := `{"model":"anthropic-claude-sonnet-4-6","reasoning":{"effort":"medium"},"include":["reasoning.encrypted_content"],` +
 		`"max_output_tokens":2048,"stream":true,` + weatherTool + `,"input":[{"role":"user","content":"Weather in Paris?"}]}`
@@ -194,8 +199,8 @@ func TestClaudeReasoningRoundTripsThroughResponses(t *testing.T) {
 		}
 		sequence += len(chunks)
 	}
-	if len(output) != 4 {
-		t.Fatalf("output = %d items, want reasoning, reasoning, message, function call", len(output))
+	if len(output) != 5 {
+		t.Fatalf("output = %d items, want reasoning, reasoning, message, reasoning, function call", len(output))
 	}
 	items := make([]string, 0, len(output))
 	for _, item := range output {

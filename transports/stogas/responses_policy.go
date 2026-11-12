@@ -1221,11 +1221,11 @@ func onlyRawKeys(object map[string]json.RawMessage, keys ...string) bool {
 }
 
 type responsesInputValidation struct {
-	calls            map[string]string
-	meaningful       bool
-	outputs          map[string]bool
-	pendingCalls     int
-	seenConversation bool
+	calls         map[string]string
+	meaningful    bool
+	outputs       map[string]bool
+	pendingCalls  int
+	claudeSystems claudeSystemPlacement
 }
 
 func validateResponsesInput(state *State, raw json.RawMessage) error {
@@ -1371,15 +1371,15 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 			return invalidRequest("Only text messages, client tool calls and outputs, and reasoning items are supported")
 		}
 		if responsesUsesAnthropicWire(state) {
-			if isSystemMessage && validation.seenConversation {
-				if !anthropicWireSupportsMidConversationSystem(state) {
-					return invalidRequest(path + ".role cannot be preserved after the conversation starts on this Anthropic-format deployment")
-				}
-				if index+1 < len(items) && !responsesInputCreatesAnthropicAssistantTurn(items[index+1]) {
-					return invalidRequest(path + ".role must be last or immediately precede an assistant turn on this Anthropic-format deployment")
-				}
-			} else if !isSystemMessage {
-				validation.seenConversation = true
+			side := claudeUserItem
+			switch {
+			case isSystemMessage:
+				side = claudeSystemItem
+			case itemType == "function_call", itemType == "reasoning", role == "assistant":
+				side = claudeAssistantItem
+			}
+			if err := validation.claudeSystems.next(state, side, path); err != nil {
+				return err
 			}
 		}
 	}
@@ -1870,21 +1870,6 @@ func responsesNamespaceDeclares(state *State, namespace, name string) bool {
 		}
 	}
 	return false
-}
-
-func responsesInputCreatesAnthropicAssistantTurn(raw json.RawMessage) bool {
-	var item map[string]json.RawMessage
-	if err := sonic.Unmarshal(raw, &item); err != nil || item == nil {
-		return false
-	}
-	switch rawString(item["type"]) {
-	case "function_call":
-		return true
-	case "", "message":
-		return rawString(item["role"]) == "assistant"
-	default:
-		return false
-	}
 }
 
 func validateResponsesToolCallOutputInput(item map[string]json.RawMessage, path string, kind string, validation *responsesInputValidation) error {
