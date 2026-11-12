@@ -401,9 +401,8 @@ func TestRoutingOrderingsStack(t *testing.T) {
 			}
 		})
 	}
-	// routing.order is the deployments list that leads its policy's sort.
-	org := ruleSource(t, `{"routing":{"order":["deployment-b"],"sort":[{"by":"provider.id"}]}}`)
-	key := ruleSource(t, `{"routing":{"order":["deployment-a"]}}`)
+	org := ruleSource(t, `{"routing":{"sort":[{"deployments":["deployment-b"]},{"by":"provider.id"}]}}`)
+	key := ruleSource(t, `{"routing":{"sort":[{"deployments":["deployment-a"]}]}}`)
 	combined, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: org}, {Scope: KeyScope, Value: key}})
 	if err != nil {
 		t.Fatal(err)
@@ -418,7 +417,7 @@ func TestRuleOrderingsAreUnconditionalDefaults(t *testing.T) {
 	sort := `"sort":[{"by":"provider.id","direction":"asc"}]`
 	for _, raw := range []string{
 		`{"rules":{"r":{"routing":{` + sort + `}}}}`,
-		`{"rules":{"r":{"mode":"required","routing":{"order":["deployment-a"]}}}}`,
+		`{"rules":{"r":{"mode":"required","routing":{"sort":[{"deployments":["deployment-a"]}]}}}}`,
 		`{"rules":{"r":{"when":"request.interface == 'chat_completions'","mode":"default","routing":{` + sort + `}}}}`,
 		`{"rules":{"r":{"when":"provider.id == 'openai'","mode":"default","routing":{"sort":[]}}}}`,
 		`{"rules":{"r":{"when":"[1].exists(deployment, deployment == 1)","routing":{"sort":[{"by":"random()"}]}}}}`,
@@ -429,14 +428,14 @@ func TestRuleOrderingsAreUnconditionalDefaults(t *testing.T) {
 	}
 	// A policy may require one ordering and prefer another, but it prefers
 	// at most one.
-	if _, err := CompileSource([]byte(`{"routing":{` + sort + `},"rules":{"r":{"mode":"default","routing":{"order":["deployment-a"]}}}}`)); err != nil {
+	if _, err := CompileSource([]byte(`{"routing":{` + sort + `},"rules":{"r":{"mode":"default","routing":{"sort":[{"deployments":["deployment-a"]}]}}}}`)); err != nil {
 		t.Fatalf("required and default ordering rejected: %v", err)
 	}
-	raw := `{"rules":{"a":{"mode":"default","routing":{` + sort + `}},"b":{"mode":"default","routing":{"order":["deployment-a"]}}}}`
+	raw := `{"rules":{"a":{"mode":"default","routing":{` + sort + `}},"b":{"mode":"default","routing":{"sort":[{"deployments":["deployment-a"]}]}}}}`
 	if _, err := CompileSource([]byte(raw)); err == nil || !strings.Contains(err.Error(), "in one rule with mode default") {
 		t.Fatalf("second default ordering accepted: %s: %v", raw, err)
 	}
-	source := ruleSource(t, `{"rules":{"r":{"mode":"default","routing":{"filter":"provider.id != 'x'","order":["deployment-a"],`+sort+`}}}}`)
+	source := ruleSource(t, `{"rules":{"r":{"mode":"default","routing":{"filter":"provider.id != 'x'","sort":[{"deployments":["deployment-a"]},{"by":"provider.id","direction":"asc"}]}}}}`)
 	if source.defaultOrdering == nil || len(source.defaultOrdering.sorts) != 2 || source.Rules[0].Value.orders() || len(source.Rules[0].Value.Config.Routing.Query.Filters) != 1 {
 		t.Fatalf("default ordering did not move to its policy: %+v", source)
 	}
@@ -487,7 +486,7 @@ func TestOriginsLocateTheDecidingPolicyAndRule(t *testing.T) {
 	if len(active.Routing.Query.Filters) != 2 || active.Routing.Fallbacks != 1 {
 		t.Fatalf("composition changed: %+v", active.Routing)
 	}
-	required, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: ruleSource(t, `{}`)}, {Scope: KeyScope, Value: ruleSource(t, `{"routing":{"order":["a"]}}`)}})
+	required, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: ruleSource(t, `{}`)}, {Scope: KeyScope, Value: ruleSource(t, `{"routing":{"sort":[{"deployments":["a"]}]}}`)}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -588,7 +587,7 @@ func TestEveryReplaceableKindHasOneName(t *testing.T) {
 		kinds |= setting.kind
 		names = append(names, setting.name)
 	}
-	if want := requestPermissions &^ orderingPermissions &^ permissionEncryptedPlugins; kinds != want {
+	if want := requestPermissions &^ permissionSort &^ permissionEncryptedPlugins; kinds != want {
 		t.Fatalf("named kinds %b, want %b", kinds, want)
 	}
 	if want := []string{
@@ -629,7 +628,7 @@ func TestOnlyTheOrderingChainSetsOrderings(t *testing.T) {
 	for _, raw := range []string{
 		`{"routing":{"sort":[{"by":"provider.id","direction":"asc"}]}}`,
 		`{"routing":{"sort":[]}}`,
-		`{"routing":{"order":["deployment-a"]}}`,
+		`{"routing":{"sort":[{"deployments":["deployment-a"]}]}}`,
 		`{"rules":{"r":{"mode":"default","routing":{"sort":[{"by":"random()"}]}}}}`,
 	} {
 		for _, scope := range []Scope{CredentialScope, RoleScope, MemberScope} {

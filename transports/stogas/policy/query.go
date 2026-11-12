@@ -249,7 +249,7 @@ func (q *Query) validate() error {
 		return configError("routing requires a filter or sort")
 	}
 	if len(q.OrderBy) > MaxSorts {
-		return configError("use no more than four sort criteria, counting routing.order")
+		return configError("use no more than four sort criteria")
 	}
 	for _, filter := range q.Filters {
 		if filter == nil || strings.TrimSpace(filter.Source) == "" || len(filter.Source) > MaxCELBytes {

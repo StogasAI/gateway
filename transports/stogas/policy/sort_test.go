@@ -69,10 +69,10 @@ func TestSortCriteriaTakeOneKind(t *testing.T) {
 		{`{"routing":{"sort":[{"providers":["openai","openai"]}]}}`, "unique catalog IDs"},
 		{`{"routing":{"sort":[{"providers":["Open AI"]}]}}`, "unique catalog IDs"},
 		{`{"routing":{"sort":[{"providers":["a"]},{"providers":["b"]}]}}`, "one providers list per policy"},
-		{`{"routing":{"order":["d"],"sort":[{"deployments":["e"]}]}}`, "one deployments list per policy"},
+		{`{"routing":{"sort":[{"deployments":["d"]},{"deployments":["e"]}]}}`, "one deployments list per policy"},
 		{`{"routing":{"sort":[{"groups":["claude"]}]}}`, "unknown field"},
 		{`{"routing":{"sort":[{"by":"model.id"},{"by":"model.id","direction":"desc"}]}}`, "must be unique"},
-		{`{"routing":{"order":["d"],"sort":[{"by":"model.id"},{"by":"provider.id"},{"by":"route.id"},{"by":"author.id"}]}}`, "no more than four"},
+		{`{"routing":{"sort":[{"deployments":["d"]},{"by":"model.id"},{"by":"provider.id"},{"by":"route.id"},{"by":"author.id"}]}}`, "no more than four"},
 		{`{"routing":{"sort":[{"by":"random()"},{"providers":["a"]}]}}`, "must be the last"},
 	} {
 		if _, err := CompileSource([]byte(test.raw)); err == nil || !strings.Contains(err.Error(), test.err) {
@@ -81,7 +81,7 @@ func TestSortCriteriaTakeOneKind(t *testing.T) {
 	}
 	for _, raw := range []string{
 		`{"routing":{"sort":[{"authors":["openai"]},{"models":["gpt-5.5"]},{"deployments":["openai-gpt-5.5"]},{"routes":["openai"]}]}}`,
-		`{"routing":{"order":["d"],"sort":[{"providers":["openai"]},{"by":"blended_price(3, 1)"},{"by":"random()"}]}}`,
+		`{"routing":{"sort":[{"deployments":["d"]},{"providers":["openai"]},{"by":"blended_price(3, 1)"},{"by":"random()"}]}}`,
 	} {
 		if _, err := CompileSource([]byte(raw)); err != nil {
 			t.Errorf("%s: %v", raw, err)

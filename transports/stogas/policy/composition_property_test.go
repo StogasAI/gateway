@@ -267,7 +267,6 @@ func TestEverySettingDeclaresItsScopeAndCombination(t *testing.T) {
 		"routing.retries":               {"candidate", "minimum"},
 		"routing.missingEncryptionKeys": {"candidate", "fail wins"},
 		"timeouts.outputIdleSeconds":    {"candidate", "minimum"},
-		"routing.order":                 {"request", "one ordering: broadest required, else closest default"},
 		"routing.sort":                  {"request", "one ordering: broadest required, else closest default"},
 		"routing.fallbacks":             {"request", "minimum"},
 		"timeouts.totalSeconds":         {"request", "minimum"},

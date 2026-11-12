@@ -252,9 +252,8 @@ func (t *Timeouts) OutputIdle() time.Duration {
 
 // Retries repeat a call to the same deployment and credential. Fallbacks move
 // to the next pair in routing order, so a request calls at most three pairs.
-// Query sorts candidates; a policy's routing.order becomes its leading
-// deployments list. Sorting never adds a deployment that selectors, filters
-// or credentials exclude.
+// Query sorts candidates. Sorting never adds a deployment that selectors,
+// filters or credentials exclude.
 // MissingEncryptionKeys is empty when no policy sets it, which fails.
 type Routing struct {
 	AllowedCatalogNodes   *AllowedCatalogNodes `json:"allowedCatalogNodes"`
@@ -428,13 +427,6 @@ func (a *AllowedCatalogNodes) validate() error {
 			}
 			seen[value] = struct{}{}
 		}
-	}
-	return nil
-}
-
-func validateOrder(order []string) error {
-	if validateNodeIDs(order) != nil {
-		return configError("routing.order must list unique deployment IDs")
 	}
 	return nil
 }

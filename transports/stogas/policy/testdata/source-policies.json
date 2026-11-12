@@ -146,7 +146,7 @@
             "literals": [
               {
                 "values": [
-                  "SECRET<&\u2028\ud83d\ude00"
+                  "SECRET<& 😀"
                 ],
                 "wholeWord": false
               }
@@ -164,7 +164,7 @@
           "presets": [],
           "literals": [
             {
-              "text": "SECRET<&\u2028\ud83d\ude00",
+              "text": "SECRET<& 😀",
               "ignoreCase": false,
               "wholeWord": false,
               "fuzzy": false
@@ -683,8 +683,12 @@
           "baseline": {
             "mode": "default",
             "routing": {
-              "order": [
-                "deployment-a"
+              "sort": [
+                {
+                  "deployments": [
+                    "deployment-a"
+                  ]
+                }
               ]
             }
           }
@@ -692,7 +696,7 @@
       },
       {}
     ],
-    "digest": "577ab9ca5c4ce73445e16cec13cfb890ecef243cecdfb576cfb3e8db6ff03a64",
+    "digest": "11f7a9f5e6478deb23b96bec6bf9720d4ef17b591bd9bb8f974fc5365c9c5fc4",
     "compiled": {
       "access": null,
       "compilerVersion": 1,
@@ -862,9 +866,13 @@
       null,
       {
         "routing": {
-          "order": [
-            "deployment-b",
-            "deployment-a"
+          "sort": [
+            {
+              "deployments": [
+                "deployment-b",
+                "deployment-a"
+              ]
+            }
           ],
           "fallbacks": 2
         }
@@ -896,6 +904,6 @@
       "requestPermission": false,
       "schema": "stogas.key-config.compiled.v1"
     },
-    "digest": "d8dc103bc9f2a98d7cebaccce059568d86e4bffa21f96a97a3a4860032b29704"
+    "digest": "f2d01680c4ef9fedd0b5cd72399d932d52da2b1817b1309dbed0f0c00212fdaf"
   }
 ]

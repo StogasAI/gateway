@@ -124,8 +124,8 @@ func compileRules(documents map[string]ruleDocument, plugins map[[32]byte]*Plugi
 		// can read request fields instead. One fallback count and one total
 		// wait apply to every candidate, so only a condition on the request may
 		// set them.
-		if rule.Value.settings&orderingPermissions != 0 && (!rule.Default || rule.When != nil) {
-			return nil, configError("rule %q can set routing.order or routing.sort only with mode default and no when", name)
+		if rule.Value.settings&permissionSort != 0 && (!rule.Default || rule.When != nil) {
+			return nil, configError("rule %q can set routing.sort only with mode default and no when", name)
 		}
 		if rule.When != nil && rule.When.candidate && rule.Value.settings&requestWidePermissions != 0 {
 			return nil, configError("rule %q cannot set routing.fallbacks or timeouts.totalSeconds because its condition reads author, model, deployment, route or provider fields", name)
@@ -219,18 +219,14 @@ func (c *Config) Activate(values Values) (*Config, error) {
 // pluginPermissions are every plugin section, the permission to encrypt one
 // among them.
 const pluginPermissions = pluginUnits | permissionEncryptedPlugins
-const orderingPermissions = permissionOrder | permissionSort
 
 // One order, fallback count and total wait apply to every candidate of a
 // request. Each call's output idle wait and retries come from its own pair.
-const requestWidePermissions = orderingPermissions | permissionFallbacks | permissionTotalTimeout
+const requestWidePermissions = permissionSort | permissionFallbacks | permissionTotalTimeout
 
 // settingsMask turns sections into the kinds of setting that combine. Each
-// plugin is its own kind, encrypted or not; the orderings are one.
+// plugin is its own kind, encrypted or not.
 func settingsMask(value Permission) Permission {
-	if value&orderingPermissions != 0 {
-		value |= orderingPermissions
-	}
 	return value & requestPermissions &^ permissionEncryptedPlugins
 }
 

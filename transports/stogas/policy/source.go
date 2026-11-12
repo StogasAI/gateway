@@ -47,9 +47,8 @@ type Source struct {
 	size                     sourceSize
 }
 
-// ordering is a policy's routing.sort, with routing.order as its leading
-// deployments list. Every ordering applies: each criterion orders the ties of
-// the ones before it.
+// ordering is a policy's routing.sort. Every ordering applies: each criterion
+// orders the ties of the ones before it.
 type ordering struct {
 	sorts []Sort
 	// rule names the default rule that set this ordering.
@@ -72,7 +71,7 @@ func (s *Source) takeOrdering(rule string) *ordering {
 			routing.Query = nil
 		}
 	}
-	s.settings &^= orderingPermissions
+	s.settings &^= permissionSort
 	return taken
 }
 
@@ -225,7 +224,6 @@ type sourceBody struct {
 		Allowed   *AllowedCatalogNodes `json:"allowedCatalogNodes"`
 		Filter    *string              `json:"filter"`
 		Sort      []Sort               `json:"sort"`
-		Order     []string             `json:"order"`
 		Retries   *int                 `json:"retries"`
 		Fallbacks *int                 `json:"fallbacks"`
 		Missing   *string              `json:"missingEncryptionKeys"`
@@ -502,13 +500,6 @@ func (d *SourceDocument) compile(plugins map[[32]byte]*Plugins, compiler *celCom
 
 	if doc.Routing != nil {
 		sorts := doc.Routing.Sort
-		if doc.Routing.Order != nil {
-			if err := validateOrder(doc.Routing.Order); err != nil {
-				return nil, err
-			}
-			// routing.order is the deployments list that leads routing.sort.
-			sorts = append([]Sort{{Deployments: doc.Routing.Order}}, sorts...)
-		}
 		if doc.Routing.Filter != nil || sorts != nil {
 			filter := ""
 			if doc.Routing.Filter != nil {
@@ -561,7 +552,7 @@ func (d *SourceDocument) compile(plugins map[[32]byte]*Plugins, compiler *celCom
 	}
 	for _, rule := range source.Rules {
 		source.previewRuleBytes += rule.previewBytes
-		if rule.Value.settings&orderingPermissions == 0 {
+		if rule.Value.settings&permissionSort == 0 {
 			continue
 		}
 		if source.defaultOrdering != nil {
@@ -971,7 +962,7 @@ type replaceableSetting struct {
 // ties that the others leave.
 var replaceableSettings = func() []replaceableSetting {
 	var settings []replaceableSetting
-	kinds := requestPermissions &^ orderingPermissions &^ permissionEncryptedPlugins
+	kinds := requestPermissions &^ permissionSort &^ permissionEncryptedPlugins
 	for name, kind := range permissionSections {
 		if kind&(kind-1) == 0 && kind&kinds == kind {
 			settings = append(settings, replaceableSetting{name, kind})
@@ -1101,16 +1092,16 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 			return nil, err
 		}
 		if scope == CredentialScope && source.requestWide() {
-			return nil, configError("credential policies cannot set routing.order, routing.sort, routing.fallbacks or timeouts.totalSeconds")
+			return nil, configError("credential policies cannot set routing.sort, routing.fallbacks or timeouts.totalSeconds")
 		}
 		if source.orders() {
 			rank, ok := orderingRanks[scope]
 			if !ok {
-				return nil, configError("%s policies cannot set routing.order or routing.sort", scope)
+				return nil, configError("%s policies cannot set routing.sort", scope)
 			}
 			// Rule parts carry no ordering: compile moved each default
 			// ordering to its policy.
-			if query := source.Config.Routing.Query; source.settings&orderingPermissions != 0 && query != nil && len(query.OrderBy) > 0 {
+			if query := source.Config.Routing.Query; source.settings&permissionSort != 0 && query != nil && len(query.OrderBy) > 0 {
 				required = append(required, placedOrdering{query.OrderBy, Origin{Source: index}, rank})
 			}
 			if source.defaultOrdering != nil {
@@ -1198,7 +1189,7 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 }
 
 func (s *Source) orders() bool {
-	return s.settings&orderingPermissions != 0 || s.defaultOrdering != nil
+	return s.settings&permissionSort != 0 || s.defaultOrdering != nil
 }
 
 // placedOrdering is one policy's ordering with its origin and chain rank.
@@ -1217,7 +1208,7 @@ func (c *Config) placeSorts(required, defaults []placedOrdering) ([]Sort, error)
 		slices.SortStableFunc(list, func(a, b placedOrdering) int { return a.rank - b.rank })
 		for i := 1; i < len(list); i++ {
 			if list[i].rank == list[i-1].rank {
-				return nil, configError("several policies of one scope set routing.order or routing.sort")
+				return nil, configError("several policies of one scope set routing.sort")
 			}
 		}
 	}

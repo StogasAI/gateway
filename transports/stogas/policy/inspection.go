@@ -453,7 +453,7 @@ func sortedAllowedNodes(value *AllowedCatalogNodes) *AllowedCatalogNodes {
 // rules. Where the smallest value or the stricter choice wins, that is the
 // first policy that sets the winning value; where every policy's value
 // combines, each policy that sets one. Ordering names its policy in
-// routing.orderFrom.
+// routing.sortFrom.
 func inspectionSetBy(entries []InspectionSource, sources []ScopedSource, compiled *Config) []map[string]any {
 	var out []map[string]any
 	add := func(setting string, mask Permission, all bool, same func(*Config) bool) {
@@ -589,7 +589,7 @@ func replacedDefaults(documents []*SourceDocument, sources []ScopedSource, requi
 			key := ruleKey{i, rule.Name}
 			for _, setting := range ruleSettings(documents[i].rules[rule.Name].fields) {
 				kind := settingsMask(permissionSections[setting])
-				if kind&orderingPermissions != 0 {
+				if kind&permissionSort != 0 {
 					continue
 				}
 				found := reaches[kind]
@@ -624,14 +624,13 @@ func replacedDefaults(documents []*SourceDocument, sources []ScopedSource, requi
 	return out
 }
 
-// withoutOrdering copies a rule's fields without routing.order and
-// routing.sort, and without routing when nothing else remains in it.
+// withoutOrdering copies a rule's fields without routing.sort, and without
+// routing when nothing else remains in it.
 func withoutOrdering(fields map[string]json.RawMessage) map[string]json.RawMessage {
 	var routing map[string]json.RawMessage
 	if json.Unmarshal(fields["routing"], &routing) != nil {
 		return fields
 	}
-	delete(routing, "order")
 	delete(routing, "sort")
 	out := maps.Clone(fields)
 	if len(routing) == 0 {
@@ -682,7 +681,7 @@ func replacedNotes(entries []InspectionSource, documents []*SourceDocument, sour
 			}
 			for _, setting := range ruleSettings(documents[i].rules[rule.Name].fields) {
 				kind := settingsMask(permissionSections[setting])
-				if kind&orderingPermissions == 0 && !slices.Contains(kinds[kind], setting) {
+				if kind&permissionSort == 0 && !slices.Contains(kinds[kind], setting) {
 					kinds[kind] = append(kinds[kind], setting)
 				}
 			}

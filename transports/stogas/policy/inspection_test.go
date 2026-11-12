@@ -510,7 +510,7 @@ func TestInspectionShowsWhichRequirementsReplaceDefaults(t *testing.T) {
 	}
 
 	// Every ordering applies, so no requirement replaces a default one.
-	preferred := `{"rules":{"d":{"mode":"default","routing":{"order":["openai"],"sort":[{"by":"provider.id"}]}}}}`
+	preferred := `{"rules":{"d":{"mode":"default","routing":{"sort":[{"deployments":["openai"]},{"by":"provider.id"}]}}}}`
 	for _, test := range []struct{ org string }{
 		{`{"routing":{"sort":[{"by":"model.id"}]}}`},
 		{preferred},
@@ -815,7 +815,7 @@ func TestReplacedDefaultsAgreeWithActivation(t *testing.T) {
 				kind := settingsMask(permissionSections[setting])
 				// A default ordering is never replaced: it joins routing.sort,
 				// which names its rule, and leaves the rule's own listing.
-				if kind&orderingPermissions != 0 {
+				if kind&permissionSort != 0 {
 					t.Fatalf("trial %d: rule %s lists its ordering %s", trial, name, setting)
 				}
 				for _, matched := range []bool{true, false} {

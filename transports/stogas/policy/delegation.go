@@ -27,7 +27,6 @@ const (
 	permissionExport
 	permissionTotalTimeout
 	permissionOutputIdleTimeout
-	permissionOrder
 	permissionMissingKeys
 	allPermissions     = permissionMissingKeys | (permissionMissingKeys - 1)
 	requestPermissions = allPermissions &^ (permissionLimits | permissionDelegation)
@@ -42,10 +41,10 @@ var permissionSections = map[string]Permission{
 	"plugins.export":             permissionExport,
 	"plugins.textExtraction":     permissionTextExtraction,
 	"plugins.redaction":          permissionRedaction, "plugins.encrypted": permissionEncryptedPlugins,
-	"routing":        permissionFilter | permissionSort | permissionNodes | permissionRetries | permissionFallbacks | permissionOrder | permissionMissingKeys,
+	"routing":        permissionFilter | permissionSort | permissionNodes | permissionRetries | permissionFallbacks | permissionMissingKeys,
 	"routing.filter": permissionFilter, "routing.sort": permissionSort,
 	"routing.allowedCatalogNodes": permissionNodes, "routing.retries": permissionRetries,
-	"routing.fallbacks": permissionFallbacks, "routing.order": permissionOrder,
+	"routing.fallbacks":             permissionFallbacks,
 	"routing.missingEncryptionKeys": permissionMissingKeys,
 	"delegation":                    permissionDelegation,
 }

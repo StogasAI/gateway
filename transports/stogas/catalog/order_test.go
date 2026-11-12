@@ -280,7 +280,7 @@ func TestPolicyCriteriaDecideEveryTriedTie(t *testing.T) {
 			name:        "an order lists a model the request did not name",
 			body:        `{"input":"hello"}`,
 			credentials: anthropic,
-			policy:      `{"routing":{"order":["anthropic-claude-opus-4-8"],"sort":[` + tiebreak + `]}}`,
+			policy:      `{"routing":{"sort":[{"deployments":["anthropic-claude-opus-4-8"]},` + tiebreak + `]}}`,
 			deployment:  "anthropic-claude-opus-4-8",
 		},
 		{
@@ -294,7 +294,7 @@ func TestPolicyCriteriaDecideEveryTriedTie(t *testing.T) {
 			name:        "the order outranks the sort",
 			body:        `{"input":"hello"}`,
 			credentials: anthropic,
-			policy:      `{"routing":{"order":["anthropic-claude-opus-5-5-us"],"sort":[{"by":"blended_price(3, 1)"}]}}`,
+			policy:      `{"routing":{"sort":[{"deployments":["anthropic-claude-opus-5-5-us"]},{"by":"blended_price(3, 1)"}]}}`,
 			deployment:  "anthropic-claude-opus-5-5-us",
 		},
 		{
