@@ -3784,6 +3784,10 @@ func TestOpenAIProviderHoldAddsSearchMeters(t *testing.T) {
 	if state.Hold.EstimatedUpstreamCostUSD == "" || state.Hold.EstimatedUpstreamCostUSD == "0" {
 		t.Fatalf("expected non-zero hold after search meter, got %#v", state.Hold)
 	}
+	// The model reads pages up to its context, so the hold covers the whole input limit.
+	if input := findMeterEstimate(state.Hold.Meters, billing.MeterInputTokens); input == nil || input.Quantity != strconv.Itoa(resolution.Deployment.MaxInputTokens) {
+		t.Fatalf("input hold = %#v, want the deployment's %d input tokens", input, resolution.Deployment.MaxInputTokens)
+	}
 	// A live reply to a 17-word prompt at low context reported 16,467 prompt
 	// tokens, the pages that the model read (July 28, 2026).
 	state.Signals = &StandardSignals{Prompt: 16467, Completion: 33}
