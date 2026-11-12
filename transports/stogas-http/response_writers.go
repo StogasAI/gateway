@@ -2,6 +2,7 @@ package stogashttp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"math"
 	"math/rand/v2"
@@ -36,7 +37,7 @@ func (s *Server) writeProviderError(ctx *requestContext, state *stogas.State, bi
 // they wait their randomized backoff. A wait over a minute tells them not to
 // retry, as the gateway's own refusals do (billingErrorResponse).
 func providerErrorResponse(state *stogas.State, bifrostErr *schemas.BifrostError, bifrostCtx *schemas.BifrostContext) errorResponse {
-	statusCode, payload := publicProviderError(bifrostErr, usesCustomerCredential(state))
+	statusCode, payload := publicProviderError(bifrostErr, providerMessageUseFor(state, bifrostErr))
 	response := errorResponse{status: statusCode, payload: payload}
 	if wait := providerErrorWait(statusCode, bifrostCtx); wait > 0 {
 		response.retryAfter, response.final = spreadRetryAfter(wait), wait > time.Minute
@@ -117,7 +118,7 @@ func spreadRetryAfter(wait time.Duration) string {
 }
 
 func bifrostErrorPayload(state *stogas.State, bifrostErr *schemas.BifrostError) any {
-	_, payload := publicProviderError(bifrostErr, usesCustomerCredential(state))
+	_, payload := publicProviderError(bifrostErr, providerMessageUseFor(state, bifrostErr))
 	return payload
 }
 
@@ -131,20 +132,78 @@ func usesCustomerCredential(state *stogas.State) bool {
 	return byok != "" && byok != stogasbilling.ManagedUpstreamByok
 }
 
-// publicBifrostError is the public form of a failure of the gateway itself.
-func publicBifrostError(bifrostErr *schemas.BifrostError) (int, map[string]any) {
-	return publicProviderError(bifrostErr, false)
+// providerMessageUse says how much of a provider's message a client may read.
+type providerMessageUse int
+
+const (
+	// filterProviderMessage passes a short message that names nothing internal.
+	filterProviderMessage providerMessageUse = iota
+	// passProviderMessage passes the provider's own words about a call with the
+	// customer's credential.
+	passProviderMessage
+	// withholdProviderMessage passes nothing, because the message repeats the
+	// credential.
+	withholdProviderMessage
+)
+
+// providerMessageUseFor decides what the client reads of a failed call's
+// message. A call with the customer's own provider credential fails with the
+// provider's words about that account, which are theirs to read, as
+// OpenRouter, LiteLLM and Portkey pass them on. A message that repeats the
+// credential itself never passes: the holder of an API key must not learn the
+// provider credential behind it.
+func providerMessageUseFor(state *stogas.State, bifrostErr *schemas.BifrostError) providerMessageUse {
+	if state == nil || state.Authorization == nil || bifrostErr == nil {
+		return filterProviderMessage
+	}
+	if messageNamesCredential(bifrostErrorMessage(bifrostErr), state.Authorization.UpstreamByokSecret) {
+		return withholdProviderMessage
+	}
+	if usesCustomerCredential(state) && bifrostErr.StatusCode != nil && !bifrostErr.IsBifrostError {
+		return passProviderMessage
+	}
+	return filterProviderMessage
 }
 
-// publicProviderError is the public form of a failed provider call. customer
-// says that the call used the customer's own provider credential, so what the
-// provider said about the account is theirs to read: a refusal of the
-// credential, its quota, its access or its rate limit then carries the
-// provider's message after the stable one, and no message is withheld for its
-// words. OpenRouter, LiteLLM and Portkey pass that text on as well; a managed
-// account's refusal stays ours.
-func publicProviderError(bifrostErr *schemas.BifrostError, customer bool) (int, map[string]any) {
-	said := customer && bifrostErr != nil && bifrostErr.StatusCode != nil && !bifrostErr.IsBifrostError
+// messageNamesCredential reports whether message repeats the credential: the
+// whole secret, or a secret field of a JSON credential, such as client_secret
+// or private_key. Its identifiers, such as a tenant or client ID, are not
+// secret, and provider errors name them.
+func messageNamesCredential(message string, secret string) bool {
+	const minimum = 8
+	if message == "" || len(secret) < minimum {
+		return false
+	}
+	if strings.Contains(message, secret) {
+		return true
+	}
+	var fields map[string]any
+	if json.Unmarshal([]byte(secret), &fields) != nil {
+		return false
+	}
+	for name, value := range fields {
+		text, ok := value.(string)
+		name = strings.ToLower(name)
+		secretField := strings.Contains(name, "secret") || strings.Contains(name, "token") || strings.HasSuffix(name, "key")
+		if ok && secretField && len(text) >= minimum && strings.Contains(message, text) {
+			return true
+		}
+	}
+	return false
+}
+
+// publicBifrostError is the public form of a failure of the gateway itself.
+func publicBifrostError(bifrostErr *schemas.BifrostError) (int, map[string]any) {
+	return publicProviderError(bifrostErr, filterProviderMessage)
+}
+
+// publicProviderError is the public form of a failed provider call. With
+// passProviderMessage, a refusal of the credential, its quota, its access or
+// its rate limit carries the provider's message after the stable one, and no
+// other 4xx message is withheld for its words. A managed account's refusal
+// stays ours.
+func publicProviderError(bifrostErr *schemas.BifrostError, use providerMessageUse) (int, map[string]any) {
+	said := use == passProviderMessage
 	if statusCode, errorType, code, message, ok := publicStableGatewayError(bifrostErr); ok {
 		if said && providerAccountRefusal(code) {
 			if detail := boundedProviderMessage(bifrostErrorMessage(bifrostErr)); detail != "" {
@@ -162,7 +221,7 @@ func publicProviderError(bifrostErr *schemas.BifrostError, customer bool) (int, 
 	}
 	statusCode := publicBifrostStatus(bifrostErr)
 	errorType := publicBifrostType(statusCode, bifrostErr)
-	message := publicBifrostMessage(statusCode, errorType, bifrostErr, said)
+	message := publicBifrostMessage(statusCode, errorType, bifrostErr, use)
 	code := publicBifrostCode(statusCode, bifrostErr)
 	param := publicBifrostParam(statusCode, bifrostErr)
 
@@ -325,22 +384,24 @@ func publicBifrostType(statusCode int, bifrostErr *schemas.BifrostError) string 
 	}
 }
 
-// publicBifrostMessage passes on the message of a 4xx failure. said marks the
-// provider's own words about a call with the customer's credential, which pass
-// whole up to a bound; any other message passes only when it is short and
-// names nothing internal.
-func publicBifrostMessage(statusCode int, errorType string, bifrostErr *schemas.BifrostError, said bool) string {
+// publicBifrostMessage passes on the message of a 4xx failure as use allows:
+// whole up to a bound, only when it is short and names nothing internal, or
+// not at all.
+func publicBifrostMessage(statusCode int, errorType string, bifrostErr *schemas.BifrostError, use providerMessageUse) string {
 	switch {
 	case bifrostErr == nil:
 		return "Internal server error"
 	case statusCode >= 400 && statusCode < 500:
 		message := bifrostErrorMessage(bifrostErr)
-		if said {
+		switch use {
+		case passProviderMessage:
 			if message = boundedProviderMessage(message); message != "" {
 				return message
 			}
-		} else if safeProviderClientMessage(message) {
-			return message
+		case filterProviderMessage:
+			if safeProviderClientMessage(message) {
+				return message
+			}
 		}
 	}
 

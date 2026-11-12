@@ -182,12 +182,48 @@ func TestProviderErrorCarriesProviderWordsForACustomerCredential(t *testing.T) {
 			http.StatusBadRequest, nil, strings.Repeat("é", maxProviderMessageBytes/2) + "…"},
 		{"gateway's own failure", gatewayMade, true,
 			http.StatusBadRequest, nil, "Invalid request"},
+		// No holder of an API key learns the provider credential behind it.
+		{"customer refusal that repeats the credential", testBifrostError(http.StatusUnauthorized, "Invalid API key: "+testProviderSecret, "", "invalid_api_key"), true,
+			http.StatusFailedDependency, "upstream_authentication_failed", "The configured provider credential was rejected"},
+		{"customer message that repeats the credential", testBifrostError(http.StatusBadRequest, "Unknown header value "+testProviderSecret, "invalid_request_error", ""), true,
+			http.StatusBadRequest, nil, "Invalid request"},
+		{"managed message that repeats the credential", testBifrostError(http.StatusBadRequest, "Unknown header value "+testProviderSecret, "invalid_request_error", ""), false,
+			http.StatusBadRequest, nil, "Invalid request"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			status, payload := publicProviderError(tc.err, tc.customer)
+			byok := billing.ManagedUpstreamByok
+			if tc.customer {
+				byok = "byok_1"
+			}
+			state := &stogas.State{Authorization: &billing.Authorization{UpstreamByok: byok, UpstreamByokSecret: testProviderSecret}}
+			status, payload := publicProviderError(tc.err, providerMessageUseFor(state, tc.err))
 			errorObject := publicErrorObject(t, payload)
 			if status != tc.wantStatus || errorObject["code"] != tc.wantCode || errorObject["message"] != tc.wantMessage {
 				t.Fatalf("status = %d, error = %#v", status, errorObject)
+			}
+		})
+	}
+}
+
+const testProviderSecret = "sk-test-0123456789abcdef"
+
+// A JSON credential's secret fields never pass, while a provider's error may name its
+// identifiers, as Entra ID names the tenant and the application.
+func TestMessageNamesCredential(t *testing.T) {
+	const azure = `{"tenant_id":"3f2504e0-4f89-11d3-9a0c-0305e82c3301","client_id":"9b2e1a56-0d8c-4f0b-8a53-6d1f0c2f7e11","client_secret":"Xy8~Q.secretValue0123"}`
+	for _, tc := range []struct {
+		name, message, secret string
+		want                  bool
+	}{
+		{"whole key", "Invalid API key: " + testProviderSecret, testProviderSecret, true},
+		{"masked key", "Incorrect API key provided: sk-test-****cdef.", testProviderSecret, false},
+		{"secret field", "Invalid client secret Xy8~Q.secretValue0123 provided", azure, true},
+		{"identifier field", "Application 9b2e1a56-0d8c-4f0b-8a53-6d1f0c2f7e11 was not found in tenant 3f2504e0-4f89-11d3-9a0c-0305e82c3301", azure, false},
+		{"no credential", "Invalid request", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := messageNamesCredential(tc.message, tc.secret); got != tc.want {
+				t.Fatalf("messageNamesCredential = %t, want %t", got, tc.want)
 			}
 		})
 	}
