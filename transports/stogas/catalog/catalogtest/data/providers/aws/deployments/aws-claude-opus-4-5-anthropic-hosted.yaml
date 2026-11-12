@@ -3,7 +3,7 @@
 # and https://platform.claude.com/docs/en/about-claude/pricing#claude-platform-on-aws-pricing
 deployments:
   modelId: claude-opus-4-5
-  routeIds: [aws-messages]
+  routeIds: [aws-claude-platform-messages]
   hosting: anthropic
   upstream:
     model: claude-opus-4-5-20251101

@@ -698,7 +698,7 @@ var exactFieldTypes = map[string]string{
 	"deployment.dataHandling.storageLocation": "string", "deployment.dataHandling.storageWithin": "string_list",
 	"deployment.dataHandling.tee": "boolean", "deployment.dataHandling.teeVerified": "boolean",
 	"deployment.dataHandling.trainingUse": "boolean", "deployment.dataHandling.zeroDataRetention": "boolean",
-	"deployment.hosting": "string", "deployment.via": "string_list",
+	"deployment.hosting": "string", "deployment.companies": "string_list",
 	"deployment.inputModalities": "string_list", "deployment.maxOutputTokens": "integer",
 	"deployment.modelId": "string", "deployment.outputModalities": "string_list",
 	"deployment.reasoning": "string", "deployment.reasoningEfforts": "string_list",

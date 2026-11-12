@@ -6,7 +6,7 @@
 # Messages API support, limits and retention reviewed 2026-11-03: https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-haiku-5-5.html
 deployments:
   modelId: claude-haiku-5-5
-  routeIds: [aws-messages]
+  routeIds: [aws-bedrock-messages]
   hosting: aws
   upstream:
     model: eu.anthropic.claude-haiku-5-5

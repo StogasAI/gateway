@@ -1,0 +1,32 @@
+# Claude Models on Google Cloud (Anthropic managed) is Anthropic's own Messages API at
+# https://claude.googleapis.com/v1/projects/{project}/locations/global/workspaces/{workspace}/invoke/v1/messages,
+# which Anthropic runs and Google Cloud bills. It stores data in the US and runs web search and web
+# fetch at Anthropic's prices.
+# Reviewed 2026-10-31: https://platform.claude.com/docs/en/build-with-claude/claude-models-on-google-cloud/anthropic-managed
+# Data handling reviewed 2026-11-03: https://platform.claude.com/docs/en/manage-claude/api-and-data-retention
+# and https://platform.claude.com/docs/en/manage-claude/data-residency. Anthropic deletes inputs and
+# outputs within 30 days. inference_geo covers model inference only, so a search or a fetch can run
+# anywhere. Website publishers can keep the URLs that web fetch requests.
+routes:
+  providerId: google-cloud
+  interfaces: [chat_completions, responses]
+  inputModalities: [text, image]
+  documentFormats:
+    extensions: [.csv, .md, .pdf, .txt]
+    mediaTypes: [application/pdf, text/plain]
+  dataHandling:
+    storageLocation: US
+    retentionDays: 30
+  hostedTools:
+    - tool: web_search
+      pricing:
+        anthropic_web_search_calls:
+          per_1k_calls: '10'
+      dataHandling:
+        processingLocation: unknown
+    - tool: web_fetch
+      dataHandling:
+        processingLocation: unknown
+        storageLocation: unknown
+        retentionDays: null
+        zeroDataRetention: false

@@ -22,8 +22,8 @@ import (
 )
 
 const (
-	catalogSchema     = "stogas.catalog.v15"
-	catalogPartSchema = "stogas.catalog.part.v15"
+	catalogSchema     = "stogas.catalog.v16"
+	catalogPartSchema = "stogas.catalog.part.v16"
 	// Evidence approves a release by the digest of its root, and the root names each part by
 	// digest and size. The build refuses a larger root, part or catalog, so the gateway refuses
 	// one before it downloads it.
@@ -53,7 +53,11 @@ var compiledRouteContracts = map[string]struct {
 		providerID: "azure",
 		interfaces: []string{"responses"},
 	},
-	"aws-messages": {
+	"aws-bedrock-messages": {
+		providerID: "aws",
+		interfaces: []string{"chat_completions", "responses"},
+	},
+	"aws-claude-platform-messages": {
 		providerID: "aws",
 		interfaces: []string{"chat_completions", "responses"},
 	},
@@ -65,7 +69,11 @@ var compiledRouteContracts = map[string]struct {
 		providerID: "chutes",
 		interfaces: []string{"chat_completions"},
 	},
-	"google-cloud-messages": {
+	"google-cloud-agent-platform-messages": {
+		providerID: "google-cloud",
+		interfaces: []string{"chat_completions", "responses"},
+	},
+	"google-cloud-anthropic-managed-messages": {
 		providerID: "google-cloud",
 		interfaces: []string{"chat_completions", "responses"},
 	},
@@ -1078,12 +1086,13 @@ func validateDeploymentUpstreamSelector(deploymentID, providerID string, deploym
 	if hosting == "" {
 		return fmt.Errorf("deployment %s has no hosting", deploymentID)
 	}
-	// A provider that runs the model itself sends requests through no one; each company between
-	// it and the hosting is named once, and unknown adds nothing to a hosting of unknown.
-	if deployment.Via == nil || len(deployment.Via) > 0 && hosting == providerID ||
-		slices.Contains(deployment.Via, providerID) || slices.Contains(deployment.Via, hosting) ||
-		len(slices.Compact(slices.Sorted(slices.Values(deployment.Via)))) != len(deployment.Via) {
-		return fmt.Errorf("deployment %s has an invalid path to its hosting", deploymentID)
+	// Companies lists each company that receives a request once, in the order that they receive it:
+	// the provider first, then any company between it and the hosting, the hosting, and any company
+	// that the hosting shares it with.
+	companies := deployment.Companies
+	if len(companies) == 0 || companies[0] != providerID || !slices.Contains(companies, hosting) ||
+		len(slices.Compact(slices.Sorted(slices.Values(companies)))) != len(companies) {
+		return fmt.Errorf("deployment %s has an invalid list of companies", deploymentID)
 	}
 	if _, offered := offeredTiers(schemas.ModelProvider(providerID), selector.ModelFormat, hosting)[selector.ServiceTier]; !offered {
 		return fmt.Errorf("deployment %s has a service tier that its provider does not offer", deploymentID)
@@ -1155,13 +1164,13 @@ func validateAzureUpstreamSelector(deploymentID string, deployment *compiledDepl
 	return nil
 }
 
-// cloudClaudeHostings names who runs Claude on AWS and Google Cloud: the cloud itself, or
-// Anthropic with the cloud's sign-in and billing. Both take the Messages body on one route, as
-// on Azure; the hosting picks the endpoint and sign-in, so the routing engine weighs them as
-// siblings.
-var cloudClaudeHostings = map[string][]string{
-	"aws":          {"anthropic", "aws"},
-	"google-cloud": {"anthropic", "google-cloud"},
+// cloudClaudeRoutes names who runs Claude on each route of AWS and Google Cloud: the cloud itself,
+// or Anthropic with the cloud's sign-in and billing. Each product has its own endpoint and sign-in.
+var cloudClaudeRoutes = map[string]string{
+	"aws-bedrock-messages":                    "aws",
+	"aws-claude-platform-messages":            "anthropic",
+	"google-cloud-agent-platform-messages":    "google-cloud",
+	"google-cloud-anthropic-managed-messages": "anthropic",
 }
 
 // BedrockSourceRegions are, for each geography of Bedrock's inference profiles but global, the
@@ -1183,12 +1192,11 @@ var BedrockSourceRegions = map[string]map[string]bool{
 // geography, which is global or us, and which Anthropic's models before Claude 4.6 do not take.
 func validateCloudClaudeSelector(deploymentID, providerID string, deployment *compiledDeployment) error {
 	selector, hosting := deployment.Upstream, deployment.Hosting
-	route, hosted := providerID+"-messages", slices.Contains(cloudClaudeHostings[providerID], hosting)
 	geo := selector.InferenceGeo == "global" || selector.InferenceGeo == "us" ||
 		selector.InferenceGeo == "" && hosting == "anthropic" ||
 		selector.InferenceGeo == "eu" && hosting == "google-cloud" ||
 		hosting == "aws" && BedrockSourceRegions[selector.InferenceGeo] != nil
-	if !hosted || !geo || !schemas.IsAnthropicModel(deployment.ModelID) ||
+	if !geo || !schemas.IsAnthropicModel(deployment.ModelID) ||
 		selector.ChuteID != "" || selector.GPUCount != nil || selector.ReasoningMode != "" ||
 		selector.DeploymentType != "" || selector.ModelFormat != "" || selector.ModelVersion != "" {
 		return fmt.Errorf("deployment %s has an invalid %s upstream selector", deploymentID, providerID)
@@ -1198,8 +1206,8 @@ func validateCloudClaudeSelector(deploymentID, providerID string, deployment *co
 		return fmt.Errorf("deployment %s must name the %s inference profile of its model", deploymentID, selector.InferenceGeo)
 	}
 	for routeID := range deployment.Routes {
-		if routeID != route {
-			return fmt.Errorf("deployment %s must use route %s", deploymentID, route)
+		if cloudClaudeRoutes[routeID] != hosting {
+			return fmt.Errorf("deployment %s cannot use route %s", deploymentID, routeID)
 		}
 	}
 	return nil

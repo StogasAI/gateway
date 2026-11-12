@@ -6,7 +6,7 @@
 # Regions and retention reviewed 2026-10-31: https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-fable-5-1.html
 deployments:
   modelId: claude-fable-5-1
-  routeIds: [aws-messages]
+  routeIds: [aws-bedrock-messages]
   hosting: aws
   upstream:
     model: us.anthropic.claude-fable-5-1

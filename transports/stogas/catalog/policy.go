@@ -26,6 +26,7 @@ type routingSelection struct {
 type policyDeploymentData struct {
 	ApprovalRequired    bool                `json:"approvalRequired"`
 	Capabilities        Capabilities        `json:"capabilities"`
+	Companies           []string            `json:"companies"`
 	ContextWindowTokens int                 `json:"contextWindowTokens"`
 	MaxInputTokens      int                 `json:"maxInputTokens"`
 	DataHandling        policyDataHandling  `json:"dataHandling"`
@@ -40,7 +41,6 @@ type policyDeploymentData struct {
 	ReasoningMaxTokens  *ReasoningMaxTokens `json:"reasoningMaxTokens"`
 	RetirementDate      *string             `json:"retirementDate"`
 	Upstream            compiledUpstream    `json:"upstream"`
-	Via                 []string            `json:"via"`
 	WeightPrecision     string              `json:"weightPrecision"`
 }
 
@@ -429,7 +429,7 @@ func newResolvedPolicyValues(candidate *ResolvedRequest) (*resolvedPolicyValues,
 				ReasoningMaxTokens: deployment.ReasoningMaxTokens,
 				RetirementDate:     compiledDeployment.RetirementDate,
 				Upstream:           compiledDeployment.Upstream,
-				Via:                deployment.Via,
+				Companies:          compiledDeployment.Companies,
 				ApprovalRequired:   deployment.ApprovalRequired,
 				WeightPrecision:    deployment.WeightPrecision,
 			},

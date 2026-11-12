@@ -103,38 +103,34 @@ func TestCELRejectsStringsThatFieldsCannotHold(t *testing.T) {
 	}
 }
 
-// A policy names the companies that it accepts on the way to the hosting as it names the hosting.
-func TestCELReadsTheHostingAndThePathToIt(t *testing.T) {
-	accepted := `["anthropic", "aws", "azure", "chutes", "google-cloud", "openai"]`
-	program, err := CompileCEL(`deployment.hosting in ` + accepted + ` && deployment.via.all(company, company in ` + accepted + `)`)
+// One condition on the companies covers the provider, each company between it and the hosting,
+// the hosting, and each company that the hosting shares a request with.
+func TestCELReadsTheCompaniesThatReceiveARequest(t *testing.T) {
+	program, err := CompileCEL(`deployment.companies.all(company, company in ["anthropic", "aws", "azure", "chutes", "google-cloud", "openai"])`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, test := range []struct {
-		hosting string
-		via     []string
-		matches bool
+		companies []string
+		matches   bool
 	}{
-		{"anthropic", nil, true},
-		{"anthropic", []string{"aws"}, true},
-		{"fireworks", nil, false},
-		{"anthropic", []string{"aws", "fireworks"}, false},
-		{"anthropic", []string{"unknown"}, false},
+		{[]string{"anthropic"}, true},
+		{[]string{"aws", "anthropic"}, true},
+		{[]string{"azure", "fireworks"}, false},
+		{[]string{"azure", "aws", "fireworks", "anthropic"}, false},
+		{[]string{"chutes", "unknown"}, false},
 	} {
-		values := testValues{
-			"deployment.hosting": {Type: "string", String: test.hosting},
-			"deployment.via":     {Type: "string_list", Strings: test.via},
-		}
+		values := testValues{"deployment.companies": {Type: "string_list", Strings: test.companies}}
 		if known, matches, _, err := program.Evaluate(values, time.Time{}); err != nil || !known || matches != test.matches {
-			t.Errorf("%s via %v: known %v, matches %v, error %v", test.hosting, test.via, known, matches, err)
+			t.Errorf("%v: known %v, matches %v, error %v", test.companies, known, matches, err)
 		}
 	}
-	for _, source := range []string{`deployment.hosting == provider.id`, `size(deployment.via) == 0`, `"unknown" in deployment.via`} {
+	for _, source := range []string{`deployment.hosting == provider.id`, `size(deployment.companies) == 1`, `"unknown" in deployment.companies`} {
 		if _, err := CompileCEL(source); err != nil {
 			t.Errorf("%s: %v", source, err)
 		}
 	}
-	for _, source := range []string{`deployment.hosting == "Azure"`, `"fire works" in deployment.via`, `deployment.via.exists(c, c == "AWS")`} {
+	for _, source := range []string{`deployment.hosting == "Azure"`, `"fire works" in deployment.companies`, `deployment.companies.exists(c, c == "AWS")`} {
 		if _, err := CompileCEL(source); err == nil || !strings.Contains(err.Error(), "cannot be") {
 			t.Errorf("%s: error = %v", source, err)
 		}

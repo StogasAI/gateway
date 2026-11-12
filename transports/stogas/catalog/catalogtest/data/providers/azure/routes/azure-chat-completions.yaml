@@ -5,5 +5,3 @@ routes:
   documentFormats:
     extensions: []
     mediaTypes: []
-  dataHandling:
-    endToEndEncrypted: false

@@ -7,6 +7,9 @@ models:
   maxOutputTokens: 128000
   inputModalities: [text, image]
   outputModalities: [text]
+  # A forced tool choice, any or a named tool, returns 400.
+  capabilities:
+    toolChoice: false
   reasoning: required
   reasoningEfforts: [low, medium, high, xhigh, max]
   releaseDate: 2026-09-28

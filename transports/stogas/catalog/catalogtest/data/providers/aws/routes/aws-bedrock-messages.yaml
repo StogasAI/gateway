@@ -1,0 +1,12 @@
+# Claude in Amazon Bedrock: https://bedrock-runtime.{region}.amazonaws.com/anthropic/v1/messages,
+# called with a global or US inference profile ID. Bedrock-mantle serves Fable 5.1 only in GovCloud.
+# It has no URL sources, Files API, server-side tools, task budgets or fallbacks.
+# Reviewed 2026-10-31: https://platform.claude.com/docs/en/build-with-claude/claude-in-amazon-bedrock
+# and https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-fable-5-1.html
+routes:
+  providerId: aws
+  interfaces: [chat_completions, responses]
+  inputModalities: [text, image]
+  documentFormats:
+    extensions: [.csv, .md, .pdf, .txt]
+    mediaTypes: [application/pdf, text/plain]

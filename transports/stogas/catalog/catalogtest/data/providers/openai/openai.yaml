@@ -17,6 +17,3 @@ providers:
     storageLocation: unknown
     retentionDays: 30
     trainingUse: false
-    zeroDataRetention: false
-    tee: false
-    teeVerified: false

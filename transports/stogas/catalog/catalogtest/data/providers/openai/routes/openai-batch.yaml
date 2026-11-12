@@ -8,6 +8,4 @@ routes:
   documentFormats:
     extensions: []
     mediaTypes: []
-  dataHandling:
-    endToEndEncrypted: false
   notes: The gateway has no batch API and serves each request as it arrives.

@@ -93,7 +93,7 @@ var fieldDomains = map[string]fieldDomain{
 	"deployment.id":                              catalogID,
 	"deployment.modelId":                         catalogID,
 	"deployment.hosting":                         company,
-	"deployment.via":                             company,
+	"deployment.companies":                       company,
 	"deployment.inputModalities":                 modalities,
 	"deployment.outputModalities":                modalities,
 	"deployment.reasoning":                       reasoning,

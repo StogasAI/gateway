@@ -2,15 +2,11 @@
 # Reviewed 2026-10-31: https://platform.claude.com/docs/en/about-claude/pricing#claude-platform-on-aws-pricing
 deployments:
   modelId: claude-fable-5-1
-  routeIds: [aws-messages]
+  routeIds: [aws-claude-platform-messages]
   hosting: anthropic
   upstream:
     model: claude-fable-5-1
     inferenceGeo: global
-  overrides:
-    dataHandling:
-      storageLocation: unknown
-      retentionDays: 30
   pricing:
     input_tokens:
       per_mill_tokens: '10'

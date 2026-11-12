@@ -1,0 +1,14 @@
+# Claude on Agent Platform, formerly Vertex AI, which Google runs (Google managed):
+# https://{host}/v1/projects/{project}/locations/{location}/publishers/anthropic/models/{model}:rawPredict.
+# It has no URL sources, Files API, code execution, web fetch, advisor or fallbacks. Its web search is
+# off until an organization policy allows it, sends queries to Brave outside Google's residency and
+# encryption commitments, and has no verified price, so the catalog lists no hosted tools here.
+# Reviewed 2026-10-31: https://platform.claude.com/docs/en/build-with-claude/claude-models-on-google-cloud/google-managed
+# and https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/claude/web-search
+routes:
+  providerId: google-cloud
+  interfaces: [chat_completions, responses]
+  inputModalities: [text, image]
+  documentFormats:
+    extensions: [.csv, .md, .pdf, .txt]
+    mediaTypes: [application/pdf, text/plain]

@@ -7,8 +7,6 @@ routes:
   documentFormats:
     extensions: [.csv, .md, .pdf, .txt]
     mediaTypes: [application/pdf, text/plain]
-  dataHandling:
-    endToEndEncrypted: false
   # Prices reviewed 2026-10-11: https://platform.claude.com/docs/en/about-claude/pricing
   # Data handling reviewed 2026-11-03: https://platform.claude.com/docs/en/manage-claude/api-and-data-retention
   # and https://platform.claude.com/docs/en/manage-claude/data-residency. inference_geo covers model inference

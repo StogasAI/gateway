@@ -268,8 +268,8 @@ func TestSnapshotValidationRejectsEndToEndEncryptionWithoutTEE(t *testing.T) {
 func TestSnapshotReadsOnlyCurrentSchema(t *testing.T) {
 	release := testCatalogRelease(t)
 	for _, schema := range []struct{ root, part string }{
-		{"stogas.catalog.v14", "stogas.catalog.part.v14"},
 		{"stogas.catalog.v15", "stogas.catalog.part.v15"},
+		{"stogas.catalog.v16", "stogas.catalog.part.v16"},
 	} {
 		release.root["schema"] = schema.root
 		for _, part := range release.parts {
@@ -288,11 +288,11 @@ func TestSnapshotReadsOnlyCurrentSchema(t *testing.T) {
 func TestChutesSelectorMatchesItsRoute(t *testing.T) {
 	eight, nine, one := 8, 9, 1
 	encrypted := func(hosting string, gpus *int) *compiledDeployment {
-		return &compiledDeployment{Hosting: hosting, Via: []string{}, Upstream: compiledUpstream{ChuteID: "chute", GPUCount: gpus},
+		return &compiledDeployment{Hosting: hosting, Upstream: compiledUpstream{ChuteID: "chute", GPUCount: gpus},
 			Routes: map[string]compiledDeploymentRoute{"chutes-chat-completions": {DataHandling: DataHandling{EndToEndEncrypted: true, TEE: true}}}}
 	}
 	standard := func(hosting string, gpus *int) *compiledDeployment {
-		return &compiledDeployment{Hosting: hosting, Via: []string{}, Upstream: compiledUpstream{ChuteID: "chute", GPUCount: gpus},
+		return &compiledDeployment{Hosting: hosting, Upstream: compiledUpstream{ChuteID: "chute", GPUCount: gpus},
 			Routes: map[string]compiledDeploymentRoute{"chutes-standard-chat-completions": {}}}
 	}
 	for _, test := range []struct {
@@ -1671,37 +1671,41 @@ func TestSnapshotValidationRejectsUnbillablePricingAndReasoning(t *testing.T) {
 	}
 }
 
-// A deployment names each company between its provider and its hosting once, and neither of
-// those two.
-func TestSnapshotValidationChecksThePathToTheHosting(t *testing.T) {
+// A deployment lists each company that receives a request once: its provider first and its
+// hosting last.
+func TestSnapshotValidationChecksTheCompanies(t *testing.T) {
 	const hosted, own = "azure-claude-fable-5-1-anthropic-hosted", "azure-gpt-5.6-sol"
 	for _, test := range []struct {
 		name, deployment string
-		via              any
+		companies        any
 		valid            bool
 	}{
-		{"no company between", hosted, []any{}, true},
-		{"one company between", hosted, []any{"fireworks"}, true},
-		{"an unnamed company between", hosted, []any{"aws", "unknown"}, true},
+		{"the provider and the hosting", hosted, []any{"azure", "anthropic"}, true},
+		{"one company between", hosted, []any{"azure", "fireworks", "anthropic"}, true},
+		{"an unnamed company between", hosted, []any{"azure", "aws", "unknown", "anthropic"}, true},
+		{"a provider that runs the model", own, []any{"azure"}, true},
+		{"a company that the hosting shares requests with", hosted, []any{"azure", "anthropic", "fireworks"}, true},
+		{"a provider that runs the model and shares requests", own, []any{"azure", "openai"}, true},
 		{"no list", hosted, nil, false},
-		{"the provider", hosted, []any{"azure"}, false},
-		{"the hosting", hosted, []any{"anthropic"}, false},
-		{"a company twice", hosted, []any{"fireworks", "aws", "fireworks"}, false},
-		{"a path to the provider itself", own, []any{"fireworks"}, false},
+		{"no company", hosted, []any{}, false},
+		{"no provider first", hosted, []any{"fireworks", "anthropic"}, false},
+		{"no hosting", hosted, []any{"azure", "fireworks"}, false},
+		{"a company twice", hosted, []any{"azure", "fireworks", "aws", "fireworks", "anthropic"}, false},
+		{"a provider that runs the model twice", own, []any{"azure", "azure"}, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var whole map[string]any
 			if err := json.Unmarshal(testCatalogJSON, &whole); err != nil {
 				t.Fatal(err)
 			}
-			whole["graph"].(map[string]any)["deployments"].(map[string]any)[test.deployment].(map[string]any)["via"] = test.via
+			whole["graph"].(map[string]any)["deployments"].(map[string]any)[test.deployment].(map[string]any)["companies"] = test.companies
 			data, err := json.Marshal(whole)
 			if err != nil {
 				t.Fatal(err)
 			}
 			loaded, err := snapshotFromCatalogBytes(data)
 			if !test.valid {
-				if err == nil || !strings.Contains(err.Error(), "has an invalid path to its hosting") {
+				if err == nil || !strings.Contains(err.Error(), "has an invalid list of companies") {
 					t.Fatalf("catalog was accepted or failed for another reason: %v", err)
 				}
 				return
@@ -1709,8 +1713,8 @@ func TestSnapshotValidationChecksThePathToTheHosting(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := loaded.graph.Deployments[test.deployment].Via; len(got) != len(test.via.([]any)) {
-				t.Fatalf("via = %v, want %v", got, test.via)
+			if got := loaded.graph.Deployments[test.deployment].Companies; len(got) != len(test.companies.([]any)) {
+				t.Fatalf("companies = %v, want %v", got, test.companies)
 			}
 		})
 	}
@@ -1816,9 +1820,11 @@ func TestSnapshotRejectsValuesThatPoliciesCannotName(t *testing.T) {
 		apply func(graph map[string]any)
 		want  string
 	}{
-		{"hosting", func(g map[string]any) { deployment(g)["hosting"] = "Azure" }, vocabulary},
+		{"hosting", func(g map[string]any) {
+			deployment(g)["hosting"], deployment(g)["companies"] = "Azure", []any{"azure", "Azure"}
+		}, vocabulary},
 		{"a company on the way to the hosting", func(g map[string]any) {
-			deployment(g)["hosting"], deployment(g)["via"] = "anthropic", []any{"Fireworks"}
+			deployment(g)["hosting"], deployment(g)["companies"] = "anthropic", []any{"azure", "Fireworks", "anthropic"}
 		}, vocabulary},
 		{"deployment type", func(g map[string]any) { upstream(g)["deploymentType"] = "GlobalStandard" }, vocabulary},
 		{"weight precision", func(g map[string]any) { deployment(g)["weightPrecision"] = "fp7" }, vocabulary},

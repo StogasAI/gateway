@@ -6,8 +6,6 @@ routes:
   documentFormats:
     extensions: [.csv, .md, .pdf, .txt]
     mediaTypes: [application/pdf, text/plain]
-  dataHandling:
-    endToEndEncrypted: false
   # Claude runs the basic web search and web fetch versions on both hostings. Foundry bills Anthropic's
   # per-feature rates; the US Data Zone multiplier applies only to tokens.
   # Prices reviewed 2026-10-11: https://platform.claude.com/docs/en/about-claude/pricing#claude-in-microsoft-foundry-pricing

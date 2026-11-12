@@ -21,8 +21,8 @@ const (
 // the dated type and the fixed name, with no schema, and a forced call by the tool's name.
 // Upstream sent bash as a function without schema, and the older text editor to both Haiku models.
 func TestAnthropicClientToolsReachClaudeAsNamed(t *testing.T) {
-	const tools = `"tools":[` + anthropicBashTool + `,{"type":"text_editor_20250728","name":"str_replace_based_edit_tool","max_characters":10000,"cache_control":{"type":"ephemeral"}},{"type":"function","name":"lookup"}],` +
-		`"tool_choice":{"type":"function","name":"str_replace_based_edit_tool"},`
+	const tools = `"tools":[` + anthropicBashTool + `,{"type":"text_editor_20250728","name":"str_replace_based_edit_tool","max_characters":10000,"cache_control":{"type":"ephemeral"}},{"type":"function","name":"lookup"}],`
+	const forcedTools = tools + `"tool_choice":{"type":"function","name":"str_replace_based_edit_tool"},`
 	const wantTools = `[{"name":"bash","type":"bash_20250124"},{"name":"str_replace_based_edit_tool","type":"text_editor_20250728","cache_control":{"type":"ephemeral"},"max_characters":10000},{"name":"lookup","input_schema":{"type":"object","properties":{}}}]`
 	check := func(t *testing.T, wire []byte, forced bool) {
 		t.Helper()
@@ -50,7 +50,6 @@ func TestAnthropicClientToolsReachClaudeAsNamed(t *testing.T) {
 			string(sent.Tools[2]["name"]) != `"lookup"` || sent.Tools[2]["type"] != nil {
 			t.Errorf("tools changed on Anthropic wire: %s", wire)
 		}
-		// Core leaves a forced choice out for Claude Fable 5.1, which refuses one.
 		if forced && (sent.ToolChoice == nil || !sameJSON(t, sent.ToolChoice, []byte(`{"type":"tool","name":"str_replace_based_edit_tool"}`))) {
 			t.Errorf("tool_choice changed on Anthropic wire: %s", sent.ToolChoice)
 		}
@@ -61,7 +60,7 @@ func TestAnthropicClientToolsReachClaudeAsNamed(t *testing.T) {
 	}
 	for _, model := range []string{"anthropic-claude-sonnet-4-6", "anthropic-claude-haiku-4-5", "anthropic-claude-haiku-5-5", "anthropic-claude-opus-4-5", "anthropic-claude-opus-5", "azure-claude-opus-4-8-anthropic-hosted"} {
 		t.Run(model, func(t *testing.T) {
-			resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/responses", Body: []byte(`{"input":"hi",` + tools + `"model":"` + model + `"}`)})
+			resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/responses", Body: []byte(`{"input":"hi",` + forcedTools + `"model":"` + model + `"}`)})
 			if err != nil {
 				t.Fatal(err)
 			}

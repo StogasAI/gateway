@@ -18,4 +18,3 @@ providers:
     trainingUse: false
     zeroDataRetention: true
     tee: true
-    teeVerified: false

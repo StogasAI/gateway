@@ -2,14 +2,11 @@
 # Reviewed 2026-10-31: https://platform.claude.com/docs/en/about-claude/pricing
 deployments:
   modelId: claude-fable-5-1
-  routeIds: [google-cloud-messages]
+  routeIds: [google-cloud-anthropic-managed-messages]
   hosting: anthropic
   upstream:
     model: claude-fable-5-1
     inferenceGeo: global
-  overrides:
-    dataHandling:
-      retentionDays: 30
   pricing:
     input_tokens:
       per_mill_tokens: '10'

@@ -6,5 +6,3 @@ routes:
   documentFormats:
     extensions: [.pdf]
     mediaTypes: [application/pdf]
-  dataHandling:
-    endToEndEncrypted: false

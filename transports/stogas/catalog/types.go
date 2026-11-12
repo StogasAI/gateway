@@ -61,10 +61,7 @@ type Deployment struct {
 	RouteID   string
 	// Hosting is who runs the model: the provider's ID, the ID of a company whose service the
 	// provider resells, or HostingUnknown.
-	Hosting string
-	// Via lists the companies that a request passes through between the provider and the
-	// hosting, in order.
-	Via                 []string
+	Hosting             string
 	Upstream            Upstream
 	Capabilities        Capabilities
 	DocumentFormats     DocumentFormats
@@ -175,7 +172,11 @@ type compiledAuthor struct {
 // A compiled deployment holds the facts that hold on all its routes, and for each route the
 // facts that combine the route with the model and deployment.
 type compiledDeployment struct {
-	ApprovalRequired    bool                               `json:"approvalRequired"`
+	ApprovalRequired bool `json:"approvalRequired"`
+	// Companies lists each company that receives a request once, in order: the provider, any
+	// company between it and the hosting, the hosting, and any company that the hosting shares it
+	// with.
+	Companies           []string                           `json:"companies"`
 	ContextWindowTokens int                                `json:"contextWindowTokens"`
 	Hosting             string                             `json:"hosting"`
 	MaxInputTokens      int                                `json:"maxInputTokens"`
@@ -190,7 +191,6 @@ type compiledDeployment struct {
 	Routes              map[string]compiledDeploymentRoute `json:"routes"`
 	StogasSupported     shown                              `json:"stogasSupported"`
 	Upstream            compiledUpstream                   `json:"upstream"`
-	Via                 []string                           `json:"via"`
 	WeightPrecision     string                             `json:"weightPrecision"`
 }
 
