@@ -352,6 +352,32 @@ func validateProviderResponsesStreamPayload(state *State, response *schemas.Bifr
 			return ErrProviderResponseMalformed
 		}
 		return nil
+	case schemas.ResponsesStreamResponseTypeApplyPatchCallOperationDiffDelta:
+		if !providerResponsesToolTypeAllowed(state, schemas.ResponsesToolTypeApplyPatch) || response.Delta == nil ||
+			!responsesStreamHasItemType(state, response, schemas.ResponsesMessageTypeApplyPatchCall) ||
+			responsesStreamUnexpectedPayload(response, responsePayloadOutputIndex|responsePayloadItemID|responsePayloadDelta|responsePayloadObfuscation) ||
+			validateProviderResponsesToolValueEvent(state, response) != nil {
+			return ErrProviderResponseMalformed
+		}
+		return nil
+	case schemas.ResponsesStreamResponseTypeApplyPatchCallOperationDiffDone:
+		if !providerResponsesToolTypeAllowed(state, schemas.ResponsesToolTypeApplyPatch) || response.Diff == nil ||
+			!responsesStreamHasItemType(state, response, schemas.ResponsesMessageTypeApplyPatchCall) ||
+			responsesStreamUnexpectedPayload(response, responsePayloadOutputIndex|responsePayloadItemID) ||
+			validateProviderResponsesToolValueEvent(state, response) != nil {
+			return ErrProviderResponseMalformed
+		}
+		return nil
+	case schemas.ResponsesStreamResponseTypeShellCallCommandAdded,
+		schemas.ResponsesStreamResponseTypeShellCallCommandDelta,
+		schemas.ResponsesStreamResponseTypeShellCallCommandDone:
+		// OpenAI names the call of a command event by its output index alone.
+		if !providerResponsesToolTypeAllowed(state, schemas.ResponsesToolTypeShell) ||
+			responsesStreamUnexpectedPayload(response, responsePayloadOutputIndex|responsePayloadItemID|responsePayloadDelta|responsePayloadObfuscation) ||
+			validateProviderResponsesShellCommandEvent(state, response) != nil {
+			return ErrProviderResponseMalformed
+		}
+		return nil
 	case schemas.ResponsesStreamResponseTypeWebSearchCallInProgress,
 		schemas.ResponsesStreamResponseTypeWebSearchCallSearching,
 		schemas.ResponsesStreamResponseTypeWebSearchCallCompleted,
@@ -487,6 +513,7 @@ func validateProviderResponsesOutputItemEvent(state *State, response *schemas.Bi
 	prior, exists := state.responsesItems[index]
 	if response.Type == schemas.ResponsesStreamResponseTypeOutputItemAdded {
 		if exists || index != len(state.responsesItems) || providerResponsesInitialToolValue(response.Item) != "" ||
+			len(providerShellCommands(response.Item)) != 0 ||
 			!providerResponsesInitialPayloadAllowed(response.Item, item.compactionPayload) {
 			return ErrProviderResponseMalformed
 		}
@@ -551,9 +578,24 @@ func providerResponsesToolItemValue(item *schemas.ResponsesMessage) (string, boo
 			return "", false
 		}
 		return item.ResponsesToolMessage.ResponsesCustomToolCall.Input, true
+	case schemas.ResponsesMessageTypeApplyPatchCall:
+		// A patch that deletes a file has no diff.
+		if patch := item.ResponsesToolMessage.ResponsesApplyPatchCall; patch != nil && patch.Operation != nil && patch.Operation.Diff != nil {
+			return *patch.Operation.Diff, true
+		}
+		return "", true
 	default:
 		return "", false
 	}
+}
+
+// providerShellCommands returns the commands of a shell call.
+func providerShellCommands(item *schemas.ResponsesMessage) []string {
+	if item == nil || item.ResponsesToolMessage == nil || item.ResponsesToolMessage.Action == nil ||
+		item.ResponsesToolMessage.Action.ResponsesShellToolCallAction == nil {
+		return nil
+	}
+	return item.ResponsesToolMessage.Action.ResponsesShellToolCallAction.Commands
 }
 
 func validateProviderResponsesTerminalItem(item *schemas.ResponsesMessage) error {
@@ -597,6 +639,15 @@ func validateProviderResponsesTerminalItem(item *schemas.ResponsesMessage) error
 	case schemas.ResponsesMessageTypeCustomToolCall:
 		if *item.Status != "completed" || item.ResponsesToolMessage == nil || item.ResponsesToolMessage.ResponsesCustomToolCall == nil ||
 			!validProviderText(item.ResponsesToolMessage.ResponsesCustomToolCall.Input, maxProviderResponseBodySize, true) {
+			return ErrProviderResponseMalformed
+		}
+	case schemas.ResponsesMessageTypeShellCall:
+		if !stringInSet(*item.Status, "completed", "incomplete") {
+			return ErrProviderResponseMalformed
+		}
+	case schemas.ResponsesMessageTypeApplyPatchCall:
+		if !stringInSet(*item.Status, "completed", "incomplete") || item.ResponsesToolMessage == nil ||
+			item.ResponsesToolMessage.ResponsesApplyPatchCall == nil || item.ResponsesToolMessage.ResponsesApplyPatchCall.Operation == nil {
 			return ErrProviderResponseMalformed
 		}
 	case schemas.ResponsesMessageTypeWebSearchCall:
@@ -665,8 +716,21 @@ func validateProviderResponsesCompletedStreamItem(streamItem providerResponsesIt
 		}
 	} else if streamItem.value != nil {
 		value, ok := providerResponsesToolItemValue(finalItem)
-		if !ok || !streamItem.valueDone || value != streamItem.value.String() {
+		// A patch without a diff, which deletes a file, streams none.
+		withoutDiff := streamItem.itemType == schemas.ResponsesMessageTypeApplyPatchCall && !streamItem.valueDone && streamItem.value.Len() == 0
+		if !ok || !streamItem.valueDone && !withoutDiff || value != streamItem.value.String() {
 			return ErrProviderResponseMalformed
+		}
+	}
+	if streamItem.itemType == schemas.ResponsesMessageTypeShellCall && len(streamItem.commands) != 0 {
+		commands := providerShellCommands(finalItem)
+		if len(commands) != len(streamItem.commands) {
+			return ErrProviderResponseMalformed
+		}
+		for index, command := range streamItem.commands {
+			if command == nil || !command.done || command.value.String() != commands[index] {
+				return ErrProviderResponseMalformed
+			}
 		}
 	}
 	if streamItem.done {
@@ -980,6 +1044,20 @@ func validateProviderResponsesItem(state *State, item *schemas.ResponsesMessage)
 		if err := validateAndRecordProviderResponsesToolCall(state, item, &observed, true); err != nil {
 			return providerResponsesItem{}, err
 		}
+	case schemas.ResponsesMessageTypeShellCall, schemas.ResponsesMessageTypeApplyPatchCall:
+		kind := schemas.ResponsesToolTypeShell
+		if *item.Type == schemas.ResponsesMessageTypeApplyPatchCall {
+			kind = schemas.ResponsesToolTypeApplyPatch
+			observed.value = &bytes.Buffer{}
+		}
+		if item.Role != nil || item.Phase != nil || item.Content != nil || item.ResponsesReasoning != nil ||
+			!providerResponsesToolTypeAllowed(state, kind) || item.ResponsesToolMessage == nil ||
+			validateProviderResponsesToolMessage(state, item.ResponsesToolMessage, *item.Type) != nil {
+			return providerResponsesItem{}, ErrProviderResponseMalformed
+		}
+		if err := validateAndRecordProviderResponsesToolCall(state, item, &observed, true); err != nil {
+			return providerResponsesItem{}, err
+		}
 	case schemas.ResponsesMessageTypeWebSearchCall:
 		if item.Role != nil || item.Phase != nil || item.Content != nil || item.ResponsesReasoning != nil ||
 			!providerResponsesToolTypeAllowed(state, schemas.ResponsesToolTypeWebSearch) || item.ResponsesToolMessage == nil ||
@@ -1112,12 +1190,46 @@ func validateProviderResponsesToolMessage(state *State, tool *schemas.ResponsesT
 		tool.ResponsesImageGenerationCall != nil || tool.ResponsesMCPListTools != nil ||
 		tool.ResponsesMCPApprovalResponse != nil || tool.ResponsesAdvisorCall != nil ||
 		tool.ResponsesToolSearchCall != nil || tool.ResponsesCodeInterpreterToolCall != nil ||
-		tool.ResponsesCodeExecutionCall != nil || tool.ResponsesShellCall != nil ||
-		tool.ResponsesApplyPatchCall != nil || tool.ItemCaller != nil || tool.CreatedBy != nil {
+		tool.ResponsesCodeExecutionCall != nil {
+		return ErrProviderResponseMalformed
+	}
+	shell, patch := itemType == schemas.ResponsesMessageTypeShellCall, itemType == schemas.ResponsesMessageTypeApplyPatchCall
+	if tool.ResponsesShellCall != nil && !shell || tool.ResponsesApplyPatchCall != nil && !patch ||
+		(tool.ItemCaller != nil || tool.CreatedBy != nil) && !shell && !patch {
 		return ErrProviderResponseMalformed
 	}
 
 	switch itemType {
+	case schemas.ResponsesMessageTypeShellCall, schemas.ResponsesMessageTypeApplyPatchCall:
+		if tool.CallID == nil || tool.Name != nil || tool.Namespace != nil || tool.Arguments != nil || tool.Caller != nil ||
+			tool.ResponsesCustomToolCall != nil || tool.ResponsesWebFetchCall != nil ||
+			!validOptionalProviderText(tool.CreatedBy, maxProviderResponseIDBytes, false) ||
+			tool.ItemCaller != nil && tool.ItemCaller.Type != "direct" {
+			return ErrProviderResponseMalformed
+		}
+		if patch {
+			if tool.Action != nil || tool.ResponsesApplyPatchCall == nil || !validProviderPatchOperation(tool.ResponsesApplyPatchCall.Operation) {
+				return ErrProviderResponseMalformed
+			}
+			break
+		}
+		// The client runs every command: a call that ran in a container would be a hosted shell,
+		// which the request cannot ask for.
+		if tool.Action == nil || tool.Action.ResponsesShellToolCallAction == nil ||
+			tool.ResponsesShellCall != nil && (tool.ResponsesShellCall.MaxOutputLength != nil ||
+				tool.ResponsesShellCall.Environment != nil && (tool.ResponsesShellCall.Environment.Type != "local" || tool.ResponsesShellCall.Environment.ContainerID != nil)) {
+			return ErrProviderResponseMalformed
+		}
+		action := tool.Action.ResponsesShellToolCallAction
+		if len(action.Commands) > maxProviderResponseItems || action.TimeoutMS != nil && *action.TimeoutMS < 0 ||
+			action.MaxOutputLength != nil && *action.MaxOutputLength < 0 {
+			return ErrProviderResponseMalformed
+		}
+		for _, command := range action.Commands {
+			if !validProviderText(command, maxProviderResponseBodySize, true) {
+				return ErrProviderResponseMalformed
+			}
+		}
 	case schemas.ResponsesMessageTypeFunctionCall:
 		if tool.CallID == nil || tool.Name == nil || tool.Arguments == nil || tool.Action != nil || tool.Caller != nil ||
 			tool.ResponsesCustomToolCall != nil || tool.ResponsesWebFetchCall != nil {
@@ -1144,6 +1256,14 @@ func validateProviderResponsesToolMessage(state *State, tool *schemas.ResponsesT
 		return ErrProviderResponseMalformed
 	}
 	return nil
+}
+
+// validProviderPatchOperation checks the file instruction of a patch call. OpenAI decides which
+// operations exist.
+func validProviderPatchOperation(operation *schemas.ResponsesApplyPatchOperation) bool {
+	return operation != nil && validProviderText(operation.Type, maxProviderResponseIDBytes, false) &&
+		validProviderText(operation.Path, maxProviderResponseBodySize, true) &&
+		validOptionalProviderText(operation.Diff, maxProviderResponseBodySize, true)
 }
 
 func validProviderWebSearchAction(state *State, action *schemas.ResponsesToolMessageActionStruct) bool {
@@ -1406,7 +1526,8 @@ func validateAndRecordProviderResponsesToolCall(state *State, item *schemas.Resp
 	if newCall {
 		state.responsesToolCalls++
 		switch *item.Type {
-		case schemas.ResponsesMessageTypeFunctionCall, schemas.ResponsesMessageTypeCustomToolCall:
+		case schemas.ResponsesMessageTypeFunctionCall, schemas.ResponsesMessageTypeCustomToolCall,
+			schemas.ResponsesMessageTypeShellCall, schemas.ResponsesMessageTypeApplyPatchCall:
 			state.responsesDeclaredCalls++
 			state.responsesClientCalls++
 		case schemas.ResponsesMessageTypeWebSearchCall, schemas.ResponsesMessageTypeWebFetchCall, schemas.ResponsesMessageTypeMCPCall:
@@ -1576,7 +1697,8 @@ func validateProviderResponsesToolValueEvent(state *State, response *schemas.Bif
 	}
 	switch response.Type {
 	case schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDelta,
-		schemas.ResponsesStreamResponseTypeCustomToolCallInputDelta:
+		schemas.ResponsesStreamResponseTypeCustomToolCallInputDelta,
+		schemas.ResponsesStreamResponseTypeApplyPatchCallOperationDiffDelta:
 		if response.Delta == nil {
 			return ErrProviderResponseMalformed
 		}
@@ -1598,11 +1720,57 @@ func validateProviderResponsesToolValueEvent(state *State, response *schemas.Bif
 			!validProviderText(*response.Input, maxProviderResponseBodySize, true) {
 			return ErrProviderResponseMalformed
 		}
+	case schemas.ResponsesStreamResponseTypeApplyPatchCallOperationDiffDone:
+		if response.Diff == nil || item.value.String() != *response.Diff ||
+			!validProviderText(*response.Diff, maxProviderResponseBodySize, true) {
+			return ErrProviderResponseMalformed
+		}
 	default:
 		return ErrProviderResponseMalformed
 	}
 	item.valueDone = true
 	state.responsesItems[*response.OutputIndex] = item
+	return nil
+}
+
+// validateProviderResponsesShellCommandEvent follows the commands of a streamed shell call. Each
+// command opens in order, takes its text in deltas and closes with the whole text.
+func validateProviderResponsesShellCommandEvent(state *State, response *schemas.BifrostResponsesStreamResponse) error {
+	if state == nil || response == nil || response.OutputIndex == nil || response.CommandIndex == nil {
+		return ErrProviderResponseMalformed
+	}
+	item, ok := state.responsesItems[*response.OutputIndex]
+	index := *response.CommandIndex
+	if !ok || item.done || item.itemType != schemas.ResponsesMessageTypeShellCall ||
+		response.ItemID != nil && *response.ItemID != item.id || index < 0 || index > len(item.commands) {
+		return ErrProviderResponseMalformed
+	}
+	if response.Type == schemas.ResponsesStreamResponseTypeShellCallCommandAdded {
+		if index != len(item.commands) || index >= maxProviderResponseItems || response.Delta != nil ||
+			response.Command != nil && *response.Command != "" {
+			return ErrProviderResponseMalformed
+		}
+		item.commands = append(item.commands, &providerResponsesCommand{})
+		state.responsesItems[*response.OutputIndex] = item
+		return nil
+	}
+	if index == len(item.commands) || item.commands[index].done {
+		return ErrProviderResponseMalformed
+	}
+	command := item.commands[index]
+	if response.Type == schemas.ResponsesStreamResponseTypeShellCallCommandDelta {
+		if response.Delta == nil || response.Command != nil ||
+			!validProviderText(*response.Delta, maxProviderResponseBodySize, true) ||
+			!validOptionalProviderText(response.Obfuscation, maxProviderResponseBodySize, true) ||
+			!appendProviderBuffer(&command.value, *response.Delta) {
+			return ErrProviderResponseMalformed
+		}
+		return nil
+	}
+	if response.Delta != nil || response.Command == nil || command.value.String() != *response.Command {
+		return ErrProviderResponseMalformed
+	}
+	command.done = true
 	return nil
 }
 

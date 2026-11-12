@@ -26,7 +26,8 @@ type observedToolCall struct {
 // requests; the provider runs the rest.
 func responsesLoggedToolCall(item providerResponsesItem) (string, bool) {
 	switch item.itemType {
-	case schemas.ResponsesMessageTypeFunctionCall, schemas.ResponsesMessageTypeCustomToolCall:
+	case schemas.ResponsesMessageTypeFunctionCall, schemas.ResponsesMessageTypeCustomToolCall,
+		schemas.ResponsesMessageTypeShellCall, schemas.ResponsesMessageTypeApplyPatchCall:
 		return item.callID, true
 	case schemas.ResponsesMessageTypeMCPApprovalRequest:
 		return item.id, true

@@ -1726,10 +1726,38 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 		{"max tool calls with function only", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup"}],"max_tool_calls":1}`, "supported only for priced hosted Responses tools"},
 		{"tool choice without tools", `{"model":"provider:openai gpt-5.5","input":"hi","tool_choice":"required"}`, "tool_choice requires supported tools"},
 		{"openai file search", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"file_search"}]}`, "hosted retrieval and file storage have separate pricing"},
-		{"openai code interpreter", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"code_interpreter"}]}`, "hosted containers have separate pricing and lifecycle"},
-		{"openai hosted shell", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"shell","environment":{"type":"container_auto"}}]}`, "hosted execution needs a container lifecycle"},
-		{"openai local shell", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"local_shell"}]}`, "local execution requires provider-state continuation"},
-		{"openai apply patch", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"apply_patch"}]}`, "local execution requires provider-state continuation"},
+		{"openai code interpreter", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"code_interpreter"}]}`, "bills by the minute for longer than the request"},
+		{"openai hosted shell", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"shell","environment":{"type":"container_auto"}}]}`, "tools[0].environment.type must be local"},
+		{"openai shell in a named container", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"shell","environment":{"type":"container_reference","container_id":"cntr_1"}}]}`, "tools[0].environment.type must be local"},
+		{"openai hosted shell that tool_choice forbids", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"shell","environment":{"type":"container_auto"}}],"tool_choice":"none"}`, "tools[0].environment.type must be local"},
+		{"openai shell environment without type", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"shell","environment":{}}]}`, "tools[0].environment.type must be local"},
+		{"openai shell network policy", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"shell","environment":{"type":"local","network_policy":{"type":"disabled"}}}]}`, "tools[0].environment.network_policy is not supported"},
+		{"openai shell unknown field", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"shell","name":"shell"}]}`, "tools[0].name is not supported"},
+		{"openai shell skill without path", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"shell","environment":{"type":"local","skills":[{"name":"lint","description":"Lint"}]}}]}`, "tools[0].environment.skills[0].path is required"},
+		{"openai hosted shell skill", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"shell","environment":{"type":"local","skills":[{"skill_id":"skill_1"}]}}]}`, "tools[0].environment.skills[0].skill_id is not supported"},
+		{"openai local shell", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"local_shell"}]}`, "OpenAI no longer serves it"},
+		{"openai apply patch unknown field", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"apply_patch","name":"patch"}]}`, "tools[0].name is not supported"},
+		{"shell choice without the tool", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"apply_patch"}],"tool_choice":{"type":"shell"}}`, "tool_choice selects an undeclared shell tool"},
+		{"shell choice with a name", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"shell"}],"tool_choice":{"type":"shell","name":"shell"}}`, "tool_choice.name is not supported"},
+		{"allowed apply_patch without the tool", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"shell"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"apply_patch"}]}}`, "tool_choice selects an undeclared apply_patch tool"},
+		{"max tool calls with shell only", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"shell"}],"max_tool_calls":1}`, "supported only for priced hosted Responses tools"},
+		{"azure shell", `{"model":"azure-gpt-5.6-sol","input":"hi","tools":[{"type":"shell"}]}`, "Only function, custom, and namespace tools are supported for Azure deployments"},
+		{"anthropic shell", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"shell"}]}`, "Only function, namespace, bash_20250124, text_editor_20250728, web_fetch"},
+		{"anthropic apply patch", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"apply_patch"}]}`, "Only function, namespace, bash_20250124, text_editor_20250728, web_fetch"},
+		{"anthropic shell call", `{"model":"anthropic-claude-sonnet-4-6","input":[{"type":"shell_call","call_id":"call_1","action":{"commands":["ls"]}},{"type":"shell_call_output","call_id":"call_1","output":[]}]}`, "shell_call input items are supported only for OpenAI deployments"},
+		{"shell call without output", `{"model":"provider:openai gpt-5.5","input":[{"type":"shell_call","call_id":"call_1","action":{"commands":["ls"]}}]}`, "shell tool calls require one matching output"},
+		{"shell call followed by a message", `{"model":"provider:openai gpt-5.5","input":[{"type":"shell_call","call_id":"call_1","action":{"commands":["ls"]}},{"role":"user","content":"hi"}]}`, "must resolve the preceding client tool calls"},
+		{"shell output without call", `{"model":"provider:openai gpt-5.5","input":[{"type":"shell_call_output","call_id":"call_1","output":[]}]}`, "call_id must match an earlier client tool call"},
+		{"shell call that ran in a container", `{"model":"provider:openai gpt-5.5","input":[{"type":"shell_call","call_id":"call_1","action":{"commands":["ls"]},"environment":{"type":"container_reference","container_id":"cntr_1"}},{"type":"shell_call_output","call_id":"call_1","output":[]}]}`, "input[0].environment must be"},
+		{"shell call commands as text", `{"model":"provider:openai gpt-5.5","input":[{"type":"shell_call","call_id":"call_1","action":{"commands":"ls"}},{"type":"shell_call_output","call_id":"call_1","output":[]}]}`, "input[0].action.commands must be an array of strings"},
+		{"shell call unknown action field", `{"model":"provider:openai gpt-5.5","input":[{"type":"shell_call","call_id":"call_1","action":{"commands":["ls"],"user":"root"}},{"type":"shell_call_output","call_id":"call_1","output":[]}]}`, "input[0].action.user is not supported"},
+		{"shell output as text", `{"model":"provider:openai gpt-5.5","input":[{"type":"shell_call","call_id":"call_1","action":{"commands":["ls"]}},{"type":"shell_call_output","call_id":"call_1","output":"a.txt"}]}`, "input[1].output must be an array of objects"},
+		{"shell output without outcome", `{"model":"provider:openai gpt-5.5","input":[{"type":"shell_call","call_id":"call_1","action":{"commands":["ls"]}},{"type":"shell_call_output","call_id":"call_1","output":[{"stdout":"a.txt","stderr":""}]}]}`, "input[1].output[0].outcome must be an object"},
+		{"shell output for a patch call", `{"model":"provider:openai gpt-5.5","input":[{"type":"apply_patch_call","call_id":"call_1","status":"completed","operation":{"type":"delete_file","path":"a.txt"}},{"type":"shell_call_output","call_id":"call_1","output":[]}]}`, "call_id selects a different client tool type"},
+		{"patch call without operation", `{"model":"provider:openai gpt-5.5","input":[{"type":"apply_patch_call","call_id":"call_1","status":"completed"},{"type":"apply_patch_call_output","call_id":"call_1","status":"completed"}]}`, "input[0].operation must be an object"},
+		{"patch call without path", `{"model":"provider:openai gpt-5.5","input":[{"type":"apply_patch_call","call_id":"call_1","status":"completed","operation":{"type":"delete_file"}},{"type":"apply_patch_call_output","call_id":"call_1","status":"completed"}]}`, "input[0].operation.path is required"},
+		{"patch output as parts", `{"model":"provider:openai gpt-5.5","input":[{"type":"apply_patch_call","call_id":"call_1","status":"completed","operation":{"type":"delete_file","path":"a.txt"}},{"type":"apply_patch_call_output","call_id":"call_1","status":"completed","output":[{"type":"input_text","text":"done"}]}]}`, "input[1].output must be a string"},
+		{"patch call repeats a function call ID", `{"model":"provider:openai gpt-5.5","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"},{"type":"apply_patch_call","call_id":"call_1","status":"completed","operation":{"type":"delete_file","path":"a.txt"}},{"type":"function_call_output","call_id":"call_1","output":"x"}]}`, "input[1].call_id duplicates another client tool call"},
 		{"openai computer", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"computer_use_preview"}]}`, "not supported"},
 		{"openai image generation", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"image_generation"}]}`, "not supported"},
 		{"openai tool search", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"tool_search"}]}`, "tool loading or provider-held state"},
@@ -1747,11 +1775,11 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 		{"anthropic namespace custom tool", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"namespace","name":"crm","description":"CRM","tools":[{"type":"custom","name":"note"}]}]}`, "Custom tools are not supported for Anthropic-format deployments"},
 		{"anthropic call to an undeclared namespace", `{"model":"anthropic-claude-sonnet-4-6","input":[{"type":"function_call","call_id":"call_1","namespace":"erp","name":"find","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":"none"}],"tools":[{"type":"namespace","name":"crm","description":"CRM","tools":[{"type":"function","name":"find"}]}]}`, "input[0].name must name a tool in namespace erp in tools for Anthropic-format deployments"},
 		{"openai memory", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"memory"}]}`, "tool loading or provider-held state"},
-		{"openai programmatic tool calling", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"programmatic_tool_calling"}]}`, "Only function, custom, namespace, remote MCP, and priced hosted web search tools are supported"},
+		{"openai programmatic tool calling", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"programmatic_tool_calling"}]}`, "Only function, custom, namespace, shell, apply_patch, remote MCP, and priced hosted web search tools are supported"},
 		{"openai computer without preview", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"computer"}]}`, "not supported"},
 		{"anthropic remote mcp", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","allowed_tools":["search"]}]}`, "No deployment for this request runs mcp. Remove the tool or choose another model."},
 		{"anthropic custom", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"custom","name":"shell"}]}`, "free-form input formats are not preserved"},
-		{"anthropic local shell", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"local_shell"}]}`, "Only function, namespace, web_fetch"},
+		{"anthropic local shell", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"local_shell"}]}`, "Only function, namespace, bash_20250124, text_editor_20250728, web_fetch"},
 		{"anthropic max uses too large", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search","max_uses":129}]}`, "max_uses is outside the supported range"},
 		{"anthropic web fetch max uses too large", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_fetch_20250910","name":"web_fetch","max_uses":129}]}`, "max_uses is outside the supported range"},
 		{"anthropic web fetch negative content cap", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_fetch_20250910","name":"web_fetch","max_content_tokens":-1}]}`, "max_content_tokens is outside the supported range"},
@@ -1762,10 +1790,10 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 		{"anthropic max tool calls conflicts with max uses", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","max_tool_calls":2,"tools":[{"type":"web_search_20250305","name":"web_search","max_uses":3}]}`, "max_tool_calls conflicts with tools[].max_uses"},
 		{"anthropic web fetch max tool calls conflicts with max uses", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","max_tool_calls":2,"tools":[{"type":"web_fetch_20250910","name":"web_fetch","max_uses":3}]}`, "max_tool_calls conflicts with tools[].max_uses"},
 		{"anthropic multiple hosted tools", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search","max_uses":2},{"type":"web_fetch_20250910","name":"web_fetch","max_uses":2}]}`, "one hosted tool per request"},
-		{"anthropic code execution", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"code_execution_20250825","name":"code_execution"}],"max_tool_calls":1}`, "Only function, namespace, web_fetch, and priced hosted web search tools are supported"},
-		{"anthropic computer use", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"computer_20251124","name":"computer"}],"max_tool_calls":1}`, "Only function, namespace, web_fetch"},
+		{"anthropic code execution", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"code_execution_20250825","name":"code_execution"}],"max_tool_calls":1}`, "Only function, namespace, bash_20250124, text_editor_20250728, web_fetch, and priced hosted web search tools are supported"},
+		{"anthropic computer use", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"computer_20251124","name":"computer"}],"max_tool_calls":1}`, "computer tools are not supported because tool results carry only text"},
 		{"openai web fetch", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"web_fetch_20250910"}],"max_tool_calls":1}`, "No deployment for this request runs web_fetch."},
-		{"openai code execution version", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"code_execution_20250825"}],"max_tool_calls":1}`, "hosted containers have separate pricing and lifecycle"},
+		{"openai code execution version", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"code_execution_20250825"}],"max_tool_calls":1}`, "a hosted container bills by the minute for longer than the request"},
 		{"openai empty web search suffix", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"web_search_"}],"max_tool_calls":1}`, "Only function, custom"},
 		{"openai separator-only web search suffix", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"web_search__"}],"max_tool_calls":1}`, "Only function, custom"},
 		{"openai empty preview web search suffix", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"web_search_preview_"}],"max_tool_calls":1}`, "Only function, custom"},
@@ -2472,6 +2500,14 @@ func TestResponsesPolicyAllowsTextFunctionAndPricedWebSearch(t *testing.T) {
 		`{"model":"anthropic-claude-sonnet-4-6","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{\"key\":\"value\"}"},{"type":"function_call_output","call_id":"call_1","output":"done"}],"tools":[{"type":"function","name":"lookup"}]}`,
 		`{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"custom","name":"lookup"}],"tool_choice":{"type":"custom","name":"lookup"}}`,
 		`{"model":"provider:openai gpt-5.5","input":[{"type":"custom_tool_call","call_id":"call_1","name":"lookup","input":"query"},{"type":"custom_tool_call_output","call_id":"call_1","output":"done"}],"tools":[{"type":"custom","name":"lookup"}]}`,
+		`{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"shell"},{"type":"apply_patch"}]}`,
+		`{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"shell","environment":null}],"tool_choice":{"type":"shell"}}`,
+		`{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"shell","environment":{"type":"local","skills":[{"name":"lint","description":"Lint the repository","path":"/skills/lint"}]}},{"type":"apply_patch"}],"tool_choice":{"type":"allowed_tools","mode":"required","tools":[{"type":"shell"},{"type":"apply_patch"}]}}`,
+		`{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"apply_patch"}],"tool_choice":{"type":"apply_patch"}}`,
+		// A call as OpenAI returns it, nulls included, with the result that the client adds.
+		`{"model":"provider:openai gpt-5.5","input":[{"role":"user","content":"list"},{"id":"sh_1","type":"shell_call","status":"completed","action":{"commands":["ls","pwd"],"max_output_length":null,"timeout_ms":null},"call_id":"call_1","environment":null},{"type":"shell_call_output","call_id":"call_1","max_output_length":4096,"status":"completed","output":[{"stdout":"a.txt\n","stderr":"","outcome":{"type":"exit","exit_code":0}},{"stdout":"","stderr":"","outcome":{"type":"timeout"}}]}],"tools":[{"type":"shell"}]}`,
+		`{"model":"provider:openai gpt-5.5","input":[{"type":"shell_call","call_id":"call_1","action":{"commands":["ls"],"timeout_ms":1000,"max_output_length":100},"environment":{"type":"local"}},{"type":"shell_call_output","call_id":"call_1","output":[]}]}`,
+		`{"model":"provider:openai gpt-5.5","input":[{"id":"apc_1","type":"apply_patch_call","status":"completed","call_id":"call_1","operation":{"type":"update_file","diff":"@@\n-x\n+z\n","path":"a.txt"}},{"type":"apply_patch_call_output","call_id":"call_1","status":"failed","output":"a.txt does not exist"},{"type":"apply_patch_call","status":"completed","call_id":"call_2","operation":{"type":"delete_file","path":"b.txt"}},{"type":"apply_patch_call_output","call_id":"call_2","status":"completed"}],"tools":[{"type":"apply_patch"}]}`,
 		`{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":"auto","max_tool_calls":2}`,
 		`{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":"auto"}`,
 		`{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"web_search_2025_08_26","filters":{"allowed_domains":["example.com"]},"search_context_size":"high","user_location":{"type":"approximate","city":"Paris","country":"FR","region":"Ile-de-France","timezone":"Europe/Paris"}}],"tool_choice":"auto","max_tool_calls":2}`,
@@ -2704,6 +2740,87 @@ func TestResponsesCustomToolContinuationReachesOpenAIWireLosslessly(t *testing.T
 	}
 	if len(wire.Input) != 2 || wire.Input[0]["type"] != "custom_tool_call" || wire.Input[0]["call_id"] != "call_1" || wire.Input[0]["name"] != "shell" || wire.Input[0]["input"] != "printf safe" || wire.Input[1]["type"] != "custom_tool_call_output" || wire.Input[1]["call_id"] != "call_1" || wire.Input[1]["output"] != "safe" {
 		t.Fatalf("custom tool continuation changed on OpenAI wire: %#v\n%s", wire.Input, wireBody)
+	}
+}
+
+// sameJSON reports whether two JSON documents hold the same value.
+func sameJSON(t *testing.T, left, right []byte) bool {
+	t.Helper()
+	var leftValue, rightValue any
+	if err := json.Unmarshal(left, &leftValue); err != nil {
+		t.Fatalf("decode %s: %v", left, err)
+	}
+	if err := json.Unmarshal(right, &rightValue); err != nil {
+		t.Fatalf("decode %s: %v", right, err)
+	}
+	return reflect.DeepEqual(leftValue, rightValue)
+}
+
+// OpenAI's shell and apply_patch tools run on the client and replay without stored state, so the
+// tools, each call and each result must reach OpenAI as the client sent them. The calls are
+// those of two live replies (gpt-5.6-luna, November 12, 2026).
+func TestResponsesShellAndPatchContinuationReachesOpenAIWireLosslessly(t *testing.T) {
+	body := `{"model":"provider:openai gpt-5.5","input":[{"role":"user","content":"fix it"},` +
+		`{"id":"sh_1","type":"shell_call","status":"completed","action":{"commands":["echo a\necho b"],"max_output_length":4096,"timeout_ms":1000},"call_id":"call_1","environment":null},` +
+		`{"type":"shell_call_output","call_id":"call_1","max_output_length":4096,"output":[{"stdout":"a\nb\n","stderr":"","outcome":{"type":"exit","exit_code":0}},{"stdout":"","stderr":"late","outcome":{"type":"timeout"}}]},` +
+		`{"id":"apc_1","type":"apply_patch_call","status":"completed","call_id":"call_2","operation":{"type":"update_file","diff":"@@\n-x\n+z\n","path":"a.txt"}},` +
+		`{"type":"apply_patch_call_output","call_id":"call_2","status":"failed","output":"a.txt does not exist"},` +
+		`{"type":"apply_patch_call","status":"completed","call_id":"call_3","operation":{"type":"delete_file","path":"b.txt"}},` +
+		`{"type":"apply_patch_call_output","call_id":"call_3","status":"completed"}],` +
+		`"tools":[{"type":"shell","environment":{"type":"local","skills":[{"name":"lint","description":"Lint the repository","path":"/skills/lint"}]}},{"type":"apply_patch"}],` +
+		`"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"shell"},{"type":"apply_patch"}]}}`
+	resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/responses", Body: []byte(body)})
+	if err != nil {
+		t.Fatalf("ResolveRequest returned error: %v", err)
+	}
+	state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
+	if err := state.Adapter.ValidateRequest(state); err != nil {
+		t.Fatalf("ValidateRequest returned error: %v", err)
+	}
+	if err := state.Adapter.SanitizeRequest(state); err != nil {
+		t.Fatalf("SanitizeRequest returned error: %v", err)
+	}
+	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	ctx.SetValue(schemas.BifrostContextKeyHTTPRequestType, resolution.RequestType)
+	request, err := resolution.ToBifrost(ctx)
+	if err != nil {
+		t.Fatalf("ToBifrost returned error: %v", err)
+	}
+	if err := PrepareProviderRequest(ctx, state, request); err != nil {
+		t.Fatalf("PrepareProviderRequest returned error: %v", err)
+	}
+	wireBody := preparedProviderBody(t, ctx, request.ResponsesRequest)
+	var wire struct {
+		Input      []json.RawMessage `json:"input"`
+		Tools      json.RawMessage   `json:"tools"`
+		ToolChoice json.RawMessage   `json:"tool_choice"`
+	}
+	if err := json.Unmarshal(wireBody, &wire); err != nil {
+		t.Fatalf("decode prepared provider body: %v\n%s", err, wireBody)
+	}
+	want := []string{
+		`{"role":"user","content":"fix it"}`,
+		// Core sends a shell call without its status and null environment, which OpenAI takes (live).
+		`{"id":"sh_1","type":"shell_call","action":{"commands":["echo a\necho b"],"max_output_length":4096,"timeout_ms":1000},"call_id":"call_1"}`,
+		`{"type":"shell_call_output","call_id":"call_1","max_output_length":4096,"output":[{"stdout":"a\nb\n","stderr":"","outcome":{"type":"exit","exit_code":0}},{"stdout":"","stderr":"late","outcome":{"type":"timeout"}}]}`,
+		`{"id":"apc_1","type":"apply_patch_call","status":"completed","call_id":"call_2","operation":{"type":"update_file","diff":"@@\n-x\n+z\n","path":"a.txt"}}`,
+		`{"type":"apply_patch_call_output","call_id":"call_2","status":"failed","output":"a.txt does not exist"}`,
+		`{"type":"apply_patch_call","status":"completed","call_id":"call_3","operation":{"type":"delete_file","path":"b.txt"}}`,
+		`{"type":"apply_patch_call_output","call_id":"call_3","status":"completed"}`,
+	}
+	if len(wire.Input) != len(want) {
+		t.Fatalf("OpenAI got %d input items, want %d\n%s", len(wire.Input), len(want), wireBody)
+	}
+	for index, item := range wire.Input {
+		if !sameJSON(t, item, []byte(want[index])) {
+			t.Errorf("input[%d] changed on OpenAI wire:\n got %s\nwant %s", index, item, want[index])
+		}
+	}
+	if !sameJSON(t, wire.Tools, []byte(`[{"type":"shell","environment":{"type":"local","skills":[{"name":"lint","description":"Lint the repository","path":"/skills/lint"}]}},{"type":"apply_patch"}]`)) {
+		t.Errorf("tools changed on OpenAI wire: %s", wire.Tools)
+	}
+	if !sameJSON(t, wire.ToolChoice, []byte(`{"type":"allowed_tools","mode":"auto","tools":[{"type":"shell"},{"type":"apply_patch"}]}`)) {
+		t.Errorf("tool_choice changed on OpenAI wire: %s", wire.ToolChoice)
 	}
 }
 

@@ -24,6 +24,19 @@ const (
 	extendedInputHoldToolTokens         = 48
 	extendedInputHoldToolEventTokens    = 24
 	extendedInputHoldToolPreambleTokens = 512
+
+	// OpenAI adds its own instructions for each of these tools, which the request does not show.
+	// Input tokens beside the same request without the tool, equal on gpt-5.5, gpt-5.6-luna,
+	// gpt-6-astra and gpt-6.1-sol (live, November 12, 2026): 237 for shell, 520 more once it lists
+	// a skill, and 623 for apply_patch.
+	openAIShellToolTokens      = 237
+	openAIShellSkillsTokens    = 520
+	openAIApplyPatchToolTokens = 623
+
+	// Anthropic documents what its bash and text editor tools add to the input: 325 and 974
+	// tokens on Claude Opus 4.7 and later, and less on earlier models. No live count confirms them.
+	anthropicBashToolTokens       = 325
+	anthropicTextEditorToolTokens = 974
 )
 
 type inputHoldStats struct {
@@ -34,6 +47,8 @@ type inputHoldStats struct {
 	ContentBlocks   int
 	ToolDefinitions int
 	ToolEvents      int
+	// ToolPromptTokens is what the provider's own instructions for the declared tools add.
+	ToolPromptTokens int
 }
 
 // estimateInputContent counts visible text once, independent of the candidate
@@ -127,13 +142,13 @@ func requestInputHoldStats(rawData map[string]json.RawMessage, route Route) inpu
 
 func inputHoldFraming(stats inputHoldStats, author string) int {
 	if author == "openai" {
-		return openAIInputHoldBaseTokens +
+		return stats.ToolPromptTokens + openAIInputHoldBaseTokens +
 			openAIInputHoldMessageTokens*stats.Messages +
 			openAIInputHoldBlockTokens*stats.ContentBlocks +
 			openAIInputHoldToolTokens*stats.ToolDefinitions +
 			openAIInputHoldToolEventTokens*stats.ToolEvents
 	}
-	tokens := extendedInputHoldBaseTokens +
+	tokens := stats.ToolPromptTokens + extendedInputHoldBaseTokens +
 		extendedInputHoldMessageTokens*stats.Messages +
 		extendedInputHoldBlockTokens*stats.ContentBlocks +
 		extendedInputHoldToolTokens*stats.ToolDefinitions +
@@ -206,7 +221,9 @@ func collectMessageObject(raw json.RawMessage, stats *inputHoldStats) {
 	if rawStringValue(object["role"]) == "tool" {
 		stats.ToolEvents++
 	}
-	if objectType := rawStringValue(object["type"]); objectType == "function_call" || objectType == "function_call_output" || objectType == "tool_call" || objectType == "tool_result" {
+	switch rawStringValue(object["type"]) {
+	case "function_call", "function_call_output", "tool_call", "tool_result",
+		"shell_call", "shell_call_output", "apply_patch_call", "apply_patch_call_output":
 		stats.ToolEvents++
 	}
 	if rawToolCalls, ok := object["tool_calls"]; ok {
@@ -333,6 +350,7 @@ func appendToolDefinitions(raw json.RawMessage, stats *inputHoldStats) {
 		for _, tool := range tools {
 			if !appendNamespaceToolDefinitions(tool, stats) {
 				stats.ToolDefinitions++
+				stats.ToolPromptTokens += toolPromptTokens(tool)
 				appendCompactJSONText(tool, stats)
 			}
 		}
@@ -340,6 +358,29 @@ func appendToolDefinitions(raw json.RawMessage, stats *inputHoldStats) {
 	}
 	stats.ToolDefinitions++
 	appendCompactJSONText(raw, stats)
+}
+
+// toolPromptTokens is what the provider's own instructions for a tool add to the input.
+func toolPromptTokens(raw json.RawMessage) int {
+	tool, err := rawjson.Object(raw)
+	if err != nil {
+		return 0
+	}
+	switch schemas.ResponsesToolType(rawStringValue(tool["type"])) {
+	case AnthropicBashToolType:
+		return anthropicBashToolTokens
+	case AnthropicTextEditorToolType:
+		return anthropicTextEditorToolTokens
+	case schemas.ResponsesToolTypeShell:
+		tokens := openAIShellToolTokens
+		if environment, err := rawjson.Object(tool["environment"]); err == nil && rawArrayLen(environment["skills"]) > 0 {
+			tokens += openAIShellSkillsTokens
+		}
+		return tokens
+	case schemas.ResponsesToolTypeApplyPatch:
+		return openAIApplyPatchToolTokens
+	}
+	return 0
 }
 
 // appendNamespaceToolDefinitions counts each tool of a namespace as a tool with the namespace's

@@ -32,7 +32,8 @@ type hostedToolUse struct {
 // requestFacts are the request fields that policies read about tools and messages. Every
 // candidate of a request shares them.
 type requestFacts struct {
-	// clientTools are the names of the function and custom tools that the model may call.
+	// clientTools are the names of the tools that the model may call and the client runs: function
+	// and custom tools, and shell and apply_patch under those names.
 	clientTools []string
 	// mcpServers name the remote MCP servers that the model may call: a URL's host, or a connector
 	// or tunnel ID, all lowercase. mcpTools lists server/name for each tool that the request allows
@@ -80,6 +81,10 @@ func readRequestTools(route Route, raw map[string]json.RawMessage) requestTools 
 			case !types[kind]:
 			case kind == schemas.ResponsesToolTypeFunction || kind == schemas.ResponsesToolTypeCustom:
 				facts.clientTools = append(facts.clientTools, rawStringValue(entry.Tool["name"]))
+			// OpenAI's shell and apply_patch tools have no name of their own; the model calls them by
+			// their type, which no function or custom tool beside them may have.
+			case kind == schemas.ResponsesToolTypeShell || kind == schemas.ResponsesToolTypeApplyPatch:
+				facts.clientTools = append(facts.clientTools, string(kind))
 			case kind == schemas.ResponsesToolTypeMCP:
 				facts.addMCPServer(entry.Tool)
 			}

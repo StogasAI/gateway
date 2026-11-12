@@ -253,10 +253,33 @@ func hostedToolForType(kind string) (HostedTool, bool) {
 	return "", false
 }
 
+// Anthropic's bash and text editor tools are functions whose schema Claude already knows. A
+// request declares one by its dated type and fixed name, Claude calls it by that name with JSON
+// arguments, and the client runs it and returns the result as for any function. These versions
+// are the ones that every listed Claude model takes.
+const (
+	AnthropicBashToolType       = "bash_20250124"
+	AnthropicTextEditorToolType = "text_editor_20250728"
+)
+
+// AnthropicClientToolName returns the name that Anthropic fixes for one of its client tools.
+func AnthropicClientToolName(rawType string) (string, bool) {
+	switch strings.TrimSpace(rawType) {
+	case AnthropicBashToolType:
+		return "bash", true
+	case AnthropicTextEditorToolType:
+		return "str_replace_based_edit_tool", true
+	}
+	return "", false
+}
+
 // CanonicalResponsesToolType names a versioned tool type, such as web_search_20250305, by the
-// stable behavior it runs.
+// stable behavior it runs. Anthropic's client tools read as functions.
 func CanonicalResponsesToolType(rawType string) schemas.ResponsesToolType {
 	toolType := schemas.ResponsesToolType(strings.TrimSpace(rawType))
+	if _, ok := AnthropicClientToolName(string(toolType)); ok {
+		return schemas.ResponsesToolTypeFunction
+	}
 	switch {
 	case toolType == schemas.ResponsesToolTypeWebSearchPreview:
 		return toolType

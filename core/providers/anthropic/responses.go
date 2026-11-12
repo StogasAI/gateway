@@ -10582,22 +10582,10 @@ func convertBifrostToolToAnthropic(caps schemas.ModelCaps, tool *schemas.Respons
 		return nil
 	}
 
-	// Text editor family (text_editor_*): normalize to the model's generation
-	// via TextEditorGeneration so old-gen requests against new-gen-only models
-	// (e.g. sonnet-4-5+) get auto-upgraded to text_editor_20250728. Scoped to
-	// text_editor only — computer-use tools are handled by the case below
-	// (which preserves the embedded display_width_px / display_height_px from
-	// ResponsesToolComputerUsePreview), and bash falls through to the
-	// ResponsesToolTypeLocalShell case (no version variants).
-	if baseTool := computerUseBaseTool(string(tool.Type)); baseTool == "text_editor" {
-		if wantType, wantName := NormalizedToolSpec(TextEditorGeneration(caps), baseTool); wantType != "" {
-			anthropicType := AnthropicToolType(wantType)
-			return &AnthropicTool{
-				Type: &anthropicType,
-				Name: wantName,
-			}
-		}
-	}
+	// Stogas: a text editor tool (text_editor_*) reaches Anthropic in the version the
+	// request names, through the cases below. Upstream replaced it here with the
+	// version it guessed for the model, which is wrong for Haiku 4.5 and Haiku 5.5:
+	// they got text_editor_20250124, which Claude 4 and later refuse.
 
 	switch tool.Type {
 	case schemas.ResponsesToolTypeCodeInterpreter:
@@ -10689,7 +10677,9 @@ func convertBifrostToolToAnthropic(caps schemas.ModelCaps, tool *schemas.Respons
 			Type: schemas.Ptr(toolSearchType),
 			Name: string(toolSearchName),
 		}
-	case schemas.ResponsesToolTypeLocalShell:
+	// Stogas: bash_20250124 is Anthropic's own name for the tool. Without this case it
+	// fell through to a function named bash with an empty schema.
+	case schemas.ResponsesToolTypeLocalShell, schemas.ResponsesToolType(AnthropicToolTypeBash20250124):
 		return &AnthropicTool{
 			Type: schemas.Ptr(AnthropicToolTypeBash20250124),
 			Name: string(AnthropicToolNameBash),

@@ -98,23 +98,23 @@ func TestValidateResponsesGuardrailsAcceptRemoteMCP(t *testing.T) {
 	}
 }
 
-func TestValidateResponsesToolsRejectsContainerShellTools(t *testing.T) {
+// The client runs a local shell and apply_patch, which cost only their tokens. A hosted shell
+// starts a container that bills by the minute for longer than the request.
+func TestValidateResponsesToolsAllowsOnlyShellsThatTheClientRuns(t *testing.T) {
 	for _, item := range []struct {
 		body string
 		err  error
 	}{
+		{`{"tools":[{"type":"apply_patch"}]}`, nil},
+		{`{"tools":[{"type":"shell"}]}`, nil},
+		{`{"tools":[{"type":"shell","environment":{"type":"local"}}]}`, nil},
 		{`{"tools":[{"type":"local_shell"}]}`, errOpenAIUnsupportedTool},
-		{`{"tools":[{"type":"apply_patch"}]}`, errOpenAIUnsupportedTool},
-		{`{"tools":[{"type":"shell"}]}`, errOpenAIUnsupportedTool},
 		{`{"tools":[{"type":"shell","environment":{"type":"container_auto"}}]}`, errOpenAIUnsupportedTool},
 		{`{"tools":[{"type":"shell","environment":{"type":"container_reference","container_id":"cntr_123"}}]}`, errOpenAIUnsupportedTool},
-		{`{"tools":[{"type":"shell","environment":{"type":"local"}}]}`, errOpenAIUnsupportedTool},
-		{`{"tools":[{"type":"shell","environment":{"type":"local","container_id":"cntr_123"}}]}`, errOpenAIUnsupportedTool},
-		{`{"tools":[{"type":"shell","environment":{"type":"local"},"max_uses":2}]}`, errOpenAIUnsupportedTool},
 	} {
 		err := validateOpenAIGuardrails(toolAdapterContext(t, openAIAdapterRouteResponses, item.body))
 		if !errors.Is(err, item.err) {
-			t.Fatalf("expected Responses shell tool rejection %v for %s, got %v", item.err, item.body, err)
+			t.Fatalf("got %v for %s, want %v", err, item.body, item.err)
 		}
 	}
 }

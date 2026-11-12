@@ -582,7 +582,7 @@ func validateOpenAIGuardrails(req openAIAdapterContext) error {
 
 func openAIResponsesToolTypeSupported(rawType string) bool {
 	switch strings.TrimSpace(rawType) {
-	case "function", "custom", "namespace", "mcp":
+	case "function", "custom", "namespace", "mcp", "shell", "apply_patch":
 		return true
 	default:
 		return openAIWebSearchToolType(rawType)
@@ -598,19 +598,17 @@ func openAIUnsupportedResponsesToolMessage(rawType string) string {
 	case strings.HasPrefix(normalized, "file_search"):
 		return "file_search is not supported because hosted retrieval and file storage have separate pricing and provider state"
 	case normalized == "code_interpreter" || strings.HasPrefix(normalized, "code_execution"):
-		return "code execution tools are not supported because hosted containers have separate pricing and lifecycle"
-	case normalized == "shell":
-		return "shell is not supported because hosted execution needs a container lifecycle or provider-state continuation"
-	case normalized == "local_shell" || normalized == "apply_patch":
-		return rawType + " is not supported because local execution requires provider-state continuation"
+		return "code execution tools are not supported because a hosted container bills by the minute for longer than the request, so the request cannot be priced"
+	case normalized == "local_shell":
+		return "local_shell is not supported because OpenAI no longer serves it; use shell with a local environment"
 	case strings.HasPrefix(normalized, "computer"):
-		return "computer tools are not supported by the current tool execution contract"
+		return "computer tools are not supported because tool results carry only text"
 	case normalized == "image_generation":
 		return "image_generation output and its pricing are not supported"
 	case normalized == "tool_search" || normalized == "memory":
 		return rawType + " is not supported because it needs tool loading or provider-held state that we do not offer"
 	default:
-		return "Only function, custom, namespace, remote MCP, and priced hosted web search tools are supported"
+		return "Only function, custom, namespace, shell, apply_patch, remote MCP, and priced hosted web search tools are supported"
 	}
 }
 
@@ -841,7 +839,14 @@ func validateTool(route openAIAdapterRoute, tool map[string]json.RawMessage) err
 			schemas.ResponsesToolTypeNamespace,
 			schemas.ResponsesToolTypeWebSearch,
 			schemas.ResponsesToolTypeWebSearchPreview,
-			schemas.ResponsesToolTypeMCP:
+			schemas.ResponsesToolTypeMCP,
+			schemas.ResponsesToolTypeApplyPatch:
+			return nil
+		case schemas.ResponsesToolTypeShell:
+			// Only the client's own shell: a hosted one starts a container that bills by the minute.
+			if shell := responsesTool.ResponsesToolShell; shell != nil && shell.Environment != nil && shell.Environment.Type != "local" {
+				return errOpenAIUnsupportedTool
+			}
 			return nil
 		default:
 			return errOpenAIUnsupportedTool

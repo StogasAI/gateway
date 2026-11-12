@@ -155,9 +155,16 @@ type providerResponsesItem struct {
 	reasoningParts    map[int]*providerResponsesPart
 	value             *bytes.Buffer
 	valueDone         bool
-	completedPayload  string
-	stage             int
-	done              bool
+	// commands holds the streamed commands of a shell call.
+	commands         []*providerResponsesCommand
+	completedPayload string
+	stage            int
+	done             bool
+}
+
+type providerResponsesCommand struct {
+	value bytes.Buffer
+	done  bool
 }
 
 type providerResponsesPart struct {
@@ -724,7 +731,9 @@ func responsesEventHasOutput(response *schemas.BifrostResponsesStreamResponse) b
 		schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta,
 		schemas.ResponsesStreamResponseTypeReasoningTextDelta,
 		schemas.ResponsesStreamResponseTypeMCPCallArgumentsDelta,
-		schemas.ResponsesStreamResponseTypeCustomToolCallInputDelta:
+		schemas.ResponsesStreamResponseTypeCustomToolCallInputDelta,
+		schemas.ResponsesStreamResponseTypeShellCallCommandDelta,
+		schemas.ResponsesStreamResponseTypeApplyPatchCallOperationDiffDelta:
 		return nonEmptyString(response.Delta)
 	case schemas.ResponsesStreamResponseTypeOutputTextDone,
 		schemas.ResponsesStreamResponseTypeReasoningSummaryTextDone,
@@ -737,6 +746,10 @@ func responsesEventHasOutput(response *schemas.BifrostResponsesStreamResponse) b
 		return nonEmptyString(response.Arguments)
 	case schemas.ResponsesStreamResponseTypeCustomToolCallInputDone:
 		return nonEmptyString(response.Input)
+	case schemas.ResponsesStreamResponseTypeShellCallCommandDone:
+		return nonEmptyString(response.Command)
+	case schemas.ResponsesStreamResponseTypeApplyPatchCallOperationDiffDone:
+		return nonEmptyString(response.Diff)
 	case schemas.ResponsesStreamResponseTypeImageGenerationCallPartialImage:
 		return nonEmptyString(response.PartialImageB64)
 	case schemas.ResponsesStreamResponseTypeContentPartAdded,
@@ -773,7 +786,9 @@ func responsesEventHasToken(response *schemas.BifrostResponsesStreamResponse) bo
 		schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta,
 		schemas.ResponsesStreamResponseTypeReasoningTextDelta,
 		schemas.ResponsesStreamResponseTypeMCPCallArgumentsDelta,
-		schemas.ResponsesStreamResponseTypeCustomToolCallInputDelta:
+		schemas.ResponsesStreamResponseTypeCustomToolCallInputDelta,
+		schemas.ResponsesStreamResponseTypeShellCallCommandDelta,
+		schemas.ResponsesStreamResponseTypeApplyPatchCallOperationDiffDelta:
 		return nonEmptyString(response.Delta)
 	case schemas.ResponsesStreamResponseTypeOutputTextDone,
 		schemas.ResponsesStreamResponseTypeReasoningSummaryTextDone,
@@ -786,6 +801,10 @@ func responsesEventHasToken(response *schemas.BifrostResponsesStreamResponse) bo
 		return nonEmptyString(response.Arguments)
 	case schemas.ResponsesStreamResponseTypeCustomToolCallInputDone:
 		return nonEmptyString(response.Input)
+	case schemas.ResponsesStreamResponseTypeShellCallCommandDone:
+		return nonEmptyString(response.Command)
+	case schemas.ResponsesStreamResponseTypeApplyPatchCallOperationDiffDone:
+		return nonEmptyString(response.Diff)
 	case schemas.ResponsesStreamResponseTypeContentPartAdded,
 		schemas.ResponsesStreamResponseTypeContentPartDone,
 		schemas.ResponsesStreamResponseTypeReasoningSummaryPartAdded,
@@ -845,6 +864,7 @@ func responsesMessageHasOutput(message *schemas.ResponsesMessage) bool {
 	}
 	return tool.ResponsesImageGenerationCall != nil && tool.ResponsesImageGenerationCall.Result != "" ||
 		tool.ResponsesCustomToolCall != nil && tool.ResponsesCustomToolCall.Input != "" ||
+		responsesPatchHasText(tool.ResponsesApplyPatchCall) ||
 		tool.ResponsesFileSearchToolCall != nil &&
 			(len(tool.ResponsesFileSearchToolCall.Queries) > 0 || len(tool.ResponsesFileSearchToolCall.Results) > 0) ||
 		tool.ResponsesAdvisorCall != nil &&
@@ -923,7 +943,13 @@ func responsesMessageHasToken(message *schemas.ResponsesMessage) bool {
 		return true
 	}
 	return tool.ResponsesCustomToolCall != nil && tool.ResponsesCustomToolCall.Input != "" ||
+		responsesPatchHasText(tool.ResponsesApplyPatchCall) ||
 		tool.ResponsesFileSearchToolCall != nil && len(tool.ResponsesFileSearchToolCall.Queries) > 0
+}
+
+// responsesPatchHasText reports whether a patch call names a file yet.
+func responsesPatchHasText(patch *schemas.ResponsesApplyPatchCall) bool {
+	return patch != nil && patch.Operation != nil && (patch.Operation.Path != "" || nonEmptyString(patch.Operation.Diff))
 }
 
 func responsesToolActionHasToken(action *schemas.ResponsesToolMessageActionStruct) bool {
@@ -947,6 +973,9 @@ func responsesToolActionHasToken(action *schemas.ResponsesToolMessageActionStruc
 	if shell := action.ResponsesLocalShellToolCallAction; shell != nil &&
 		(shell.Type != "" || len(shell.Command) > 0 || len(shell.Env) > 0 || shell.TimeoutMS != nil ||
 			shell.User != nil || shell.WorkingDirectory != nil) {
+		return true
+	}
+	if shell := action.ResponsesShellToolCallAction; shell != nil && len(shell.Commands) > 0 {
 		return true
 	}
 	if approval := action.ResponsesMCPApprovalRequestAction; approval != nil {
@@ -977,6 +1006,9 @@ func responsesToolActionHasOutput(action *schemas.ResponsesToolMessageActionStru
 	if shell := action.ResponsesLocalShellToolCallAction; shell != nil &&
 		(shell.Type != "" || len(shell.Command) > 0 || len(shell.Env) > 0 || shell.TimeoutMS != nil ||
 			shell.User != nil || shell.WorkingDirectory != nil) {
+		return true
+	}
+	if shell := action.ResponsesShellToolCallAction; shell != nil && len(shell.Commands) > 0 {
 		return true
 	}
 	if approval := action.ResponsesMCPApprovalRequestAction; approval != nil {

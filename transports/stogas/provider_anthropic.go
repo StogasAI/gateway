@@ -764,7 +764,16 @@ func (AnthropicAdapter) ValidateRawResponsesToolType(state *State, tool map[stri
 	if strings.HasPrefix(rawType, "web_search_") || strings.HasPrefix(rawType, "web_fetch_") {
 		return invalidRequest("Claude runs " + anthropicWebSearchVersion + " and " + anthropicWebFetchVersion + "; name one of them, web_search or web_fetch")
 	}
-	return invalidRequest("Only function, namespace, web_fetch, and priced hosted web search tools are supported")
+	if strings.HasPrefix(rawType, "bash_") || strings.HasPrefix(rawType, "text_editor_") {
+		return invalidRequest("Claude takes " + catalog.AnthropicBashToolType + " and " + catalog.AnthropicTextEditorToolType + "; name one of them")
+	}
+	if strings.HasPrefix(rawType, "computer") {
+		return invalidRequest("computer tools are not supported because tool results carry only text")
+	}
+	if strings.HasPrefix(rawType, "memory") {
+		return invalidRequest("memory tools are not supported because the instructions that Anthropic adds for them are not measured")
+	}
+	return invalidRequest("Only function, namespace, " + catalog.AnthropicBashToolType + ", " + catalog.AnthropicTextEditorToolType + ", web_fetch, and priced hosted web search tools are supported")
 }
 
 func ensureAnthropicResponsesHostedToolCap(state *State) {
@@ -1105,7 +1114,7 @@ const (
 func anthropicResponsesToolTypeSupported(rawType string) bool {
 	rawType = strings.TrimSpace(rawType)
 	switch rawType {
-	case "function", "namespace":
+	case "function", "namespace", catalog.AnthropicBashToolType, catalog.AnthropicTextEditorToolType:
 		return true
 	default:
 		return anthropicResponsesWebSearchToolType(rawType) || anthropicResponsesWebFetchToolType(rawType)

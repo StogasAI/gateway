@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+
+	"github.com/maximhq/bifrost/core/schemas"
 )
 
 // Read only feature selectors. Large prompt strings and tool schemas are skipped
@@ -28,8 +30,11 @@ func requestCapabilities(raw map[string]json.RawMessage, route Route, shared Cap
 			return required, ErrInvalidJSON
 		}
 		for _, tool := range tools {
-			// A namespace holds function and custom tools.
-			if tool.Type == "function" || tool.Type == "custom" || tool.Type == "namespace" {
+			// A namespace holds function and custom tools, and the model calls shell and
+			// apply_patch as it calls a function.
+			switch CanonicalResponsesToolType(tool.Type) {
+			case schemas.ResponsesToolTypeFunction, schemas.ResponsesToolTypeCustom, schemas.ResponsesToolTypeNamespace,
+				schemas.ResponsesToolTypeShell, schemas.ResponsesToolTypeApplyPatch:
 				required.FunctionCalling = true
 			}
 		}

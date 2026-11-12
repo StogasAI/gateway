@@ -100,6 +100,14 @@ func responsesItemTextMaterial(item *schemas.ResponsesMessage) textMaterial {
 			if tool.ResponsesCustomToolCall != nil {
 				material.output += len(tool.ResponsesCustomToolCall.Input)
 			}
+		case schemas.ResponsesMessageTypeShellCall:
+			for _, command := range providerShellCommands(item) {
+				material.output += len(command)
+			}
+		case schemas.ResponsesMessageTypeApplyPatchCall:
+			if tool.ResponsesApplyPatchCall != nil && tool.ResponsesApplyPatchCall.Operation != nil {
+				material.output += len(tool.ResponsesApplyPatchCall.Operation.Path) + textBytes(tool.ResponsesApplyPatchCall.Operation.Diff)
+			}
 		}
 	}
 	return material
@@ -140,7 +148,9 @@ func (s *State) observeResponsesStreamTextMaterial(event *schemas.BifrostRespons
 		current.output += textBytes(event.Delta)
 	case schemas.ResponsesStreamResponseTypeRefusalDelta,
 		schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDelta,
-		schemas.ResponsesStreamResponseTypeCustomToolCallInputDelta:
+		schemas.ResponsesStreamResponseTypeCustomToolCallInputDelta,
+		schemas.ResponsesStreamResponseTypeShellCallCommandDelta,
+		schemas.ResponsesStreamResponseTypeApplyPatchCallOperationDiffDelta:
 		current.output += textBytes(event.Delta)
 	case schemas.ResponsesStreamResponseTypeReasoningSummaryPartAdded,
 		schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta:

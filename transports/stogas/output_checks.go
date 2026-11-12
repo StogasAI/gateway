@@ -288,7 +288,7 @@ func (s *State) checkResponsesOutputs(checker *outputChecker, checks *outputChec
 			if tool := item.ResponsesToolMessage; tool != nil && tool.Name != nil && tool.Arguments != nil {
 				checks.addToolCall(checker.toolCall(providerCallNamespace(tool), *tool.Name, []byte(*tool.Arguments)))
 			}
-		case schemas.ResponsesMessageTypeCustomToolCall:
+		case schemas.ResponsesMessageTypeCustomToolCall, schemas.ResponsesMessageTypeShellCall, schemas.ResponsesMessageTypeApplyPatchCall:
 			toolCalls = true
 		case schemas.ResponsesMessageTypeMessage:
 			if !format.json || item.Content == nil {
@@ -346,7 +346,7 @@ func (c *outputChecker) toolCall(namespace, name string, arguments []byte) check
 		chat := c.resolution.Route == catalog.RouteChat
 		for _, entry := range catalog.ResponsesToolList(c.resolution.RawTools()) {
 			tool := entry.Tool
-			if rawString(tool["type"]) != "function" {
+			if catalog.CanonicalResponsesToolType(rawString(tool["type"])) != schemas.ResponsesToolTypeFunction {
 				continue
 			}
 			if !chat {

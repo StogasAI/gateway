@@ -68,14 +68,17 @@ func (AzureAdapter) ValidateRawResponsesToolType(state *State, tool map[string]j
 	if azureDeploymentUsesAnthropicWire(state) {
 		return (AnthropicAdapter{}).ValidateRawResponsesToolType(state, tool)
 	}
-	switch toolType := catalog.CanonicalResponsesToolType(rawString(tool["type"])); toolType {
+	toolType := catalog.CanonicalResponsesToolType(rawString(tool["type"]))
+	switch toolType {
 	case schemas.ResponsesToolTypeFunction, schemas.ResponsesToolTypeCustom, schemas.ResponsesToolTypeNamespace:
-		return nil
-	default:
-		// The catalog offers no hosted tool on Azure's own routes.
-		if err := hostedToolOffered(state, string(toolType)); err != nil {
-			return err
+		// Anthropic's client tools read as functions, which only Claude takes.
+		if _, anthropicTool := catalog.AnthropicClientToolName(rawString(tool["type"])); !anthropicTool {
+			return nil
 		}
-		return invalidRequest("Only function, custom, and namespace tools are supported for Azure deployments")
 	}
+	// The catalog offers no hosted tool on Azure's own routes.
+	if err := hostedToolOffered(state, string(toolType)); err != nil {
+		return err
+	}
+	return invalidRequest("Only function, custom, and namespace tools are supported for Azure deployments")
 }

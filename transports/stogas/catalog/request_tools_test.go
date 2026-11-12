@@ -36,6 +36,12 @@ func TestRequestFactsListToolsServersAndSystemMessages(t *testing.T) {
 			client: []string{"exec", "find", "lookup", "note"}},
 		{name: "a forced function counts every function", route: RouteResponses,
 			body: `{"tools":` + responsesTools + `,"tool_choice":{"type":"function","name":"lookup"}}`, client: []string{"lookup"}},
+		{name: "shell and apply_patch by their types", route: RouteResponses,
+			body:   `{"tools":[{"type":"function","name":"lookup"},{"type":"shell","environment":{"type":"local"}},{"type":"apply_patch"}]}`,
+			client: []string{"apply_patch", "lookup", "shell"}},
+		{name: "a forced shell leaves the other types out", route: RouteResponses,
+			body:   `{"tools":[{"type":"function","name":"lookup"},{"type":"shell"},{"type":"apply_patch"}],"tool_choice":{"type":"shell"}}`,
+			client: []string{"shell"}},
 		{name: "allowed MCP tools count every server", route: RouteResponses,
 			body: `{"tools":[{"type":"function","name":"lookup"},{"type":"mcp","server_label":"a","server_url":"https://a.example/mcp"},` +
 				`{"type":"mcp","server_label":"b","server_url":"https://b.example/mcp"}],` +

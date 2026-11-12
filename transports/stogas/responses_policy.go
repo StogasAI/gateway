@@ -355,8 +355,10 @@ func parseResponsesTools(state *State, raw json.RawMessage) ([]schemas.Responses
 		case schemas.ResponsesToolTypeFunction, schemas.ResponsesToolTypeCustom, schemas.ResponsesToolTypeNamespace:
 		case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview, schemas.ResponsesToolTypeWebFetch:
 		case schemas.ResponsesToolTypeMCP:
+		case schemas.ResponsesToolTypeShell, schemas.ResponsesToolTypeApplyPatch:
+		case catalog.AnthropicBashToolType, catalog.AnthropicTextEditorToolType:
 		default:
-			return nil, invalidRequest("Only function, custom, namespace, web_fetch, and priced hosted web search tools are supported")
+			return nil, invalidRequest("Only function, custom, namespace, shell, apply_patch, web_fetch, and priced hosted web search tools are supported")
 		}
 	}
 	return tools, nil
@@ -384,6 +386,9 @@ func validateResponsesToolPolicy(
 func validateRawResponsesToolShape(state *State, tool map[string]json.RawMessage, index int) (schemas.ResponsesToolType, string, error) {
 	path := fmt.Sprintf("tools[%d]", index)
 	toolType := catalog.CanonicalResponsesToolType(rawString(tool["type"]))
+	if name, ok := catalog.AnthropicClientToolName(rawString(tool["type"])); ok {
+		return toolType, name, validateAnthropicClientTool(tool, path, name)
+	}
 	switch toolType {
 	case schemas.ResponsesToolTypeFunction:
 		name, err := validateResponsesFunctionTool(tool, path, maxClientToolName)
@@ -401,9 +406,86 @@ func validateRawResponsesToolShape(state *State, tool map[string]json.RawMessage
 	case schemas.ResponsesToolTypeMCP:
 		server, err := validateResponsesMCPTool(tool, path)
 		return toolType, server.label, err
+	case schemas.ResponsesToolTypeShell:
+		return toolType, "", validateResponsesShellTool(tool, path)
+	case schemas.ResponsesToolTypeApplyPatch:
+		return toolType, "", rejectUnsupportedResponsesToolKeys(tool, path, "type")
 	default:
 		return toolType, "", nil
 	}
+}
+
+// validateAnthropicClientTool checks one of Anthropic's bash and text editor tools. Anthropic
+// fixes its name, which joins the names of the request's function tools.
+func validateAnthropicClientTool(tool map[string]json.RawMessage, path, name string) error {
+	keys := []string{"type", "name", "cache_control"}
+	if rawString(tool["type"]) == catalog.AnthropicTextEditorToolType {
+		keys = append(keys, "max_characters")
+	}
+	if err := rejectUnsupportedResponsesToolKeys(tool, path, keys...); err != nil {
+		return err
+	}
+	if declared, _ := rawStringValue(tool["name"]); declared != name {
+		return invalidRequest(path + ".name must be " + name)
+	}
+	if raw, ok := tool["max_characters"]; ok {
+		if value, ok := rawIntegerValue(raw); !ok || value < 1 {
+			return invalidRequest(path + ".max_characters must be a positive integer")
+		}
+	}
+	return validateResponsesToolCacheControl(tool["cache_control"], path+".cache_control")
+}
+
+// responsesLocalToolsSupported reports whether the deployment takes OpenAI's shell and apply_patch
+// tools. The client runs both, they cost only their tokens, and their calls and results replay in
+// input without stored state (live, November 12, 2026). Azure's are unreviewed.
+func responsesLocalToolsSupported(state *State) bool {
+	return state != nil && state.Resolution != nil && state.Resolution.Route == catalog.RouteResponses &&
+		state.Resolution.Provider == schemas.OpenAI
+}
+
+// validateResponsesShellTool accepts only a shell that the client runs. A hosted environment
+// starts a container that bills by the minute for longer than the request, and OpenAI starts it
+// even when tool_choice is none (live, November 12, 2026). An omitted environment is local.
+func validateResponsesShellTool(tool map[string]json.RawMessage, path string) error {
+	if err := rejectUnsupportedResponsesToolKeys(tool, path, "type", "environment"); err != nil {
+		return err
+	}
+	raw, ok := tool["environment"]
+	if !ok || !rawJSONValueSet(raw) {
+		return nil
+	}
+	path += ".environment"
+	environment, ok := rawObject(raw)
+	if !ok {
+		return invalidRequest(path + " must be an object")
+	}
+	if kind, _ := rawStringValue(environment["type"]); kind != "local" {
+		return invalidRequest(path + ".type must be local; hosted shell containers are not supported because their time is billed outside the request")
+	}
+	if err := rejectUnsupportedResponsesToolKeys(environment, path, "type", "skills"); err != nil {
+		return err
+	}
+	rawSkills, ok := environment["skills"]
+	if !ok || !rawJSONValueSet(rawSkills) {
+		return nil
+	}
+	var skills []map[string]json.RawMessage
+	if err := sonic.Unmarshal(rawSkills, &skills); err != nil {
+		return invalidRequest(path + ".skills must be an array of objects")
+	}
+	for index, skill := range skills {
+		skillPath := fmt.Sprintf("%s.skills[%d]", path, index)
+		if err := rejectUnsupportedResponsesToolKeys(skill, skillPath, "name", "description", "path"); err != nil {
+			return err
+		}
+		for _, key := range []string{"name", "description", "path"} {
+			if _, err := requiredInputString(skill, key, skillPath, false); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // validateResponsesNamespaceTool checks a namespace and its tools. A namespace holds only function
@@ -938,6 +1020,14 @@ func validateResponsesToolChoice(state *State, raw json.RawMessage, tools []sche
 		return nil
 	case schemas.ResponsesToolTypeMCP:
 		return validateResponsesMCPToolSelector(choice, "tool_choice", tools)
+	case schemas.ResponsesToolTypeShell, schemas.ResponsesToolTypeApplyPatch:
+		if err := rejectUnsupportedResponsesToolKeys(choice, "tool_choice", "type"); err != nil {
+			return err
+		}
+		if !responsesToolTypeExists(tools, selectedType) {
+			return invalidRequest("tool_choice selects an undeclared " + string(selectedType) + " tool")
+		}
+		return nil
 	default:
 		return invalidRequest("tool_choice must select a supported tool")
 	}
@@ -1021,6 +1111,17 @@ func validateResponsesAllowedToolChoice(state *State, raw json.RawMessage, tools
 				return invalidRequest(path + " duplicates another allowed tool")
 			}
 			seen[identity] = true
+		case schemas.ResponsesToolTypeShell, schemas.ResponsesToolTypeApplyPatch:
+			if err := rejectUnsupportedResponsesToolKeys(allowed, path, "type"); err != nil {
+				return err
+			}
+			if !responsesToolTypeExists(tools, toolType) {
+				return invalidRequest("tool_choice selects an undeclared " + string(toolType) + " tool")
+			}
+			if seen[string(toolType)] {
+				return invalidRequest(path + " duplicates another allowed tool")
+			}
+			seen[string(toolType)] = true
 		default:
 			return invalidRequest("tool_choice must select a supported tool")
 		}
@@ -1068,6 +1169,10 @@ func validateResponsesToolSelectorType(state *State, rawType string) (schemas.Re
 		if rawType == "mcp" && responsesMCPSupported(state) {
 			return toolType, nil
 		}
+	case schemas.ResponsesToolTypeShell, schemas.ResponsesToolTypeApplyPatch:
+		if responsesLocalToolsSupported(state) {
+			return toolType, nil
+		}
 	}
 	return toolType, invalidRequest("tool_choice must select a supported tool")
 }
@@ -1091,6 +1196,9 @@ func responsesNamedTools(tools []schemas.ResponsesTool) map[string]schemas.Respo
 		case tool.Name == nil:
 		case tool.Type == schemas.ResponsesToolTypeFunction || tool.Type == schemas.ResponsesToolTypeCustom:
 			named[*tool.Name] = tool.Type
+		// tool_choice names one of Anthropic's client tools as a function.
+		case catalog.CanonicalResponsesToolType(string(tool.Type)) == schemas.ResponsesToolTypeFunction:
+			named[*tool.Name] = schemas.ResponsesToolTypeFunction
 		case tool.Type == schemas.ResponsesToolTypeNamespace && *tool.Name == providerutils.DefaultToolNamespace && tool.ResponsesToolNamespace != nil:
 			for _, member := range tool.ResponsesToolNamespace.Tools {
 				if member.Name != nil {
@@ -1172,7 +1280,8 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 		}
 		if validation.pendingCalls > 0 {
 			switch itemType {
-			case "function_call", "function_call_output", "custom_tool_call", "custom_tool_call_output":
+			case "function_call", "function_call_output", "custom_tool_call", "custom_tool_call_output",
+				"shell_call", "shell_call_output", "apply_patch_call", "apply_patch_call_output":
 			// MCP items are the provider's own steps, which a response can interleave with client calls.
 			case "mcp_list_tools", "mcp_call", "mcp_approval_request", "mcp_approval_response":
 			default:
@@ -1217,6 +1326,22 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 				return invalidRequest("custom_tool_call_output input items are supported only for OpenAI-format deployments")
 			}
 			if err := validateResponsesToolCallOutputInput(item, path, "custom", &validation); err != nil {
+				return err
+			}
+			turn.result(rawString(item["call_id"]))
+		case "shell_call", "apply_patch_call":
+			if !responsesLocalToolsSupported(state) {
+				return invalidRequest(itemType + " input items are supported only for OpenAI deployments")
+			}
+			if err := validateResponsesLocalToolCallInput(item, path, itemType, &validation); err != nil {
+				return err
+			}
+			turn.call()
+		case "shell_call_output", "apply_patch_call_output":
+			if !responsesLocalToolsSupported(state) {
+				return invalidRequest(itemType + " input items are supported only for OpenAI deployments")
+			}
+			if err := validateResponsesLocalToolOutputInput(item, path, itemType, &validation); err != nil {
 				return err
 			}
 			turn.result(rawString(item["call_id"]))
@@ -1567,6 +1692,164 @@ func validateResponsesToolCallInput(state *State, item map[string]json.RawMessag
 	}
 	validation.calls[callID] = kind
 	validation.pendingCalls++
+	return nil
+}
+
+// validateResponsesLocalToolCallInput checks a replayed shell_call or apply_patch_call. Each key
+// holds the type that OpenAI returns it with; OpenAI decides the rest, such as which statuses and
+// operations it takes back.
+func validateResponsesLocalToolCallInput(item map[string]json.RawMessage, path, itemType string, validation *responsesInputValidation) error {
+	payloadKey, kind := "action", "shell"
+	allowed := []string{"type", "id", "status", "call_id", "action", "environment"}
+	if itemType == "apply_patch_call" {
+		payloadKey, kind = "operation", "apply_patch"
+		allowed = []string{"type", "id", "status", "call_id", "operation"}
+	}
+	if err := rejectUnsupportedInputKeys(item, path, allowed...); err != nil {
+		return err
+	}
+	if err := validateResponsesInputItemIdentity(item, path); err != nil {
+		return err
+	}
+	callID, err := requiredInputString(item, "call_id", path, false)
+	if err != nil {
+		return err
+	}
+	if len(callID) > 64 {
+		return invalidRequest(path + ".call_id must contain at most 64 bytes")
+	}
+	if _, exists := validation.calls[callID]; exists {
+		return invalidRequest(path + ".call_id duplicates another client tool call")
+	}
+	payload, ok := rawObject(item[payloadKey])
+	if !ok {
+		return invalidRequest(path + "." + payloadKey + " must be an object")
+	}
+	payloadPath := path + "." + payloadKey
+	if kind == "shell" {
+		if err := rejectUnsupportedInputKeys(payload, payloadPath, "commands", "timeout_ms", "max_output_length"); err != nil {
+			return err
+		}
+		var commands []string
+		if raw, ok := payload["commands"]; !ok || sonic.Unmarshal(raw, &commands) != nil {
+			return invalidRequest(payloadPath + ".commands must be an array of strings")
+		}
+		for _, key := range []string{"timeout_ms", "max_output_length"} {
+			if raw, ok := payload[key]; ok {
+				if value, ok := rawIntegerValue(raw); !ok || value < 0 {
+					return invalidRequest(payloadPath + "." + key + " must be a non-negative integer")
+				}
+			}
+		}
+		// A replayed call names the environment that ran it, which is only the client's.
+		if raw, ok := item["environment"]; ok {
+			environment, ok := rawObject(raw)
+			if !ok || rawString(environment["type"]) != "local" || len(environment) != 1 {
+				return invalidRequest(path + ".environment must be {\"type\": \"local\"}")
+			}
+		}
+	} else {
+		if err := rejectUnsupportedInputKeys(payload, payloadPath, "type", "path", "diff"); err != nil {
+			return err
+		}
+		for _, key := range []string{"type", "path"} {
+			if _, err := requiredInputString(payload, key, payloadPath, false); err != nil {
+				return err
+			}
+		}
+		if raw, ok := payload["diff"]; ok {
+			if _, ok := rawStringValue(raw); !ok {
+				return invalidRequest(payloadPath + ".diff must be a string")
+			}
+		}
+	}
+	validation.calls[callID] = kind
+	validation.pendingCalls++
+	return nil
+}
+
+// validateResponsesLocalToolOutputInput checks the client's result of a shell_call or
+// apply_patch_call.
+func validateResponsesLocalToolOutputInput(item map[string]json.RawMessage, path, itemType string, validation *responsesInputValidation) error {
+	kind := "shell"
+	allowed := []string{"type", "id", "status", "call_id", "output", "max_output_length"}
+	if itemType == "apply_patch_call_output" {
+		kind = "apply_patch"
+		allowed = []string{"type", "id", "status", "call_id", "output"}
+	}
+	if err := rejectUnsupportedInputKeys(item, path, allowed...); err != nil {
+		return err
+	}
+	if raw, ok := item["id"]; ok {
+		if _, err := requiredInputString(map[string]json.RawMessage{"id": raw}, "id", path, false); err != nil {
+			return err
+		}
+	}
+	if raw, ok := item["status"]; ok {
+		if _, ok := rawStringValue(raw); !ok {
+			return invalidRequest(path + ".status must be a string")
+		}
+	}
+	callID, err := requiredInputString(item, "call_id", path, false)
+	if err != nil {
+		return err
+	}
+	callKind, exists := validation.calls[callID]
+	if !exists {
+		return invalidRequest(path + ".call_id must match an earlier client tool call")
+	}
+	if callKind != kind {
+		return invalidRequest(path + ".call_id selects a different client tool type")
+	}
+	if validation.outputs[callID] {
+		return invalidRequest(path + ".call_id duplicates a client tool output")
+	}
+	if kind == "apply_patch" {
+		if raw, ok := item["output"]; ok {
+			if _, ok := rawStringValue(raw); !ok {
+				return invalidRequest(path + ".output must be a string")
+			}
+		}
+	} else {
+		var outputs []map[string]json.RawMessage
+		if raw, ok := item["output"]; !ok || sonic.Unmarshal(raw, &outputs) != nil {
+			return invalidRequest(path + ".output must be an array of objects")
+		}
+		for index, output := range outputs {
+			outputPath := fmt.Sprintf("%s.output[%d]", path, index)
+			if err := rejectUnsupportedInputKeys(output, outputPath, "stdout", "stderr", "outcome"); err != nil {
+				return err
+			}
+			for _, key := range []string{"stdout", "stderr"} {
+				if _, err := requiredInputString(output, key, outputPath, true); err != nil {
+					return err
+				}
+			}
+			outcome, ok := rawObject(output["outcome"])
+			if !ok {
+				return invalidRequest(outputPath + ".outcome must be an object")
+			}
+			if err := rejectUnsupportedInputKeys(outcome, outputPath+".outcome", "type", "exit_code"); err != nil {
+				return err
+			}
+			if _, err := requiredInputString(outcome, "type", outputPath+".outcome", false); err != nil {
+				return err
+			}
+			if raw, ok := outcome["exit_code"]; ok {
+				if _, ok := rawIntegerValue(raw); !ok {
+					return invalidRequest(outputPath + ".outcome.exit_code must be an integer")
+				}
+			}
+		}
+		if raw, ok := item["max_output_length"]; ok {
+			if value, ok := rawIntegerValue(raw); !ok || value < 0 {
+				return invalidRequest(path + ".max_output_length must be a non-negative integer")
+			}
+		}
+	}
+	validation.outputs[callID] = true
+	validation.pendingCalls--
+	validation.meaningful = true
 	return nil
 }
 
