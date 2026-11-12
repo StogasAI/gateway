@@ -113,8 +113,6 @@ func TestFailureActionFor(t *testing.T) {
 		{name: "provider refuses a retry of a credential", failure: failure(http.StatusUnauthorized, ""), headers: map[string]string{"x-should-retry": "false"}, want: nextPair},
 		{name: "provider asks to retry billed usage", failure: billed, headers: map[string]string{"x-should-retry": "true"}, want: stopRun},
 		{name: "provider asks to retry our failure", failure: ours, headers: map[string]string{"x-should-retry": "true"}, want: stopRun},
-		{name: "another model version served", failure: servedModelChangedError(), want: stopRun},
-		{name: "provider asks to retry another model version", failure: servedModelChangedError(), headers: map[string]string{"x-should-retry": "true"}, want: stopRun},
 	} {
 		if got := failureActionFor(test.failure, retryAfterContext(test.headers), test.memory); got != test.want {
 			t.Errorf("%s: action = %d, want %d", test.name, got, test.want)
@@ -150,7 +148,6 @@ func TestProviderMayHaveRun(t *testing.T) {
 		{"a server error", failure(http.StatusInternalServerError), nil, true},
 		{"a refusal after billed usage", billedRefusal, nil, true},
 		{"billed usage before a call that never reached the provider", billedUnsent, nil, true},
-		{"an Azure reply from another model version", servedModelChangedError(), nil, true},
 		{"an answer that core cannot read", noStatus, map[string]string{"content-type": "application/json"}, true},
 		{"a failure before the call", noStatus, nil, false},
 	} {
@@ -207,13 +204,11 @@ func anthropicRefusal(status int, message string) *schemas.BifrostError {
 	return &schemas.BifrostError{StatusCode: schemas.Ptr(status), Error: &schemas.ErrorField{Type: schemas.Ptr(errorType), Message: message}}
 }
 
-func TestAzureReplyThatNamesAnotherVersionFailsItsCall(t *testing.T) {
+// A reply that shows its Azure target moved asks for a check of the account and stands as it is.
+func TestAzureReplyThatShowsItsTargetMovedAsksForACheck(t *testing.T) {
 	binding := billing.AzureBinding{ID: "binding-1", ModelName: "gpt-5.6-sol", ModelVersion: "2026-07-09"}
 	authorization := &billing.Authorization{AzureBinding: &binding, UpstreamByok: "byok-1"}
-	// Without a runtime the server stops and rechecks nothing, which the stogas tests cover.
 	server := &Server{}
-	discarded := 0
-	discard := func() { discarded++ }
 	for _, headers := range []map[string]string{
 		{"X-Ms-Served-Model": "gpt-5.6-sol-2026-07-09"},
 		{"x-ms-served-model": "GPT-5.6-sol-2026-07-09"},
@@ -221,54 +216,31 @@ func TestAzureReplyThatNamesAnotherVersionFailsItsCall(t *testing.T) {
 		{"x-ms-served-model": "gpt-5.6-sol"},
 		nil,
 	} {
-		if failure := server.checkAzureReply(retryAfterContext(headers), authorization, nil, discard); failure != nil || discarded != 0 {
-			t.Fatalf("headers %v: failure = %v, discarded %d", headers, failure, discarded)
+		if server.azureTargetMoved(retryAfterContext(headers), authorization, nil) {
+			t.Fatalf("headers %v asked for a check", headers)
 		}
 	}
 	changed := retryAfterContext(map[string]string{"x-ms-served-model": "gpt-5.6-sol-2026-10-28"})
-	failure := server.checkAzureReply(changed, authorization, nil, discard)
-	if failure == nil || discarded != 1 || failureActionFor(failure, changed, nil) != stopRun {
-		t.Fatalf("a reply from another version: failure = %v, discarded %d", failure, discarded)
+	if !server.azureTargetMoved(changed, authorization, nil) {
+		t.Fatal("a reply from another version asked for no check")
 	}
-	status, payload := publicBifrostError(failure)
-	body := payload["error"].(map[string]any)
-	if status != http.StatusBadRequest || body["code"] != billing.ErrByokTargetChanged.Code || body["message"] != billing.ErrByokTargetChanged.Message {
-		t.Fatalf("caller error = %d %v", status, body)
+	failure := func(status int, code string) *schemas.BifrostError {
+		return &schemas.BifrostError{StatusCode: schemas.Ptr(status), Error: &schemas.ErrorField{Code: schemas.Ptr(code), Message: code}}
 	}
-	if billing.NormalizeUpstreamStatus(failure) != "model_unavailable" {
-		t.Fatalf("logged upstream status = %s", billing.NormalizeUpstreamStatus(failure))
-	}
-	// A provider failure stays the call's failure.
-	gone := &schemas.BifrostError{StatusCode: schemas.Ptr(http.StatusNotFound), Error: &schemas.ErrorField{Message: "DeploymentNotFound"}}
-	if server.checkAzureReply(changed, authorization, gone, discard) != gone || discarded != 1 {
-		t.Fatal("a provider failure was replaced")
-	}
-}
-
-func TestDiscardedStreamStopsItsProvider(t *testing.T) {
-	attempt, cancel := schemas.NewBifrostContextWithCancel(t.Context())
-	defer cancel()
-	stream := make(chan *schemas.BifrostStreamChunk)
-	stopped := make(chan struct{})
-	go func() {
-		defer close(stopped)
-		defer close(stream)
-		for {
-			select {
-			case stream <- &schemas.BifrostStreamChunk{}:
-			case <-attempt.Done():
-				return
-			}
+	for _, test := range []struct {
+		failure *schemas.BifrostError
+		want    bool
+	}{
+		{failure(http.StatusNotFound, "DeploymentNotFound"), true},
+		{failure(http.StatusGone, "ModelDeprecated"), true},
+		{failure(http.StatusTooManyRequests, "RateLimitReached"), false},
+		{failure(http.StatusInternalServerError, "InternalServerError"), false},
+	} {
+		// A failure's headers say nothing about the target.
+		if got := server.azureTargetMoved(changed, authorization, test.failure); got != test.want {
+			t.Errorf("%s: asks for a check = %v, want %v", *test.failure.Error.Code, got, test.want)
 		}
-	}()
-	discardProviderResponse(attempt, stream)
-	select {
-	case <-stopped:
-	case <-time.After(5 * time.Second):
-		t.Fatal("the discarded stream's provider kept running")
 	}
-	// A unary reply needs nothing.
-	discardProviderResponse(attempt, &schemas.BifrostResponse{})
 }
 
 func retryAfterContext(headers map[string]string) *schemas.BifrostContext {

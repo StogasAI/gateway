@@ -106,17 +106,8 @@ func (r *Runtime) ApplyUpstreamCredentials(ctx *schemas.BifrostContext, state *S
 	return applyUpstreamCredentials(ctx, state, r.azureTokens, r.googleTokens, r.azureChecks)
 }
 
-// StopAzureTarget stops a request's Azure target in the background after its reply named served,
-// another model version than the target's, so later requests move on without calling it.
-func (r *Runtime) StopAzureTarget(authorization *billing.Authorization, served string) {
-	if r == nil || r.azureChecks == nil || authorization == nil || authorization.AzureBinding == nil {
-		return
-	}
-	r.azureChecks.Stop(azureCheckTarget{ByokID: authorization.UpstreamByok, BindingID: authorization.AzureBinding.ID}, served)
-}
-
 // RecheckAzureTarget checks a request's Azure account in the background after a reply showed that
-// the target's deployment is gone or retired.
+// the target's deployment is gone, retired or serving another model version.
 func (r *Runtime) RecheckAzureTarget(authorization *billing.Authorization) {
 	if r == nil || r.azureChecks == nil || authorization == nil || authorization.AzureBinding == nil ||
 		!azureAccountIDPattern.MatchString(authorization.AzureAccountID) {
@@ -128,7 +119,6 @@ func (r *Runtime) RecheckAzureTarget(authorization *billing.Authorization) {
 	}
 	r.azureChecks.Recheck(azureCheckTarget{
 		ByokID:     authorization.UpstreamByok,
-		BindingID:  authorization.AzureBinding.ID,
 		AccountID:  authorization.AzureAccountID,
 		VerifiedAt: authorization.AzureVerifiedAt,
 		Credential: azureauth.Credential{TenantID: credential.TenantID, ClientID: credential.ClientID, Secret: credential.ClientSecret},

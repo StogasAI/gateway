@@ -16,7 +16,7 @@
 			"checkError": null,
 			"bindings": [],
 			"deployments": [
-				{"id":"/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/foundry/deployments/gpt-5.6-sol-2026-07-09","modelFormat":"OpenAI","modelName":"gpt-5.6-sol","modelVersion":"2026-07-09","skuName":"GlobalStandard","state":"Updating","versionUpgrade":""}
+				{"id":"/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/foundry/deployments/gpt-5.6-sol-2026-07-09","modelFormat":"OpenAI","modelName":"gpt-5.6-sol","modelVersion":"2026-07-09","skuName":"GlobalStandard","state":"Updating"}
 			]
 		}
 	}

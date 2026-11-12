@@ -545,9 +545,12 @@ func validateActualResponseModel(state *State, model string) error {
 		return nil
 	}
 	resolution := state.Resolution
-	if resolution.Deployment.Hosting == catalog.HostingUnknown {
-		// The operator names the model in its own terms, which the catalog does not know, so the reply
-		// is checked only for changing model within one reply.
+	// An operator that the catalog does not know names the model in its own terms. A customer's
+	// Azure deployment answers for whatever its account serves now: one that Azure upgraded or its
+	// owner changed since the last check of the account still answers, and the check that such a
+	// reply starts stops its target (Server.azureTargetMoved). Both replies are checked only for
+	// changing model within one reply.
+	if resolution.Deployment.Hosting == catalog.HostingUnknown || resolution.Provider == schemas.Azure {
 		if state.ActualModel != "" && state.ActualModel != model {
 			return ErrProviderExecutionMismatch
 		}
@@ -557,45 +560,19 @@ func validateActualResponseModel(state *State, model string) error {
 	if expected == "" {
 		return nil
 	}
-	// A reply that repeats the deployment name tells nothing about the model, except from an API
-	// that reports the model that served.
-	echo := model == strings.TrimSpace(resolution.Model) && !reportsServedModel(resolution)
-	if !(echo || providerModelMatchesSelected(expected, model, resolution.Deployment.Upstream.ModelVersion)) ||
-		(state.ActualModel != "" && state.ActualModel != model) {
+	if !providerModelMatchesSelected(expected, model) || (state.ActualModel != "" && state.ActualModel != model) {
 		return ErrProviderExecutionMismatch
 	}
 	return nil
 }
 
-// reportsServedModel reports whether the provider names the model that served the request rather
-// than repeating the deployment name that the request used. Azure Chat Completions reports an
-// OpenAI model with its version under any deployment name. Azure Responses, and Chat Completions
-// for other model formats, repeat the name, so even a name that reads as another model or version
-// is no evidence.
-func reportsServedModel(resolution *catalog.ResolvedRequest) bool {
-	return resolution.Provider == schemas.Azure && resolution.WireRoute() == catalog.RouteChat &&
-		resolution.Deployment.Upstream.ModelFormat == "OpenAI"
-}
-
-// providerModelMatchesSelected accepts the selected model alone or with a revision date. When the
-// catalog pins a dated version, as Azure deployments do, the date must be that version, so a
-// deployment that Azure upgraded cannot answer for the version that was bound.
-func providerModelMatchesSelected(expected, actual, version string) bool {
+// providerModelMatchesSelected accepts the selected model alone or with a revision date.
+func providerModelMatchesSelected(expected, actual string) bool {
 	if actual == expected {
 		return true
 	}
 	prefix := expected + "-"
-	if !strings.HasPrefix(actual, prefix) {
-		return false
-	}
-	suffix := strings.TrimPrefix(actual, prefix)
-	if !revisionDate(suffix) {
-		return false
-	}
-	if len(version) != 10 || !revisionDate(version) {
-		return true
-	}
-	return suffix == version || suffix == strings.ReplaceAll(version, "-", "")
+	return strings.HasPrefix(actual, prefix) && revisionDate(strings.TrimPrefix(actual, prefix))
 }
 
 // revisionDate reports whether value is a date as providers suffix it: YYYYMMDD or YYYY-MM-DD.

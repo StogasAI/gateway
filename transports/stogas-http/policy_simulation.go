@@ -288,7 +288,6 @@ func (s *Server) simulatePolicy(ctx *requestContext) {
 		Policy:               config.Config,
 		AvailableCredentials: available,
 		DeploymentEligible:   stogas.CredentialDeploymentFilter(config, now),
-		DeploymentChanged:    stogas.CredentialTargetChanged(config),
 		CredentialPolicy: func(provider schemas.ModelProvider, index int) (catalog.RequestPolicy, error) {
 			selected, err := config.SimulatedPolicyForCredential(string(provider), index, now, &budget)
 			if err != nil {

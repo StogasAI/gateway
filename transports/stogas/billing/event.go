@@ -405,9 +405,8 @@ func NormalizeUpstreamStatus(bifrostErr *schemas.BifrostError) string {
 		// The provider retired the model, whatever status it sends: Groq and Azure
 		// send a retirement as 400.
 		return "model_retired"
-	case identifiers.has("unsupported_country_region_territory", "byok_target_changed"):
-		// The provider does not serve the model to our region, or the reply came from another
-		// model version than the target's.
+	case identifiers.has("unsupported_country_region_territory"):
+		// The provider does not serve the model to our region.
 		return "model_unavailable"
 	case statusCode == 401:
 		return "authentication_error"

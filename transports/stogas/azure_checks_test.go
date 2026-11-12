@@ -26,12 +26,9 @@ type fakeAzureCheckStore struct {
 	claimed  int
 	recorded [][]billing.AzureDeployment
 	started  []time.Time
-	result   billing.AzureCheckResult
 	claimErr error
 	// staleAfter lists how old each claim let the last confirmation be.
 	staleAfter []time.Duration
-	// stopped lists the served models of the targets that replies stopped.
-	stopped []string
 	// onClaim runs on each claim, such as to move the test clock.
 	onClaim func()
 
@@ -41,7 +38,7 @@ type fakeAzureCheckStore struct {
 	discoverClaims   int
 	discoverErr      error
 	discoveries      []recordedAzureDiscovery
-	discoveryOutcome billing.AzureCheckResult
+	discoveryChanged bool
 	discoveryErr     error
 }
 
@@ -69,22 +66,12 @@ func (s *fakeAzureCheckStore) ClaimAzureCheck(_ context.Context, byokID string, 
 	return claim, nil
 }
 
-func (s *fakeAzureCheckStore) RecordAzureCheck(_ context.Context, _ string, startedAt time.Time, deployments []billing.AzureDeployment) (billing.AzureCheckResult, error) {
+func (s *fakeAzureCheckStore) RecordAzureCheck(_ context.Context, _ string, startedAt time.Time, deployments []billing.AzureDeployment) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.recorded = append(s.recorded, deployments)
 	s.started = append(s.started, startedAt)
-	return s.result, nil
-}
-
-func (s *fakeAzureCheckStore) StopAzureTarget(_ context.Context, byokID, bindingID, servedModel string) (bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if byokID != "byok-1" || bindingID != "binding-1" {
-		return false, fmt.Errorf("unexpected target %s %s", byokID, bindingID)
-	}
-	s.stopped = append(s.stopped, servedModel)
-	return len(s.stopped) == 1, nil
+	return nil
 }
 
 func (s *fakeAzureCheckStore) ClaimAzureDiscovery(_ context.Context, byokID string) (bool, time.Time, error) {
@@ -97,11 +84,11 @@ func (s *fakeAzureCheckStore) ClaimAzureDiscovery(_ context.Context, byokID stri
 	return s.discoverClaimed, s.discoverStarted, s.discoverErr
 }
 
-func (s *fakeAzureCheckStore) RecordAzureDiscovery(_ context.Context, byokID string, startedAt time.Time, envelope, failure string, discovery *billing.AzureDiscoveryResult) (billing.AzureCheckResult, error) {
+func (s *fakeAzureCheckStore) RecordAzureDiscovery(_ context.Context, byokID string, startedAt time.Time, envelope, failure string, discovery *billing.AzureDiscoveryResult) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.discoveries = append(s.discoveries, recordedAzureDiscovery{byokID, envelope, failure, startedAt, discovery})
-	return s.discoveryOutcome, s.discoveryErr
+	return s.discoveryChanged, s.discoveryErr
 }
 
 func (s *fakeAzureCheckStore) discoveryCounts() (int, int) {
@@ -201,7 +188,6 @@ func newTestAzureChecks(t *testing.T, store *fakeAzureCheckStore, pages ...map[s
 func testCheckTarget(verifiedAt time.Time) azureCheckTarget {
 	return azureCheckTarget{
 		ByokID:     "byok-1",
-		BindingID:  "binding-1",
 		AccountID:  testAzureAccount,
 		VerifiedAt: verifiedAt,
 		Credential: azureauth.Credential{TenantID: "tenant", ClientID: "client", Secret: "azure-client-secret"},
@@ -242,13 +228,12 @@ func TestAzureChecksRefreshAgingConfirmationsInBackgroundOnce(t *testing.T) {
 		t.Fatalf("aging confirmations started several checks: claims=%d requests=%d", claimed, requests.Load())
 	}
 	want := billing.AzureDeployment{
-		ID:             testAzureAccount + "/deployments/customer-sol",
-		ModelFormat:    "OpenAI",
-		ModelName:      "gpt-5.6-sol",
-		ModelVersion:   "2026-07-09",
-		SkuName:        "GlobalStandard",
-		State:          "Succeeded",
-		VersionUpgrade: "OnceNewDefaultVersionAvailable",
+		ID:           testAzureAccount + "/deployments/customer-sol",
+		ModelFormat:  "OpenAI",
+		ModelName:    "gpt-5.6-sol",
+		ModelVersion: "2026-07-09",
+		SkuName:      "GlobalStandard",
+		State:        "Succeeded",
 	}
 	if got := store.recorded[0]; len(got) != 1 || got[0] != want {
 		t.Fatalf("recorded deployments = %#v", got)
@@ -271,43 +256,6 @@ func waitFor(t *testing.T, what string, done func() bool) {
 	}
 }
 
-func TestAzureChecksGiveUnreportedRepliesYoungerConfirmations(t *testing.T) {
-	started := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
-	store := &fakeAzureCheckStore{claims: []billing.AzureClaim{{Claimed: true, StartedAt: started}}}
-	checks, _, clock := newTestAzureChecks(t, store, map[string]any{"value": []any{}})
-	// Two minutes is young for a reply that names its version.
-	if err := checks.Confirm(context.Background(), testCheckTarget(clock.Ago(2*time.Minute))); err != nil {
-		t.Fatal(err)
-	}
-	if claimed, _ := store.counts(); claimed != 0 {
-		t.Fatalf("a young confirmation started a check: claims=%d", claimed)
-	}
-	// A reply that names none needs a check, in the background, that asks for a younger one.
-	target := testCheckTarget(clock.Ago(2 * time.Minute))
-	target.Unreported = true
-	if err := checks.Confirm(context.Background(), target); err != nil {
-		t.Fatal(err)
-	}
-	waitFor(t, "the background check", func() bool { _, recorded := store.counts(); return recorded == 1 })
-	if store.staleAfter[0] != azureCheckUnreportedFresh {
-		t.Fatalf("the background claim let confirmations be %v old", store.staleAfter[0])
-	}
-
-	// Past ten minutes such a request waits for the check, which the other requests' pacing does
-	// not hold back.
-	waiting := &fakeAzureCheckStore{claims: []billing.AzureClaim{{Claimed: true, StartedAt: started}}}
-	checks, requests, clock := newTestAzureChecks(t, waiting, map[string]any{"value": []any{}})
-	checks.pause("byok-1", azureCheckFresh)
-	target = testCheckTarget(clock.Ago(11 * time.Minute))
-	target.Unreported = true
-	if err := checks.Confirm(context.Background(), target); err != nil {
-		t.Fatal(err)
-	}
-	if _, recorded := waiting.counts(); recorded != 1 || requests.Load() != 1 || waiting.staleAfter[0] != azureCheckUnreportedStale {
-		t.Fatalf("the request did not wait for a check: records=%d requests=%d claims=%v", recorded, requests.Load(), waiting.staleAfter)
-	}
-}
-
 func TestAzureChecksRecheckAGoneTargetOnceAtATime(t *testing.T) {
 	store := &fakeAzureCheckStore{claims: []billing.AzureClaim{{Claimed: true, StartedAt: time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)}}}
 	checks, requests, clock := newTestAzureChecks(t, store, map[string]any{"value": []any{}})
@@ -316,131 +264,70 @@ func TestAzureChecksRecheckAGoneTargetOnceAtATime(t *testing.T) {
 		checks.Recheck(target)
 	}
 	waitFor(t, "the recheck", func() bool { _, recorded := store.counts(); return recorded == 1 })
-	if claimed, _ := store.counts(); claimed != 1 || requests.Load() != 1 || store.staleAfter[0] != azureCheckWait {
+	if claimed, _ := store.counts(); claimed != 1 || requests.Load() != 1 || store.staleAfter[0] != azureCheckPace {
 		t.Fatalf("rechecks: claims=%d requests=%d stale after %v", claimed, requests.Load(), store.staleAfter)
 	}
 }
 
-func TestAzureChecksStopATargetThatServedAnotherVersion(t *testing.T) {
-	store := &fakeAzureCheckStore{}
-	checks, requests, _ := newTestAzureChecks(t, store, map[string]any{"value": []any{}})
-	checks.Stop(testCheckTarget(time.Time{}), "gpt-5.6-sol-2026-10-28")
-	waitFor(t, "the stop", func() bool {
-		store.mu.Lock()
-		defer store.mu.Unlock()
-		return len(store.stopped) == 1
-	})
-	if store.stopped[0] != "gpt-5.6-sol-2026-10-28" || requests.Load() != 0 {
-		t.Fatalf("stopped %v after %d Azure requests", store.stopped, requests.Load())
-	}
-}
-
-func TestAzureChecksStopRequestsWhoseTargetChanged(t *testing.T) {
+// A request never waits for Azure: it keeps the target that its hold found in service, however old
+// the last confirmation, while the check that it started goes on for later requests.
+func TestAzureChecksNeverHoldARequestForACheck(t *testing.T) {
 	for _, test := range []struct {
-		reason string
-		want   error
+		name string
+		age  time.Duration
 	}{
-		{"changed", billing.ErrByokTargetChanged},
-		{"missing", billing.ErrByokTarget},
-		{"failed", billing.ErrByokTarget},
-	} {
-		t.Run(test.reason, func(t *testing.T) {
-			store := &fakeAzureCheckStore{
-				claims: []billing.AzureClaim{{Claimed: true, StartedAt: time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)}},
-				result: billing.AzureCheckResult{Unavailable: map[string]string{"binding-1": test.reason}},
-			}
-			checks, _, clock := newTestAzureChecks(t, store, map[string]any{"value": []any{armDeploymentJSON("customer-sol", "2026-10-28", "GlobalStandard", "Succeeded")}})
-			if err := checks.Confirm(context.Background(), testCheckTarget(clock.Ago(31*time.Minute))); !errors.Is(err, test.want) {
-				t.Fatalf("Confirm() = %v, want %v", err, test.want)
-			}
-		})
-	}
-}
-
-func TestAzureChecksServeTargetsThatAnotherBindingsCheckLeft(t *testing.T) {
-	store := &fakeAzureCheckStore{
-		claims: []billing.AzureClaim{{Claimed: true, StartedAt: time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)}},
-		result: billing.AzureCheckResult{Unavailable: map[string]string{"binding-2": "changed"}},
-	}
-	checks, _, clock := newTestAzureChecks(t, store, map[string]any{"value": []any{}})
-	if err := checks.Confirm(context.Background(), testCheckTarget(clock.Ago(31*time.Minute))); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestAzureChecksWaitForAnotherGatewaysCheck(t *testing.T) {
-	started := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
-	store := &fakeAzureCheckStore{claims: []billing.AzureClaim{
-		{StartedAt: started, VerifiedAt: started.Add(-40 * time.Minute)},
-		{StartedAt: started, VerifiedAt: started.Add(-40 * time.Minute)},
-		{StartedAt: started.Add(time.Second), VerifiedAt: started.Add(500 * time.Millisecond)},
-	}}
-	checks, requests, clock := newTestAzureChecks(t, store, map[string]any{"value": []any{}})
-	if err := checks.Confirm(context.Background(), testCheckTarget(clock.Ago(40*time.Minute))); err != nil {
-		t.Fatal(err)
-	}
-	if claimed, recorded := store.counts(); claimed != 3 || recorded != 0 || requests.Load() != 0 {
-		t.Fatalf("waiting for another gateway read Azure: claims=%d records=%d requests=%d", claimed, recorded, requests.Load())
-	}
-}
-
-// A request that waited for another gateway's check refuses a target that the check stopped.
-func TestAzureChecksRefuseTargetsThatAnotherGatewaysCheckStopped(t *testing.T) {
-	started := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
-	store := &fakeAzureCheckStore{claims: []billing.AzureClaim{
-		{StartedAt: started, VerifiedAt: started.Add(-40 * time.Minute)},
-		{
-			StartedAt:   started.Add(time.Second),
-			VerifiedAt:  started.Add(500 * time.Millisecond),
-			Unavailable: map[string]string{"binding-1": "changed"},
-		},
-	}}
-	checks, requests, clock := newTestAzureChecks(t, store, map[string]any{"value": []any{}})
-	if err := checks.Confirm(context.Background(), testCheckTarget(clock.Ago(40*time.Minute))); !errors.Is(err, billing.ErrByokTargetChanged) {
-		t.Fatalf("Confirm() = %v", err)
-	}
-	if requests.Load() != 0 {
-		t.Fatal("waiting for another gateway read Azure")
-	}
-}
-
-// A gateway waits azureCheckWait for another gateway's check. Within the grace it then serves,
-// unless the database already knows the target is out of service; past it, it checks unclaimed.
-func TestAzureChecksStopWaitingForAnotherGateway(t *testing.T) {
-	for _, test := range []struct {
-		name        string
-		age         time.Duration
-		binding     string
-		want        error
-		armRequests int32
-	}{
-		{"within grace", 40 * time.Minute, "binding-1", nil, 0},
-		{"within grace with the target out", 40 * time.Minute, "binding-2", billing.ErrByokTarget, 0},
-		{"past grace", 3 * time.Hour, "binding-1", nil, 1},
+		{"aging", 40 * time.Minute},
+		{"past grace", 3 * time.Hour},
+		{"never confirmed", 0},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			started := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
-			store := &fakeAzureCheckStore{claims: []billing.AzureClaim{{
-				StartedAt:   started,
-				VerifiedAt:  started.Add(-test.age),
-				Unavailable: map[string]string{"binding-2": "missing"},
-			}}}
+			store := &fakeAzureCheckStore{claims: []billing.AzureClaim{{Claimed: true, StartedAt: time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)}}}
 			checks, requests, clock := newTestAzureChecks(t, store, map[string]any{"value": []any{}})
-			store.onClaim = func() { clock.Advance(time.Second) }
-			target := testCheckTarget(clock.Ago(test.age))
-			target.BindingID = test.binding
-			if err := checks.Confirm(context.Background(), target); !errors.Is(err, test.want) {
-				t.Fatalf("Confirm() = %v, want %v", err, test.want)
+			release := make(chan struct{})
+			tokens := checks.tokens
+			checks.tokens = azureTokenFunc(func(ctx context.Context, credential azureauth.Credential) (string, error) {
+				<-release
+				return tokens.Token(ctx, credential)
+			})
+			verifiedAt := time.Time{}
+			if test.age > 0 {
+				verifiedAt = clock.Ago(test.age)
 			}
-			claimed, recorded := store.counts()
-			if claimed < 5 || recorded != int(test.armRequests) || requests.Load() != test.armRequests {
-				t.Fatalf("claims=%d records=%d requests=%d", claimed, recorded, requests.Load())
+			for range 8 {
+				if err := checks.Confirm(context.Background(), testCheckTarget(verifiedAt)); err != nil {
+					t.Fatalf("Confirm() = %v while the check ran", err)
+				}
+			}
+			close(release)
+			waitFor(t, "the check", func() bool { _, recorded := store.counts(); return recorded == 1 })
+			if claimed, _ := store.counts(); claimed != 1 || requests.Load() != 1 {
+				t.Fatalf("the requests did not share one check: claims=%d requests=%d", claimed, requests.Load())
 			}
 		})
 	}
 }
 
-// While another gateway holds the claim, this one claims again no sooner than azureCheckWait.
+// Another gateway's recent confirmation answers a check, without a read of Azure.
+func TestAzureChecksUseAnotherGatewaysConfirmation(t *testing.T) {
+	started := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
+	store := &fakeAzureCheckStore{claims: []billing.AzureClaim{{StartedAt: started, VerifiedAt: started.Add(-time.Minute)}}}
+	checks, requests, clock := newTestAzureChecks(t, store, map[string]any{"value": []any{}})
+	target := testCheckTarget(clock.Ago(15 * time.Minute))
+	if err := checks.Confirm(context.Background(), target); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the claim", func() bool { claimed, _ := store.counts(); return claimed == 1 })
+	waitFor(t, "the pause", func() bool {
+		checks.mu.Lock()
+		defer checks.mu.Unlock()
+		return checks.marks["byok-1"].until.Equal(clock.Now().Add(azureCheckFresh - time.Minute))
+	})
+	if _, recorded := store.counts(); recorded != 0 || requests.Load() != 0 {
+		t.Fatalf("a confirmed credential was read again: records=%d requests=%d", recorded, requests.Load())
+	}
+}
+
+// While another gateway holds the claim, this one claims again no sooner than azureCheckPace.
 func TestAzureChecksPaceBackgroundClaims(t *testing.T) {
 	started := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
 	store := &fakeAzureCheckStore{claims: []billing.AzureClaim{{StartedAt: started, VerifiedAt: started.Add(-15 * time.Minute)}}}
@@ -474,7 +361,7 @@ func TestAzureChecksPaceBackgroundClaims(t *testing.T) {
 	if claimed, _ := store.counts(); claimed != 1 {
 		t.Fatalf("requests claimed again at once: claims=%d", claimed)
 	}
-	clock.Advance(azureCheckWait)
+	clock.Advance(azureCheckPace)
 	if err := checks.Confirm(context.Background(), target); err != nil {
 		t.Fatal(err)
 	}
@@ -501,74 +388,8 @@ func TestAzureChecksDropMarksThatPassed(t *testing.T) {
 	}
 }
 
-// A request waits for a slow check only so long. Within the grace it then keeps its target, and
-// the check goes on for later requests.
-func TestAzureChecksBoundTheWaitForASlowCheck(t *testing.T) {
-	for _, test := range []struct {
-		name string
-		age  time.Duration
-		want error
-	}{
-		{"within grace", 40 * time.Minute, nil},
-		{"never confirmed", 0, billing.ErrByok},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			store := &fakeAzureCheckStore{claims: []billing.AzureClaim{{Claimed: true, StartedAt: time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)}}}
-			checks, _, clock := newTestAzureChecks(t, store, map[string]any{"value": []any{}})
-			checks.wait = 20 * time.Millisecond
-			release := make(chan struct{})
-			tokens := checks.tokens
-			checks.tokens = azureTokenFunc(func(ctx context.Context, credential azureauth.Credential) (string, error) {
-				<-release
-				return tokens.Token(ctx, credential)
-			})
-			verifiedAt := time.Time{}
-			if test.age > 0 {
-				verifiedAt = clock.Ago(test.age)
-			}
-			if err := checks.Confirm(context.Background(), testCheckTarget(verifiedAt)); !errors.Is(err, test.want) {
-				t.Fatalf("Confirm() = %v, want %v", err, test.want)
-			}
-			close(release)
-			deadline := time.Now().Add(5 * time.Second)
-			for {
-				if _, recorded := store.counts(); recorded == 1 {
-					break
-				}
-				if time.Now().After(deadline) {
-					t.Fatal("the check did not go on after the request stopped waiting")
-				}
-				time.Sleep(5 * time.Millisecond)
-			}
-		})
-	}
-}
-
-func TestAzureChecksCoalesceWaitingRequests(t *testing.T) {
-	store := &fakeAzureCheckStore{claims: []billing.AzureClaim{{Claimed: true, StartedAt: time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)}}}
-	checks, requests, clock := newTestAzureChecks(t, store, map[string]any{"value": []any{}})
-	release := make(chan struct{})
-	tokens := checks.tokens
-	checks.tokens = azureTokenFunc(func(ctx context.Context, credential azureauth.Credential) (string, error) {
-		<-release
-		return tokens.Token(ctx, credential)
-	})
-	var group sync.WaitGroup
-	for range 8 {
-		group.Go(func() {
-			if err := checks.Confirm(context.Background(), testCheckTarget(clock.Ago(time.Hour))); err != nil {
-				t.Error(err)
-			}
-		})
-	}
-	time.Sleep(50 * time.Millisecond)
-	close(release)
-	group.Wait()
-	if claimed, recorded := store.counts(); claimed != 1 || recorded != 1 || requests.Load() != 1 {
-		t.Fatalf("waiting requests did not share one check: claims=%d records=%d requests=%d", claimed, recorded, requests.Load())
-	}
-}
-
+// While this gateway's checks fail, requests keep their targets until the last confirmation is
+// two hours old, and then stop until a check succeeds.
 func TestAzureChecksServeThroughFailuresOnlyWithinGrace(t *testing.T) {
 	for _, test := range []struct {
 		name string
@@ -581,33 +402,43 @@ func TestAzureChecksServeThroughFailuresOnlyWithinGrace(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := &fakeAzureCheckStore{claims: []billing.AzureClaim{{Claimed: true, StartedAt: time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)}}}
-			checks, _, clock := newTestAzureChecks(t, store, map[string]any{"status": http.StatusServiceUnavailable})
+			checks, requests, clock := newTestAzureChecks(t, store,
+				map[string]any{"status": http.StatusServiceUnavailable},
+				map[string]any{"status": http.StatusServiceUnavailable},
+				map[string]any{"value": []any{}})
 			verifiedAt := time.Time{}
 			if test.age > 0 {
 				verifiedAt = clock.Ago(test.age)
 			}
 			target := testCheckTarget(verifiedAt)
-			if err := checks.Confirm(context.Background(), target); !errors.Is(err, test.want) {
-				t.Fatalf("Confirm() = %v, want %v", err, test.want)
+			// Nothing has failed yet, so the first request keeps its target and starts the check.
+			if err := checks.Confirm(context.Background(), target); err != nil {
+				t.Fatalf("Confirm() before any check = %v", err)
 			}
+			waitFor(t, "the failed check", func() bool { return checks.failing("byok-1") })
 			if _, recorded := store.counts(); recorded != 0 {
 				t.Fatal("a failed check recorded deployments")
 			}
 			// A failed check waits before the gateway tries Azure again.
-			if checks.due("byok-1") {
-				t.Fatal("a failed check left the credential due at once")
-			}
-			// Until then, requests answer at once instead of waiting for another check.
 			if err := checks.Confirm(context.Background(), target); !errors.Is(err, test.want) {
-				t.Fatalf("Confirm() during the retry = %v, want %v", err, test.want)
+				t.Fatalf("Confirm() after the failure = %v, want %v", err, test.want)
 			}
 			if claimed, _ := store.counts(); claimed != 1 {
 				t.Fatalf("a request during the retry claimed a check: claims=%d", claimed)
 			}
+			// The failure stands through the retry's own check, which fails too.
+			clock.Advance(azureCheckRetry)
+			if err := checks.Confirm(context.Background(), target); !errors.Is(err, test.want) {
+				t.Fatalf("Confirm() at the retry = %v, want %v", err, test.want)
+			}
+			waitFor(t, "the retry", func() bool { return requests.Load() == 2 && checks.failing("byok-1") })
+			// A check that succeeds clears it.
 			clock.Advance(azureCheckRetry)
 			_ = checks.Confirm(context.Background(), target)
-			if claimed, _ := store.counts(); claimed != 2 {
-				t.Fatalf("no check after the retry: claims=%d", claimed)
+			waitFor(t, "the check that succeeds", func() bool { _, recorded := store.counts(); return recorded == 1 })
+			waitFor(t, "the cleared failure", func() bool { return !checks.failing("byok-1") })
+			if err := checks.Confirm(context.Background(), target); err != nil {
+				t.Fatalf("Confirm() after a check succeeded = %v", err)
 			}
 		})
 	}
@@ -644,7 +475,7 @@ func TestAzureChecksReadDeploymentsLikeDiscovery(t *testing.T) {
 		t.Fatalf("deployments() = %v (%s)", err, reason)
 	}
 	want := []billing.AzureDeployment{
-		{ID: testAzureAccount + "/deployments/customer-sol", ModelFormat: "OpenAI", ModelName: "gpt-5.6-sol", ModelVersion: "2026-07-09", SkuName: "GlobalStandard", VersionUpgrade: "OnceNewDefaultVersionAvailable"},
+		{ID: testAzureAccount + "/deployments/customer-sol", ModelFormat: "OpenAI", ModelName: "gpt-5.6-sol", ModelVersion: "2026-07-09", SkuName: "GlobalStandard"},
 		{ID: testAzureAccount + "/deployments/odd.name_1", ModelFormat: "OpenAI", State: "Creating"},
 	}
 	if requests.Load() != 3 || len(deployments) != len(want) || deployments[0] != want[0] || deployments[1] != want[1] {

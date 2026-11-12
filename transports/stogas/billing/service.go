@@ -142,9 +142,6 @@ type UpstreamTarget struct {
 	ModelVersion        string   `json:"modelVersion"`
 	ProcessingLocations []string `json:"processingLocations"`
 	StorageLocations    []string `json:"storageLocations"`
-	// VersionUnreported marks a request whose reply will not name the model version that served
-	// it, so only a target whose version Azure keeps may serve it.
-	VersionUnreported bool `json:"versionUnreported"`
 }
 
 type AzureBinding struct {
@@ -162,9 +159,6 @@ type AzureBinding struct {
 	TokenScope         string `json:"tokenScope"`
 	// ModelDeprecationAt is when Azure retires the model version, nil when Azure named no date.
 	ModelDeprecationAt *time.Time `json:"modelDeprecationAt"`
-	// AutoUpgrade says when Azure may move the deployment to another version: none,
-	// at_retirement, or new_default when another version becomes the default.
-	AutoUpgrade string `json:"autoUpgrade"`
 }
 
 type azureBoundBinding struct {
@@ -262,7 +256,6 @@ type Service struct {
 	sanctionedNetworksQuery    string
 	claimAzureCheckQuery       string
 	recordAzureCheckQuery      string
-	stopAzureTargetQuery       string
 	claimAzureDiscoveryQuery   string
 	recordAzureDiscoveryQuery  string
 	byokCheckTargetQuery       string
@@ -322,11 +315,10 @@ func NewService(
 		storeLogBatchQuery:        db.functionQuery("store_gateway_log_batch", "*", "$1::json"),
 		sanctionedSourceQuery:     db.functionQuery("gateway_sanctioned_networks_source", "*", ""),
 		sanctionedNetworksQuery:   db.functionQuery("gateway_sanctioned_networks", "first_address, last_address", ""),
-		claimAzureCheckQuery:      db.functionQuery("gateway_claim_azure_check", "claimed, verified_at, started_at, unavailable", "$1::uuid, make_interval(secs => $2::double precision)"),
-		recordAzureCheckQuery:     db.functionQuery("gateway_record_azure_check", "result, unavailable", "$1::uuid, $2::timestamptz, $3::jsonb"),
-		stopAzureTargetQuery:      db.functionQuery("gateway_stop_azure_target", "stopped", "$1::uuid, $2::uuid, $3::text"),
+		claimAzureCheckQuery:      db.functionQuery("gateway_claim_azure_check", "claimed, verified_at, started_at", "$1::uuid, make_interval(secs => $2::double precision)"),
+		recordAzureCheckQuery:     db.functionQuery("gateway_record_azure_check", "result", "$1::uuid, $2::timestamptz, $3::jsonb"),
 		claimAzureDiscoveryQuery:  db.functionQuery("gateway_claim_azure_discovery", "claimed, started_at", "$1::uuid"),
-		recordAzureDiscoveryQuery: db.functionQuery("gateway_record_azure_discovery", "result, unavailable", "$1::uuid, $2::timestamptz, $3::text, $4::text, $5::jsonb, $6::jsonb"),
+		recordAzureDiscoveryQuery: db.functionQuery("gateway_record_azure_discovery", "result", "$1::uuid, $2::timestamptz, $3::text, $4::text, $5::jsonb, $6::jsonb"),
 		byokCheckTargetQuery:      db.functionQuery("gateway_byok_check_target", "result, provider, encrypted_secret, encryption_key_id, target, azure_account_id, encryption_keys, checked_at, started_at", "$1::text, $2::text, $3::uuid"),
 		recordByokCheckQuery:      db.functionQuery("gateway_record_byok_check", "result, checked_at, azure_targets", "$1::text, $2::text, $3::uuid, $4::text, $5::timestamptz, $6::text, $7::timestamptz, $8::jsonb, $9::jsonb"),
 		inferenceTokenPublicKey:   publicKey,
@@ -348,7 +340,6 @@ func NewService(
 		service.sanctionedNetworksQuery,
 		service.claimAzureCheckQuery,
 		service.recordAzureCheckQuery,
-		service.stopAzureTargetQuery,
 		service.claimAzureDiscoveryQuery,
 		service.recordAzureDiscoveryQuery,
 		service.byokCheckTargetQuery,
@@ -505,7 +496,7 @@ func PairRefused(err error) bool {
 		return false
 	}
 	switch refusal {
-	case ErrInsufficientBalance, ErrByok, ErrByokRequired, ErrByokTarget, ErrByokTargetChanged, errByokNotAllowed:
+	case ErrInsufficientBalance, ErrByok, ErrByokRequired, ErrByokTarget, errByokNotAllowed:
 		return true
 	}
 	// Other policy results are limits, except a disabled or expired scope that

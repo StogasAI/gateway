@@ -26,13 +26,10 @@ type CachedCredential struct {
 	EncryptedSecret string                   `json:"encryptedSecret"`
 	EncryptionKeyID string                   `json:"encryptionKeyId"`
 	Bindings        []AzureCredentialBinding `json:"bindings"`
-	// ChangedTargets are Azure targets whose chosen deployment now serves another model,
-	// version or SKU. They serve nothing, but name the cause when no other credential serves.
-	ChangedTargets []AzureTarget          `json:"changedTargets"`
-	Target         *CloudTarget           `json:"target"`
-	Policy         credentialPolicyRecord `json:"policy"`
-	policySource   *sharedCredentialPolicy
-	azureBindings  map[azureBindingKey][]*AzureCredentialBinding
+	Target          *CloudTarget             `json:"target"`
+	Policy          credentialPolicyRecord   `json:"policy"`
+	policySource    *sharedCredentialPolicy
+	azureBindings   map[azureBindingKey][]*AzureCredentialBinding
 }
 
 // CloudTarget is the public part of an AWS or Google Cloud credential: who may
@@ -62,17 +59,6 @@ type AzureTarget struct {
 	ModelVersion   string `json:"modelVersion"`
 	Hosting        string `json:"hosting"`
 	DeploymentType string `json:"deploymentType"`
-}
-
-// AzureTargetChanged reports whether the deployment chosen for target now serves another
-// model, version or SKU.
-func (c *CachedCredential) AzureTargetChanged(target UpstreamTarget) bool {
-	for _, changed := range c.ChangedTargets {
-		if changed == (AzureTarget{target.ModelFormat, target.Model, target.ModelVersion, target.Hosting, target.DeploymentType}) {
-			return true
-		}
-	}
-	return false
 }
 
 func indexAzureBindings(bindings []AzureCredentialBinding) map[azureBindingKey][]*AzureCredentialBinding {

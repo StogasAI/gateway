@@ -407,12 +407,10 @@ func outcomeUnknown(failure *schemas.BifrostError, attempt *schemas.BifrostConte
 
 // providerMayHaveRun reports a failed call after which the provider may have
 // run the request, or part of it, so that another call could run it twice: a
-// failure with billed usage, an Azure reply from another model version than
-// the pair's target, or a failure that does not show whether the provider ran
-// the request.
+// failure with billed usage, or a failure that does not show whether the
+// provider ran the request.
 func providerMayHaveRun(failure *schemas.BifrostError, attempt *schemas.BifrostContext) bool {
-	return !requestNotSent(failure) && (failure.ExtraFields.BilledUsage != nil ||
-		bifrostErrorCode(failure) == billing.ErrByokTargetChanged.Code || outcomeUnknown(failure, attempt))
+	return !requestNotSent(failure) && (failure.ExtraFields.BilledUsage != nil || outcomeUnknown(failure, attempt))
 }
 
 // providerAnswered reports a call that got a response from its provider.
@@ -538,64 +536,26 @@ func startProviderCall[T any](r *providerRun, wait time.Duration, call providerC
 		}
 		if server != nil {
 			server.providers.observe(provider, result.failure)
-			if authorization != nil && authorization.AzureBinding != nil {
-				answered := result.failure == nil
-				result.failure = server.checkAzureReply(attempt, authorization, result.failure, func() {
-					var none T
-					discardProviderResponse(attempt, result.response)
-					result.response = none
-				})
-				if answered && result.failure != nil {
-					state.RejectProviderReply(result.failure)
-				}
+			if authorization != nil && authorization.AzureBinding != nil && server.azureTargetMoved(attempt, authorization, result.failure) {
+				server.runtime.RecheckAzureTarget(authorization)
 			}
 		}
 	}()
 	return ready
 }
 
-// checkAzureReply checks a call on an Azure target before anything of its reply is used. A reply
-// that names another model version than the target's fails the call and the request, since the
-// provider ran it, and stops the target for the fleet. A deployment that is gone or retired asks
-// for a check of its account at once. discard drops a reply that failed.
-func (s *Server) checkAzureReply(attempt *schemas.BifrostContext, authorization *billing.Authorization, failure *schemas.BifrostError, discard func()) *schemas.BifrostError {
+// azureTargetMoved reports a call on an Azure target whose reply shows that the target no longer
+// serves its model version: the deployment is gone or retired, or the reply names another version.
+// The account then needs a check at once, which stops the target for the fleet. The reply itself
+// stands: a failure moves the request on as any other does, and an answer from another version is
+// the answer of the customer's own deployment, which Azure moved after the last check, so it goes
+// to the caller and the log names the version that served it.
+func (s *Server) azureTargetMoved(attempt *schemas.BifrostContext, authorization *billing.Authorization, failure *schemas.BifrostError) bool {
 	if failure != nil {
-		if status := billing.NormalizeUpstreamStatus(failure); status == "model_unavailable" || status == "model_retired" {
-			s.runtime.RecheckAzureTarget(authorization)
-		}
-		return failure
+		status := billing.NormalizeUpstreamStatus(failure)
+		return status == "model_unavailable" || status == "model_retired"
 	}
-	served, changed := stogas.AzureServedModelChanged(authorization, providerResponseHeader(attempt, "x-ms-served-model"))
-	if !changed {
-		return nil
-	}
-	discard()
-	s.runtime.StopAzureTarget(authorization, served)
-	return servedModelChangedError()
-}
-
-// servedModelChangedError fails a call whose Azure reply named another model version than its
-// target. The caller sees what the stopped target answers later requests.
-func servedModelChangedError() *schemas.BifrostError {
-	public := stogas.PublicBillingErrorFor(billing.ErrByokTargetChanged)
-	return &schemas.BifrostError{
-		IsBifrostError: true,
-		StatusCode:     schemas.Ptr(public.StatusCode),
-		Type:           &public.Type,
-		Error:          &schemas.ErrorField{Type: &public.Type, Code: &public.Code, Message: public.Message},
-	}
-}
-
-// discardProviderResponse stops a provider call whose reply nobody uses. A stream's provider
-// stops when its call is canceled, and the stream is drained so that it can close.
-func discardProviderResponse[T any](attempt *schemas.BifrostContext, response T) {
-	if stream, ok := any(response).(chan *schemas.BifrostStreamChunk); ok && stream != nil {
-		attempt.Cancel()
-		go func() {
-			for range stream {
-			}
-		}()
-	}
+	return stogas.AzureServedModelChanged(authorization, providerResponseHeader(attempt, "x-ms-served-model"))
 }
 
 // runProvider calls the bound pair, and the pairs after it, until a call

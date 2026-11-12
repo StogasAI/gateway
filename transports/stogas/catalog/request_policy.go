@@ -145,8 +145,7 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 	// When no credential serves any candidate, the request says so. Once one
 	// pair passes this check, a policy may be what removed the rest, so the
 	// request keeps the general error and the simulator names each cause.
-	// A removed target whose chosen Azure deployment moved to another model names that cause.
-	targetRemoved, targetPassed, targetChanged := false, false, false
+	targetRemoved, targetPassed := false, false
 	// A pair whose policy skips missing encryption keys leaves before it
 	// takes a place among the deployment's pairs. Its candidate stays pending
 	// for later credentials that share its policy.
@@ -203,8 +202,6 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 			ranks[credentialCandidate{selection.provider, index}] = rank
 			if input.DeploymentEligible != nil && !input.DeploymentEligible(selection.provider, index, selection.deployment.WireRoute(route), selection.deployment) {
 				targetRemoved = true
-				targetChanged = targetChanged || input.DeploymentChanged != nil &&
-					input.DeploymentChanged(selection.provider, index, selection.deployment)
 				trace.removePair(selection, index, nil, RemovedCandidate{Reason: RemovedCredentialTarget})
 				continue
 			}
@@ -338,9 +335,6 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 	if len(candidates.filtered) == 0 && targetRemoved && !targetPassed {
 		if err := variants.ruledOutError(input, route); err != nil {
 			return nil, err
-		}
-		if targetChanged {
-			return nil, ErrByokTargetChanged
 		}
 		return nil, ErrByokTargetUnavailable
 	}

@@ -16,8 +16,6 @@ const (
 	azureByokSchema        = "stogas.azure-byok.v6"
 	azureDeploymentNameMax = 256
 	azureDataScope         = "https://ai.azure.com/.default"
-	// The longest served model that a stopped target records.
-	azureServedModelMax = 255
 )
 
 var (
@@ -53,7 +51,7 @@ func CredentialDeploymentFilter(snapshot *billing.KeyConfigSnapshot, now time.Ti
 			cloudTargets[provider] = append(cloudTargets[provider], target)
 		}
 	}
-	return func(provider schemas.ModelProvider, index int, route catalog.Route, deployment catalog.Deployment) bool {
+	return func(provider schemas.ModelProvider, index int, _ catalog.Route, deployment catalog.Deployment) bool {
 		if targets, cloud := cloudTargets[provider]; cloud || provider == catalog.ProviderAWS || provider == catalog.ProviderGoogleCloud {
 			return index >= 0 && index < len(targets) && cloudTargetServes(provider, targets[index], deployment)
 		}
@@ -63,10 +61,8 @@ func CredentialDeploymentFilter(snapshot *billing.KeyConfigSnapshot, now time.Ti
 		if index < 0 || index >= len(lookups) || lookups[index] == nil {
 			return false
 		}
-		unreported := !azureRepliesNameVersion(route, deployment)
 		for _, item := range lookups[index](credentialTarget(deployment)) {
-			if item.ModelDeprecationAt != nil && !now.Before(*item.ModelDeprecationAt) ||
-				unreported && !azureKeepsVersion(item.AzureBinding, now) {
+			if azureRetired(item.ModelDeprecationAt, now) {
 				continue
 			}
 			if validAzureBinding(servingBinding(item.AzureBinding, deployment), deployment) {
@@ -74,19 +70,6 @@ func CredentialDeploymentFilter(snapshot *billing.KeyConfigSnapshot, now time.Ti
 			}
 		}
 		return false
-	}
-}
-
-// CredentialTargetChanged reports whether an Azure credential's chosen deployment for a catalog
-// deployment now serves another model, version or SKU. A request that only such targets could
-// serve then gets byok_target_changed, which tells the owner to choose the new target.
-func CredentialTargetChanged(snapshot *billing.KeyConfigSnapshot) func(schemas.ModelProvider, int, catalog.Deployment) bool {
-	selections := snapshot.Credentials["azure"]
-	return func(provider schemas.ModelProvider, index int, deployment catalog.Deployment) bool {
-		if provider != schemas.Azure || index < 0 || index >= len(selections) || selections[index].Credential == nil {
-			return false
-		}
-		return selections[index].Credential.AzureTargetChanged(credentialTarget(deployment))
 	}
 }
 
@@ -144,74 +127,35 @@ func ValidatePreparedCredential(credential *billing.PreparedCredential, provider
 	return nil
 }
 
-// azureRepliesNameVersion reports whether Azure's reply to a request names the model version
-// that served it. Azure sends x-ms-served-model, the deployment's model name and version, on
-// Responses for every model format and on Chat Completions for OpenAI models, and the Chat
-// Completions body names the OpenAI model too. Chat Completions for other formats name only the
-// deployment. Replies through Anthropic's Messages API were not probed: deploying Claude needs
-// the account's legal attestation and a Marketplace order (probed 2026-11-03).
-func azureRepliesNameVersion(route catalog.Route, deployment catalog.Deployment) bool {
-	switch format := deployment.Upstream.ModelFormat; {
-	case format == "Anthropic":
-		return false
-	case route == catalog.RouteResponses:
-		return true
-	default:
-		return route == catalog.RouteChat && format == "OpenAI"
-	}
-}
-
-// azureKeepsVersion reports whether Azure keeps a target's model version at now, so that a
-// request whose reply names no version may use it. Azure moves a deployment within two weeks of
-// another version becoming the default, without notice, unless its upgrade option waits for the
-// version to retire or never upgrades. It moves those when the version retires, region by region
-// from the retirement date, and it can move a preview version whatever the option, so the target
-// stops when that date begins anywhere.
-func azureKeepsVersion(binding billing.AzureBinding, now time.Time) bool {
-	if binding.AutoUpgrade != "none" && binding.AutoUpgrade != "at_retirement" {
+// azureRetired says whether the model version that Azure retires on a date has retired at now:
+// once that date has ended everywhere on Earth, at 12:00 UTC on the next day, as the catalog reads
+// its own retirement dates. Azure names a date, which can begin or end in any time zone, and a
+// deployment that Azure stops earlier answers with a retirement that moves the request on.
+// PostgreSQL's azure_target_serves is the same rule.
+func azureRetired(retiresAt *time.Time, now time.Time) bool {
+	if retiresAt == nil {
 		return false
 	}
-	return binding.ModelDeprecationAt == nil || now.Before(azureRetirementBegins(*binding.ModelDeprecationAt))
-}
-
-// azureRetirementBegins is when a retirement date begins in UTC+14, the first time zone to reach
-// it: 10:00 UTC the day before.
-func azureRetirementBegins(retiresAt time.Time) time.Time {
 	day := retiresAt.UTC()
-	return time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, time.UTC).Add(-14 * time.Hour)
+	return !now.Before(time.Date(day.Year(), day.Month(), day.Day(), 36, 0, 0, 0, time.UTC))
 }
 
-// AzureServedModelChanged reports the model that an Azure reply named, served, when it is another
-// model or version than the reply's target. Azure names the deployment's model name and version
-// joined by a hyphen. A reply that names nothing, or only the model, is no evidence. The result
-// keeps only characters that a model name uses.
-func AzureServedModelChanged(authorization *billing.Authorization, served string) (string, bool) {
+// AzureServedModelChanged reports whether an Azure reply named another model or version than its
+// target's. Azure names the deployment's model name and version joined by a hyphen on Responses,
+// and on Chat Completions for OpenAI models. A reply that names nothing, or only the model, is no
+// evidence. Azure moved the deployment after its last check, so the reply is the customer's own
+// deployment's answer and goes to the caller, and a check of the account stops the target.
+func AzureServedModelChanged(authorization *billing.Authorization, served string) bool {
 	if authorization == nil || authorization.AzureBinding == nil {
-		return "", false
+		return false
 	}
 	binding := authorization.AzureBinding
 	served = strings.TrimSpace(served)
-	if served == "" || strings.EqualFold(served, binding.ModelName) ||
-		strings.EqualFold(served, binding.ModelName+"-"+binding.ModelVersion) {
-		return "", false
-	}
-	if len(served) > azureServedModelMax {
-		served = served[:azureServedModelMax]
-	}
-	clean := []byte(served)
-	for index, char := range clean {
-		if !(char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9' ||
-			index > 0 && (char == '.' || char == '_' || char == ':' || char == '-')) {
-			clean[index] = '_'
-		}
-	}
-	if clean[0] == '_' {
-		clean[0] = 'x'
-	}
-	return string(clean), true
+	return served != "" && !strings.EqualFold(served, binding.ModelName) &&
+		!strings.EqualFold(served, binding.ModelName+"-"+binding.ModelVersion)
 }
 
-func azureDirectKey(authorization *billing.Authorization, resolution *catalog.ResolvedRequest, now time.Time) (schemas.Key, string, error) {
+func azureDirectKey(authorization *billing.Authorization, resolution *catalog.ResolvedRequest) (schemas.Key, string, error) {
 	if authorization == nil || resolution == nil || resolution.Provider != schemas.Azure || authorization.AzureBinding == nil {
 		return schemas.Key{}, "", billing.ErrByok
 	}
@@ -222,10 +166,6 @@ func azureDirectKey(authorization *billing.Authorization, resolution *catalog.Re
 	binding := servingBinding(*authorization.AzureBinding, resolution.Deployment)
 	if !validAzureBinding(binding, resolution.Deployment) {
 		return schemas.Key{}, "", billing.ErrByok
-	}
-	// The hold chose the target for this; the gateway's clock confirms it.
-	if !azureRepliesNameVersion(resolution.WireRoute(), resolution.Deployment) && !azureKeepsVersion(binding, now) {
-		return schemas.Key{}, "", billing.ErrByokTarget
 	}
 	return schemas.Key{
 		ID:     authorization.UpstreamByok,

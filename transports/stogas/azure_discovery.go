@@ -95,9 +95,6 @@ func azureDiscoveryMessage(err error) string {
 // azureDiscoveredBinding is a target that a deployment or an Instant project makes, as
 // azure_save_discovery reads it.
 type azureDiscoveredBinding struct {
-	// The deployment's version upgrade option, empty when Azure left it out or for an Instant
-	// target, which names its version.
-	VersionUpgrade       string     `json:"versionUpgrade"`
 	DeploymentName       string     `json:"deploymentName"`
 	DeploymentResourceID string     `json:"deploymentResourceId"`
 	DeploymentType       string     `json:"deploymentType"`
@@ -844,7 +841,7 @@ func (c *azureDiscoveryContext) deploymentBindings(values []json.RawMessage) ([]
 		if regional, ok := c.models[identity.key()]; ok {
 			metadata = regional.azureModelMetadata
 		}
-		if metadata.deprecationAt != nil && !metadata.deprecationAt.After(c.discoveredAt) {
+		if azureRetired(metadata.deprecationAt, c.discoveredAt) {
 			continue
 		}
 		hosting := azureModelHosting(identity.format, metadata)
@@ -866,7 +863,6 @@ func (c *azureDiscoveryContext) deploymentBindings(values []json.RawMessage) ([]
 			continue
 		}
 		if bindings, err = c.append(bindings, azureDiscoveredBinding{
-			VersionUpgrade:       fact.VersionUpgrade,
 			DeploymentName:       name,
 			DeploymentResourceID: resourceID,
 			DeploymentType:       deploymentType,
@@ -910,7 +906,7 @@ func (c *azureDiscoveryContext) instantBindings(values []json.RawMessage, names 
 		endpoint := c.foundry + "/api/projects/" + name
 		for _, key := range c.modelOrder {
 			model := c.models[key]
-			if !model.instant || model.deprecationAt != nil && !model.deprecationAt.After(c.discoveredAt) ||
+			if !model.instant || azureRetired(model.deprecationAt, c.discoveredAt) ||
 				allowed != nil && !allowed[key] {
 				continue
 			}

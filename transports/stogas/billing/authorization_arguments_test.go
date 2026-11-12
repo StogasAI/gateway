@@ -119,7 +119,6 @@ func recordedAuthorizations(t *testing.T) map[string]*authorizationArguments {
 	}
 	inPlaces := azure
 	inPlaces.ProcessingLocations, inPlaces.StorageLocations = []string{"US"}, []string{"US"}
-	inPlaces.VersionUnreported = true
 
 	stored := base("stored", recordedByokID)
 	stored.ProviderKey, stored.ProductKey = "openai", "gpt-4o-mini"

@@ -23,7 +23,7 @@
 			"product_key": "gpt-5.6-sol",
 			"estimated_upstream_cost_usd": "0.01",
 			"expires_at": "2026-01-02T03:19:05.678901Z",
-			"hold_params_hash": "c3d09a2dc898ceee0a6a4099bfe57483c23c04a0dd4dda62a13e869edf9aaa5b",
+			"hold_params_hash": "b8237868812ce90caed4f880799c258641b2b48479593728e752b58cf78970fa",
 			"upstream_target": {
 				"deploymentType": "global_standard",
 				"hosting": "azure",
@@ -31,8 +31,7 @@
 				"modelFormat": "OpenAI",
 				"modelVersion": "2026-07-09",
 				"processingLocations": null,
-				"storageLocations": null,
-				"versionUnreported": false
+				"storageLocations": null
 			},
 			"encryption_key_id": "0000000000000000000000000000000000000000000000000000000000000c0c",
 			"authorize_before": "2026-01-02T03:04:07.178901Z",
@@ -65,7 +64,7 @@
 			"product_key": "gpt-5.6-sol",
 			"estimated_upstream_cost_usd": "0.01",
 			"expires_at": "2026-01-02T03:19:05.678901Z",
-			"hold_params_hash": "3e17c4373f3d10c0b5c9dffb499fa199c0929e9e09c421b8397ca65fb9e0d6cb",
+			"hold_params_hash": "7a606438bc90fbd9f733d00452592baca632a21279f0f169251e51cc8deea282",
 			"upstream_target": {
 				"deploymentType": "global_standard",
 				"hosting": "azure",
@@ -77,8 +76,7 @@
 				],
 				"storageLocations": [
 					"US"
-				],
-				"versionUnreported": true
+				]
 			},
 			"encryption_key_id": null,
 			"authorize_before": "2026-01-02T03:04:07.178901Z",
@@ -111,7 +109,7 @@
 			"product_key": "gpt-5.6-sol",
 			"estimated_upstream_cost_usd": "0.01",
 			"expires_at": "2026-01-02T03:19:05.678901Z",
-			"hold_params_hash": "c3d09a2dc898ceee0a6a4099bfe57483c23c04a0dd4dda62a13e869edf9aaa5b",
+			"hold_params_hash": "b8237868812ce90caed4f880799c258641b2b48479593728e752b58cf78970fa",
 			"upstream_target": {
 				"deploymentType": "global_standard",
 				"hosting": "azure",
@@ -119,8 +117,7 @@
 				"modelFormat": "OpenAI",
 				"modelVersion": "2026-07-09",
 				"processingLocations": null,
-				"storageLocations": null,
-				"versionUnreported": false
+				"storageLocations": null
 			},
 			"encryption_key_id": null,
 			"authorize_before": "2026-01-02T03:04:07.178901Z",
