@@ -234,7 +234,7 @@ func TestRejectionLogsFlushWhenTrafficStopsAndRetryTheSameBatchUntilStored(t *te
 	}
 }
 
-func TestRejectionLogsNameResolvedRequestTypes(t *testing.T) {
+func TestRejectionLogsNameInterfaceAndStream(t *testing.T) {
 	db := newFakeSettlementDatabase(t, settleAll)
 	service := db.service
 	for i, requestType := range []string{"chat_completion", "chat_completion_stream", "responses", "responses_stream", "chat_completion_request"} {
@@ -246,12 +246,12 @@ func TestRejectionLogsNameResolvedRequestTypes(t *testing.T) {
 	got := map[string]int{}
 	service.rejectionLogs.mu.Lock()
 	for _, row := range service.rejectionLogs.groups {
-		got[row.RequestType]++
+		got[fmt.Sprint(row.Interface, " ", row.Stream)]++
 	}
 	service.rejectionLogs.mu.Unlock()
-	want := map[string]int{"chat_completion": 1, "chat_completion_stream": 1, "responses": 1, "responses_stream": 1, "unknown": 1}
+	want := map[string]int{"chat_completions false": 1, "chat_completions true": 1, "responses false": 2, "responses true": 1}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
-		t.Fatalf("rejection request types = %v, want %v", got, want)
+		t.Fatalf("rejection interfaces = %v, want %v", got, want)
 	}
 }
 
@@ -265,7 +265,7 @@ func TestRejectionLogsBoundMemoryAndDiscardUntrustedLabels(t *testing.T) {
 	service.rejectionLogs.mu.Lock()
 	for _, row := range service.rejectionLogs.groups {
 		encoded, _ := json.Marshal(row)
-		if strings.Contains(string(encoded), "secret") || row.RequestType != "unknown" || row.GatewayError == nil || row.GatewayError.Code != "insufficient_balance" {
+		if strings.Contains(string(encoded), "secret") || row.Interface != "responses" || row.Stream || row.GatewayError == nil || row.GatewayError.Code != "insufficient_balance" {
 			t.Errorf("untrusted labels escaped: %s", encoded)
 		}
 	}

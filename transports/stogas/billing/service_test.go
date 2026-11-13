@@ -596,7 +596,7 @@ func TestLargestRequestLogFitsTheLimit(t *testing.T) {
 	event := RequestEvent{
 		SchemaVersion: RequestLogSchemaVersion, RequestID: uuid.NewString(), CreatedAt: "2026-10-16T12:00:00.000Z", LastRequestAt: "2026-10-16T12:00:00.000Z",
 		RequestCount: 1, GatewayError: &EventError{Code: "upstream_configuration_error", Status: 599}, APIKeyID: uuid.NewString(),
-		GrantID: new(uuid.NewString()), MemberID: uuid.NewString(), OrganizationID: uuid.NewString(), RequestType: "chat_completion_stream",
+		GrantID: new(uuid.NewString()), MemberID: uuid.NewString(), OrganizationID: uuid.NewString(), Interface: "chat_completions", Stream: true,
 		RequestSettings: RequestSettings{
 			MaxOutputTokens: &integer, ReasoningEnabled: &flag, ReasoningEffort: setting, ReasoningMaxTokens: &integer, ReasoningSummary: setting,
 			ReasoningDisplay: setting, TaskBudgetTokens: &integer, Temperature: &number, TopP: &number, TopK: &integer, FrequencyPenalty: &number,

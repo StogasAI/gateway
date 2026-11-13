@@ -6,8 +6,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/maximhq/bifrost/core/schemas"
 )
 
 const (
@@ -49,10 +47,11 @@ type RejectionInput struct {
 }
 
 type rejectionLogKey struct {
-	keyID, requestType, code, transport string
-	status                              int
-	window                              int64
-	versions, roots                     [32]byte
+	keyID, requestInterface, code, transport string
+	stream                                   bool
+	status                                   int
+	window                                   int64
+	versions, roots                          [32]byte
 }
 
 type RejectionLogDiagnostics struct {
@@ -113,13 +112,15 @@ func NewRejectionEvent(input RejectionInput) RequestEvent {
 	}
 	stamp := at.Format("2006-01-02T15:04:05.000Z")
 	zero := ZeroChargeUSD
+	requestInterface, stream := RequestShape(input.RequestType)
 	return RequestEvent{
+		Interface: requestInterface, Stream: stream,
 		SchemaVersion: RequestLogSchemaVersion,
 		RequestID:     input.RequestID, CreatedAt: stamp, LastRequestAt: stamp, RequestCount: 1,
 		PolicyVersions: input.PolicyVersions,
 		APIKeyID:       input.Claims.KeyID, OrganizationID: input.Claims.OrganizationID,
 		MemberID: input.Claims.ResponsibleID, GrantID: input.Claims.GrantID,
-		RequestType: input.RequestType, Metadata: map[string]string{}, Transport: input.Transport,
+		Metadata: map[string]string{}, Transport: input.Transport,
 		EncryptionKeyIDs: encryptionKeyIDs(input.EncryptionKeyIDs),
 		GatewayError:     &EventError{Code: NormalizeStogasErrorCode(input.Code, input.StatusCode), Status: input.StatusCode},
 		ProviderAttempts: []ProviderAttempt{},
@@ -167,11 +168,6 @@ func (s *Service) recordRejection(input RejectionInput, export *RejectionExport)
 		return false, nil
 	}
 	input.Code = NormalizeStogasErrorCode(input.Code, input.StatusCode)
-	switch schemas.RequestType(input.RequestType) {
-	case schemas.ChatCompletionRequest, schemas.ChatCompletionStreamRequest, schemas.ResponsesRequest, schemas.ResponsesStreamRequest:
-	default:
-		input.RequestType = "unknown"
-	}
 	b := &s.rejectionLogs
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -200,7 +196,8 @@ func (s *Service) recordRejection(input RejectionInput, export *RejectionExport)
 	if len(input.EncryptionKeyIDs) > 0 {
 		roots = sha256.Sum256([]byte(strings.Join(input.EncryptionKeyIDs, ",")))
 	}
-	key := rejectionLogKey{input.Claims.KeyID, input.RequestType, input.Code, input.Transport, input.StatusCode, at.Truncate(rejectionLogWindow).Unix(), versions, roots}
+	requestInterface, stream := RequestShape(input.RequestType)
+	key := rejectionLogKey{input.Claims.KeyID, requestInterface, input.Code, input.Transport, stream, input.StatusCode, at.Truncate(rejectionLogWindow).Unix(), versions, roots}
 	stamp := at.Format("2006-01-02T15:04:05.000Z")
 	group := b.groups[key]
 	if group == nil {

@@ -68,17 +68,21 @@ const (
 )
 
 type RequestEvent struct {
-	SchemaVersion    uint8                 `json:"schema_version"`
-	RequestID        string                `json:"request_id"`
-	CreatedAt        string                `json:"created_at"`
-	LastRequestAt    string                `json:"last_request_at"`
-	RequestCount     uint32                `json:"request_count"`
-	GatewayError     *EventError           `json:"gateway_error"`
-	APIKeyID         string                `json:"api_key_id"`
-	GrantID          *string               `json:"grant_id"`
-	MemberID         string                `json:"member_id"`
-	OrganizationID   string                `json:"organization_id"`
-	RequestType      string                `json:"request_type"`
+	SchemaVersion  uint8       `json:"schema_version"`
+	RequestID      string      `json:"request_id"`
+	CreatedAt      string      `json:"created_at"`
+	LastRequestAt  string      `json:"last_request_at"`
+	RequestCount   uint32      `json:"request_count"`
+	GatewayError   *EventError `json:"gateway_error"`
+	APIKeyID       string      `json:"api_key_id"`
+	GrantID        *string     `json:"grant_id"`
+	MemberID       string      `json:"member_id"`
+	OrganizationID string      `json:"organization_id"`
+	// Interface is the API that the client called, spelled as route.interfaces and
+	// policies spell it.
+	Interface string `json:"interface"`
+	// Stream is true when the request body asked for a stream.
+	Stream           bool                  `json:"stream"`
 	RequestSettings  RequestSettings       `json:"request_settings"`
 	SessionID        string                `json:"session_id"`
 	TraceID          string                `json:"trace_id"`

@@ -113,7 +113,8 @@ func NewRequestEvent(input EventInput) (RequestEvent, error) {
 		return RequestEvent{}, fmt.Errorf("invalid upstream cost: %w", err)
 	}
 	ttftMS := cloneUint32Pointer(input.TTFTMS)
-	if !isStreamingRequest(input.RequestType) {
+	requestInterface, stream := RequestShape(input.RequestType)
+	if !stream {
 		ttftMS = nil
 	} else if ttftMS != nil && *ttftMS > totalTimeMS {
 		*ttftMS = totalTimeMS
@@ -156,7 +157,8 @@ func NewRequestEvent(input EventInput) (RequestEvent, error) {
 		GrantID:          authorization.GrantID,
 		MemberID:         authorization.UserID,
 		OrganizationID:   authorization.OrganizationID,
-		RequestType:      input.RequestType,
+		Interface:        requestInterface,
+		Stream:           stream,
 		RequestSettings:  input.RequestSettings,
 		SessionID:        input.SessionID,
 		TraceID:          input.TraceID,
@@ -335,13 +337,20 @@ func calculateBilledCostUSD(authorization *Authorization, upstreamCostUSD *money
 	return new(money.USD).MulRatioCeil(upstreamCostUSD, big.NewInt(2), 100)
 }
 
-func isStreamingRequest(requestType string) bool {
-	switch requestType {
-	case string(schemas.ChatCompletionStreamRequest), string(schemas.ResponsesStreamRequest):
-		return true
-	default:
-		return false
+// RequestShape reads a client request type as the interface that route.interfaces and
+// policies spell, and whether the body asked for a stream. Only the Chat Completions and
+// Responses paths reach inference, so a type that is not a Chat Completions one is a
+// Responses one.
+func RequestShape(requestType string) (string, bool) {
+	switch schemas.RequestType(requestType) {
+	case schemas.ChatCompletionRequest:
+		return "chat_completions", false
+	case schemas.ChatCompletionStreamRequest:
+		return "chat_completions", true
+	case schemas.ResponsesStreamRequest:
+		return "responses", true
 	}
+	return "responses", false
 }
 
 func providerStatusCode(bifrostErr *schemas.BifrostError) *int {
