@@ -115,8 +115,10 @@ func TestFallbackLoadsEveryRecordThatItsRootLists(t *testing.T) {
 			t.Errorf("the fallback's graph holds other %s than its root lists", kind)
 		}
 	}
-	if _, exists := snap.graph.Deployments["openai-gpt-4o-search-preview-2025-03-11"]; exists {
-		t.Fatal("retired search preview deployment must not remain in the current catalog")
+	// The catalog keeps what its provider retired, so that a request for it learns the day.
+	retired, exists := snap.graph.Deployments["openai-gpt-4o-search-preview-2025-03-11"]
+	if !exists || deploymentAvailableAt(retired, time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)) {
+		t.Fatal("the fallback must list the retired search preview, and it must not serve after its day")
 	}
 }
 
