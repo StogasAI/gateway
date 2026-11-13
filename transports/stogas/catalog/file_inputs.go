@@ -240,10 +240,10 @@ func inputCheckRefusal(path, setting string) error {
 	return attachmentRefusal(path, " is an attachment, which "+setting+" cannot check")
 }
 
-// textExtractionHint ends the refusal of an inline text file that a pair without text extraction
-// cannot read. Text extraction turns the file into text, which every deployment and input check
-// reads.
-const textExtractionHint = ". Turn on plugins.textExtraction to send it as text"
+// textExtractionHint ends the refusal of an inline text file that a pair whose policy turns text
+// extraction off cannot read. Text extraction turns the file into text, which every deployment and
+// input check reads.
+const textExtractionHint = ". Set plugins.textExtraction to auto to send it as text"
 
 // CloudRunsClaude reports whether AWS or Google runs a Claude deployment itself, rather than
 // Anthropic behind the cloud's sign-in.

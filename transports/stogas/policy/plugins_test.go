@@ -14,7 +14,8 @@ func TestTextExtractionRequirementsAndDefaults(t *testing.T) {
 		sources []string
 		want    string
 	}{
-		{"omitted", []string{`{}`}, TextExtractionOff},
+		{"omitted", []string{`{}`}, TextExtractionAuto},
+		{"off where nothing is stronger", []string{`{}`, `{"plugins":{"textExtraction":"off"}}`}, TextExtractionOff},
 		{"the strongest requirement", []string{`{"plugins":{"textExtraction":"always"}}`, `{"plugins":{"textExtraction":"off"}}`}, TextExtractionAlways},
 		{"auto over off", []string{`{"plugins":{"textExtraction":"off"}}`, `{"plugins":{"textExtraction":"auto"}}`}, TextExtractionAuto},
 		{"always over auto", []string{`{"plugins":{"textExtraction":"auto"}}`, `{"plugins":{"textExtraction":"always"}}`}, TextExtractionAlways},

@@ -491,8 +491,8 @@ func inspectionSetBy(entries []InspectionSource, sources []ScopedSource, compile
 	// sets that mode.
 	for _, part := range compiled.PluginSources {
 		if part.units()&permissionTextExtraction != 0 {
-			mode := compiled.TextExtraction()
-			add("plugins.textExtraction", permissionTextExtraction, false, func(c *Config) bool { return c.TextExtraction() == mode })
+			mode := compiled.textExtractionSet()
+			add("plugins.textExtraction", permissionTextExtraction, false, func(c *Config) bool { return c.textExtractionSet() == mode })
 			break
 		}
 	}

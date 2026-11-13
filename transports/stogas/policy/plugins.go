@@ -14,9 +14,19 @@ type ActivePlugins struct {
 }
 
 // TextExtraction returns the strongest text extraction mode that the policy's plugins set, or
-// TextExtractionOff.
+// TextExtractionAuto when none sets one: auto differs from off only where off would leave a
+// deployment out or refuse a file.
 func (c *Config) TextExtraction() string {
-	mode := TextExtractionOff
+	if mode := c.textExtractionSet(); mode != "" {
+		return mode
+	}
+	return TextExtractionAuto
+}
+
+// textExtractionSet returns the strongest text extraction mode that the policy's plugins set, or
+// "".
+func (c *Config) textExtractionSet() string {
+	mode := ""
 	if c == nil {
 		return mode
 	}

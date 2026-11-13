@@ -298,7 +298,7 @@ type Plugins struct {
 }
 
 // Text extraction modes, from the weakest to the strongest: a policy that sets a stronger one
-// overrides a weaker one.
+// overrides a weaker one, and auto applies when no policy sets one.
 const (
 	// TextExtractionOff sends every text file as a file, which only a deployment that reads
 	// text files takes.

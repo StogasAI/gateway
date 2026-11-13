@@ -31,7 +31,9 @@ func TestRoutingSkipsDeploymentsThatCannotReadTheAttachments(t *testing.T) {
 		name, model, path, part, want, wantErr string
 		order                                  []string
 		// textOnly leaves the first deployment text only, and audio gives the second audio.
-		textOnly, audio, extract bool
+		textOnly, audio bool
+		// extraction is the policy's text extraction mode, or "" for the default.
+		extraction string
 	}{
 		{name: "chat text", part: `{"type":"text","text":"hello"}`, want: gpt[0]},
 		{name: "chat PDF", part: chatFile(pdf), want: gpt[1]},
@@ -41,8 +43,9 @@ func TestRoutingSkipsDeploymentsThatCannotReadTheAttachments(t *testing.T) {
 		{name: "chat audio that no candidate reads", part: `{"type":"input_audio","input_audio":{"data":"AAAA","format":"wav"}}`, wantErr: "messages[0].content[1] audio input is not supported by any deployment that this request can use", textOnly: true},
 		{name: "chat file URL", part: `{"type":"file","file":{"file_url":"https://example.com/a.pdf"}}`, wantErr: "messages[0].content[1] file URLs on Chat Completions are not supported by any deployment that this request can use; send the file in file_data or use Responses"},
 		{name: "responses PDF", path: "/v1/responses", part: responsesFile(pdf), want: gpt[0]},
-		{name: "responses text file", path: "/v1/responses", part: responsesFile(text), want: gpt[1]},
-		{name: "responses text file with extraction", path: "/v1/responses", part: responsesFile(text), want: gpt[0], extract: true},
+		{name: "responses text file", path: "/v1/responses", part: responsesFile(text), want: gpt[0]},
+		{name: "responses text file without extraction", path: "/v1/responses", part: responsesFile(text), want: gpt[1], extraction: policy.TextExtractionOff},
+		{name: "responses text file with extraction", path: "/v1/responses", part: responsesFile(text), want: gpt[0], extraction: policy.TextExtractionAlways},
 		{name: "responses image without the modality", path: "/v1/responses", part: `{"type":"input_image","image_url":` + image + `}`, want: gpt[1], textOnly: true},
 		{name: "two sources go to the checks", path: "/v1/responses", part: `{"type":"input_file","file_data":` + text + `,"file_url":"https://example.com/a.txt"}`, wantErr: "exactly one"},
 		{name: "image URL where AWS runs Claude", model: "claude-fable-5-1", order: claude, part: `{"type":"image_url","image_url":{"url":"https://example.com/a.png"}}`, want: claude[1]},
@@ -73,9 +76,8 @@ func TestRoutingSkipsDeploymentsThatCannotReadTheAttachments(t *testing.T) {
 			config := policyConfig(1)
 			config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Deployments: order}
 			config.Routing.Query = orderedQuery(t, "", order...)
-			if tc.extract {
-				extract := policy.TextExtractionAlways
-				config.Plugins = &policy.Plugins{TextExtraction: &extract}
+			if tc.extraction != "" {
+				config.Plugins = &policy.Plugins{TextExtraction: &tc.extraction}
 			}
 			messages := `"messages":[{"role":"user","content":[{"type":"text","text":"read this"},` + tc.part + `]}]`
 			if path == "/v1/responses" {
@@ -232,6 +234,13 @@ func TestRoutingSkipsPairsWhosePolicyRefusesOpaqueAttachments(t *testing.T) {
 		extract := policy.TextExtractionAlways
 		config.Plugins = &policy.Plugins{TextExtraction: &extract}
 	}
+	noExtraction := func(config *policy.Config) {
+		off := policy.TextExtractionOff
+		if config.Plugins == nil {
+			config.Plugins = &policy.Plugins{}
+		}
+		config.Plugins.TextExtraction = &off
+	}
 	for _, tc := range []struct {
 		name, part, want, wantErr string
 		azure, openai             []setting
@@ -241,8 +250,9 @@ func TestRoutingSkipsPairsWhosePolicyRefusesOpaqueAttachments(t *testing.T) {
 		{name: "inspection on every pair", part: pdf, azure: []setting{asciiOnly}, openai: []setting{redaction},
 			wantErr: "input[0].content[1] is an attachment, which input.asciiOnly cannot check. input[0].content[1] is an attachment, which plugins.redaction cannot check"},
 		{name: "an extracted text file", part: text, azure: []setting{asciiOnly, extraction}, want: gpt[0]},
-		{name: "a text file that no pair extracts", part: text, azure: []setting{asciiOnly}, openai: []setting{redaction},
-			wantErr: "input[0].content[1] is text/plain, which is not supported by azure-gpt-5.6-sol. input[0].content[1] is an attachment, which plugins.redaction cannot check. Turn on plugins.textExtraction to send it as text"},
+		{name: "a text file by default", part: text, azure: []setting{asciiOnly}, openai: []setting{redaction}, want: gpt[0]},
+		{name: "a text file that no pair extracts", part: text, azure: []setting{asciiOnly, noExtraction}, openai: []setting{redaction, noExtraction},
+			wantErr: "input[0].content[1] is text/plain, which is not supported by azure-gpt-5.6-sol. input[0].content[1] is an attachment, which plugins.redaction cannot check. Set plugins.textExtraction to auto to send it as text"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			configure := func(settings []setting) *policy.Config {
