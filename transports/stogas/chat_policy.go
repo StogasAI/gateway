@@ -733,7 +733,7 @@ func validateChatAssistantInput(state *State, message map[string]json.RawMessage
 			return err
 		}
 		if reasoningSet && !chatReasoningMatchesDetails(reasoningValue, details) {
-			return invalidRequest(path + ".reasoning must match the visible text in reasoning_details")
+			return invalidRequest(path + ".reasoning must start with the visible text in reasoning_details")
 		}
 		hasPayload = true
 	}
@@ -944,11 +944,15 @@ func validateChatReasoningDetails(raw json.RawMessage, path string) error {
 			if err := rejectUnsupportedInputKeys(detail, detailPath, "id", "index", "type", "text", "signature"); err != nil {
 				return err
 			}
-			if _, err := requiredInputString(detail, "text", detailPath, true); err != nil {
-				return err
-			}
-			if _, ok := detail["signature"]; ok {
+			_, signed := detail["signature"]
+			if signed {
 				if _, err := requiredInputString(detail, "signature", detailPath, false); err != nil {
+					return err
+				}
+			}
+			// A stream gives Claude's hidden reasoning as a signature without text.
+			if _, hasText := detail["text"]; hasText || !signed {
+				if _, err := requiredInputString(detail, "text", detailPath, true); err != nil {
 					return err
 				}
 			}
@@ -986,8 +990,10 @@ func chatReasoningMatchesDetails(reasoning string, raw json.RawMessage) bool {
 			visible = append(visible, rawString(detail["text"]))
 		}
 	}
-	joined := strings.Join(visible, "\n")
-	return reasoning == joined || (len(visible) > 0 && reasoning == joined+"\n")
+	// A reply joins the text of its details without a separator and then adds Claude's thinking
+	// that has no detail, such as a progress update after another block; other clients join
+	// details with a line break.
+	return strings.HasPrefix(reasoning, strings.Join(visible, "")) || strings.HasPrefix(reasoning, strings.Join(visible, "\n"))
 }
 
 func validateChatAnnotations(raw json.RawMessage, path string) error {

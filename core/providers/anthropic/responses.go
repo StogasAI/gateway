@@ -5193,9 +5193,13 @@ func ToAnthropicResponsesRequest(ctx *schemas.BifrostContext, bifrostReq *schema
 			if anthropicReq.Thinking != nil && anthropicReq.Thinking.Type != "disabled" && anthropicReq.Thinking.Type != "between_tools" {
 				if bifrostReq.Params.Reasoning != nil &&
 					bifrostReq.Params.Reasoning.Summary != nil {
-					if *bifrostReq.Params.Reasoning.Summary == "none" {
+					switch *bifrostReq.Params.Reasoning.Summary {
+					case "none":
 						anthropicReq.Thinking.Display = schemas.Ptr("omitted")
-					} else {
+					case AnthropicThinkingDisplayUpdates:
+						// Progress updates without the reasoning summaries.
+						anthropicReq.Thinking.Display = schemas.Ptr(AnthropicThinkingDisplayUpdates)
+					default:
 						anthropicReq.Thinking.Display = schemas.Ptr("summarized")
 					}
 				}

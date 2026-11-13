@@ -31,10 +31,11 @@ func (s *State) observeChatTextMaterial(response *schemas.BifrostChatResponse) {
 	for _, choice := range response.Choices {
 		var details []schemas.ChatReasoningDetails
 		var calls []schemas.ChatAssistantMessageToolCall
+		var reasoning *string
 		if stream := choice.ChatStreamResponseChoice; stream != nil && stream.Delta != nil {
 			delta := stream.Delta
 			material.output += textBytes(delta.Content) + textBytes(delta.Refusal)
-			details, calls = delta.ReasoningDetails, delta.ToolCalls
+			details, calls, reasoning = delta.ReasoningDetails, delta.ToolCalls, delta.Reasoning
 		}
 		if unary := choice.ChatNonStreamResponseChoice; unary != nil && unary.Message != nil {
 			message := unary.Message
@@ -46,24 +47,30 @@ func (s *State) observeChatTextMaterial(response *schemas.BifrostChatResponse) {
 			}
 			if assistant := message.ChatAssistantMessage; assistant != nil {
 				material.output += textBytes(assistant.Refusal)
-				details, calls = assistant.ReasoningDetails, assistant.ToolCalls
+				details, calls, reasoning = assistant.ReasoningDetails, assistant.ToolCalls, assistant.Reasoning
 			}
 		}
 		for _, call := range calls {
 			material.output += len(call.Function.Arguments)
 		}
-		// The convenience reasoning string repeats reasoning.text details.
+		// The reasoning string repeats the text of its details, then holds Claude's thinking
+		// that has no detail (validateProviderChatMessage), so the longer of the two counts.
+		detailText := 0
 		for _, detail := range details {
 			switch detail.Type {
 			case schemas.BifrostReasoningDetailsTypeText:
 				if detail.Text != nil {
-					material.reasoning += len(*detail.Text)
+					detailText += len(*detail.Text)
 					material.visible = 1
 				}
 			case schemas.BifrostReasoningDetailsTypeSummary, schemas.BifrostReasoningDetailsTypeEncrypted:
 				material.opaque = 1
 			}
 		}
+		if textBytes(reasoning) > 0 {
+			material.visible = 1
+		}
+		material.reasoning += max(detailText, textBytes(reasoning))
 	}
 	s.textMaterial.add(material, 1)
 	s.textMaterialObserved = true

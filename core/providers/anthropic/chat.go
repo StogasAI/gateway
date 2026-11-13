@@ -1095,10 +1095,16 @@ func ToAnthropicChatRequest(ctx *schemas.BifrostContext, bifrostReq *schemas.Bif
 						})
 						continue
 					}
+					// A stream gives the hidden reasoning of display "omitted" and "updates"
+					// as a signature without text, and Claude requires the thinking field.
+					thinking := reasoningDetail.Text
+					if thinking == nil {
+						thinking = schemas.Ptr("")
+					}
 					content = append(content, AnthropicContentBlock{
 						Type:      AnthropicContentBlockTypeThinking,
 						Signature: reasoningDetail.Signature,
-						Thinking:  reasoningDetail.Text,
+						Thinking:  thinking,
 					})
 				}
 			}

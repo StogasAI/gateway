@@ -18,7 +18,6 @@ func validateProviderChatMessage(state *State, message *schemas.ChatMessage) err
 	}
 	if assistant := message.ChatAssistantMessage; assistant != nil {
 		if assistant.Audio != nil || validateProviderReasoningDetails(assistant.ReasoningDetails) != nil ||
-			assistant.Reasoning != nil && len(assistant.ReasoningDetails) == 0 ||
 			!validOptionalProviderText(assistant.Refusal, maxProviderResponseBodySize, false) ||
 			!validOptionalProviderText(assistant.Reasoning, maxProviderResponseBodySize, true) ||
 			assistant.Refusal != nil && providerChatContentPresent(message.Content) ||
@@ -36,7 +35,6 @@ func validateProviderChatMessage(state *State, message *schemas.ChatMessage) err
 func validateProviderChatDelta(state *State, delta *schemas.ChatStreamResponseChoiceDelta) error {
 	if delta == nil || delta.Audio != nil || rawProviderExtensionSet(delta.ExtraContent) ||
 		validateProviderReasoningDetails(delta.ReasoningDetails) != nil ||
-		delta.Reasoning != nil && len(delta.ReasoningDetails) == 0 ||
 		!validOptionalProviderText(delta.Content, maxProviderResponseBodySize, true) ||
 		!validOptionalProviderText(delta.Refusal, maxProviderResponseBodySize, true) ||
 		!validOptionalProviderText(delta.Reasoning, maxProviderResponseBodySize, true) ||
@@ -103,19 +101,23 @@ func validateProviderReasoningDetails(details []schemas.ChatReasoningDetails) er
 	return nil
 }
 
+// providerReasoningMatchesDetails reports whether the reasoning text starts with the text of its
+// details. Claude's thinking that follows another block of its reply, such as a progress update
+// before a tool call, comes after that text and has no detail, because a client cannot send it
+// back in its place (core's laterthinking.go).
 func providerReasoningMatchesDetails(reasoning *string, details []schemas.ChatReasoningDetails) bool {
-	if reasoning == nil {
-		return true
-	}
+	return reasoning == nil || strings.HasPrefix(*reasoning, reasoningDetailsText(details))
+}
+
+// reasoningDetailsText joins the readable text of reasoning details.
+func reasoningDetailsText(details []schemas.ChatReasoningDetails) string {
 	var text strings.Builder
-	found := false
 	for _, detail := range details {
 		if detail.Type == schemas.BifrostReasoningDetailsTypeText && detail.Text != nil {
-			found = true
 			_, _ = text.WriteString(*detail.Text)
 		}
 	}
-	return found && text.String() == *reasoning
+	return text.String()
 }
 
 func validateProviderChatToolCalls(state *State, calls []schemas.ChatAssistantMessageToolCall, streaming bool) error {
@@ -125,7 +127,8 @@ func validateProviderChatToolCalls(state *State, calls []schemas.ChatAssistantMe
 	seen := make(map[uint16]struct{}, len(calls))
 	seenIDs := make(map[string]struct{}, len(calls))
 	for position, call := range calls {
-		if !streaming && call.Index != 0 {
+		// A reply's calls have no index on OpenAI's wire; core numbers Claude's by position.
+		if !streaming && call.Index != 0 && int(call.Index) != position {
 			return ErrProviderResponseMalformed
 		}
 		index := call.Index

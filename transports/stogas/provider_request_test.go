@@ -86,23 +86,25 @@ func TestPreparedProviderRequestPreservesDecodedPrompt(t *testing.T) {
 
 func TestPreparedAnthropicThinkingDisplayPreservesCallerChoice(t *testing.T) {
 	for _, route := range []string{"chat/completions", "responses"} {
-		for _, display := range []string{"", "omitted", "summarized"} {
+		for _, display := range []string{"", "omitted", "summarized", "updates"} {
 			t.Run(route+"/"+display, func(t *testing.T) {
 				fields := `"messages":[{"role":"user","content":"hello"}],"reasoning_effort":"high"`
 				if route == "responses" {
 					fields = `"input":"hello","reasoning":{"effort":"high"}`
 					if display != "" {
-						summary := "auto"
-						if display == "omitted" {
-							summary = "none"
-						}
+						summary := map[string]string{"omitted": "none", "summarized": "auto", "updates": "updates"}[display]
 						fields = fmt.Sprintf(`"input":"hello","reasoning":{"effort":"high","summary":%q}`, summary)
 					}
 				} else if display != "" {
 					fields += fmt.Sprintf(`,"reasoning_display":%q`, display)
 				}
+				// Progress updates need a model that writes them.
+				model := "anthropic-claude-opus-4-7"
+				if display == "updates" {
+					model = "anthropic-claude-fable-5-1"
+				}
 				resolved, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/" + route,
-					Body: []byte(`{"model":"anthropic-claude-opus-4-7",` + fields + `}`)})
+					Body: []byte(`{"model":"` + model + `",` + fields + `}`)})
 				if err != nil {
 					t.Fatal(err)
 				}

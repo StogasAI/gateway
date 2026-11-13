@@ -3014,12 +3014,15 @@ func hasProgrammaticCaller(callers []string) bool {
 	return false
 }
 
-// StripEmptyThinkingBlocks removes thinking content blocks that would be
-// rejected by Anthropic: those with an empty "thinking" field, or those
-// with an empty "signature" field. An empty signature means the block came
-// from a non-Anthropic upstream (OpenAI never emits signatures; Anthropic
-// always does), so it is unsafe to replay to Anthropic. keepUnsigned keeps the
-// latter for upstreams that never sign their own thinking (vLLM, SGLang).
+// StripEmptyThinkingBlocks removes thinking content blocks without a
+// "signature". An empty signature means the block came from a non-Anthropic
+// upstream (OpenAI never emits signatures; Anthropic always does), so it is
+// unsafe to replay to Anthropic. keepUnsigned keeps those that hold text, for
+// upstreams that never sign their own thinking (vLLM, SGLang).
+//
+// A signed block stays even when its "thinking" text is empty: Claude returns
+// its reasoning that way at display "omitted" and "updates", and refuses
+// history that leaves out a thinking block between two others.
 //
 // The predicate must stay scoped to "thinking" blocks: "redacted_thinking"
 // blocks carry only an encrypted "data" payload (no thinking or signature
@@ -3051,8 +3054,8 @@ func StripEmptyThinkingBlocks(jsonBody []byte, keepUnsigned bool) ([]byte, error
 		stripped := false
 		kept := make([]gjson.Result, 0, len(blocks))
 		for _, block := range blocks {
-			if block.Get("type").String() == "thinking" &&
-				(block.Get("thinking").String() == "" || (!keepUnsigned && block.Get("signature").String() == "")) {
+			if block.Get("type").String() == "thinking" && block.Get("signature").String() == "" &&
+				(!keepUnsigned || block.Get("thinking").String() == "") {
 				stripped = true
 				continue
 			}

@@ -412,10 +412,12 @@ func validateAnthropicResponsesPolicy(state *State) error {
 		return err
 	}
 	if reasoning, ok := rawObject(raw["reasoning"]); ok {
-		for _, name := range []string{"summary", "generate_summary"} {
-			if value, exists := rawStringValue(reasoning[name]); exists && value != "auto" && value != "none" {
-				return invalidRequest("reasoning." + name + " must be auto or none for Anthropic-format deployments")
-			}
+		// summary "updates" asks Claude for its progress updates without reasoning summaries.
+		if value, exists := rawStringValue(reasoning["summary"]); exists && value != "auto" && value != "none" && value != anthropicprovider.AnthropicThinkingDisplayUpdates {
+			return invalidRequest("reasoning.summary must be auto, none or updates for Anthropic-format deployments")
+		}
+		if value, exists := rawStringValue(reasoning["generate_summary"]); exists && value != "auto" && value != "none" {
+			return invalidRequest("reasoning.generate_summary must be auto or none for Anthropic-format deployments")
 		}
 	}
 	if rawJSONValueSet(raw["prompt_cache_retention"]) {

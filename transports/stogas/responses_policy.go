@@ -1280,8 +1280,9 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 			switch itemType {
 			case "function_call", "function_call_output", "custom_tool_call", "custom_tool_call_output",
 				"shell_call", "shell_call_output", "apply_patch_call", "apply_patch_call_output":
-			// MCP items are the provider's own steps, which a response can interleave with client calls.
-			case "mcp_list_tools", "mcp_call", "mcp_approval_request", "mcp_approval_response":
+			// Reasoning and MCP items are the provider's own steps, which a response can interleave with
+			// client calls, as Claude does with a progress update before each call.
+			case "reasoning", "mcp_list_tools", "mcp_call", "mcp_approval_request", "mcp_approval_response":
 			default:
 				return invalidRequest(path + " must resolve the preceding client tool calls before adding another input item")
 			}

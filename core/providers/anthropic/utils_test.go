@@ -4352,11 +4352,12 @@ func TestStripEmptyThinkingBlocks(t *testing.T) {
 			wantMsgConts: []int{1},
 		},
 		{
-			// Blocks where thinking="" are also stripped — Anthropic rejects them with
-			// "each thinking block must contain thinking", even if the signature is valid.
-			name:         "strips block with empty thinking even if signature is non-empty",
-			input:        `{"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"","signature":"abc123"}]}]}`,
-			wantMsgConts: []int{0},
+			// Claude returns its reasoning with thinking="" and a signature at display
+			// "omitted" and "updates", and takes it back that way.
+			name:          "keeps signed block with empty thinking",
+			input:         `{"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"","signature":"abc123"}]}]}`,
+			wantUnchanged: true,
+			wantMsgConts:  []int{1},
 		},
 		{
 			name:          "no thinking blocks, body returned unchanged",
