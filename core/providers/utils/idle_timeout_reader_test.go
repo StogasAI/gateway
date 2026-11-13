@@ -418,6 +418,28 @@ func TestIdleTimeoutReader_ErrorFromClosedPipe(t *testing.T) {
 	}
 }
 
+// endsOnClose is a body that a close ends cleanly, as a peer that answers the
+// timer's close can.
+type endsOnClose struct {
+	reader *io.PipeReader
+	writer *io.PipeWriter
+}
+
+func (b endsOnClose) Read(p []byte) (int, error) { return b.reader.Read(p) }
+func (b endsOnClose) Close() error               { return b.writer.Close() }
+
+func TestIdleTimeoutReader_EOFAfterTimeoutIsTheTimeout(t *testing.T) {
+	t.Parallel()
+	reader, writer := io.Pipe()
+	body := endsOnClose{reader: reader, writer: writer}
+	wrapped, cleanup := NewIdleTimeoutReader(body, body, 50*time.Millisecond, nil)
+	defer cleanup()
+
+	if _, err := wrapped.Read(make([]byte, 64)); !errors.Is(err, ErrStreamIdleTimeout) {
+		t.Fatalf("expected ErrStreamIdleTimeout, got %v", err)
+	}
+}
+
 func TestIdleTimeoutReader_NilContextDoesNotPanic(t *testing.T) {
 	t.Parallel()
 	wrapped, cleanup := NewIdleTimeoutReader(&readCloserSpy{}, &readCloserSpy{}, time.Second, nil)

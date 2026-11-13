@@ -4192,8 +4192,8 @@ type idleTimeoutReader struct {
 // Supports both io.Closer and fasthttp's CloseWithError interface — the latter
 // closes the underlying TCP connection when called with a non-nil error, which is
 // required to interrupt a blocked Read on fasthttp streaming responses.
-// When the timer fires, any subsequent error from Read is translated to
-// ErrStreamIdleTimeout so callers do not need per-handler error checks.
+// When the timer fires, any subsequent end of Read, io.EOF included, is translated
+// to ErrStreamIdleTimeout so callers do not need per-handler error checks.
 // Returns the wrapped reader and a cleanup function that MUST be called (via defer)
 // when streaming is complete, to stop the timer and prevent premature closure.
 //
@@ -4307,7 +4307,10 @@ func (r *idleTimeoutReader) Read(p []byte) (n int, err error) {
 	if n > 0 {
 		r.timer.Reset(r.timeout)
 	}
-	if err != nil && err != io.EOF && r.fired.Load() {
+	// An EOF after the timer closed the stream does not mean the stream completed: the
+	// close sends TLS close_notify, which a peer can answer by ending its body, and
+	// fasthttp also reports a peer's close at a chunk boundary as io.EOF.
+	if err != nil && r.fired.Load() {
 		return n, ErrStreamIdleTimeout
 	}
 	return n, err
