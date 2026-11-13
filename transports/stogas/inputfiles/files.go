@@ -134,9 +134,11 @@ func Describe(fields map[string]json.RawMessage, responses bool) (map[string]jso
 	return described, nil
 }
 
-// replaceBlocks visits the content blocks of each message and re-encodes only
-// the containers whose blocks were replaced. It names each block by its path, as
-// messages[0].content[1].
+// replaceBlocks visits the content blocks of each user message and re-encodes
+// only the containers whose blocks were replaced. It names each block by its
+// path, as messages[0].content[1]. Other messages stay as sent: routing reads
+// attachments only from user messages, and the request checks refuse an
+// attachment anywhere else.
 func replaceBlocks(fields map[string]json.RawMessage, responses bool, replace func(string, map[string]json.RawMessage) (json.RawMessage, error)) error {
 	field := "messages"
 	if responses {
@@ -153,7 +155,7 @@ func replaceBlocks(fields map[string]json.RawMessage, responses bool, replace fu
 	changed := false
 	for i, itemRaw := range items {
 		item, err := rawjson.Object(itemRaw)
-		if err != nil {
+		if err != nil || stringField(item, "role") != "user" {
 			continue
 		}
 		// Tool results and reasoning replay are separate protocol values.

@@ -261,3 +261,24 @@ func TestChecksNameTheAttachmentAndSeeEveryPart(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestProcessLeavesFilesOutsideUserMessagesToTheRequestChecks(t *testing.T) {
+	for _, tc := range []struct {
+		field     string
+		responses bool
+		item      string
+	}{
+		{"messages", false, `{"role":"assistant","content":[{"type":"file","file":{"file_data":"data:text/plain;base64,aGk="}}]}`},
+		{"input", true, `{"role":"assistant","content":[{"type":"input_file","file_data":"data:text/plain;base64,aGk="}]}`},
+		{"input", true, `{"type":"message","role":"developer","content":[{"type":"input_file","file_data":"data:text/plain;base64,aGk="}]}`},
+	} {
+		fields := map[string]json.RawMessage{tc.field: json.RawMessage("[" + tc.item + "]")}
+		stats, err := Process(fields, tc.responses, Options{Extract: true, Check: func(string, MediaType) error {
+			t.Fatal("checked a file outside a user message")
+			return nil
+		}})
+		if err != nil || stats != (Stats{}) || string(fields[tc.field]) != "["+tc.item+"]" {
+			t.Fatalf("%s: stats %+v, error %v, body %s", tc.item, stats, err, fields[tc.field])
+		}
+	}
+}
