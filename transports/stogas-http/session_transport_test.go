@@ -433,6 +433,11 @@ func TestSessionHTTPEarlyErrorClosesAbandonedHTTP1Upload(t *testing.T) {
 	if metadata.Status != http.StatusTooManyRequests {
 		t.Fatal("lost authenticated error")
 	}
+	// The server stops waiting for the upload unreadUploadDrainTimeout after its response. A server
+	// that keeps waiting fails at go test's -timeout.
+	if err := connection.SetDeadline(time.Time{}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := input.ReadByte(); err != io.EOF {
 		t.Fatal("server retained the abandoned upload after its response", err)
 	}
@@ -542,7 +547,9 @@ func TestSessionHTTPEarlyErrorDoesNotWaitForUpload(t *testing.T) {
 func TestSessionHTTPCompletedUploadRejectedBeforeReadDoesNotCancelNextRequest(t *testing.T) {
 	for _, http2 := range []bool{false, true} {
 		t.Run(fmt.Sprintf("http2=%v", http2), func(t *testing.T) {
+			addresses := make(chan string, 3)
 			f := newSessionHTTPFixture(t, func(ctx *requestContext) {
+				addresses <- ctx.request.RemoteAddr
 				if ctx.request.Header.Get("Authorization") == "" {
 					ctx.writer.WriteHeader(http.StatusUnauthorized)
 					return
@@ -570,6 +577,12 @@ func TestSessionHTTPCompletedUploadRejectedBeforeReadDoesNotCancelNextRequest(t 
 				}
 				if inner.Status != want {
 					t.Fatalf("inner status = %d, want %d", inner.Status, want)
+				}
+			}
+			first := <-addresses
+			for range 2 {
+				if <-addresses != first {
+					t.Fatal("a completed upload rejected before its read closed its connection")
 				}
 			}
 		})

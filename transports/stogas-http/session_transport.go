@@ -20,6 +20,12 @@ const sessionContentType = "application/vnd.stogas.session"
 const sessionNodeHeader = "Stogas-Node-ID"
 const sessionSetupBudget = 15 * time.Second
 
+// After a response that ends before its HTTP/1 upload, net/http reads up to 256 KiB more of the
+// upload, so a client that sent all of it can send its next request on the same connection. An
+// upload that has not ended this long after the response closes the connection. nginx waits as
+// long for more of a request body that it discards (lingering_timeout).
+const unreadUploadDrainTimeout = 5 * time.Second
+
 // Part of the existing request reservation, retained through the final encrypted write.
 const sessionAdapterRetainedBytes = 2*channel.MaxRecordBytes + (2*int(requestBodyReservationFactor)+1)*serverReadBufferSize
 
@@ -147,9 +153,6 @@ func (s *Server) sessionTransport(next requestHandler) requestHandler {
 			ctx.encrypted = true
 			ctx.request = inner
 			next(ctx)
-		}
-		if ctx.request.ProtoMajor < 2 && !incoming.Consumed() {
-			s.idleConnections.retireAfterReply(ctx.request.Context())
 		}
 		if err := writer.finish(); err != nil {
 			panic(http.ErrAbortHandler)
@@ -318,11 +321,10 @@ func (w *sessionResponse) FlushError() error {
 }
 func (w *sessionResponse) finish() error {
 	if w.http1 && !w.input.Consumed() {
-		// Full-duplex HTTP/1 otherwise drains the unfinished body after this
-		// handler returns. Stop abandoned uploads without delaying the error
-		// response. The connection owner retires this socket after net/http
-		// flushes the response; an expired read can cancel its shared context.
-		if err := http.NewResponseController(w.outer).SetReadDeadline(time.Now()); err != nil {
+		// net/http sends the whole response before it reads the rest of the upload, and since
+		// Go 1.27 it closes the connection when that read fails, so a failed read never
+		// reaches the connection's next request.
+		if err := http.NewResponseController(w.outer).SetReadDeadline(time.Now().Add(unreadUploadDrainTimeout)); err != nil {
 			return err
 		}
 	}

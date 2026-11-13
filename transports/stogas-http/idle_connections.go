@@ -16,10 +16,9 @@ import (
 type idleConnections struct {
 	mu sync.Mutex
 	// Admitted sockets; the element is nil while a request runs.
-	tracked  map[net.Conn]*list.Element
-	oldest   list.List
-	retiring map[net.Conn]struct{}
-	evicted  uint64
+	tracked map[net.Conn]*list.Element
+	oldest  list.List
+	evicted uint64
 }
 
 type httpConnectionKey struct{}
@@ -51,35 +50,9 @@ func (c *idleConnections) busy(ctx context.Context) {
 	}
 }
 
-// An aborted HTTP/1 upload cannot serve another request. Let net/http finish
-// the response framing before closing its socket at the idle transition.
-func (c *idleConnections) retireAfterReply(ctx context.Context) {
-	conn, ok := ctx.Value(httpConnectionKey{}).(net.Conn)
-	if !ok {
-		return
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.retiring == nil {
-		c.retiring = make(map[net.Conn]struct{})
-	}
-	c.retiring[conn] = struct{}{}
-}
-
 func (c *idleConnections) observe(conn net.Conn, state http.ConnState) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if _, retiring := c.retiring[conn]; retiring && (state == http.StateIdle || state == http.StateClosed || state == http.StateHijacked) {
-		delete(c.retiring, conn)
-		if state == http.StateIdle {
-			if secured, ok := conn.(*ingressTLSConn); ok {
-				secured.evict()
-			} else {
-				_ = conn.Close()
-			}
-			return
-		}
-	}
 	item, tracked := c.tracked[conn]
 	if !tracked {
 		return
