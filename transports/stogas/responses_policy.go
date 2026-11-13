@@ -1905,8 +1905,10 @@ func validateResponsesToolCallOutputInput(item map[string]json.RawMessage, path 
 
 // validateResponsesReasoningInput checks a reasoning item that a reply returned. Its encrypted
 // content holds OpenAI's encrypted reasoning or a Claude block, and without it, its content holds
-// plain reasoning text. The checks are the same on every deployment, and each deployment gets only
-// the items that it takes back (catalog.ResolvedRequest.KeepReadableReasoning).
+// plain reasoning text. An item with neither holds nothing to continue from, which is every
+// reasoning item of a reply to a request that did not include reasoning.encrypted_content. The
+// checks are the same on every deployment, and each deployment gets only the items that it takes
+// back (catalog.ResolvedRequest.KeepReadableReasoning).
 func validateResponsesReasoningInput(item map[string]json.RawMessage, path string) error {
 	if err := rejectUnsupportedInputKeys(item, path, "type", "id", "status", "summary", "content", "encrypted_content"); err != nil {
 		return err
@@ -1938,15 +1940,6 @@ func validateResponsesReasoningInput(item map[string]json.RawMessage, path strin
 			return invalidRequest(path + ".encrypted_content must be sent back unchanged")
 		}
 		return nil
-	}
-	// Like a Chat Completions message's reasoning, plain reasoning text can be blank: a reply can
-	// return blank reasoning, and its client can send it back.
-	if !rawJSONValueSet(item["content"]) {
-		return invalidRequest("reasoning input items require encrypted_content")
-	}
-	var summary []json.RawMessage
-	if err := sonic.Unmarshal(item["summary"], &summary); err == nil && len(summary) > 0 {
-		return invalidRequest(path + ".summary must be empty when the item has no encrypted_content")
 	}
 	return nil
 }

@@ -147,6 +147,12 @@ func validateNumber(raw map[string]json.RawMessage, name string) error {
 	return nil
 }
 
+// rawJSONEmptyArray reports an array without elements.
+func rawJSONEmptyArray(raw json.RawMessage) bool {
+	var elements []json.RawMessage
+	return len(raw) > 0 && sonic.Unmarshal(raw, &elements) == nil && elements != nil && len(elements) == 0
+}
+
 func rawJSONValueSet(raw json.RawMessage) bool {
 	return len(raw) > 0 && !bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
 }
@@ -728,7 +734,9 @@ func validateChatAssistantInput(state *State, message map[string]json.RawMessage
 	}
 	// Reasoning history passes these checks on every deployment, and each deployment gets only the
 	// history that it takes back (catalog.ResolvedRequest.KeepReadableReasoning).
-	if details, ok := message["reasoning_details"]; ok {
+	// An empty array holds nothing, as a client's stream accumulator leaves it for a reply
+	// without reasoning, and as OpenAI's replies carry their annotations.
+	if details, ok := message["reasoning_details"]; ok && !rawJSONEmptyArray(details) {
 		if err := validateChatReasoningDetails(details, path+".reasoning_details"); err != nil {
 			return err
 		}
@@ -737,7 +745,7 @@ func validateChatAssistantInput(state *State, message map[string]json.RawMessage
 		}
 		hasPayload = true
 	}
-	if annotations, ok := message["annotations"]; ok {
+	if annotations, ok := message["annotations"]; ok && !rawJSONEmptyArray(annotations) {
 		if !chatAnnotationsInputSupported(state) {
 			return invalidRequest("assistant annotations are supported only for OpenAI-format deployments")
 		}

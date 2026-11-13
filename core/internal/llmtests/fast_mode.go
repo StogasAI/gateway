@@ -17,8 +17,7 @@ import (
 //  2. The API accepts the request without error
 //  3. The response is valid
 //
-// Note: Fast mode is currently only supported on the direct Anthropic API with
-// Opus 4.8 and Opus 5.
+// Note: Fast mode is currently only supported on Anthropic (direct API) with Opus 4.6.
 func RunFastModeTest(t *testing.T, client *bifrost.Bifrost, ctx context.Context, testConfig ComprehensiveTestConfig) {
 	if !testConfig.Scenarios.FastMode {
 		t.Logf("Fast mode not supported for provider %s", testConfig.Provider)
@@ -38,7 +37,7 @@ func RunFastModeTest(t *testing.T, client *bifrost.Bifrost, ctx context.Context,
 
 		model := testConfig.FastModeModel
 		if model == "" {
-			model = "claude-opus-4-8"
+			model = "claude-opus-4-6"
 		}
 
 		messages := []schemas.ResponsesMessage{

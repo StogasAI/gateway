@@ -153,7 +153,7 @@ type ComprehensiveTestConfig struct {
 	WebSearchChatModel       string                     // Model for web search via chat completions tests; defaults to ChatModel when empty
 	ExternalCompactionModel  string                     // Model for external compaction tests; defaults to gpt-4o
 	InterleavedThinkingModel string                     // Model for interleaved thinking tests; defaults to claude-opus-4-5
-	FastModeModel            string                     // Model for fast mode tests; defaults to claude-opus-4-8
+	FastModeModel            string                     // Model for fast mode tests; defaults to claude-opus-4-6
 	RealtimeModel            string                     // Model for Realtime API (e.g., "gpt-4o-realtime-preview")
 
 	// SkipEmptyToolSchemas skips the empty/nil function-schema tool tests for providers that

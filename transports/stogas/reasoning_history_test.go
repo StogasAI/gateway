@@ -323,10 +323,6 @@ func TestReasoningHistoryChecksAreTheSameOnEveryDeployment(t *testing.T) {
 	for _, test := range []struct{ name, path, fields, want string }{
 		{"altered Claude block", "/v1/responses", `"input":[{"role":"user","content":"hi"},{"type":"reasoning","id":"rs_1","summary":[],"encrypted_content":"claude:e30"},` +
 			`{"role":"assistant","content":"Hello."},{"role":"user","content":"again"}]`, "input[1].encrypted_content must be sent back unchanged"},
-		{"summary alone", "/v1/responses", `"input":[{"role":"user","content":"hi"},{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"Plan."}]},` +
-			`{"role":"assistant","content":"Hello."},{"role":"user","content":"again"}]`, "reasoning input items require encrypted_content"},
-		{"plain reasoning with a summary", "/v1/responses", `"input":[{"role":"user","content":"hi"},{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"Plan."}],` +
-			`"content":[{"type":"reasoning_text","text":"Thinking."}]},{"role":"assistant","content":"Hello."},{"role":"user","content":"again"}]`, "input[1].summary must be empty when the item has no encrypted_content"},
 		{"summary detail", "/v1/chat/completions", `"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"Hello.",` +
 			`"reasoning_details":[{"index":0,"type":"reasoning.summary","summary":"Plan."}]},{"role":"user","content":"again"}]`, "reasoning_details[0].type must be reasoning.text or reasoning.encrypted"},
 		{"empty signature", "/v1/chat/completions", `"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"Hello.",` +
@@ -344,6 +340,52 @@ func TestReasoningHistoryChecksAreTheSameOnEveryDeployment(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// A reply to a Responses request that did not include reasoning.encrypted_content returns reasoning
+// items with a summary at most, and a client that appends the reply's output to its input sends
+// them back. They hold nothing to continue from, so every deployment takes the request and gets
+// the rest of the input. Plain reasoning reaches Chutes without the summary beside it.
+func TestReasoningItemsWithNothingToContinueFromAreLeftOut(t *testing.T) {
+	input := `"input":[{"role":"user","content":"Weather in Paris?"},` +
+		`{"id":"rs_1","type":"reasoning","summary":[{"type":"summary_text","text":"Look it up."}]},` +
+		`{"id":"rs_2","type":"reasoning","summary":[],"encrypted_content":null},` +
+		`{"id":"rs_3","type":"reasoning","summary":[{"type":"summary_text","text":"Shown."}],"content":[{"type":"reasoning_text","text":"Paris, then."}]},` +
+		`{"type":"function_call","call_id":"call_1","name":"get_weather","arguments":"{\"city\":\"Paris\"}"},` +
+		`{"type":"function_call_output","call_id":"call_1","output":"18 C and sunny"}]`
+	for _, model := range []string{"anthropic-claude-sonnet-4-6", "provider:openai gpt-5.5", "azure-gpt-5.6-sol", "chutes-glm-5.2"} {
+		body, _, _ := providerBody(t, "/v1/responses", `{"model":"`+model+`",`+weatherTool+`,`+input+`}`)
+		history := string(body["input"]) + string(body["messages"])
+		if !strings.Contains(history, "get_weather") || !strings.Contains(history, "18 C and sunny") {
+			t.Fatalf("%s lost the tool call or its result: %s", model, history)
+		}
+		for _, gone := range []string{"Look it up.", "Shown.", "rs_1", "rs_2"} {
+			if strings.Contains(history, gone) {
+				t.Fatalf("%s got %q: %s", model, gone, history)
+			}
+		}
+		if plain := strings.Contains(history, "Paris, then."); plain != (model == "chutes-glm-5.2") {
+			t.Fatalf("%s plain reasoning sent = %v: %s", model, plain, history)
+		}
+	}
+}
+
+// An empty reasoning_details or annotations array holds nothing: a client's stream accumulator
+// leaves the first for a reply without reasoning, and OpenAI's own replies carry the second.
+func TestEmptyReplyArraysInChatHistoryAreAccepted(t *testing.T) {
+	messages := `"messages":[{"role":"user","content":"hi"},` +
+		`{"role":"assistant","content":"Hello.","refusal":null,"annotations":[],"reasoning_details":[]},` +
+		`{"role":"user","content":"again"}]`
+	for _, model := range []string{"anthropic-claude-sonnet-4-6", "provider:openai gpt-5.5", "azure-gpt-5.6-sol", "chutes-glm-5.2"} {
+		body, _, _ := providerBody(t, "/v1/chat/completions", `{"model":"`+model+`",`+messages+`}`)
+		history := string(body["input"]) + string(body["messages"])
+		if !strings.Contains(history, "Hello.") || strings.Contains(history, "annotations") || strings.Contains(history, "reasoning_details") {
+			t.Fatalf("%s history = %s", model, history)
+		}
+	}
+	if err := requestCheckError(t, "/v1/chat/completions", `{"model":"chutes-glm-5.2","messages":[{"role":"user","content":"hi"},{"role":"assistant","reasoning_details":[]},{"role":"user","content":"again"}]}`); err == nil {
+		t.Fatal("an assistant message with nothing in it was accepted")
 	}
 }
 

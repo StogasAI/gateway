@@ -139,13 +139,17 @@ func chatReasoningDetailFormat(detail schemas.ChatReasoningDetails) ReasoningFor
 
 // responsesReasoningFormat is the format of a Responses reasoning item. Its encrypted content holds
 // a Claude block or OpenAI's encrypted reasoning, and an item without it holds plain reasoning
-// text.
+// text in its content. An item with neither has no format, and no deployment takes it back: a
+// summary is what a client shows, not reasoning that a model continues from.
 func responsesReasoningFormat(item *schemas.ResponsesMessage) ReasoningFormat {
 	if reasoning := item.ResponsesReasoning; reasoning != nil && reasoning.EncryptedContent != nil && *reasoning.EncryptedContent != "" {
 		if anthropicprovider.HoldsThinkingBlock(*reasoning.EncryptedContent) {
 			return ClaudeReasoning
 		}
 		return EncryptedReasoning
+	}
+	if item.Content == nil || len(item.Content.ContentBlocks) == 0 {
+		return 0
 	}
 	return PlainReasoning
 }
@@ -219,8 +223,17 @@ func (r *ResolvedRequest) readableResponsesItem(item schemas.ResponsesMessage) (
 	}
 	format := responsesReasoningFormat(&item)
 	if format != EncryptedReasoning {
-		keep := r.ReadsReasoning(format)
-		return item, keep, !keep
+		if !r.ReadsReasoning(format) {
+			return item, false, true
+		}
+		// Plain reasoning goes without a summary, which Chat Completions history has no place for.
+		if format != PlainReasoning || item.ResponsesReasoning == nil || len(item.ResponsesReasoning.Summary) == 0 {
+			return item, true, false
+		}
+		reasoning := *item.ResponsesReasoning
+		reasoning.Summary = []schemas.ResponsesReasoningSummary{}
+		item.ResponsesReasoning = &reasoning
+		return item, true, true
 	}
 	content, ok := r.ownEncryptedReasoning(item.ResponsesReasoning.EncryptedContent)
 	if !ok {

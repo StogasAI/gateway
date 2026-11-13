@@ -209,7 +209,7 @@ type ProviderFeatureSupport struct {
 	Skills                 bool // Agent Skills — container.skills object (cite: A)
 	ContainerBasic         bool // Bare string-form container id — universally supported (cite: A)
 	Context1M              bool // 1M context window — context-1m-2025-08-07 (cite: A)
-	FastMode               bool // Opus 4.8 and Opus 5 research preview — fast-mode-2026-02-01 (cite: A)
+	FastMode               bool // Opus 4.6 research preview — fast-mode-2026-02-01 (cite: A)
 	RedactThinking         bool // redact-thinking-2026-02-12 (cite: A) — note Bedrock has its own "thinking encryption" (different mechanism)
 	TaskBudgets            bool // output_config.task_budget — task-budgets-2026-03-13 (cite: A)
 	InferenceGeo           bool // inference_geo field — Claude API only; Bedrock/Vertex/Azure use their own region-routing mechanisms (cite: A)
@@ -592,7 +592,7 @@ type AnthropicMessageRequest struct {
 	Thinking          *AnthropicThinking     `json:"thinking,omitempty"`
 	OutputFormat      json.RawMessage        `json:"output_format,omitempty"` // Beta: requires header "anthropic-beta": "structured-outputs-2025-11-13" (json.RawMessage preserves key ordering)
 	OutputConfig      *AnthropicOutputConfig `json:"output_config,omitempty"` // GA: structured outputs without beta header
-	Speed             *string                `json:"speed,omitempty"`         // "fast" for fast mode (Opus 4.8 and Opus 5 only, requires fast-mode beta header)
+	Speed             *string                `json:"speed,omitempty"`         // "fast" for fast mode (Opus 4.6 and 4.7+, requires fast-mode beta header)
 	ServiceTier       *string                `json:"service_tier,omitempty"`  // "auto" or "standard_only"
 	InferenceGeo      *string                `json:"inference_geo,omitempty"` // the geographic region for inference processing. If not specified, the workspace's default_inference_geo is used.
 	ContextManagement *ContextManagement     `json:"context_management,omitempty"`
