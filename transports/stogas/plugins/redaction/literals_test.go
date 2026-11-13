@@ -217,9 +217,11 @@ func TestASCIIInputChecksDecodedOriginalTextTransactionally(t *testing.T) {
 		field, body string
 		allowed     bool
 	}{
-		{SurfaceChat, "messages", `[{"reasoning":"é","reasoning_details":[],"content":"safe"}]`, true},
-		{SurfaceChat, "messages", `[{"reasoning_details":[],"reasoning":"\u00e9","content":"safe"}]`, true},
-		{SurfaceChat, "messages", `[{"reasoning":"é","reasoning_details":[],"content":"é"}]`, false},
+		{SurfaceChat, "messages", `[{"reasoning":"é","reasoning_content":"é","reasoning_details":[{"text":"é","signature":"s"}],"content":"safe"}]`, true},
+		{SurfaceChat, "messages", `[{"reasoning_details":[{"data":"s"}],"reasoning":"\u00e9","content":"safe"}]`, true},
+		{SurfaceChat, "messages", `[{"reasoning":"é","reasoning_details":[{"text":"é","signature":"s"}],"content":"é"}]`, false},
+		{SurfaceChat, "messages", `[{"reasoning":"safe","reasoning_details":[{"text":"é"}],"content":"safe"}]`, false},
+		{SurfaceChat, "messages", `[{"reasoning_details":[{"text":"safe","signature":""}],"reasoning":"é","content":"safe"}]`, false},
 		{SurfaceChat, "messages", `[{"reasoning":"é","content":"safe"}]`, false},
 		{SurfaceResponses, "input", `[{"summary":"é","encrypted_content":"opaque","type":"reasoning"}]`, true},
 		{SurfaceResponses, "input", `[{"type":"reasoning","encrypted_content":"opaque","summary":"é"}]`, true},

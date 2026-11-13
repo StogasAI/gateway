@@ -12,6 +12,7 @@ import (
 	"github.com/maximhq/bifrost/core/providers/anthropic"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"github.com/maximhq/bifrost/transports/stogas/plugins/redaction"
 )
 
 // testAccount is the provider account that the credential of every test pair reaches.
@@ -33,7 +34,13 @@ func testPair(resolution *catalog.ResolvedRequest) *State {
 // gets, with the context of the provider call.
 func providerBody(t *testing.T, path, body string) (map[string]json.RawMessage, *schemas.BifrostContext, *State) {
 	t.Helper()
-	resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: path, Body: []byte(body)})
+	return providerBodyOf(t, catalog.RequestInput{Method: "POST", Path: path, Body: []byte(body)})
+}
+
+// providerBodyOf is providerBody for a request with other input, such as a redaction policy.
+func providerBodyOf(t *testing.T, input catalog.RequestInput) (map[string]json.RawMessage, *schemas.BifrostContext, *State) {
+	t.Helper()
+	resolution, err := catalog.ResolveRequest(input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -516,5 +523,33 @@ func TestRecordedEncryptedReasoningGoesBackAsTheProviderTookIt(t *testing.T) {
 				t.Fatalf("Chat detail without id sent = %v, the provider took %v", got, withoutID)
 			}
 		})
+	}
+}
+
+// Redaction runs before the request's checks, which compare a message's reasoning text with its
+// details and with its other name. A Claude reply that comes back unchanged keeps its signed
+// thinking and passes, and reasoning without a signature reaches its provider redacted.
+func TestRedactionScansOnlyReasoningHistoryWithoutASignature(t *testing.T) {
+	policy, err := redaction.CompilePolicy(redaction.Options{Patterns: []redaction.Pattern{redaction.PatternEmailAddress}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := func(model, assistant string) catalog.RequestInput {
+		return catalog.RequestInput{Method: "POST", Path: "/v1/chat/completions", RedactionPolicy: policy, Body: []byte(`{"model":"` + model + `","messages":[` +
+			`{"role":"user","content":"Who owns the repository?"},` + assistant + `,{"role":"user","content":"Thanks."}]}`)}
+	}
+
+	body, _, _ := providerBodyOf(t, request("anthropic-claude-sonnet-5", `{"role":"assistant","content":"The owner.",`+
+		`"reasoning":"Mail owner@corp.io.","reasoning_content":"Mail owner@corp.io.",`+
+		`"reasoning_details":[{"index":0,"type":"reasoning.text","text":"Mail owner@corp.io.","signature":"sig"}]}`))
+	if thinking := rawString(assistantBlocks(t, body)[0][0]["thinking"]); thinking != "Mail owner@corp.io." {
+		t.Fatalf("signed thinking = %q", thinking)
+	}
+
+	body, _, _ = providerBodyOf(t, request("chutes-glm-5.2", `{"role":"assistant","content":"The owner.",`+
+		`"reasoning":"Mail owner@corp.io.","reasoning_content":"Mail owner@corp.io.",`+
+		`"reasoning_details":[{"index":0,"type":"reasoning.text","text":"Mail owner@corp.io."}]}`))
+	if messages := string(body["messages"]); strings.Contains(messages, "owner@corp.io") || !strings.Contains(messages, "Mail <EMAIL_ADDRESS>.") {
+		t.Fatalf("plain reasoning reached the provider as %s", messages)
 	}
 }

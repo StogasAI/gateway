@@ -94,6 +94,9 @@ type Redactor struct {
 	asciiOnly        bool
 	expansion        int
 	reserveExpansion func(int) error
+	// sealedDetails counts the signed or encrypted reasoning details that the walk has passed, so
+	// that a message knows whether it holds one.
+	sealedDetails int
 }
 
 // NewWithPolicy creates request-local state for an immutable compiled policy.

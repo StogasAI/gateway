@@ -168,6 +168,59 @@ func TestCustomPatternStillReceivesAllWhitespace(t *testing.T) {
 	}
 }
 
+// Only a signed or encrypted reasoning detail is the provider's own. Reasoning text without one
+// reaches a provider as the client wrote it, so it is scanned like other text, and both names of a
+// message's reasoning text get the same treatment, since the request's checks compare them.
+func TestReasoningHistoryIsScannedUnlessADetailSealsIt(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name, message, want string
+		items               uint32
+	}{
+		{
+			name:    "plain detail",
+			message: `{"role":"assistant","reasoning":"plain@corp.io","reasoning_content":"plain@corp.io","reasoning_details":[{"index":0,"type":"reasoning.text","text":"plain@corp.io"}]}`,
+			want:    `{"role":"assistant","reasoning":"<EMAIL_ADDRESS>","reasoning_content":"<EMAIL_ADDRESS>","reasoning_details":[{"index":0,"type":"reasoning.text","text":"<EMAIL_ADDRESS>"}]}`,
+			items:   3,
+		},
+		{
+			name:    "empty signature",
+			message: `{"role":"assistant","reasoning_details":[{"index":0,"type":"reasoning.text","signature":"","text":"plain@corp.io"}],"reasoning":"plain@corp.io"}`,
+			want:    `{"role":"assistant","reasoning_details":[{"index":0,"type":"reasoning.text","signature":"","text":"<EMAIL_ADDRESS>"}],"reasoning":"<EMAIL_ADDRESS>"}`,
+			items:   2,
+		},
+		{
+			name:    "signed detail",
+			message: `{"role":"assistant","reasoning":"signed@corp.io","reasoning_content":"signed@corp.io","reasoning_details":[{"index":0,"type":"reasoning.text","text":"signed@corp.io","signature":"opaque"}]}`,
+			want:    `{"role":"assistant","reasoning":"signed@corp.io","reasoning_content":"signed@corp.io","reasoning_details":[{"index":0,"type":"reasoning.text","text":"signed@corp.io","signature":"opaque"}]}`,
+		},
+		{
+			name:    "signed and plain details",
+			message: `{"role":"assistant","reasoning_content":"signed@corp.io","reasoning_details":[{"index":0,"type":"reasoning.text","text":"signed@corp.io","signature":"opaque"},{"index":1,"type":"reasoning.text","text":"plain@corp.io"}]}`,
+			want:    `{"role":"assistant","reasoning_content":"signed@corp.io","reasoning_details":[{"index":0,"type":"reasoning.text","text":"signed@corp.io","signature":"opaque"},{"index":1,"type":"reasoning.text","text":"<EMAIL_ADDRESS>"}]}`,
+			items:   1,
+		},
+		{
+			name:    "sealed detail of an earlier message",
+			message: `{"role":"assistant","reasoning_details":[{"index":0,"type":"reasoning.encrypted","data":"opaque"}]},{"role":"assistant","reasoning":"plain@corp.io"}`,
+			want:    `{"role":"assistant","reasoning_details":[{"index":0,"type":"reasoning.encrypted","data":"opaque"}]},{"role":"assistant","reasoning":"<EMAIL_ADDRESS>"}`,
+			items:   1,
+		},
+	} {
+		raw := map[string]json.RawMessage{"messages": json.RawMessage(`[` + test.message + `]`)}
+		redactor := newTestRedactor()
+		if err := redactor.RedactRequestFields(raw, SurfaceChat, nil); err != nil {
+			t.Fatalf("%s: %v", test.name, err)
+		}
+		if got := string(raw["messages"]); got != `[`+test.want+`]` {
+			t.Fatalf("%s: messages = %s", test.name, got)
+		}
+		if got := redactor.Summary().ItemsRedacted; got != test.items {
+			t.Fatalf("%s: items_redacted = %d, want %d", test.name, got, test.items)
+		}
+	}
+}
+
 func TestProtectedReasoningDoesNotDependOnKeyOrder(t *testing.T) {
 	t.Parallel()
 	chatMessages := []string{

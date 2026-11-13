@@ -56,6 +56,8 @@ const (
 	jsonContextFile
 	jsonContextResponsesTools
 	jsonContextResponsesTool
+	jsonContextReasoningDetails
+	jsonContextReasoningDetail
 )
 
 // RedactRequestFields changes only provider-bound text containers. Routing,
@@ -193,10 +195,13 @@ func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, repla
 	baseReplacements := len(*replacements)
 	baseItems, baseTextBytes := r.items, r.inputTextBytes
 	hasEncryptedContent := false
-	hasReasoningDetails := false
-	reasoningStart := -1
-	reasoningEnd := -1
-	reasoningBytes := 0
+	// A reasoning detail with a signature or encrypted data is the provider's own: a provider
+	// refuses a changed one, so it stays as the client sent it, and so does the reasoning text of
+	// its message, which the request's checks compare with it. Other reasoning history is text
+	// like any other.
+	hasSignature, hasData := false, false
+	sealedDetails := r.sealedDetails
+	var reasoningTexts []jsonSpan
 	itemType := ""
 	// An MCP tool's connection settings reach the provider as the client sent them: its
 	// credentials and server address are not prompt text, and a redacted token would fail.
@@ -225,16 +230,19 @@ func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, repla
 		if position >= len(source) {
 			return position, errInvalidJSON
 		}
-		if key == jsonKeyEncryptedContent {
-			present := false
-			if source[position] == '"' {
-				valueEnd, _, valueErr := jsonStringEnd(source, position)
-				if valueErr != nil {
-					return position, valueErr
-				}
-				present = valueEnd > position+2
+		switch key {
+		case jsonKeyEncryptedContent:
+			if hasEncryptedContent, err = jsonStringHasText(source, position); err != nil {
+				return position, err
 			}
-			hasEncryptedContent = present
+		case jsonKeySignature:
+			if hasSignature, err = jsonStringHasText(source, position); err != nil {
+				return position, err
+			}
+		case jsonKeyData:
+			if hasData, err = jsonStringHasText(source, position); err != nil {
+				return position, err
+			}
 		}
 		if key == jsonKeyType {
 			itemType = ""
@@ -272,17 +280,10 @@ func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, repla
 			valueAllowed = false
 		}
 		if context == jsonContextChatMessage && key == jsonKeyReasoningDetails {
-			// Anthropic reasoning details contain provider-signed or encrypted
-			// history. Preserve this exact protocol value. The request policy
-			// validates its shape before any provider receives it.
-			hasReasoningDetails = source[position] == '['
-			if hasReasoningDetails {
-				valueAllowed = false
-			}
+			valueContext = jsonContextReasoningDetails
 		}
-		if context == jsonContextChatMessage && key == jsonKeyReasoning {
-			reasoningStart = position
-			reasoningBytes = r.inputTextBytes
+		if context == jsonContextReasoningDetail && (key == jsonKeySignature || key == jsonKeyData) && source[position] == '"' {
+			valueAllowed = false
 		}
 		switch key {
 		case jsonKeySkipScalar, jsonKeyType:
@@ -302,8 +303,7 @@ func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, repla
 			mcpSettings = append(mcpSettings, jsonSpan{start: settingStart, end: position, textBytes: r.inputTextBytes - settingBytes})
 		}
 		if context == jsonContextChatMessage && key == jsonKeyReasoning {
-			reasoningEnd = position
-			reasoningBytes = r.inputTextBytes - reasoningBytes
+			reasoningTexts = append(reasoningTexts, jsonSpan{start: settingStart, end: position, textBytes: r.inputTextBytes - settingBytes})
 		}
 		position = skipJSONSpace(source, position)
 		if position >= len(source) {
@@ -313,9 +313,11 @@ func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, repla
 		case ',':
 			position = skipJSONSpace(source, position+1)
 		case '}':
-			if context == jsonContextChatMessage && hasReasoningDetails && reasoningStart >= 0 {
-				r.discardJSONReplacements(replacements, baseReplacements, reasoningStart, reasoningEnd)
-				r.inputTextBytes -= reasoningBytes
+			if context == jsonContextChatMessage && r.sealedDetails != sealedDetails {
+				for _, text := range reasoningTexts {
+					r.discardJSONReplacements(replacements, baseReplacements, text.start, text.end)
+					r.inputTextBytes -= text.textBytes
+				}
 			}
 			if context == jsonContextResponsesTool && itemType == "mcp" {
 				for _, setting := range mcpSettings {
@@ -323,8 +325,11 @@ func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, repla
 					r.inputTextBytes -= setting.textBytes
 				}
 			}
-			protected := context == jsonContextResponsesInputItem && itemType == "reasoning" && hasEncryptedContent
-			if protected {
+			sealed := context == jsonContextReasoningDetail && (hasSignature || hasData)
+			if sealed {
+				r.sealedDetails++
+			}
+			if sealed || context == jsonContextResponsesInputItem && itemType == "reasoning" && hasEncryptedContent {
 				*replacements = (*replacements)[:baseReplacements]
 				r.items = baseItems
 				r.inputTextBytes = baseTextBytes
@@ -353,6 +358,8 @@ func (r *Redactor) walkJSONArray(source []byte, position int, allow bool, replac
 			childContext = jsonContextResponsesTool
 		case jsonContextContent:
 			childContext = jsonContextContentBlock
+		case jsonContextReasoningDetails:
+			childContext = jsonContextReasoningDetail
 		}
 		position, err = r.walkJSONValue(source, position, allow, replacements, depth, childContext)
 		if err != nil {
@@ -494,6 +501,15 @@ func jsonStringEnd(source []byte, start int) (int, bool, error) {
 	return len(source), hadEscape, errInvalidJSON
 }
 
+// jsonStringHasText reports whether the value at position is a string that is not empty.
+func jsonStringHasText(source []byte, position int) (bool, error) {
+	if source[position] != '"' {
+		return false, nil
+	}
+	end, _, err := jsonStringEnd(source, position)
+	return end > position+2, err
+}
+
 func isJSONHex(value byte) bool {
 	return isASCIIDigit(value) || value >= 'a' && value <= 'f' || value >= 'A' && value <= 'F'
 }
@@ -575,6 +591,8 @@ const (
 	jsonKeySkipScalar
 	jsonKeyMCPSetting
 	jsonKeyEncryptedContent
+	jsonKeySignature
+	jsonKeyData
 	jsonKeyType
 	jsonKeyReasoning
 	jsonKeyReasoningDetails
@@ -605,7 +623,11 @@ func classifyJSONKey(encoded []byte, escaped bool) (jsonKeyKind, error) {
 		return jsonKeyEncryptedContent, nil
 	case "type":
 		return jsonKeyType, nil
-	case "reasoning":
+	case "signature":
+		return jsonKeySignature, nil
+	case "data":
+		return jsonKeyData, nil
+	case "reasoning", "reasoning_content":
 		return jsonKeyReasoning, nil
 	case "reasoning_details":
 		return jsonKeyReasoningDetails, nil
