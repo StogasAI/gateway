@@ -16,7 +16,7 @@ func laterThinkingReply() []AnthropicContentBlock {
 		{Type: AnthropicContentBlockTypeThinking, Thinking: schemas.Ptr("Plan the lookup."), Signature: schemas.Ptr("sig-plan")},
 		{Type: AnthropicContentBlockTypeRedactedThinking, Data: schemas.Ptr("redacted-plan")},
 		{Type: AnthropicContentBlockTypeText, Text: schemas.Ptr("Checking the weather.")},
-		{Type: AnthropicContentBlockTypeThinking, Thinking: schemas.Ptr(" Asking for Paris."), Signature: schemas.Ptr("sig-update")},
+		{Type: AnthropicContentBlockTypeThinking, Thinking: schemas.Ptr("Asking for Paris."), Signature: schemas.Ptr("sig-update")},
 		{Type: AnthropicContentBlockTypeToolUse, ID: schemas.Ptr("toolu_01"), Name: schemas.Ptr("get_weather"), Input: json.RawMessage(`{"city":"Paris"}`)},
 		{Type: AnthropicContentBlockTypeRedactedThinking, Data: schemas.Ptr("redacted-late")},
 	}
@@ -63,8 +63,8 @@ func TestChatReplyReturnsTheThinkingThatStartsIt(t *testing.T) {
 	if got := message.ChatAssistantMessage.ReasoningDetails; !reflect.DeepEqual(got, wantDetails) {
 		t.Fatalf("reasoning_details = %+v, want %+v", got, wantDetails)
 	}
-	// The progress update stays readable.
-	if got := *message.ChatAssistantMessage.Reasoning; got != "Plan the lookup. Asking for Paris." {
+	// The progress update stays readable, as a paragraph of its own.
+	if got := *message.ChatAssistantMessage.Reasoning; got != "Plan the lookup.\n\nAsking for Paris." {
 		t.Fatalf("reasoning = %q", got)
 	}
 

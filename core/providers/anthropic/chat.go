@@ -844,6 +844,9 @@ func ToAnthropicChatRequest(ctx *schemas.BifrostContext, bifrostReq *schemas.Bif
 						BudgetTokens: schemas.Ptr(budgetTokens),
 					}
 				}
+			} else if reasoningParams.Effort == nil && (reasoningParams.Enabled == nil || *reasoningParams.Enabled) {
+				// No effort and no budget: the model keeps its default (displayonly.go).
+				anthropicReq.Thinking = defaultThinkingForDisplay(capModel, reasoningParams.Display)
 			} else if caps.CanDisableReasoning(DefaultCanDisableReasoning(capModel)) {
 				// Fable/Mythos reject thinking:{type:"disabled"} with a 400 —
 				// adaptive thinking is always on and cannot be disabled. Omit
@@ -1353,8 +1356,11 @@ func (response *AnthropicMessageResponse) ToBifrostChatResponse(ctx *schemas.Bif
 						Signature: c.Signature,
 					})
 				}
-				// Streaming forwards thinking deltas without a separator.
-				if c.Thinking != nil {
+				// A stream separates the blocks the same way.
+				if c.Thinking != nil && *c.Thinking != "" {
+					if reasoningText != "" {
+						reasoningText += thinkingBlockSeparator
+					}
 					reasoningText += *c.Thinking
 				}
 			case AnthropicContentBlockTypeRedactedThinking:
@@ -1709,6 +1715,11 @@ type AnthropicStreamState struct {
 	// answered turns true when a block other than thinking starts. Later
 	// thinking streams as reasoning text only (see laterthinking.go).
 	answered bool
+	// reasoningBlock is the content_block index of the thinking block whose
+	// text streamed last, and reasoningStreamed whether any has. The text of
+	// another block starts after thinkingBlockSeparator.
+	reasoningBlock    int
+	reasoningStreamed bool
 }
 
 // NewAnthropicStreamState returns an initialised stream state for one streaming response.
@@ -1963,7 +1974,12 @@ func (chunk *AnthropicStreamEvent) ToBifrostChatCompletionStream(ctx *schemas.Bi
 				// Handle thinking content streaming
 				if chunk.Delta.Thinking != nil && *chunk.Delta.Thinking != "" {
 					thinkingText := *chunk.Delta.Thinking
-					delta := &schemas.ChatStreamResponseChoiceDelta{Reasoning: schemas.Ptr(thinkingText)}
+					reasoningText := thinkingText
+					if state.reasoningStreamed && state.reasoningBlock != *chunk.Index {
+						reasoningText = thinkingBlockSeparator + thinkingText
+					}
+					state.reasoningBlock, state.reasoningStreamed = *chunk.Index, true
+					delta := &schemas.ChatStreamResponseChoiceDelta{Reasoning: schemas.Ptr(reasoningText)}
 					if !state.answered {
 						delta.ReasoningDetails = []schemas.ChatReasoningDetails{
 							{

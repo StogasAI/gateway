@@ -152,6 +152,25 @@ func TestPublicBifrostErrorKeepsProviderLimitAndPolicyDetails(t *testing.T) {
 	}
 }
 
+// Claude's refusal of changed reasoning history names its own message positions and a setting
+// that neither API has, so the client reads what it can do, with either kind of credential.
+func TestPublicProviderErrorSaysHowToRecoverRefusedReasoningHistory(t *testing.T) {
+	refusal := testBifrostError(http.StatusBadRequest, "messages.5.content.0: Invalid `signature` in `thinking` block. The block is bound to a different conversation. "+
+		"Remove the block, or set `thinking.block_binding.prefix_mismatch_behavior` to \"drop_block\". That setting requires the `thinking-binding-controls-2026-08-01` value in the `anthropic-beta` header.",
+		"invalid_request_error", "")
+	for _, use := range []providerMessageUse{filterProviderMessage, passProviderMessage, withholdProviderMessage} {
+		status, payload := publicProviderError(refusal, use)
+		if errorObject := publicErrorObject(t, payload); status != http.StatusBadRequest || errorObject["type"] != "invalid_request_error" || errorObject["message"] != reasoningHistoryRefused {
+			t.Fatalf("use %d: status = %d, error = %#v", use, status, errorObject)
+		}
+	}
+	// A signature that Claude cannot read is another failure and keeps Anthropic's words.
+	tampered := testBifrostError(http.StatusBadRequest, "messages.1.content.0: Invalid `signature` in `thinking` block.", "invalid_request_error", "")
+	if _, payload := publicBifrostError(tampered); publicErrorObject(t, payload)["message"] != tampered.Error.Message {
+		t.Fatalf("error = %#v", payload)
+	}
+}
+
 // A provider's words about the customer's own account are the customer's to
 // read, so a call with their credential carries them where a managed account's
 // refusal names nothing.

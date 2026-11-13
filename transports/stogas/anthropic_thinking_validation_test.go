@@ -79,7 +79,7 @@ func TestAnthropicThinkingChatResponsePassesValidation(t *testing.T) {
 // so one can follow text or an earlier tool call. Display "updates" returns the reasoning as a
 // signed block without text and the updates as readable blocks.
 const claudeProgressUpdateBlocks = `{"type":"thinking","thinking":"","signature":"c2lnLXJlYXNvbg=="},` +
-	`{"type":"thinking","thinking":"Found the config. ","signature":"c2lnLXVwZGF0ZTE="},` +
+	`{"type":"thinking","thinking":"Found the config.","signature":"c2lnLXVwZGF0ZTE="},` +
 	`{"type":"tool_use","id":"toolu_01","name":"lookup","input":{"q":"a"}},` +
 	`{"type":"thinking","thinking":"Reading the tests next.","signature":"c2lnLXVwZGF0ZTI="},` +
 	`{"type":"tool_use","id":"toolu_02","name":"lookup","input":{"q":"b"}}`
@@ -88,12 +88,13 @@ const claudeProgressUpdateModel = `"model":"anthropic-claude-fable-5-1","reasoni
 
 const claudeProgressUpdateTool = `"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object","properties":{"q":{"type":"string"}}}}}]`
 
-const claudeProgressUpdateText = "Found the config. Reading the tests next."
+// Each update is a paragraph of the reasoning text.
+const claudeProgressUpdateText = "Found the config.\n\nReading the tests next."
 
 // What Claude must get back: the hidden reasoning with its empty text, the update after it, and
 // both calls. The update between the calls is left out, which Anthropic allows.
 const claudeProgressUpdateHistory = `type="thinking" thinking="" signature="c2lnLXJlYXNvbg=="` + "\n" +
-	`type="thinking" thinking="Found the config. " signature="c2lnLXVwZGF0ZTE="` + "\n" +
+	`type="thinking" thinking="Found the config." signature="c2lnLXVwZGF0ZTE="` + "\n" +
 	`type="tool_use" id="toolu_01"` + "\n" +
 	`type="tool_use" id="toolu_02"`
 
@@ -197,7 +198,7 @@ func TestClaudeProgressUpdatesReachChatClients(t *testing.T) {
 		}
 		parts[index] += `}`
 	}
-	assembled := `{"role":"assistant","reasoning":"` + streamed + `","reasoning_details":[` + strings.Join(parts, ",") + `],"tool_calls":[` + strings.Join(calls, ",") + `]}`
+	assembled := `{"role":"assistant","reasoning":` + strconv.Quote(streamed) + `,"reasoning_details":[` + strings.Join(parts, ",") + `],"tool_calls":[` + strings.Join(calls, ",") + `]}`
 	if got := claudeHistoryAfter(t, assembled); got != claudeProgressUpdateHistory {
 		t.Fatalf("after a stream Claude gets\n%s\nwant\n%s\nfrom %s", got, claudeProgressUpdateHistory, assembled)
 	}
@@ -244,7 +245,7 @@ func TestClaudeProgressUpdatesReachResponsesClients(t *testing.T) {
 		}
 		sequence += len(chunks)
 	}
-	if got := strings.Join(summaries, ""); len(items) != 5 || got != claudeProgressUpdateText {
+	if got := strings.Join(summaries, "\n\n"); len(items) != 5 || got != claudeProgressUpdateText {
 		t.Fatalf("output = %d items with summaries %q", len(items), got)
 	}
 	next, _, _ := providerBody(t, "/v1/responses", request+`,`+strings.Join(items, ",")+
@@ -266,11 +267,11 @@ func anthropicStreamEvents(t *testing.T, blocks, stopReason string) []anthropic.
 		var deltas []string
 		switch string(block["type"]) {
 		case `"thinking"`:
-			// Hidden reasoning streams its signature alone.
-			if string(block["thinking"]) != `""` {
-				deltas = []string{`{"type":"thinking_delta","thinking":` + string(block["thinking"]) + `}`}
+			// Hidden reasoning streams an empty text before its signature.
+			deltas = []string{
+				`{"type":"thinking_delta","thinking":` + string(block["thinking"]) + `}`,
+				`{"type":"signature_delta","signature":` + string(block["signature"]) + `}`,
 			}
-			deltas = append(deltas, `{"type":"signature_delta","signature":`+string(block["signature"])+`}`)
 			block["thinking"], block["signature"] = json.RawMessage(`""`), json.RawMessage(`""`)
 		case `"tool_use"`:
 			partial, err := json.Marshal(string(block["input"]))
@@ -298,4 +299,27 @@ func anthropicStreamEvents(t *testing.T, blocks, stopReason string) []anthropic.
 		}
 	}
 	return events
+}
+
+// A request can ask what a reply shows of Claude's thinking without an effort. A model that
+// thinks without being asked keeps that default and gets the display; a model that does not gets
+// no thinking setting. Before, the Chat request turned reasoning off, and both lost the display.
+func TestClaudeDisplayWithoutAnEffortKeepsTheDefaultThinking(t *testing.T) {
+	for _, test := range []struct{ model, display, want string }{
+		{"anthropic-claude-fable-5-1", "updates", `{"type":"adaptive","display":"updates"}`},
+		{"anthropic-claude-opus-5", "summarized", `{"type":"adaptive","display":"summarized"}`},
+		{"anthropic-claude-haiku-5-5", "omitted", `{"type":"adaptive","display":"omitted"}`},
+		{"anthropic-claude-opus-4-8", "summarized", ""},
+	} {
+		summary := map[string]string{"updates": "updates", "summarized": "auto", "omitted": "none"}[test.display]
+		for path, request := range map[string]string{
+			"/v1/chat/completions": `{"model":"` + test.model + `","reasoning":{"display":"` + test.display + `"},"messages":[{"role":"user","content":"hi"}]}`,
+			"/v1/responses":        `{"model":"` + test.model + `","reasoning":{"summary":"` + summary + `"},"input":"hi"}`,
+		} {
+			body, _, _ := providerBody(t, path, request)
+			if got := string(body["thinking"]); got != test.want || body["output_config"] != nil {
+				t.Errorf("%s %s display %s: thinking = %s, output_config = %s, want %s", path, test.model, test.display, got, body["output_config"], test.want)
+			}
+		}
+	}
 }

@@ -101,23 +101,41 @@ func validateProviderReasoningDetails(details []schemas.ChatReasoningDetails) er
 	return nil
 }
 
-// providerReasoningMatchesDetails reports whether the reasoning text starts with the text of its
-// details. Claude's thinking that follows another block of its reply, such as a progress update
-// before a tool call, comes after that text and has no detail, because a client cannot send it
-// back in its place (core's laterthinking.go).
+// providerReasoningMatchesDetails reports whether the reasoning text holds the text of its
+// details, in their order (reasoningHoldsDetails).
 func providerReasoningMatchesDetails(reasoning *string, details []schemas.ChatReasoningDetails) bool {
-	return reasoning == nil || strings.HasPrefix(*reasoning, reasoningDetailsText(details))
-}
-
-// reasoningDetailsText joins the readable text of reasoning details.
-func reasoningDetailsText(details []schemas.ChatReasoningDetails) string {
-	var text strings.Builder
+	if reasoning == nil {
+		return true
+	}
+	texts := make([]string, 0, len(details))
 	for _, detail := range details {
 		if detail.Type == schemas.BifrostReasoningDetailsTypeText && detail.Text != nil {
-			_, _ = text.WriteString(*detail.Text)
+			texts = append(texts, *detail.Text)
 		}
 	}
-	return text.String()
+	return reasoningHoldsDetails(*reasoning, texts)
+}
+
+// reasoningHoldsDetails reports whether reasoning text holds the texts of its details in their
+// order, with nothing but line breaks before each. Core separates Claude's thinking blocks with
+// a blank line, also at the start of a streamed block; other clients join details with one line
+// break or with nothing. Anything can follow the last detail: Claude's thinking that follows
+// another block of its reply, such as a progress update before a tool call, has no detail,
+// because a client cannot send it back in its place (core's laterthinking.go).
+func reasoningHoldsDetails(reasoning string, texts []string) bool {
+	for _, text := range texts {
+		for {
+			if rest, found := strings.CutPrefix(reasoning, text); found {
+				reasoning = rest
+				break
+			}
+			if !strings.HasPrefix(reasoning, "\n") {
+				return false
+			}
+			reasoning = reasoning[1:]
+		}
+	}
+	return true
 }
 
 func validateProviderChatToolCalls(state *State, calls []schemas.ChatAssistantMessageToolCall, streaming bool) error {

@@ -5187,6 +5187,9 @@ func ToAnthropicResponsesRequest(ctx *schemas.BifrostContext, bifrostReq *schema
 							setEffortOnOutputConfig(anthropicReq, MapBifrostEffortToAnthropic(native.Effort))
 						}
 					}
+				} else {
+					// No effort and no budget: the model keeps its default (displayonly.go).
+					anthropicReq.Thinking = defaultThinkingForDisplay(capModel, bifrostReq.Params.Reasoning.Summary)
 				}
 			}
 			// between_tools takes no display field.

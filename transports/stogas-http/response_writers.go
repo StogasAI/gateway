@@ -384,12 +384,25 @@ func publicBifrostType(statusCode int, bifrostErr *schemas.BifrostError) string 
 // publicBifrostMessage passes on the message of a 4xx failure as use allows:
 // whole up to a bound, only when it is short and names nothing internal, or
 // not at all.
+// Claude refuses reasoning history whose system prompt, tools or earlier messages changed after
+// Claude produced it (https://platform.claude.com/docs/en/build-with-claude/preserved-thinking/prefix-checks).
+// Its 400 names a position in its own message list and a setting that Chat Completions and
+// Responses do not have, so the client reads what it can do instead.
+const (
+	claudeHistoryRefusal    = "bound to a different conversation"
+	reasoningHistoryRefused = "Claude refused the reasoning in this conversation's history, because the system prompt, the tools or an earlier message changed after Claude produced it. " +
+		"Send each assistant message back unchanged, or send the request again without its reasoning."
+)
+
 func publicBifrostMessage(statusCode int, errorType string, bifrostErr *schemas.BifrostError, use providerMessageUse) string {
 	switch {
 	case bifrostErr == nil:
 		return "Internal server error"
 	case statusCode >= 400 && statusCode < 500:
 		message := bifrostErrorMessage(bifrostErr)
+		if strings.Contains(message, claudeHistoryRefusal) {
+			return reasoningHistoryRefused
+		}
 		switch use {
 		case passProviderMessage:
 			if message = boundedProviderMessage(message); message != "" {

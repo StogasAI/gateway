@@ -990,10 +990,7 @@ func chatReasoningMatchesDetails(reasoning string, raw json.RawMessage) bool {
 			visible = append(visible, rawString(detail["text"]))
 		}
 	}
-	// A reply joins the text of its details without a separator and then adds Claude's thinking
-	// that has no detail, such as a progress update after another block; other clients join
-	// details with a line break.
-	return strings.HasPrefix(reasoning, strings.Join(visible, "")) || strings.HasPrefix(reasoning, strings.Join(visible, "\n"))
+	return reasoningHoldsDetails(reasoning, visible)
 }
 
 func validateChatAnnotations(raw json.RawMessage, path string) error {

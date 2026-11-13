@@ -11,6 +11,12 @@ package anthropic
 // starts each reply. Later thinking, such as a progress update before a tool call, stays
 // readable in a Chat reply's reasoning text and in Responses summaries.
 
+// thinkingBlockSeparator comes between the texts of two thinking blocks in a Chat reply's
+// reasoning text, whole or streamed. Claude writes each progress update as a block of its own,
+// and without a blank line one update runs into the next. The text of a reasoning detail stays
+// exactly the block's own.
+const thinkingBlockSeparator = "\n\n"
+
 func isAnthropicThinkingBlock(blockType AnthropicContentBlockType) bool {
 	return blockType == AnthropicContentBlockTypeThinking || blockType == AnthropicContentBlockTypeRedactedThinking
 }
