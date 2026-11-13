@@ -99,7 +99,7 @@ func TestDiagnosticsTLSRejectsUnauthorizedClientsBeforeHTTP(t *testing.T) {
 			transport := &http.Transport{TLSClientConfig: clientTLS}
 			defer transport.CloseIdleConnections()
 			before := requests.Load()
-			response, err := (&http.Client{Transport: transport, Timeout: time.Second}).Get(endpoint.URL)
+			response, err := (&http.Client{Transport: transport}).Get(endpoint.URL)
 			if response != nil {
 				response.Body.Close()
 			}

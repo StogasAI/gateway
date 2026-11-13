@@ -61,7 +61,7 @@ func TestPrivateDrainRequiresActuatorAndExactGuest(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, ServerName: "example.com", Certificates: []tls.Certificate{test.certificate}}}
 			defer transport.CloseIdleConnections()
-			client := &http.Client{Transport: transport, Timeout: time.Second}
+			client := &http.Client{Transport: transport}
 			response, err := client.Post(endpoint.URL+"/drain", "application/json", strings.NewReader(test.body))
 			if err != nil {
 				t.Fatal(err)

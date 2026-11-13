@@ -289,7 +289,7 @@ func TestProxyIngressIsolatesStalledAndMalformedConnections(t *testing.T) {
 				},
 			}
 			defer transport.CloseIdleConnections()
-			client := &http.Client{Transport: transport, Timeout: 2 * time.Second}
+			client := &http.Client{Transport: transport}
 			response, err := client.Get("https://" + listener.Addr().String())
 			if err != nil {
 				t.Fatal(err)

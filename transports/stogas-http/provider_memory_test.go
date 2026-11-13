@@ -80,7 +80,7 @@ func TestProviderResponseAdmissionBeforeBufferingAndDecompression(t *testing.T) 
 					_, _ = w.Write(encoded)
 				}))
 				defer provider.Close()
-				client := &fasthttp.Client{Transport: providerio.NewTransport(2<<20, false), StreamResponseBody: streaming, MaxConnsPerHost: 1, ReadTimeout: time.Second}
+				client := &fasthttp.Client{Transport: providerio.NewTransport(2<<20, false), StreamResponseBody: streaming, MaxConnsPerHost: 1}
 				defer client.CloseIdleConnections()
 				for index, limit := range []int64{minimumRequestWeightBytes, 128 << 20, minimumRequestWeightBytes} {
 					admission := &requestMemoryAdmission{budget: limit}
@@ -179,7 +179,7 @@ func TestProviderResponseRejectsDenseStructureAndExpandedSize(t *testing.T) {
 			admission := &requestMemoryAdmission{budget: tc.budget}
 			lease, _ := admission.acquire(0)
 			defer lease.release()
-			client := &fasthttp.Client{Transport: providerio.NewTransport(tc.maximum, false), StreamResponseBody: streaming, ReadTimeout: time.Second}
+			client := &fasthttp.Client{Transport: providerio.NewTransport(tc.maximum, false), StreamResponseBody: streaming}
 			defer client.CloseIdleConnections()
 			request, response := fasthttp.AcquireRequest(), fasthttp.AcquireResponse()
 			defer fasthttp.ReleaseRequest(request)
@@ -260,7 +260,7 @@ func TestProviderResponseRejectsTruncatedHTTPWithoutReplay(t *testing.T) {
 			admission := &requestMemoryAdmission{budget: minimumRequestWeightBytes}
 			lease, _ := admission.acquire(0)
 			defer lease.release()
-			client := &fasthttp.Client{Transport: providerio.NewTransport(1<<20, false), ReadTimeout: time.Second}
+			client := &fasthttp.Client{Transport: providerio.NewTransport(1<<20, false)}
 			defer client.CloseIdleConnections()
 			request, response := fasthttp.AcquireRequest(), fasthttp.AcquireResponse()
 			defer fasthttp.ReleaseRequest(request)

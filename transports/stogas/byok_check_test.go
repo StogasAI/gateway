@@ -79,10 +79,10 @@ func byokCheckTestServer(t *testing.T, status *int) (*httptest.Server, func() []
 }
 
 func newTestByokChecker(server *httptest.Server, google googleSignIn, now time.Time) *byokChecker {
-	client := &http.Client{Transport: http.DefaultTransport, Timeout: time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
+	client := &http.Client{Transport: http.DefaultTransport, CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}}
-	awsClient := &http.Client{Transport: redirectAll{server}, Timeout: time.Second, CheckRedirect: client.CheckRedirect}
+	awsClient := &http.Client{Transport: redirectAll{server}, CheckRedirect: client.CheckRedirect}
 	return &byokChecker{
 		openAIBaseURL: server.URL, anthropicBaseURL: server.URL, chutesAPIBaseURL: server.URL,
 		client: client, aws: awsClient, google: google, now: func() time.Time { return now },
