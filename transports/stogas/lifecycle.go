@@ -289,13 +289,15 @@ var modelCapabilities = schemas.ModelCapabilities{
 	SupportsEagerInputStreaming: schemas.Ptr(false),
 }
 
+func resolveModelCapabilities(schemas.ModelProvider, string) *schemas.ModelCapabilities {
+	return &modelCapabilities
+}
+
 func init() {
 	// Every upstream credential comes from the request's binding. Core must
 	// never fall back to an AWS, Google or Azure identity the machine holds.
 	schemas.UseHostCloudCredentials = false
-	schemas.SetCapabilityResolver(func(schemas.ModelProvider, string) *schemas.ModelCapabilities {
-		return &modelCapabilities
-	})
+	schemas.SetCapabilityResolver(resolveModelCapabilities)
 }
 
 func FinalizeState(ctx context.Context, billing billingAuthorizer, state *State) {

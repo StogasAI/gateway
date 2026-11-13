@@ -510,16 +510,23 @@ func TestPreparedProviderBodySurvivesCredentialInstallationAndDispatchBuilder(t 
 	}
 }
 
+// useDatasheetOutputLimit gives one model an output limit in core's datasheet for the test. Every
+// other model keeps the gateway's capabilities, and the gateway's resolver returns when the test
+// ends, because the tests after it depend on it.
+func useDatasheetOutputLimit(t *testing.T, model string, limit int) {
+	t.Helper()
+	schemas.SetCapabilityResolver(func(provider schemas.ModelProvider, candidate string) *schemas.ModelCapabilities {
+		if candidate == model {
+			return &schemas.ModelCapabilities{MaxOutputTokens: &limit}
+		}
+		return resolveModelCapabilities(provider, candidate)
+	})
+	t.Cleanup(func() { schemas.SetCapabilityResolver(resolveModelCapabilities) })
+}
+
 func TestPrepareProviderRequestAppliesPinnedAnthropicLimitBeforeSerialization(t *testing.T) {
 	const model = "stogas-prepared-body-max-output-test"
-	wrongLimit := 7
-	schemas.SetCapabilityResolver(func(_ schemas.ModelProvider, candidate string) *schemas.ModelCapabilities {
-		if candidate == model {
-			return &schemas.ModelCapabilities{MaxOutputTokens: &wrongLimit}
-		}
-		return nil
-	})
-	t.Cleanup(func() { schemas.SetCapabilityResolver(nil) })
+	useDatasheetOutputLimit(t, model, 7)
 	text := "hello"
 	request := &schemas.BifrostRequest{
 		RequestType: schemas.ChatCompletionRequest,
@@ -917,14 +924,7 @@ func TestClientMetadataNeverReachesProvider(t *testing.T) {
 
 func TestPrepareProviderRequestUsesPinnedCatalogTranslationContext(t *testing.T) {
 	const wireModel = "opaque-upstream-deployment"
-	wrongLimit := 100000
-	schemas.SetCapabilityResolver(func(_ schemas.ModelProvider, candidate string) *schemas.ModelCapabilities {
-		if candidate == wireModel {
-			return &schemas.ModelCapabilities{MaxOutputTokens: &wrongLimit}
-		}
-		return nil
-	})
-	t.Cleanup(func() { schemas.SetCapabilityResolver(nil) })
+	useDatasheetOutputLimit(t, wireModel, 100000)
 
 	text := "hello"
 	request := &schemas.BifrostRequest{
