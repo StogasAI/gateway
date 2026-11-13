@@ -3318,11 +3318,14 @@ func TestStreamingPostHookSpans_SiblingsWithRealDuration(t *testing.T) {
 	ctx.SetValue(schemas.BifrostContextKeyStreamStartTime, time.Now())
 
 	const chunks = 3
+	var hookTime time.Duration
 	for i := 0; i < chunks; i++ {
 		if i == chunks-1 {
 			ctx.SetValue(schemas.BifrostContextKeyStreamEndIndicator, true)
 		}
+		start := time.Now()
 		p.RunPostLLMHooks(ctx, &schemas.BifrostResponse{}, nil, len(p.llmPlugins))
+		hookTime += time.Since(start)
 	}
 	hooksDone := time.Now()
 	time.Sleep(50 * time.Millisecond) // a slow client send of the final chunk, before finalizing
@@ -3337,9 +3340,11 @@ func TestStreamingPostHookSpans_SiblingsWithRealDuration(t *testing.T) {
 	if slowSpan.parent != "llm" || fastSpan.parent != "llm" {
 		t.Errorf("posthook parents = slow:%q fast:%q, want both under the LLM span", slowSpan.parent, fastSpan.parent)
 	}
+	// A loaded machine stretches the sleeps, so the span is bounded by the time the hooks
+	// took, which leaves out the client's 50 ms.
 	got := slowSpan.end.Sub(slowSpan.start)
-	if want := chunks * slow.delay; got < want || got > want+15*time.Millisecond {
-		t.Errorf("slow posthook span lasts %v, want about %v (its summed hook time)", got, want)
+	if want := chunks * slow.delay; got < want || got > hookTime {
+		t.Errorf("slow posthook span lasts %v, want its summed hook time: at least %v and at most the %v the hooks took", got, want, hookTime)
 	}
 	if output.parent != slowID {
 		t.Errorf("output span parent = %q, want the slow posthook span %q", output.parent, slowID)
