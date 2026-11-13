@@ -1,0 +1,511 @@
+{
+	"shows": "Azure's DeepSeek and gpt-oss deployments take prompt_cache_key on Chat Completions and Responses and refuse prompt_cache_retention. DeepSeek keeps one cache for each key: a request with the key of an earlier one reads its cached prefix, and a request with a new key reads nothing.",
+	"recorded": "2026-11-13",
+	"exchanges": [
+		{
+			"name": "deepseek first request with a key",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "deepseek-v4-flash",
+					"messages": [
+						{
+							"role": "system",
+							"content": "Note 1794582141698 1: reply with one short word and do not explain note 1. Note 1794582141698 2: reply with one short word and do not explain note 2. Note 1794582141698 3: reply with one short word and do not explain note 3. Note 1794582141698 4: reply with one short word and do not explain note 4. Note 1794582141698 5: reply with one short word and do not explain note 5. Note 1794582141698 6: reply with one short word and do not explain note 6. Note 1794582141698 7: reply with one short word and do not explain note 7. Note 1794582141698 8: reply with one short word and do not explain note 8. Note 1794582141698 9: reply with one short word and do not explain note 9. Note 1794582141698 10: reply with one short word and do not explain note 10. Note 1794582141698 11: reply with one short word and do not explain note 11. Note 1794582141698 12: reply with one short word and do not explain note 12. Note 1794582141698 13: reply with one short word and do not explain note 13. Note 1794582141698 14: reply with one short word and do not explain note 14. Note 1794582141698 15: reply with one short word and do not explain note 15. Note 1794582141698 16: reply with one short word and do not explain note 16. Note 1794582141698 17: reply with one short word and do not explain note 17. Note 1794582141698 18: reply with one short word and do not explain note 18. Note 1794582141698 19: reply with one short word and do not explain note 19. Note 1794582141698 20: reply with one short word and do not explain note 20. Note 1794582141698 21: reply with one short word and do not explain note 21. Note 1794582141698 22: reply with one short word and do not explain note 22. Note 1794582141698 23: reply with one short word and do not explain note 23. Note 1794582141698 24: reply with one short word and do not explain note 24. Note 1794582141698 25: reply with one short word and do not explain note 25. Note 1794582141698 26: reply with one short word and do not explain note 26. Note 1794582141698 27: reply with one short word and do not explain note 27. Note 1794582141698 28: reply with one short word and do not explain note 28. Note 1794582141698 29: reply with one short word and do not explain note 29. Note 1794582141698 30: reply with one short word and do not explain note 30. Note 1794582141698 31: reply with one short word and do not explain note 31. Note 1794582141698 32: reply with one short word and do not explain note 32. Note 1794582141698 33: reply with one short word and do not explain note 33. Note 1794582141698 34: reply with one short word and do not explain note 34. Note 1794582141698 35: reply with one short word and do not explain note 35. Note 1794582141698 36: reply with one short word and do not explain note 36. Note 1794582141698 37: reply with one short word and do not explain note 37. Note 1794582141698 38: reply with one short word and do not explain note 38. Note 1794582141698 39: reply with one short word and do not explain note 39. Note 1794582141698 40: reply with one short word and do not explain note 40. Note 1794582141698 41: reply with one short word and do not explain note 41. Note 1794582141698 42: reply with one short word and do not explain note 42. Note 1794582141698 43: reply with one short word and do not explain note 43. Note 1794582141698 44: reply with one short word and do not explain note 44. Note 1794582141698 45: reply with one short word and do not explain note 45. Note 1794582141698 46: reply with one short word and do not explain note 46. Note 1794582141698 47: reply with one short word and do not explain note 47. Note 1794582141698 48: reply with one short word and do not explain note 48. Note 1794582141698 49: reply with one short word and do not explain note 49. Note 1794582141698 50: reply with one short word and do not explain note 50. Note 1794582141698 51: reply with one short word and do not explain note 51. Note 1794582141698 52: reply with one short word and do not explain note 52. Note 1794582141698 53: reply with one short word and do not explain note 53. Note 1794582141698 54: reply with one short word and do not explain note 54. Note 1794582141698 55: reply with one short word and do not explain note 55. Note 1794582141698 56: reply with one short word and do not explain note 56. Note 1794582141698 57: reply with one short word and do not explain note 57. Note 1794582141698 58: reply with one short word and do not explain note 58. Note 1794582141698 59: reply with one short word and do not explain note 59. Note 1794582141698 60: reply with one short word and do not explain note 60. Note 1794582141698 61: reply with one short word and do not explain note 61. Note 1794582141698 62: reply with one short word and do not explain note 62. Note 1794582141698 63: reply with one short word and do not explain note 63. Note 1794582141698 64: reply with one short word and do not explain note 64. Note 1794582141698 65: reply with one short word and do not explain note 65. Note 1794582141698 66: reply with one short word and do not explain note 66. Note 1794582141698 67: reply with one short word and do not explain note 67. Note 1794582141698 68: reply with one short word and do not explain note 68. Note 1794582141698 69: reply with one short word and do not explain note 69. Note 1794582141698 70: reply with one short word and do not explain note 70."
+						},
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_completion_tokens": 20,
+					"prompt_cache_key": "first-1794582141698"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "c33d53ebdd6545bb91a4031662e38b43",
+					"model": "deepseek-v4-flash",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "OK"
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 1617,
+						"completion_tokens": 2,
+						"total_tokens": 1619,
+						"audio_prompt_tokens": 0
+					},
+					"created": 1794582142,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "deepseek same key",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "deepseek-v4-flash",
+					"messages": [
+						{
+							"role": "system",
+							"content": "Note 1794582141698 1: reply with one short word and do not explain note 1. Note 1794582141698 2: reply with one short word and do not explain note 2. Note 1794582141698 3: reply with one short word and do not explain note 3. Note 1794582141698 4: reply with one short word and do not explain note 4. Note 1794582141698 5: reply with one short word and do not explain note 5. Note 1794582141698 6: reply with one short word and do not explain note 6. Note 1794582141698 7: reply with one short word and do not explain note 7. Note 1794582141698 8: reply with one short word and do not explain note 8. Note 1794582141698 9: reply with one short word and do not explain note 9. Note 1794582141698 10: reply with one short word and do not explain note 10. Note 1794582141698 11: reply with one short word and do not explain note 11. Note 1794582141698 12: reply with one short word and do not explain note 12. Note 1794582141698 13: reply with one short word and do not explain note 13. Note 1794582141698 14: reply with one short word and do not explain note 14. Note 1794582141698 15: reply with one short word and do not explain note 15. Note 1794582141698 16: reply with one short word and do not explain note 16. Note 1794582141698 17: reply with one short word and do not explain note 17. Note 1794582141698 18: reply with one short word and do not explain note 18. Note 1794582141698 19: reply with one short word and do not explain note 19. Note 1794582141698 20: reply with one short word and do not explain note 20. Note 1794582141698 21: reply with one short word and do not explain note 21. Note 1794582141698 22: reply with one short word and do not explain note 22. Note 1794582141698 23: reply with one short word and do not explain note 23. Note 1794582141698 24: reply with one short word and do not explain note 24. Note 1794582141698 25: reply with one short word and do not explain note 25. Note 1794582141698 26: reply with one short word and do not explain note 26. Note 1794582141698 27: reply with one short word and do not explain note 27. Note 1794582141698 28: reply with one short word and do not explain note 28. Note 1794582141698 29: reply with one short word and do not explain note 29. Note 1794582141698 30: reply with one short word and do not explain note 30. Note 1794582141698 31: reply with one short word and do not explain note 31. Note 1794582141698 32: reply with one short word and do not explain note 32. Note 1794582141698 33: reply with one short word and do not explain note 33. Note 1794582141698 34: reply with one short word and do not explain note 34. Note 1794582141698 35: reply with one short word and do not explain note 35. Note 1794582141698 36: reply with one short word and do not explain note 36. Note 1794582141698 37: reply with one short word and do not explain note 37. Note 1794582141698 38: reply with one short word and do not explain note 38. Note 1794582141698 39: reply with one short word and do not explain note 39. Note 1794582141698 40: reply with one short word and do not explain note 40. Note 1794582141698 41: reply with one short word and do not explain note 41. Note 1794582141698 42: reply with one short word and do not explain note 42. Note 1794582141698 43: reply with one short word and do not explain note 43. Note 1794582141698 44: reply with one short word and do not explain note 44. Note 1794582141698 45: reply with one short word and do not explain note 45. Note 1794582141698 46: reply with one short word and do not explain note 46. Note 1794582141698 47: reply with one short word and do not explain note 47. Note 1794582141698 48: reply with one short word and do not explain note 48. Note 1794582141698 49: reply with one short word and do not explain note 49. Note 1794582141698 50: reply with one short word and do not explain note 50. Note 1794582141698 51: reply with one short word and do not explain note 51. Note 1794582141698 52: reply with one short word and do not explain note 52. Note 1794582141698 53: reply with one short word and do not explain note 53. Note 1794582141698 54: reply with one short word and do not explain note 54. Note 1794582141698 55: reply with one short word and do not explain note 55. Note 1794582141698 56: reply with one short word and do not explain note 56. Note 1794582141698 57: reply with one short word and do not explain note 57. Note 1794582141698 58: reply with one short word and do not explain note 58. Note 1794582141698 59: reply with one short word and do not explain note 59. Note 1794582141698 60: reply with one short word and do not explain note 60. Note 1794582141698 61: reply with one short word and do not explain note 61. Note 1794582141698 62: reply with one short word and do not explain note 62. Note 1794582141698 63: reply with one short word and do not explain note 63. Note 1794582141698 64: reply with one short word and do not explain note 64. Note 1794582141698 65: reply with one short word and do not explain note 65. Note 1794582141698 66: reply with one short word and do not explain note 66. Note 1794582141698 67: reply with one short word and do not explain note 67. Note 1794582141698 68: reply with one short word and do not explain note 68. Note 1794582141698 69: reply with one short word and do not explain note 69. Note 1794582141698 70: reply with one short word and do not explain note 70."
+						},
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_completion_tokens": 20,
+					"prompt_cache_key": "first-1794582141698"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "b1acb1f0784d46e4828d2a938ab5f8a0",
+					"model": "deepseek-v4-flash",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "OK"
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 1617,
+						"completion_tokens": 2,
+						"total_tokens": 1619,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 1536
+						}
+					},
+					"created": 1794582153,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "deepseek new key",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "deepseek-v4-flash",
+					"messages": [
+						{
+							"role": "system",
+							"content": "Note 1794582141698 1: reply with one short word and do not explain note 1. Note 1794582141698 2: reply with one short word and do not explain note 2. Note 1794582141698 3: reply with one short word and do not explain note 3. Note 1794582141698 4: reply with one short word and do not explain note 4. Note 1794582141698 5: reply with one short word and do not explain note 5. Note 1794582141698 6: reply with one short word and do not explain note 6. Note 1794582141698 7: reply with one short word and do not explain note 7. Note 1794582141698 8: reply with one short word and do not explain note 8. Note 1794582141698 9: reply with one short word and do not explain note 9. Note 1794582141698 10: reply with one short word and do not explain note 10. Note 1794582141698 11: reply with one short word and do not explain note 11. Note 1794582141698 12: reply with one short word and do not explain note 12. Note 1794582141698 13: reply with one short word and do not explain note 13. Note 1794582141698 14: reply with one short word and do not explain note 14. Note 1794582141698 15: reply with one short word and do not explain note 15. Note 1794582141698 16: reply with one short word and do not explain note 16. Note 1794582141698 17: reply with one short word and do not explain note 17. Note 1794582141698 18: reply with one short word and do not explain note 18. Note 1794582141698 19: reply with one short word and do not explain note 19. Note 1794582141698 20: reply with one short word and do not explain note 20. Note 1794582141698 21: reply with one short word and do not explain note 21. Note 1794582141698 22: reply with one short word and do not explain note 22. Note 1794582141698 23: reply with one short word and do not explain note 23. Note 1794582141698 24: reply with one short word and do not explain note 24. Note 1794582141698 25: reply with one short word and do not explain note 25. Note 1794582141698 26: reply with one short word and do not explain note 26. Note 1794582141698 27: reply with one short word and do not explain note 27. Note 1794582141698 28: reply with one short word and do not explain note 28. Note 1794582141698 29: reply with one short word and do not explain note 29. Note 1794582141698 30: reply with one short word and do not explain note 30. Note 1794582141698 31: reply with one short word and do not explain note 31. Note 1794582141698 32: reply with one short word and do not explain note 32. Note 1794582141698 33: reply with one short word and do not explain note 33. Note 1794582141698 34: reply with one short word and do not explain note 34. Note 1794582141698 35: reply with one short word and do not explain note 35. Note 1794582141698 36: reply with one short word and do not explain note 36. Note 1794582141698 37: reply with one short word and do not explain note 37. Note 1794582141698 38: reply with one short word and do not explain note 38. Note 1794582141698 39: reply with one short word and do not explain note 39. Note 1794582141698 40: reply with one short word and do not explain note 40. Note 1794582141698 41: reply with one short word and do not explain note 41. Note 1794582141698 42: reply with one short word and do not explain note 42. Note 1794582141698 43: reply with one short word and do not explain note 43. Note 1794582141698 44: reply with one short word and do not explain note 44. Note 1794582141698 45: reply with one short word and do not explain note 45. Note 1794582141698 46: reply with one short word and do not explain note 46. Note 1794582141698 47: reply with one short word and do not explain note 47. Note 1794582141698 48: reply with one short word and do not explain note 48. Note 1794582141698 49: reply with one short word and do not explain note 49. Note 1794582141698 50: reply with one short word and do not explain note 50. Note 1794582141698 51: reply with one short word and do not explain note 51. Note 1794582141698 52: reply with one short word and do not explain note 52. Note 1794582141698 53: reply with one short word and do not explain note 53. Note 1794582141698 54: reply with one short word and do not explain note 54. Note 1794582141698 55: reply with one short word and do not explain note 55. Note 1794582141698 56: reply with one short word and do not explain note 56. Note 1794582141698 57: reply with one short word and do not explain note 57. Note 1794582141698 58: reply with one short word and do not explain note 58. Note 1794582141698 59: reply with one short word and do not explain note 59. Note 1794582141698 60: reply with one short word and do not explain note 60. Note 1794582141698 61: reply with one short word and do not explain note 61. Note 1794582141698 62: reply with one short word and do not explain note 62. Note 1794582141698 63: reply with one short word and do not explain note 63. Note 1794582141698 64: reply with one short word and do not explain note 64. Note 1794582141698 65: reply with one short word and do not explain note 65. Note 1794582141698 66: reply with one short word and do not explain note 66. Note 1794582141698 67: reply with one short word and do not explain note 67. Note 1794582141698 68: reply with one short word and do not explain note 68. Note 1794582141698 69: reply with one short word and do not explain note 69. Note 1794582141698 70: reply with one short word and do not explain note 70."
+						},
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_completion_tokens": 20,
+					"prompt_cache_key": "second-1794582141698"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "f5e7004f43834272afb442bda25bdc1e",
+					"model": "deepseek-v4-flash",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "OK"
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 1617,
+						"completion_tokens": 2,
+						"total_tokens": 1619,
+						"audio_prompt_tokens": 0
+					},
+					"created": 1794582155,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "deepseek retention",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "deepseek-v4-flash",
+					"messages": [
+						{
+							"role": "system",
+							"content": "Be brief."
+						},
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_completion_tokens": 20,
+					"prompt_cache_retention": "24h"
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": "unrecognized_request_argument",
+						"message": "Unrecognized request argument supplied: prompt_cache_retention",
+						"details": "Unrecognized request argument supplied: prompt_cache_retention"
+					}
+				}
+			}
+		},
+		{
+			"name": "deepseek-v4-pro chat with a key",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "deepseek-v4-pro",
+					"messages": [
+						{
+							"role": "system",
+							"content": "Be brief."
+						},
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_completion_tokens": 20,
+					"prompt_cache_key": "first-1794582141698"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "d91d26e95583498e8ebe5598a7629514",
+					"model": "deepseek-v4-pro",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "OK"
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 10,
+						"completion_tokens": 2,
+						"total_tokens": 12,
+						"audio_prompt_tokens": 0
+					},
+					"created": 1794582156,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "gpt-oss-120b chat with a key",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "gpt-oss-120b",
+					"messages": [
+						{
+							"role": "system",
+							"content": "Be brief."
+						},
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_completion_tokens": 20,
+					"prompt_cache_key": "first-1794582141698"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "dbbcbb0e899b446c83585746a3aefa70",
+					"model": "gpt-oss-120b",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "OK.",
+								"reasoning_content": "We need brief response \"OK\"."
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 80,
+						"completion_tokens": 19,
+						"total_tokens": 99,
+						"audio_prompt_tokens": 0
+					},
+					"created": 1794582158,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "deepseek-v4-flash responses with a key",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/responses",
+				"body": {
+					"model": "deepseek-v4-flash",
+					"input": "Say OK.",
+					"max_output_tokens": 200,
+					"store": false,
+					"prompt_cache_key": "first-1794582141698"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_0abb6bb77827d661016af72690521c81968b886c1cdb8444d1",
+					"object": "response",
+					"created_at": 1794582160,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"completed_at": 1794582161,
+					"content_filters": null,
+					"error": null,
+					"frequency_penalty": 0,
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 200,
+					"max_tool_calls": null,
+					"model": "deepseek-v4-flash",
+					"moderation": null,
+					"output": [
+						{
+							"id": "msg_0abb6bb77827d661016af72691872881968d3ec81833be40f3",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "OK."
+								}
+							],
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": "first-1794582141698",
+					"prompt_cache_retention": "in_memory",
+					"reasoning": {
+						"context": null,
+						"effort": null,
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "auto",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [],
+					"top_logprobs": 0,
+					"top_p": 1,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 13,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"output_tokens": 3,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 16
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "gpt-oss-120b responses with a key",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/responses",
+				"body": {
+					"model": "gpt-oss-120b",
+					"input": "Say OK.",
+					"max_output_tokens": 200,
+					"store": false,
+					"prompt_cache_key": "first-1794582141698"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_05737a7f0fef1643016af72691a66081949689449efcb98069",
+					"object": "response",
+					"created_at": 1794582161,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"completed_at": 1794582162,
+					"content_filters": null,
+					"error": null,
+					"frequency_penalty": 0,
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 200,
+					"max_tool_calls": null,
+					"model": "gpt-oss-120b",
+					"moderation": null,
+					"output": [
+						{
+							"id": "rs_05737a7f0fef1643016af7269233348194896cbab22fa3cb9b",
+							"type": "reasoning",
+							"content": [],
+							"encrypted_content": "gAAAAABq9yaSJrCqOarCvLnFAEqr_lRKoyDiB92azQvBbbEkN7gx3UiIJLLb4kEV4YsSqy1IApkeecgKh91nCMaxrrUv26aVAfUpWyXxWFbcCaiY19cpvkh0eNo0hL719UjlZhsRRWQSpj-YyqeLwGACKDoyI922E9Z4WPgON1pMvGg4R6jmLYhkopzdkNcchqlS5hEkyCcplfkNI3CwO3-IBjmlmN3zgAdOfVoBssoqoxUXCln0cBBYWlfJ4ntMHVB0feIO1mQrVFTs4Bd79BoG0RWNDkjlYZ1SivzOXNTz0lOHYlMHkZm33LWTs4Ncje4zWA8BU1KHrdnsfemQCGRg94apu-qdkCYA32VuaacO4C-gCQ8CYA-2qr33u6I8o2bWhCqsqfkiI_hNf7xV5836wy8vwuqysNFXXwlSAQ-1cB7N0axYVCSSt7ODA7TAI3UgJtqHRt31sOmYhZjFiCNkSEE_kSaSqBWANpEgTSeWwH20ZEzhdo8BU3zAN-iL6VtCcTlys-M0sgD10ldoy8RFQPLOz6tQ-6wicwGl6rdkon0g8lLW4ZznYF4LW8lRxJmdY0LimA_ElYKIwEsRVXPNa3RHgHePy8v8TtJbAMgSP0qgq2-POLk45N4FIZ9moMA0V59otC7iDxIUeptlpvX76IbY3tRElQQfxYfCmxM-XaFE7QcBSm7WOTCl1t7ceYNA7yDtUaO1_-QzHGsWxIlSe1-WQ3CKGQ==",
+							"summary": [
+								{
+									"type": "summary_text",
+									"text": "The user wants to say \"OK.\" Probably they want the assistant to respond with \"OK.\" Simple."
+								}
+							]
+						},
+						{
+							"id": "msg_05737a7f0fef1643016af7269234e08194a6d9f8444701e13a",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "OK."
+								}
+							],
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": false,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": "first-1794582141698",
+					"prompt_cache_retention": "in_memory",
+					"reasoning": {
+						"context": "current_turn",
+						"effort": "medium",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "auto",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [],
+					"top_logprobs": 0,
+					"top_p": 1,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 66,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"output_tokens": 33,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 99
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		}
+	]
+}

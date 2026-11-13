@@ -3474,7 +3474,8 @@ func TestOpenAIPromptCachingRejectsUnrepresentableShapes(t *testing.T) {
 }
 
 // Codex sends a prompt cache key and parallel_tool_calls: true with every request. Every
-// deployment takes both, and only OpenAI's models, which OpenAI routes by the key, receive it.
+// deployment takes both, and the key reaches only the deployments whose provider keeps a cache for
+// each key: OpenAI's models, and DeepSeek's on Azure (azure/prompt-cache-key-other-models).
 func TestCodexCacheKeyAndParallelCallsWorkOnEveryDeployment(t *testing.T) {
 	tool := `{"type":"function","name":"lookup","parameters":{"type":"object"}}`
 	chatTool := `{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}`
@@ -3484,7 +3485,7 @@ func TestCodexCacheKeyAndParallelCallsWorkOnEveryDeployment(t *testing.T) {
 	}{
 		{"provider:openai gpt-5.5", true},
 		{"azure-gpt-5.6-sol", true},
-		{"azure-deepseek-v4-pro", false},
+		{"azure-deepseek-v4-pro", true},
 		{"azure-minimax-m3-fireworks-hosted-us", false},
 		{"azure-gpt-oss-120b", false},
 		{"anthropic-claude-sonnet-4-6", false},

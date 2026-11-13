@@ -365,13 +365,21 @@ func (r *ResolvedRequest) ToBifrost(ctx *schemas.BifrostContext) (*schemas.Bifro
 	}
 }
 
-// takesPromptCacheKey reports whether the deployment takes a prompt cache key, which only tunes how
-// OpenAI routes requests to its cache: one of OpenAI's models that caches implicitly. Claude caches
-// only what a request marks, and other models have no use for OpenAI's routing. ToBifrost leaves
-// the key out of a copy of the parameters, which can belong to the typed request that other pairs
+// takesPromptCacheKey reports whether the deployment takes a prompt cache key, which selects the
+// cache that the provider looks a request's prefix up in: a deployment that caches implicitly on
+// OpenAI, or on Azure in a model format that was measured to keep one cache for each key. Claude
+// caches only what a request marks, and no other provider documents the key. ToBifrost leaves the
+// key out of a copy of the parameters, which can belong to the typed request that other pairs
 // share.
 func (r *ResolvedRequest) takesPromptCacheKey() bool {
-	return r.runsOpenAIModel() && r.Deployment.Capabilities.ImplicitPromptCaching
+	if !r.Deployment.Capabilities.ImplicitPromptCaching {
+		return false
+	}
+	if r.Provider == schemas.Azure {
+		format := r.Deployment.Upstream.ModelFormat
+		return format == "OpenAI" || format == "DeepSeek"
+	}
+	return r.Provider == schemas.OpenAI
 }
 
 // runsOpenAIModel reports whether the deployment runs one of OpenAI's own models: on OpenAI, or on
