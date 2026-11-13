@@ -706,19 +706,25 @@ func validateChatAssistantInput(state *State, message map[string]json.RawMessage
 		hasPayload = hasPayload || meaningful
 		validation.meaningful = validation.meaningful || meaningful
 	}
-	reasoningSet := false
+	// reasoning_content is another name for reasoning, which DeepSeek-style clients read and send.
+	// A reply carries the text under both names, so a client that sends the reply back sends both.
+	reasoningSet, reasoningGiven := false, false
 	reasoningValue := ""
-	if reasoning, ok := message["reasoning"]; ok {
-		value, ok := rawStringValue(reasoning)
+	for _, name := range []string{"reasoning", "reasoning_content"} {
+		raw, ok := message[name]
 		if !ok {
-			return invalidRequest(path + ".reasoning must be a string")
+			continue
 		}
-		reasoningValue = value
+		value, ok := rawStringValue(raw)
+		if !ok {
+			return invalidRequest(path + "." + name + " must be a string")
+		}
+		if reasoningGiven && value != reasoningValue {
+			return invalidRequest(path + ".reasoning_content must equal reasoning")
+		}
+		reasoningValue, reasoningGiven = value, true
 		reasoningSet = hasNonWhitespace(value)
 		hasPayload = hasPayload || reasoningSet
-	}
-	if _, ok := message["reasoning_content"]; ok {
-		return invalidRequest(path + ".reasoning_content is not supported; use reasoning")
 	}
 	// Reasoning history passes these checks on every deployment, and each deployment gets only the
 	// history that it takes back (catalog.ResolvedRequest.KeepReadableReasoning).

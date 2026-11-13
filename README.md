@@ -13,9 +13,16 @@ The open-source, OpenAI-compatible gateway that runs inside Stogas confidential 
 
 ## Repository
 
-- `core/`: the allowlisted Maxim Bifrost runtime and provider layer
+- `core/`: the allowlisted Maxim Bifrost runtime and provider layer, edited in place. `stogas/upstream-sync.lock` names the upstream commit it was last synchronized with
 - `transports/`: the Stogas API transport, signed catalog loader, routing, policies, and entrypoint
 - `stogas/`: the reproducible IGVM release pipeline
+
+The code in this repository is the code that runs. Every change to `core/` is committed here, and the release build takes its source from the tagged commit alone. To list the changes against upstream Bifrost:
+
+```console
+git fetch https://github.com/maximhq/bifrost.git "$(cat stogas/upstream-sync.lock)"
+git diff FETCH_HEAD -- core
+```
 
 The public listener uses port `5185`; private readiness uses `5186` and TLS diagnostics `5187`. Confidential ingress requires a PROXYv2 header before TLS, so allow backend access only from trusted load balancers.
 

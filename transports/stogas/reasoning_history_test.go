@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/bytedance/sonic"
 	"github.com/maximhq/bifrost/core/providers/anthropic"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
@@ -335,5 +337,184 @@ func TestReasoningHistoryChecksAreTheSameOnEveryDeployment(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// TestChatReplyWithReasoningTextGoesBackUnchanged sends a reply's message back as a client that
+// appends it to its history does. A reply carries reasoning text under both of its names,
+// reasoning and reasoning_content, so a request takes both, and either alone.
+func TestChatReplyWithReasoningTextGoesBackUnchanged(t *testing.T) {
+	reply, err := sonic.Marshal(schemas.ChatMessage{
+		Role:    schemas.ChatMessageRoleAssistant,
+		Content: &schemas.ChatMessageContent{ContentStr: schemas.Ptr("4")},
+		ChatAssistantMessage: &schemas.ChatAssistantMessage{
+			Reasoning:        schemas.Ptr("two and two"),
+			ReasoningDetails: []schemas.ChatReasoningDetails{{Index: 0, Type: schemas.BifrostReasoningDetailsTypeText, Text: schemas.Ptr("two and two")}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(reply, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if string(fields["reasoning"]) != `"two and two"` || string(fields["reasoning_content"]) != `"two and two"` {
+		t.Fatalf("a reply carries reasoning under both names, got %s", reply)
+	}
+	conversation := func(assistant string) string {
+		return `"messages":[{"role":"user","content":"2+2?"},` + assistant + `,{"role":"user","content":"again"}]`
+	}
+	for _, model := range []string{"anthropic-claude-sonnet-4-6", "provider:openai gpt-5.5", "azure-gpt-5.6-sol", "chutes-glm-5.2"} {
+		for name, assistant := range map[string]string{
+			"the reply":              string(reply),
+			"reasoning_content only": `{"role":"assistant","content":"4","reasoning_content":"two and two"}`,
+			"reasoning only":         `{"role":"assistant","content":"4","reasoning":"two and two"}`,
+		} {
+			if err := requestCheckError(t, "/v1/chat/completions", `{"model":"`+model+`",`+conversation(assistant)+`}`); err != nil {
+				t.Errorf("%s, %s: %v", model, name, err)
+			}
+		}
+		for name, assistant := range map[string]string{
+			"names that disagree": `{"role":"assistant","content":"4","reasoning":"two and two","reasoning_content":"five"}`,
+			"not a string":        `{"role":"assistant","content":"4","reasoning_content":["two and two"]}`,
+		} {
+			if err := requestCheckError(t, "/v1/chat/completions", `{"model":"`+model+`",`+conversation(assistant)+`}`); err == nil {
+				t.Errorf("%s, %s: accepted", model, name)
+			}
+		}
+	}
+
+	// Chutes takes plain reasoning back, once, whichever name the client used.
+	for _, assistant := range []string{string(reply), `{"role":"assistant","content":"4","reasoning_content":"two and two"}`} {
+		body, _, _ := providerBody(t, "/v1/chat/completions", `{"model":"chutes-glm-5.2",`+conversation(assistant)+`}`)
+		var wire []map[string]json.RawMessage
+		if err := json.Unmarshal(body["messages"], &wire); err != nil {
+			t.Fatal(err)
+		}
+		if string(wire[1]["reasoning_content"]) != `"two and two"` || wire[1]["reasoning"] != nil || wire[1]["reasoning_details"] != nil {
+			t.Fatalf("Chutes assistant message = %s", body["messages"])
+		}
+	}
+}
+
+// recordedReasoningItem is the reasoning item of a recorded request's input, decoded.
+func recordedReasoningItem(t *testing.T, body json.RawMessage) (item any, encrypted string) {
+	t.Helper()
+	var request struct {
+		Input []json.RawMessage `json:"input"`
+	}
+	if err := json.Unmarshal(body, &request); err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range request.Input {
+		var fields struct {
+			Type             string `json:"type"`
+			EncryptedContent string `json:"encrypted_content"`
+		}
+		if json.Unmarshal(raw, &fields) == nil && fields.Type == "reasoning" {
+			if err := json.Unmarshal(raw, &item); err != nil {
+				t.Fatal(err)
+			}
+			return item, fields.EncryptedContent
+		}
+	}
+	t.Fatalf("no reasoning item in %s", body)
+	return nil, ""
+}
+
+// forGateway turns a recorded provider request into the request that a client of the gateway
+// sends for it: the gateway's model, and encrypted reasoning as a reply of the test account
+// returned it.
+func forGateway(t *testing.T, body json.RawMessage, model, encrypted string) string {
+	t.Helper()
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		t.Fatal(err)
+	}
+	fields["model"], _ = json.Marshal(model)
+	out, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if encrypted == "" {
+		return string(out)
+	}
+	return strings.Replace(string(out), encrypted, boundReasoning(encrypted), 1)
+}
+
+// TestRecordedEncryptedReasoningGoesBackAsTheProviderTookIt replays exchanges recorded from OpenAI
+// and Azure. The gateway returns the recorded reply's encrypted reasoning bound to its account, and
+// sends a client's copy of it back as the very item that the provider took in the recording, from
+// a Responses item and from a Chat Completions reasoning detail with or without its id.
+func TestRecordedEncryptedReasoningGoesBackAsTheProviderTookIt(t *testing.T) {
+	for _, test := range []struct{ capture, model string }{
+		{"openai/encrypted-reasoning-replay", "provider:openai gpt-6-luna"},
+		{"azure/encrypted-reasoning-replay", "azure-gpt-5.6-sol"},
+	} {
+		t.Run(test.capture, func(t *testing.T) {
+			exchanges := providerCapture(t, test.capture)
+			for _, name := range []string{"replay as returned", "replay without id", "replay as the gateway sends it", "replay as the gateway sends it without id"} {
+				if status := exchange(t, exchanges, name).Response.Status; status != 200 {
+					t.Fatalf("%s: the provider answered %d in the recording", name, status)
+				}
+			}
+			for _, name := range []string{"replay changed content", "replay another id", "replay without summary"} {
+				if status := exchange(t, exchanges, name).Response.Status; status != 400 {
+					t.Fatalf("%s: the provider answered %d in the recording", name, status)
+				}
+			}
+
+			mint := exchange(t, exchanges, "mint")
+			resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/responses", Body: []byte(forGateway(t, mint.Request.Body, test.model, ""))})
+			if err != nil {
+				t.Fatal(err)
+			}
+			state := testPair(resolution)
+			if err := state.Adapter.ValidateRequest(state); err != nil {
+				t.Fatal(err)
+			}
+			reply := mint.responsesReply(t)
+			if err := state.Adapter.IngestResponse(state, &schemas.BifrostResponse{ResponsesResponse: reply}, nil); err != nil {
+				t.Fatalf("recorded reply refused: %v", err)
+			}
+			withID, encrypted := recordedReasoningItem(t, exchange(t, exchanges, "replay as the gateway sends it").Request.Body)
+			withoutID, _ := recordedReasoningItem(t, exchange(t, exchanges, "replay as the gateway sends it without id").Request.Body)
+			var id, callID string
+			for _, item := range reply.Output {
+				switch {
+				case item.ResponsesReasoning != nil && item.ResponsesReasoning.EncryptedContent != nil:
+					if got := *item.ResponsesReasoning.EncryptedContent; got != boundReasoning(encrypted) {
+						t.Fatalf("the reply's reasoning is not bound to its account: %.40s", got)
+					}
+					id = *item.ID
+				case item.ResponsesToolMessage != nil && item.ResponsesToolMessage.CallID != nil:
+					callID = *item.ResponsesToolMessage.CallID
+				}
+			}
+			if id == "" || callID == "" {
+				t.Fatalf("the recorded reply needs reasoning and a call, got %d items", len(reply.Output))
+			}
+
+			sent := func(path, body string) any {
+				t.Helper()
+				fields, _, _ := providerBody(t, path, body)
+				item, _ := recordedReasoningItem(t, json.RawMessage(`{"input":`+string(fields["input"])+`}`))
+				return item
+			}
+			if got := sent("/v1/responses", forGateway(t, exchange(t, exchanges, "replay as returned").Request.Body, test.model, encrypted)); !reflect.DeepEqual(got, withID) {
+				t.Fatalf("Responses item sent = %v, the provider took %v", got, withID)
+			}
+			chat := func(detailID string) string {
+				return fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"hi"},{"role":"assistant","reasoning_details":[{"type":"reasoning.encrypted","index":0,"data":%q%s}],"tool_calls":[{"id":%q,"type":"function","function":{"name":"get_secret_number","arguments":"{}"}}]},{"role":"tool","tool_call_id":%q,"content":"41"}],"tools":[{"type":"function","function":{"name":"get_secret_number","parameters":{"type":"object","properties":{}}}}]}`,
+					test.model, boundReasoning(encrypted), detailID, callID, callID)
+			}
+			if got := sent("/v1/chat/completions", chat(`,"id":"`+id+`"`)); !reflect.DeepEqual(got, withID) {
+				t.Fatalf("Chat detail sent = %v, the provider took %v", got, withID)
+			}
+			if got := sent("/v1/chat/completions", chat("")); !reflect.DeepEqual(got, withoutID) {
+				t.Fatalf("Chat detail without id sent = %v, the provider took %v", got, withoutID)
+			}
+		})
 	}
 }

@@ -1,0 +1,1127 @@
+{
+	"shows": "OpenAI's shell and apply_patch calls on Responses (gpt-5.5): a streamed shell call, a streamed patch that updates a file, a streamed patch that deletes one, and a whole reply with a shell call.",
+	"recorded": "2026-11-12",
+	"exchanges": [
+		{
+			"name": "shell stream",
+			"provider": "openai",
+			"response": {
+				"status": 200,
+				"events": [
+					{
+						"type": "response.created",
+						"response": {
+							"id": "resp_0ffcc142010966d7016af50513167c87d1a4bb96e0f704344f",
+							"object": "response",
+							"created_at": 1794442515,
+							"status": "in_progress",
+							"access_programs": null,
+							"background": false,
+							"completed_at": null,
+							"error": null,
+							"frequency_penalty": 0.0,
+							"image": {
+								"context_compression": "disabled"
+							},
+							"incomplete_details": null,
+							"instructions": null,
+							"max_output_tokens": null,
+							"max_tool_calls": null,
+							"model": "gpt-5.5-2026-04-23",
+							"moderation": null,
+							"output": [],
+							"parallel_tool_calls": true,
+							"presence_penalty": 0.0,
+							"previous_response_id": null,
+							"prompt_cache_key": null,
+							"prompt_cache_retention": "24h",
+							"reasoning": {
+								"context": "current_turn",
+								"effort": "low",
+								"mode": "standard",
+								"summary": null
+							},
+							"safety_identifier": null,
+							"service_tier": "auto",
+							"store": false,
+							"temperature": 1.0,
+							"text": {
+								"format": {
+									"type": "text"
+								},
+								"verbosity": "medium"
+							},
+							"tool_choice": {
+								"type": "shell"
+							},
+							"tool_usage": {
+								"image_gen": {
+									"input_tokens": 0,
+									"input_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"output_tokens": 0,
+									"output_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"total_tokens": 0
+								},
+								"web_search": {
+									"num_requests": 0
+								}
+							},
+							"tools": [
+								{
+									"type": "shell",
+									"environment": {
+										"type": "local"
+									}
+								}
+							],
+							"top_logprobs": 0,
+							"top_p": 0.98,
+							"truncation": "disabled",
+							"usage": null,
+							"user": null,
+							"metadata": {}
+						},
+						"sequence_number": 0
+					},
+					{
+						"type": "response.in_progress",
+						"response": {
+							"id": "resp_0ffcc142010966d7016af50513167c87d1a4bb96e0f704344f",
+							"object": "response",
+							"created_at": 1794442515,
+							"status": "in_progress",
+							"access_programs": null,
+							"background": false,
+							"completed_at": null,
+							"error": null,
+							"frequency_penalty": 0.0,
+							"image": {
+								"context_compression": "disabled"
+							},
+							"incomplete_details": null,
+							"instructions": null,
+							"max_output_tokens": null,
+							"max_tool_calls": null,
+							"model": "gpt-5.5-2026-04-23",
+							"moderation": null,
+							"output": [],
+							"parallel_tool_calls": true,
+							"presence_penalty": 0.0,
+							"previous_response_id": null,
+							"prompt_cache_key": null,
+							"prompt_cache_retention": "24h",
+							"reasoning": {
+								"context": "current_turn",
+								"effort": "low",
+								"mode": "standard",
+								"summary": null
+							},
+							"safety_identifier": null,
+							"service_tier": "auto",
+							"store": false,
+							"temperature": 1.0,
+							"text": {
+								"format": {
+									"type": "text"
+								},
+								"verbosity": "medium"
+							},
+							"tool_choice": {
+								"type": "shell"
+							},
+							"tool_usage": {
+								"image_gen": {
+									"input_tokens": 0,
+									"input_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"output_tokens": 0,
+									"output_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"total_tokens": 0
+								},
+								"web_search": {
+									"num_requests": 0
+								}
+							},
+							"tools": [
+								{
+									"type": "shell",
+									"environment": {
+										"type": "local"
+									}
+								}
+							],
+							"top_logprobs": 0,
+							"top_p": 0.98,
+							"truncation": "disabled",
+							"usage": null,
+							"user": null,
+							"metadata": {}
+						},
+						"sequence_number": 1
+					},
+					{
+						"type": "response.output_item.added",
+						"item": {
+							"id": "sh_0ffcc142010966d7016af50514097087d1a2f788f04e5d337b",
+							"type": "shell_call",
+							"status": "in_progress",
+							"action": {
+								"commands": [],
+								"max_output_length": null,
+								"timeout_ms": null
+							},
+							"call_id": "call_ZxQurRmwB3E8xuUTl71gBK4P",
+							"environment": null
+						},
+						"output_index": 0,
+						"sequence_number": 2
+					},
+					{
+						"type": "response.shell_call_command.added",
+						"command": "",
+						"command_index": 0,
+						"output_index": 0,
+						"sequence_number": 3
+					},
+					{
+						"type": "response.shell_call_command.delta",
+						"command_index": 0,
+						"delta": "echo",
+						"obfuscation": "KTdhFhUBQw2H",
+						"output_index": 0,
+						"sequence_number": 4
+					},
+					{
+						"type": "response.shell_call_command.delta",
+						"command_index": 0,
+						"delta": " a",
+						"obfuscation": "XiPra8bavWiV5A",
+						"output_index": 0,
+						"sequence_number": 5
+					},
+					{
+						"type": "response.shell_call_command.done",
+						"command": "echo a",
+						"command_index": 0,
+						"output_index": 0,
+						"sequence_number": 6
+					},
+					{
+						"type": "response.shell_call_command.added",
+						"command": "",
+						"command_index": 1,
+						"output_index": 0,
+						"sequence_number": 7
+					},
+					{
+						"type": "response.shell_call_command.delta",
+						"command_index": 1,
+						"delta": "echo",
+						"obfuscation": "CfPVl0uuVikv",
+						"output_index": 0,
+						"sequence_number": 8
+					},
+					{
+						"type": "response.shell_call_command.delta",
+						"command_index": 1,
+						"delta": " b",
+						"obfuscation": "AbN3oZhRXfMDJw",
+						"output_index": 0,
+						"sequence_number": 9
+					},
+					{
+						"type": "response.shell_call_command.done",
+						"command": "echo b",
+						"command_index": 1,
+						"output_index": 0,
+						"sequence_number": 10
+					},
+					{
+						"type": "response.output_item.done",
+						"item": {
+							"id": "sh_0ffcc142010966d7016af50514097087d1a2f788f04e5d337b",
+							"type": "shell_call",
+							"status": "completed",
+							"action": {
+								"commands": [
+									"echo a",
+									"echo b"
+								],
+								"max_output_length": null,
+								"timeout_ms": null
+							},
+							"call_id": "call_ZxQurRmwB3E8xuUTl71gBK4P",
+							"environment": null
+						},
+						"output_index": 0,
+						"sequence_number": 11
+					},
+					{
+						"type": "response.completed",
+						"response": {
+							"id": "resp_0ffcc142010966d7016af50513167c87d1a4bb96e0f704344f",
+							"object": "response",
+							"created_at": 1794442515,
+							"status": "completed",
+							"access_programs": null,
+							"background": false,
+							"completed_at": 1794442516,
+							"error": null,
+							"frequency_penalty": 0.0,
+							"image": {
+								"context_compression": "disabled"
+							},
+							"incomplete_details": null,
+							"instructions": null,
+							"max_output_tokens": null,
+							"max_tool_calls": null,
+							"model": "gpt-5.5-2026-04-23",
+							"moderation": null,
+							"output": [
+								{
+									"id": "sh_0ffcc142010966d7016af50514097087d1a2f788f04e5d337b",
+									"type": "shell_call",
+									"status": "completed",
+									"action": {
+										"commands": [
+											"echo a",
+											"echo b"
+										],
+										"max_output_length": null,
+										"timeout_ms": null
+									},
+									"call_id": "call_ZxQurRmwB3E8xuUTl71gBK4P",
+									"environment": null
+								}
+							],
+							"parallel_tool_calls": true,
+							"presence_penalty": 0.0,
+							"previous_response_id": null,
+							"prompt_cache_key": null,
+							"prompt_cache_retention": "24h",
+							"reasoning": {
+								"context": "current_turn",
+								"effort": "low",
+								"mode": "standard",
+								"summary": null
+							},
+							"safety_identifier": null,
+							"service_tier": "default",
+							"store": false,
+							"temperature": 1.0,
+							"text": {
+								"format": {
+									"type": "text"
+								},
+								"verbosity": "medium"
+							},
+							"tool_choice": {
+								"type": "shell"
+							},
+							"tool_usage": {
+								"image_gen": {
+									"input_tokens": 0,
+									"input_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"output_tokens": 0,
+									"output_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"total_tokens": 0
+								},
+								"web_search": {
+									"num_requests": 0
+								}
+							},
+							"tools": [
+								{
+									"type": "shell",
+									"environment": {
+										"type": "local"
+									}
+								}
+							],
+							"top_logprobs": 0,
+							"top_p": 0.98,
+							"truncation": "disabled",
+							"usage": {
+								"input_tokens": 265,
+								"input_tokens_details": {
+									"cache_write_tokens": 0,
+									"cached_tokens": 0
+								},
+								"output_tokens": 23,
+								"output_tokens_details": {
+									"reasoning_tokens": 0
+								},
+								"total_tokens": 288
+							},
+							"user": null,
+							"metadata": {}
+						},
+						"sequence_number": 12
+					}
+				]
+			}
+		},
+		{
+			"name": "patch stream",
+			"provider": "openai",
+			"response": {
+				"status": 200,
+				"events": [
+					{
+						"type": "response.created",
+						"response": {
+							"id": "resp_0ae66164fdd8e69f016af505145cdc87d1ab93310c511e9bb4",
+							"object": "response",
+							"created_at": 1794442516,
+							"status": "in_progress",
+							"access_programs": null,
+							"background": false,
+							"completed_at": null,
+							"error": null,
+							"frequency_penalty": 0.0,
+							"image": {
+								"context_compression": "disabled"
+							},
+							"incomplete_details": null,
+							"instructions": null,
+							"max_output_tokens": null,
+							"max_tool_calls": null,
+							"model": "gpt-5.5-2026-04-23",
+							"moderation": null,
+							"output": [],
+							"parallel_tool_calls": true,
+							"presence_penalty": 0.0,
+							"previous_response_id": null,
+							"prompt_cache_key": null,
+							"prompt_cache_retention": "24h",
+							"reasoning": {
+								"context": "current_turn",
+								"effort": "low",
+								"mode": "standard",
+								"summary": null
+							},
+							"safety_identifier": null,
+							"service_tier": "auto",
+							"store": false,
+							"temperature": 1.0,
+							"text": {
+								"format": {
+									"type": "text"
+								},
+								"verbosity": "medium"
+							},
+							"tool_choice": {
+								"type": "apply_patch"
+							},
+							"tool_usage": {
+								"image_gen": {
+									"input_tokens": 0,
+									"input_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"output_tokens": 0,
+									"output_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"total_tokens": 0
+								},
+								"web_search": {
+									"num_requests": 0
+								}
+							},
+							"tools": [
+								{
+									"type": "apply_patch"
+								}
+							],
+							"top_logprobs": 0,
+							"top_p": 0.98,
+							"truncation": "disabled",
+							"usage": null,
+							"user": null,
+							"metadata": {}
+						},
+						"sequence_number": 0
+					},
+					{
+						"type": "response.in_progress",
+						"response": {
+							"id": "resp_0ae66164fdd8e69f016af505145cdc87d1ab93310c511e9bb4",
+							"object": "response",
+							"created_at": 1794442516,
+							"status": "in_progress",
+							"access_programs": null,
+							"background": false,
+							"completed_at": null,
+							"error": null,
+							"frequency_penalty": 0.0,
+							"image": {
+								"context_compression": "disabled"
+							},
+							"incomplete_details": null,
+							"instructions": null,
+							"max_output_tokens": null,
+							"max_tool_calls": null,
+							"model": "gpt-5.5-2026-04-23",
+							"moderation": null,
+							"output": [],
+							"parallel_tool_calls": true,
+							"presence_penalty": 0.0,
+							"previous_response_id": null,
+							"prompt_cache_key": null,
+							"prompt_cache_retention": "24h",
+							"reasoning": {
+								"context": "current_turn",
+								"effort": "low",
+								"mode": "standard",
+								"summary": null
+							},
+							"safety_identifier": null,
+							"service_tier": "auto",
+							"store": false,
+							"temperature": 1.0,
+							"text": {
+								"format": {
+									"type": "text"
+								},
+								"verbosity": "medium"
+							},
+							"tool_choice": {
+								"type": "apply_patch"
+							},
+							"tool_usage": {
+								"image_gen": {
+									"input_tokens": 0,
+									"input_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"output_tokens": 0,
+									"output_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"total_tokens": 0
+								},
+								"web_search": {
+									"num_requests": 0
+								}
+							},
+							"tools": [
+								{
+									"type": "apply_patch"
+								}
+							],
+							"top_logprobs": 0,
+							"top_p": 0.98,
+							"truncation": "disabled",
+							"usage": null,
+							"user": null,
+							"metadata": {}
+						},
+						"sequence_number": 1
+					},
+					{
+						"type": "response.output_item.added",
+						"item": {
+							"id": "apc_0ae66164fdd8e69f016af505154a1087d1bf661081ac99856c",
+							"type": "apply_patch_call",
+							"status": "in_progress",
+							"call_id": "call_jIjOVS067qxsQbPx104TkayQ",
+							"operation": {
+								"type": "create_file",
+								"diff": "",
+								"path": "hello.txt"
+							}
+						},
+						"output_index": 0,
+						"sequence_number": 2
+					},
+					{
+						"type": "response.apply_patch_call_operation_diff.delta",
+						"delta": "+",
+						"item_id": "apc_0ae66164fdd8e69f016af505154a1087d1bf661081ac99856c",
+						"obfuscation": "3ozI53DLaHkNYuY",
+						"output_index": 0,
+						"sequence_number": 3
+					},
+					{
+						"type": "response.apply_patch_call_operation_diff.delta",
+						"delta": "hi",
+						"item_id": "apc_0ae66164fdd8e69f016af505154a1087d1bf661081ac99856c",
+						"obfuscation": "9YqZZM7W4sc8zk",
+						"output_index": 0,
+						"sequence_number": 4
+					},
+					{
+						"type": "response.apply_patch_call_operation_diff.delta",
+						"delta": "\n",
+						"item_id": "apc_0ae66164fdd8e69f016af505154a1087d1bf661081ac99856c",
+						"obfuscation": "HTUAYd39dHcIN4X",
+						"output_index": 0,
+						"sequence_number": 5
+					},
+					{
+						"type": "response.apply_patch_call_operation_diff.done",
+						"diff": "+hi\n",
+						"item_id": "apc_0ae66164fdd8e69f016af505154a1087d1bf661081ac99856c",
+						"output_index": 0,
+						"sequence_number": 6
+					},
+					{
+						"type": "response.output_item.done",
+						"item": {
+							"id": "apc_0ae66164fdd8e69f016af505154a1087d1bf661081ac99856c",
+							"type": "apply_patch_call",
+							"status": "completed",
+							"call_id": "call_jIjOVS067qxsQbPx104TkayQ",
+							"operation": {
+								"type": "create_file",
+								"diff": "+hi\n",
+								"path": "hello.txt"
+							}
+						},
+						"output_index": 0,
+						"sequence_number": 7
+					},
+					{
+						"type": "response.completed",
+						"response": {
+							"id": "resp_0ae66164fdd8e69f016af505145cdc87d1ab93310c511e9bb4",
+							"object": "response",
+							"created_at": 1794442516,
+							"status": "completed",
+							"access_programs": null,
+							"background": false,
+							"completed_at": 1794442517,
+							"error": null,
+							"frequency_penalty": 0.0,
+							"image": {
+								"context_compression": "disabled"
+							},
+							"incomplete_details": null,
+							"instructions": null,
+							"max_output_tokens": null,
+							"max_tool_calls": null,
+							"model": "gpt-5.5-2026-04-23",
+							"moderation": null,
+							"output": [
+								{
+									"id": "apc_0ae66164fdd8e69f016af505154a1087d1bf661081ac99856c",
+									"type": "apply_patch_call",
+									"status": "completed",
+									"call_id": "call_jIjOVS067qxsQbPx104TkayQ",
+									"operation": {
+										"type": "create_file",
+										"diff": "+hi\n",
+										"path": "hello.txt"
+									}
+								}
+							],
+							"parallel_tool_calls": true,
+							"presence_penalty": 0.0,
+							"previous_response_id": null,
+							"prompt_cache_key": null,
+							"prompt_cache_retention": "24h",
+							"reasoning": {
+								"context": "current_turn",
+								"effort": "low",
+								"mode": "standard",
+								"summary": null
+							},
+							"safety_identifier": null,
+							"service_tier": "default",
+							"store": false,
+							"temperature": 1.0,
+							"text": {
+								"format": {
+									"type": "text"
+								},
+								"verbosity": "medium"
+							},
+							"tool_choice": {
+								"type": "apply_patch"
+							},
+							"tool_usage": {
+								"image_gen": {
+									"input_tokens": 0,
+									"input_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"output_tokens": 0,
+									"output_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"total_tokens": 0
+								},
+								"web_search": {
+									"num_requests": 0
+								}
+							},
+							"tools": [
+								{
+									"type": "apply_patch"
+								}
+							],
+							"top_logprobs": 0,
+							"top_p": 0.98,
+							"truncation": "disabled",
+							"usage": {
+								"input_tokens": 644,
+								"input_tokens_details": {
+									"cache_write_tokens": 0,
+									"cached_tokens": 0
+								},
+								"output_tokens": 29,
+								"output_tokens_details": {
+									"reasoning_tokens": 0
+								},
+								"total_tokens": 673
+							},
+							"user": null,
+							"metadata": {}
+						},
+						"sequence_number": 8
+					}
+				]
+			}
+		},
+		{
+			"name": "patch delete stream",
+			"provider": "openai",
+			"response": {
+				"status": 200,
+				"events": [
+					{
+						"type": "response.created",
+						"response": {
+							"id": "resp_0c713601ea4c2d94016af50515890c87d1b9578df07f132d99",
+							"object": "response",
+							"created_at": 1794442517,
+							"status": "in_progress",
+							"access_programs": null,
+							"background": false,
+							"completed_at": null,
+							"error": null,
+							"frequency_penalty": 0.0,
+							"image": {
+								"context_compression": "disabled"
+							},
+							"incomplete_details": null,
+							"instructions": null,
+							"max_output_tokens": null,
+							"max_tool_calls": null,
+							"model": "gpt-5.5-2026-04-23",
+							"moderation": null,
+							"output": [],
+							"parallel_tool_calls": true,
+							"presence_penalty": 0.0,
+							"previous_response_id": null,
+							"prompt_cache_key": null,
+							"prompt_cache_retention": "24h",
+							"reasoning": {
+								"context": "current_turn",
+								"effort": "low",
+								"mode": "standard",
+								"summary": null
+							},
+							"safety_identifier": null,
+							"service_tier": "auto",
+							"store": false,
+							"temperature": 1.0,
+							"text": {
+								"format": {
+									"type": "text"
+								},
+								"verbosity": "medium"
+							},
+							"tool_choice": {
+								"type": "apply_patch"
+							},
+							"tool_usage": {
+								"image_gen": {
+									"input_tokens": 0,
+									"input_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"output_tokens": 0,
+									"output_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"total_tokens": 0
+								},
+								"web_search": {
+									"num_requests": 0
+								}
+							},
+							"tools": [
+								{
+									"type": "apply_patch"
+								}
+							],
+							"top_logprobs": 0,
+							"top_p": 0.98,
+							"truncation": "disabled",
+							"usage": null,
+							"user": null,
+							"metadata": {}
+						},
+						"sequence_number": 0
+					},
+					{
+						"type": "response.in_progress",
+						"response": {
+							"id": "resp_0c713601ea4c2d94016af50515890c87d1b9578df07f132d99",
+							"object": "response",
+							"created_at": 1794442517,
+							"status": "in_progress",
+							"access_programs": null,
+							"background": false,
+							"completed_at": null,
+							"error": null,
+							"frequency_penalty": 0.0,
+							"image": {
+								"context_compression": "disabled"
+							},
+							"incomplete_details": null,
+							"instructions": null,
+							"max_output_tokens": null,
+							"max_tool_calls": null,
+							"model": "gpt-5.5-2026-04-23",
+							"moderation": null,
+							"output": [],
+							"parallel_tool_calls": true,
+							"presence_penalty": 0.0,
+							"previous_response_id": null,
+							"prompt_cache_key": null,
+							"prompt_cache_retention": "24h",
+							"reasoning": {
+								"context": "current_turn",
+								"effort": "low",
+								"mode": "standard",
+								"summary": null
+							},
+							"safety_identifier": null,
+							"service_tier": "auto",
+							"store": false,
+							"temperature": 1.0,
+							"text": {
+								"format": {
+									"type": "text"
+								},
+								"verbosity": "medium"
+							},
+							"tool_choice": {
+								"type": "apply_patch"
+							},
+							"tool_usage": {
+								"image_gen": {
+									"input_tokens": 0,
+									"input_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"output_tokens": 0,
+									"output_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"total_tokens": 0
+								},
+								"web_search": {
+									"num_requests": 0
+								}
+							},
+							"tools": [
+								{
+									"type": "apply_patch"
+								}
+							],
+							"top_logprobs": 0,
+							"top_p": 0.98,
+							"truncation": "disabled",
+							"usage": null,
+							"user": null,
+							"metadata": {}
+						},
+						"sequence_number": 1
+					},
+					{
+						"type": "response.output_item.added",
+						"item": {
+							"id": "apc_0c713601ea4c2d94016af505168d2487d1a769385935ef8367",
+							"type": "apply_patch_call",
+							"status": "in_progress",
+							"call_id": "call_hhm8PbJws7huAAN8nrFJASef",
+							"operation": {
+								"type": "delete_file",
+								"path": "old.txt"
+							}
+						},
+						"output_index": 0,
+						"sequence_number": 2
+					},
+					{
+						"type": "response.output_item.done",
+						"item": {
+							"id": "apc_0c713601ea4c2d94016af505168d2487d1a769385935ef8367",
+							"type": "apply_patch_call",
+							"status": "completed",
+							"call_id": "call_hhm8PbJws7huAAN8nrFJASef",
+							"operation": {
+								"type": "delete_file",
+								"path": "old.txt"
+							}
+						},
+						"output_index": 0,
+						"sequence_number": 3
+					},
+					{
+						"type": "response.completed",
+						"response": {
+							"id": "resp_0c713601ea4c2d94016af50515890c87d1b9578df07f132d99",
+							"object": "response",
+							"created_at": 1794442517,
+							"status": "completed",
+							"access_programs": null,
+							"background": false,
+							"completed_at": 1794442518,
+							"error": null,
+							"frequency_penalty": 0.0,
+							"image": {
+								"context_compression": "disabled"
+							},
+							"incomplete_details": null,
+							"instructions": null,
+							"max_output_tokens": null,
+							"max_tool_calls": null,
+							"model": "gpt-5.5-2026-04-23",
+							"moderation": null,
+							"output": [
+								{
+									"id": "apc_0c713601ea4c2d94016af505168d2487d1a769385935ef8367",
+									"type": "apply_patch_call",
+									"status": "completed",
+									"call_id": "call_hhm8PbJws7huAAN8nrFJASef",
+									"operation": {
+										"type": "delete_file",
+										"path": "old.txt"
+									}
+								}
+							],
+							"parallel_tool_calls": true,
+							"presence_penalty": 0.0,
+							"previous_response_id": null,
+							"prompt_cache_key": null,
+							"prompt_cache_retention": "24h",
+							"reasoning": {
+								"context": "current_turn",
+								"effort": "low",
+								"mode": "standard",
+								"summary": null
+							},
+							"safety_identifier": null,
+							"service_tier": "default",
+							"store": false,
+							"temperature": 1.0,
+							"text": {
+								"format": {
+									"type": "text"
+								},
+								"verbosity": "medium"
+							},
+							"tool_choice": {
+								"type": "apply_patch"
+							},
+							"tool_usage": {
+								"image_gen": {
+									"input_tokens": 0,
+									"input_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"output_tokens": 0,
+									"output_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"total_tokens": 0
+								},
+								"web_search": {
+									"num_requests": 0
+								}
+							},
+							"tools": [
+								{
+									"type": "apply_patch"
+								}
+							],
+							"top_logprobs": 0,
+							"top_p": 0.98,
+							"truncation": "disabled",
+							"usage": {
+								"input_tokens": 645,
+								"input_tokens_details": {
+									"cache_write_tokens": 0,
+									"cached_tokens": 0
+								},
+								"output_tokens": 26,
+								"output_tokens_details": {
+									"reasoning_tokens": 0
+								},
+								"total_tokens": 671
+							},
+							"user": null,
+							"metadata": {}
+						},
+						"sequence_number": 4
+					}
+				]
+			}
+		},
+		{
+			"name": "shell reply",
+			"provider": "openai",
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_0457d2dd78ccca16016af50516cff087d18df24cb8e9df8956",
+					"object": "response",
+					"created_at": 1794442518,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1794442520,
+					"error": null,
+					"frequency_penalty": 0.0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": null,
+					"max_tool_calls": null,
+					"model": "gpt-5.5-2026-04-23",
+					"moderation": null,
+					"output": [
+						{
+							"id": "rs_0457d2dd78ccca16016af505177bf887d1909d3a843396ec21",
+							"type": "reasoning",
+							"content": [],
+							"encrypted_content": "gAAAAABq9QUYAjlL6ZfixqjFBrFwx5xJptCMtfCPsCulcdPUZUqUS-xM6QRJe4ezgCzVLC4nNLNGYMvd2T3UutId3T04H8VcJWZi41Kv3wpujMWeKhHrH3cyjTULx6d6-quk0_NJjUx-fpA1miLuLLAxHn4-J6MOlCErcmhd4JcqpthWSrpKT8o_oEhbn38bF0FTML02kvzzIvRf1l3aW_HZ-LM-1FhTzIRY4J_dQgOzRWSVUfyMYZruarDy0DXeUbqJ41aixRm0GSuarKz2xWMDVzEQIQSsXM9kliz-Lxe9-0Vjrc_ON-fjAdQddpp8Mi1tr_-oGHOV5NHnh7GoCmB3DtVP3cAaHFFRtrDKLYs4z2este15PIAq7r0RDO3zB_v0Dh1ZdzQzWIOBKjoNxDK57O-QiFmjyzNvsjreiQ0mNJudqISGythsOsGSby5rkGkUlU3sw7q2XHU44BNzosELwHId5nZH3iYyFsKzUQbYDK-BFZTI7ImLy79H3YumMOM8tkiQ8LTBTH6iIjx4vT6VmwttmdL9kZmx_5EEJS7H0nDcaM626BXPxf1FeHDqMjigrtaoXRJS67Nd0AaQ8VNYfRiDizqj4ADycDO_usul6EP8hyzi6seLYH84mFt7UM2abEWYrjhf1kQmnlRzJ_kaBBqyBIEgogLmhN_K7s33QgJd3zDVfiQqb9dq1X-CNW1oDdv0BXQcAodORusbdd4WQAtmijVI8id11nL9-0JhE4Ox4tvV1fdPmbwvELDQE-1VzQx0fw9qMTL0YGXthrlMZ7lEqlFEjOBfinvHmAbuSw2kBJa0wUajv4FqppQaFJ972EE0lPprD9jJRSN3UH8IUMC9SPC8NX0KRe-6r6RD_CAPEo6m5pnmsFGD0S1CnJGFekOv8E7o2gMuQwuFqpKOB_ppmmCe7w9MGgm2EK3EbKtMz9JAXQzHt2tAnAId_VZscKuprnSlo1ihbz8e-Ew2c8jRB1DAzJTh1XCW0-6jAr4e7c8DFMfWRcfWMp0b4HqFyuPy3_2-VIIjzFd1i-EIbFcgJxVLt93WbrOL0BSB4hu_XeXJfUb_KM5fc4Ijh4Sxf39-1OTQI8GYXFIJO-MyroUs56jcpDfru_gNjx1cnPo5CQMD8LVoisC6KKlejcudE86G7Q0ZHNSf15kRfVw8CScCx-GJvyio_UQ3HJPo2U0E7blvvjtGh3i4lCVDf_09KxosjACk8evmklmdZqY46gNOJDCYrcmj0iRQLj_U5kN0pawmn_BOqs5UI3ufsdXvNUVHYdsjHZjIAvJ6TEe6yenPAWk86z8uuJYZn8iM69P3w7JR4p3VGnNJLA8_YMdN_U6mp5Nft1T0oAuFag-gtCSrMNW8J4qaEg74YlnSu8F0G378xGRfPBtQNLeEsemr8wbPrOfUx67kA-N6ZpShUI44Vg761CpZ_xCxHmKwMrebRKWz-i7UihW9w9XBrwqJSQjU2YHUdWf0Xr05gMHpbtoK2VtNzd48TqI95KHVrEeCMgiazaG7h0VIDuZtxv-2-1sGjcoOEs5pKd_3s90tonwOB3tvSsCtFCyCfjO_vqnOsMA9k4UQKDk8yEVUTr99NX2TSEeK6GZj546LSxPhv7lUhO7zd_t7apG5EGpCYLE-iNF_voswufKq_Awk5LIZPzRoO7j_MrcW-neSrLtaed4Wftga9MXoJQXLK9UneLF9N4wDPXi4nMmsFTzbzAd3eyLOZilj6OKolHrdqCF5-g-tMoxmQCSXTBQSWFG8DiF-xR56nJb55_Ume1SOsUNyog7DYsBoQbz_JnjONbK99MmQidO99zSjXsyD8RE0LnZvl5q6dWnqqjhh0zZUUZTSITkGc5_zjdfWwBn7Nua1uB6zlgGDGanysbiUDcXc06sBm-fEiU9pUNtX1WgFkrNLZeIiUxBgf0L_0IElnWHv9SZ7DZ5imSw4Wp3kJiQVkfBf2bPlzEL3UjHmgozMm8K6rWlq9rQhZ46jOpR6X7IdKzgVXpkTBlDkCEI-xkBohtJRoJBTKi5j4D8zYnZUuDamCK-Wqe25WxRmEliK9FTi8RhwRZYETAMtXR09kk3grmgzf5uTU07-hqzuX1LhZNjoYndBrOugzREgJDNz1SAFBNjXBLgkJ0YW7boPNySHbPoXR2if-4M=",
+							"summary": []
+						},
+						{
+							"id": "sh_0457d2dd78ccca16016af50518193c87d1b1c37993f97a44a9",
+							"type": "shell_call",
+							"status": "completed",
+							"action": {
+								"commands": [
+									"ls"
+								],
+								"max_output_length": 12000,
+								"timeout_ms": 10000
+							},
+							"call_id": "call_ZoWjM1FlNGpHnxqK4NCTnLJu",
+							"environment": null
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0.0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "current_turn",
+						"effort": "low",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1.0,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "required",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "shell",
+							"environment": {
+								"type": "local"
+							}
+						},
+						{
+							"type": "apply_patch"
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 873,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"output_tokens": 75,
+						"output_tokens_details": {
+							"reasoning_tokens": 43
+						},
+						"total_tokens": 948
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		}
+	]
+}

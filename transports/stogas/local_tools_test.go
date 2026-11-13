@@ -1,13 +1,9 @@
 package stogas
 
 import (
-	"bytes"
 	"errors"
-	"os"
-	"path/filepath"
 	"testing"
 
-	"github.com/bytedance/sonic"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 )
@@ -18,23 +14,11 @@ const (
 	localBothRequest  = `{"model":"provider:openai gpt-5.5","input":"do both","reasoning":{"effort":"low"},"tools":[{"type":"shell","environment":{"type":"local"}},{"type":"apply_patch"}],"tool_choice":"required"}`
 )
 
-// localToolStream reads the events of a whole OpenAI stream (gpt-5.5, November 12, 2026) from
-// testdata/openai-local-tools, decoded as core decodes each event.
+// localToolStream reads the events of a whole OpenAI stream (gpt-5.5, November 12, 2026) from the
+// provider capture openai/shell-and-apply-patch, decoded as core decodes each event.
 func localToolStream(t *testing.T, name string) []*schemas.BifrostResponsesStreamResponse {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join("testdata", "openai-local-tools", name+".jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var events []*schemas.BifrostResponsesStreamResponse
-	for _, line := range bytes.Split(bytes.TrimSpace(data), []byte("\n")) {
-		event := &schemas.BifrostResponsesStreamResponse{}
-		if err := sonic.Unmarshal(line, event); err != nil {
-			t.Fatalf("decode %s: %v", line, err)
-		}
-		events = append(events, event)
-	}
-	return events
+	return exchange(t, providerCapture(t, "openai/shell-and-apply-patch"), name).responsesStream(t)
 }
 
 // replayLocalToolStream sends the events in order with their place in the stream as sequence
@@ -56,11 +40,11 @@ func TestProviderResponsesStreamAcceptsLiveShellAndPatchCalls(t *testing.T) {
 		outputBytes             string
 	}{
 		// The commands "echo a" and "echo b".
-		{"shell-stream", localShellRequest, "shell_call", "12"},
+		{"shell stream", localShellRequest, "shell_call", "12"},
 		// The diff "+hi\n" and the path "hello.txt".
-		{"patch-stream", localPatchRequest, "apply_patch_call", "13"},
+		{"patch stream", localPatchRequest, "apply_patch_call", "13"},
 		// A patch that deletes a file streams no diff; its path is "old.txt".
-		{"patch-delete-stream", localPatchRequest, "apply_patch_call", "7"},
+		{"patch delete stream", localPatchRequest, "apply_patch_call", "7"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			state := resolvedResponseValidationState(t, test.request)
@@ -82,17 +66,8 @@ func TestProviderResponsesStreamAcceptsLiveShellAndPatchCalls(t *testing.T) {
 }
 
 func TestProviderResponsesAcceptsLiveShellReply(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("testdata", "openai-local-tools", "shell-reply.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	decode := func() *schemas.BifrostResponsesResponse {
-		response := &schemas.BifrostResponsesResponse{}
-		if err := sonic.Unmarshal(data, response); err != nil {
-			t.Fatal(err)
-		}
-		return response
-	}
+	reply := exchange(t, providerCapture(t, "openai/shell-and-apply-patch"), "shell reply")
+	decode := func() *schemas.BifrostResponsesResponse { return reply.responsesReply(t) }
 	state := resolvedResponseValidationState(t, localBothRequest)
 	if err := validateProviderResponsesResponse(state, decode()); err != nil {
 		t.Fatalf("live reply refused: %v", err)
@@ -185,53 +160,53 @@ func TestProviderResponsesStreamRefusesInconsistentShellAndPatchCalls(t *testing
 		fixture, request string
 		change           func([]*schemas.BifrostResponsesStreamResponse) []*schemas.BifrostResponsesStreamResponse
 	}{
-		"a command that ends with other text": {"shell-stream", localShellRequest, func(events []*schemas.BifrostResponsesStreamResponse) []*schemas.BifrostResponsesStreamResponse {
+		"a command that ends with other text": {"shell stream", localShellRequest, func(events []*schemas.BifrostResponsesStreamResponse) []*schemas.BifrostResponsesStreamResponse {
 			events[6].Command = schemas.Ptr("echo evil")
 			return events
 		}},
-		"a final command that differs from the stream": {"shell-stream", localShellRequest, func(events []*schemas.BifrostResponsesStreamResponse) []*schemas.BifrostResponsesStreamResponse {
+		"a final command that differs from the stream": {"shell stream", localShellRequest, func(events []*schemas.BifrostResponsesStreamResponse) []*schemas.BifrostResponsesStreamResponse {
 			events[11].Item.ResponsesToolMessage.Action.ResponsesShellToolCallAction.Commands[1] = "rm -rf /"
 			return events
 		}},
-		"a final command that was not streamed": {"shell-stream", localShellRequest, func(events []*schemas.BifrostResponsesStreamResponse) []*schemas.BifrostResponsesStreamResponse {
+		"a final command that was not streamed": {"shell stream", localShellRequest, func(events []*schemas.BifrostResponsesStreamResponse) []*schemas.BifrostResponsesStreamResponse {
 			return without(events, 7, 8, 9, 10)
 		}},
-		"a command that never ends": {"shell-stream", localShellRequest, func(events []*schemas.BifrostResponsesStreamResponse) []*schemas.BifrostResponsesStreamResponse {
+		"a command that never ends": {"shell stream", localShellRequest, func(events []*schemas.BifrostResponsesStreamResponse) []*schemas.BifrostResponsesStreamResponse {
 			return without(events, 10)
 		}},
-		"a command out of order": {"shell-stream", localShellRequest, func(events []*schemas.BifrostResponsesStreamResponse) []*schemas.BifrostResponsesStreamResponse {
+		"a command out of order": {"shell stream", localShellRequest, func(events []*schemas.BifrostResponsesStreamResponse) []*schemas.BifrostResponsesStreamResponse {
 			return without(events, 3, 4, 5, 6)
 		}},
-		"text for a command that ended": {"shell-stream", localShellRequest, func(events []*schemas.BifrostResponsesStreamResponse) []*schemas.BifrostResponsesStreamResponse {
+		"text for a command that ended": {"shell stream", localShellRequest, func(events []*schemas.BifrostResponsesStreamResponse) []*schemas.BifrostResponsesStreamResponse {
 			events[8].CommandIndex = schemas.Ptr(0)
 			return events
 		}},
-		"a call added with commands": {"shell-stream", localShellRequest, func(events []*schemas.BifrostResponsesStreamResponse) []*schemas.BifrostResponsesStreamResponse {
+		"a call added with commands": {"shell stream", localShellRequest, func(events []*schemas.BifrostResponsesStreamResponse) []*schemas.BifrostResponsesStreamResponse {
 			events[2].Item.ResponsesToolMessage.Action.ResponsesShellToolCallAction.Commands = []string{"echo a"}
 			return events
 		}},
-		"shell commands without the shell tool": {"shell-stream", localPatchRequest, func(events []*schemas.BifrostResponsesStreamResponse) []*schemas.BifrostResponsesStreamResponse {
+		"shell commands without the shell tool": {"shell stream", localPatchRequest, func(events []*schemas.BifrostResponsesStreamResponse) []*schemas.BifrostResponsesStreamResponse {
 			return events
 		}},
-		"a diff that ends with other text": {"patch-stream", localPatchRequest, func(events []*schemas.BifrostResponsesStreamResponse) []*schemas.BifrostResponsesStreamResponse {
+		"a diff that ends with other text": {"patch stream", localPatchRequest, func(events []*schemas.BifrostResponsesStreamResponse) []*schemas.BifrostResponsesStreamResponse {
 			events[6].Diff = schemas.Ptr("+evil\n")
 			return events
 		}},
-		"a final diff that differs from the stream": {"patch-stream", localPatchRequest, func(events []*schemas.BifrostResponsesStreamResponse) []*schemas.BifrostResponsesStreamResponse {
+		"a final diff that differs from the stream": {"patch stream", localPatchRequest, func(events []*schemas.BifrostResponsesStreamResponse) []*schemas.BifrostResponsesStreamResponse {
 			events[7].Item.ResponsesToolMessage.ResponsesApplyPatchCall.Operation.Diff = schemas.Ptr("+evil\n")
 			return events
 		}},
-		"a diff that never ends": {"patch-stream", localPatchRequest, func(events []*schemas.BifrostResponsesStreamResponse) []*schemas.BifrostResponsesStreamResponse {
+		"a diff that never ends": {"patch stream", localPatchRequest, func(events []*schemas.BifrostResponsesStreamResponse) []*schemas.BifrostResponsesStreamResponse {
 			return without(events, 6)
 		}},
-		"a final diff that was not streamed": {"patch-stream", localPatchRequest, func(events []*schemas.BifrostResponsesStreamResponse) []*schemas.BifrostResponsesStreamResponse {
+		"a final diff that was not streamed": {"patch stream", localPatchRequest, func(events []*schemas.BifrostResponsesStreamResponse) []*schemas.BifrostResponsesStreamResponse {
 			return without(events, 3, 4, 5, 6)
 		}},
-		"a diff for another item": {"patch-stream", localPatchRequest, func(events []*schemas.BifrostResponsesStreamResponse) []*schemas.BifrostResponsesStreamResponse {
+		"a diff for another item": {"patch stream", localPatchRequest, func(events []*schemas.BifrostResponsesStreamResponse) []*schemas.BifrostResponsesStreamResponse {
 			events[3].ItemID = schemas.Ptr("apc_other")
 			return events
 		}},
-		"a patch without the apply_patch tool": {"patch-stream", localShellRequest, func(events []*schemas.BifrostResponsesStreamResponse) []*schemas.BifrostResponsesStreamResponse {
+		"a patch without the apply_patch tool": {"patch stream", localShellRequest, func(events []*schemas.BifrostResponsesStreamResponse) []*schemas.BifrostResponsesStreamResponse {
 			return events
 		}},
 	} {
