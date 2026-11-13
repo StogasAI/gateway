@@ -2788,14 +2788,11 @@ func TestWriteSSEStreamDrainsUpstreamAfterBodyStreamClose(t *testing.T) {
 	if err := closer.Close(); err != nil {
 		t.Fatalf("closing body stream failed: %v", err)
 	}
-	deadline := time.Now().Add(time.Second)
+	// A closure that is never recorded as a cancellation fails at go test's -timeout.
 	cancelledByClient, clientStoppedAt := state.ClientStatus()
-	for !cancelledByClient && time.Now().Before(deadline) {
+	for !cancelledByClient {
 		time.Sleep(time.Millisecond)
 		cancelledByClient, clientStoppedAt = state.ClientStatus()
-	}
-	if !cancelledByClient {
-		t.Fatal("client stream closure must be recorded as cancellation")
 	}
 	if state.ProviderOutputObserved {
 		t.Fatal("output must not be recorded after the client closes the stream")

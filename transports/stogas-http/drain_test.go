@@ -44,11 +44,8 @@ func TestServerDrainWaitsForActiveRequest(t *testing.T) {
 		close(done)
 	}()
 
-	deadline := time.Now().Add(time.Second)
+	// A server that never starts draining fails at go test's -timeout.
 	for !server.requests.diagnostics().Draining {
-		if time.Now().After(deadline) {
-			t.Fatal("server did not start draining")
-		}
 		time.Sleep(time.Millisecond)
 	}
 	select {

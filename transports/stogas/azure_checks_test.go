@@ -214,16 +214,7 @@ func TestAzureChecksRefreshAgingConfirmationsInBackgroundOnce(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if _, recorded := store.counts(); recorded == 1 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("the background check did not record")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	waitFor(func() bool { _, recorded := store.counts(); return recorded == 1 })
 	if claimed, _ := store.counts(); claimed != 1 || requests.Load() != 1 {
 		t.Fatalf("aging confirmations started several checks: claims=%d requests=%d", claimed, requests.Load())
 	}
@@ -245,15 +236,18 @@ func TestAzureChecksRefreshAgingConfirmationsInBackgroundOnce(t *testing.T) {
 }
 
 // waitFor polls until done reports true, or fails the test after five seconds.
-func waitFor(t *testing.T, what string, done func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+// waitFor polls until done holds. A wait that never ends fails at go test's -timeout, which prints
+// every goroutine's stack.
+func waitFor(done func() bool) {
 	for !done() {
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting: %s", what)
-		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+// settle waits for the check or discovery that runs for key, if one does. A check marks its result
+// before it returns, and a check that starts before then joins it instead of reading Azure.
+func settle(checks *AzureChecks, key string) {
+	checks.flights.Do(key, func() (any, error) { return nil, nil })
 }
 
 func TestAzureChecksRecheckAGoneTargetOnceAtATime(t *testing.T) {
@@ -263,7 +257,7 @@ func TestAzureChecksRecheckAGoneTargetOnceAtATime(t *testing.T) {
 	for range 3 {
 		checks.Recheck(target)
 	}
-	waitFor(t, "the recheck", func() bool { _, recorded := store.counts(); return recorded == 1 })
+	waitFor(func() bool { _, recorded := store.counts(); return recorded == 1 })
 	if claimed, _ := store.counts(); claimed != 1 || requests.Load() != 1 || store.staleAfter[0] != azureCheckPace {
 		t.Fatalf("rechecks: claims=%d requests=%d stale after %v", claimed, requests.Load(), store.staleAfter)
 	}
@@ -299,7 +293,7 @@ func TestAzureChecksNeverHoldARequestForACheck(t *testing.T) {
 				}
 			}
 			close(release)
-			waitFor(t, "the check", func() bool { _, recorded := store.counts(); return recorded == 1 })
+			waitFor(func() bool { _, recorded := store.counts(); return recorded == 1 })
 			if claimed, _ := store.counts(); claimed != 1 || requests.Load() != 1 {
 				t.Fatalf("the requests did not share one check: claims=%d requests=%d", claimed, requests.Load())
 			}
@@ -316,8 +310,8 @@ func TestAzureChecksUseAnotherGatewaysConfirmation(t *testing.T) {
 	if err := checks.Confirm(context.Background(), target); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, "the claim", func() bool { claimed, _ := store.counts(); return claimed == 1 })
-	waitFor(t, "the pause", func() bool {
+	waitFor(func() bool { claimed, _ := store.counts(); return claimed == 1 })
+	waitFor(func() bool {
 		checks.mu.Lock()
 		defer checks.mu.Unlock()
 		return checks.marks["byok-1"].until.Equal(clock.Now().Add(azureCheckFresh - time.Minute))
@@ -334,19 +328,8 @@ func TestAzureChecksPaceBackgroundClaims(t *testing.T) {
 	checks, _, clock := newTestAzureChecks(t, store, map[string]any{"value": []any{}})
 	target := testCheckTarget(clock.Ago(15 * time.Minute))
 	waitForClaims := func(want int) {
-		t.Helper()
-		deadline := time.Now().Add(5 * time.Second)
-		for {
-			if claimed, _ := store.counts(); claimed == want {
-				// Let the background check finish.
-				time.Sleep(50 * time.Millisecond)
-				return
-			}
-			if time.Now().After(deadline) {
-				t.Fatalf("expected %d claims", want)
-			}
-			time.Sleep(5 * time.Millisecond)
-		}
+		waitFor(func() bool { claimed, _ := store.counts(); return claimed == want })
+		settle(checks, "byok-1")
 	}
 	if err := checks.Confirm(context.Background(), target); err != nil {
 		t.Fatal(err)
@@ -415,7 +398,8 @@ func TestAzureChecksServeThroughFailuresOnlyWithinGrace(t *testing.T) {
 			if err := checks.Confirm(context.Background(), target); err != nil {
 				t.Fatalf("Confirm() before any check = %v", err)
 			}
-			waitFor(t, "the failed check", func() bool { return checks.failing("byok-1") })
+			waitFor(func() bool { return checks.failing("byok-1") })
+			settle(checks, "byok-1")
 			if _, recorded := store.counts(); recorded != 0 {
 				t.Fatal("a failed check recorded deployments")
 			}
@@ -431,12 +415,13 @@ func TestAzureChecksServeThroughFailuresOnlyWithinGrace(t *testing.T) {
 			if err := checks.Confirm(context.Background(), target); !errors.Is(err, test.want) {
 				t.Fatalf("Confirm() at the retry = %v, want %v", err, test.want)
 			}
-			waitFor(t, "the retry", func() bool { return requests.Load() == 2 && checks.failing("byok-1") })
+			waitFor(func() bool { return requests.Load() == 2 && checks.failing("byok-1") })
+			settle(checks, "byok-1")
 			// A check that succeeds clears it.
 			clock.Advance(azureCheckRetry)
 			_ = checks.Confirm(context.Background(), target)
-			waitFor(t, "the check that succeeds", func() bool { _, recorded := store.counts(); return recorded == 1 })
-			waitFor(t, "the cleared failure", func() bool { return !checks.failing("byok-1") })
+			waitFor(func() bool { _, recorded := store.counts(); return recorded == 1 })
+			waitFor(func() bool { return !checks.failing("byok-1") })
 			if err := checks.Confirm(context.Background(), target); err != nil {
 				t.Fatalf("Confirm() after a check succeeded = %v", err)
 			}
@@ -565,7 +550,7 @@ func TestAzureChecksDiscoverAnEncryptedCredentialOnceWhenDue(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	waitFor(t, "the discovery", func() bool { _, recorded := store.discoveryCounts(); return recorded == 1 })
+	waitFor(func() bool { _, recorded := store.discoveryCounts(); return recorded == 1 })
 	claims, _ := store.discoveryCounts()
 	answered, unexpected := arm.counts()
 	if claims != 1 || answered != len(entry.Responses) || len(unexpected) > 0 {
@@ -620,8 +605,8 @@ func TestAzureChecksLeaveADiscoveryThatAnotherGatewayClaimed(t *testing.T) {
 	if err := checks.Confirm(context.Background(), testDiscoveryTarget(clock, entry.AccountID)); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, "the claim", func() bool { claims, _ := store.discoveryCounts(); return claims == 1 })
-	waitFor(t, "the pause", func() bool {
+	waitFor(func() bool { claims, _ := store.discoveryCounts(); return claims == 1 })
+	waitFor(func() bool {
 		checks.mu.Lock()
 		defer checks.mu.Unlock()
 		return checks.marks["byok-1/discover"].until.Equal(clock.Now().Add(azureCheckRetry))
@@ -651,7 +636,7 @@ func TestAzureChecksRecordDiscoveryFailuresForTheDashboard(t *testing.T) {
 			if err := checks.Confirm(context.Background(), testDiscoveryTarget(clock, entry.AccountID)); err != nil {
 				t.Fatal(err)
 			}
-			waitFor(t, "the record", func() bool { _, recorded := store.discoveryCounts(); return recorded == 1 })
+			waitFor(func() bool { _, recorded := store.discoveryCounts(); return recorded == 1 })
 			recorded := store.discoveries[0]
 			// A missing role keeps the targets that the discovery found; other failures keep the last.
 			if recorded.failure != test.want || (recorded.discovery != nil) != (test.want == azureRoleMissing) {
@@ -667,7 +652,7 @@ func TestAzureChecksRetryDiscoveriesThatRecordedNothing(t *testing.T) {
 	if err := checks.Confirm(context.Background(), testDiscoveryTarget(clock, entry.AccountID)); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, "the failed record", func() bool { return checks.failing("byok-1/discover") })
+	waitFor(func() bool { return checks.failing("byok-1/discover") })
 
 	// A gateway too busy to discover records nothing: the claim lapses for a later request.
 	busy := &fakeAzureCheckStore{discoverClaimed: true}
@@ -681,7 +666,7 @@ func TestAzureChecksRetryDiscoveriesThatRecordedNothing(t *testing.T) {
 	if err := checks.Confirm(context.Background(), testDiscoveryTarget(clock, entry.AccountID)); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, "the busy discovery", func() bool { return checks.failing("byok-1/discover") })
+	waitFor(func() bool { return checks.failing("byok-1/discover") })
 	if _, recorded := busy.discoveryCounts(); recorded != 0 {
 		t.Fatal("a busy gateway recorded a discovery")
 	}
