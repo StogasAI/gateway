@@ -3016,29 +3016,15 @@ func TestWriteSSEStreamAllowsQuietChatStream(t *testing.T) {
 	}
 }
 
+// A stream that never ends fails at go test's -timeout, which prints every goroutine's stack. A
+// shorter limit here failed streams that a busy machine wrote slowly.
 func readResponseBodyStream(t *testing.T, reader io.Reader) string {
 	t.Helper()
-
-	type result struct {
-		body []byte
-		err  error
+	body, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("failed to read response body stream: %v", err)
 	}
-	done := make(chan result, 1)
-	go func() {
-		body, err := io.ReadAll(reader)
-		done <- result{body: body, err: err}
-	}()
-
-	select {
-	case result := <-done:
-		if result.err != nil {
-			t.Fatalf("failed to read response body stream: %v", result.err)
-		}
-		return string(result.body)
-	case <-time.After(time.Second):
-		t.Fatal("timed out reading response body stream")
-		return ""
-	}
+	return string(body)
 }
 
 func requireSSEDataPayload(t *testing.T, body string, id string) map[string]any {

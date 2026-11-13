@@ -434,16 +434,22 @@ func TestUnansweredAuthorizationsTakeOnePlacePerConnectionUntilClosed(t *testing
 	service := &Service{db: &GatewayDB{pool: pool}, authorizeHoldQuery: "select 1", closeRequestQuery: "select 1"}
 	defer service.Close()
 
-	var authorizations sync.WaitGroup
-	for index := range 200 {
+	holds := make([]HoldRequest, 200)
+	for index := range holds {
 		var cache keyConfigCache
 		snapshot := credentialPolicySnapshot(t, &cache, fmt.Sprint("organization-", index), json.RawMessage(`null`), nil)
 		prepared, err := service.PrepareCredential(snapshot, "chutes", 0, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
+		holds[index] = HoldRequest{RequestID: fmt.Sprint("request-", index), ProviderKey: "chutes", ProductKey: "product", EstimatedUpstreamCostUSD: "0.01", Snapshot: snapshot, Prepared: prepared, RequestLifetime: time.Minute}
+	}
+	// Every authorization starts before the first one times out, as the bound below assumes. One that
+	// started later would take a connection that a timed-out authorization gave up.
+	var authorizations sync.WaitGroup
+	for _, hold := range holds {
 		authorizations.Go(func() {
-			_, err := service.authorizeResolvedRequest(context.Background(), "hash", snapshot.Claims, HoldRequest{RequestID: fmt.Sprint("request-", index), ProviderKey: "chutes", ProductKey: "product", EstimatedUpstreamCostUSD: "0.01", Snapshot: snapshot, Prepared: prepared, RequestLifetime: time.Minute})
+			_, err := service.authorizeResolvedRequest(context.Background(), "hash", hold.Snapshot.Claims, hold)
 			if !errors.Is(err, ErrGatewayUnavailable) {
 				t.Errorf("authorization error = %v", err)
 			}
