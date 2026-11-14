@@ -408,7 +408,9 @@ func NormalizeUpstreamStatus(bifrostErr *schemas.BifrostError) string {
 		return messageRefusal(bifrostErr)
 	case identifiers.has("rate_limit_error", "rate_limited", "too_many_requests", "upstream_rate_limit_error", "rate_limit_exceeded"):
 		return "rate_limited"
-	case identifiers.has("content_filter", "content_filter_error", "safety_error", "content_policy_violation", "refusal", "cyber_policy"):
+	// OpenAI sends invalid_prompt, as a 400, for a prompt that its safety checks flag.
+	case identifiers.has("content_filter", "content_filter_error", "safety_error", "content_policy_violation", "refusal", "cyber_policy",
+		"invalid_prompt"):
 		return "content_filter"
 	case identifiers.has("model_decommissioned", "servicemodeldeprecating"):
 		// The provider retired the model, whatever status it sends: Groq and Azure

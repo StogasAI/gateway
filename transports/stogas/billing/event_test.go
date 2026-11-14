@@ -222,6 +222,7 @@ func TestNormalizeUpstreamStatusExhaustiveStructuredIdentifierMatrix(t *testing.
 		{identifier: "content_filter_error", want: "content_filter"},
 		{identifier: "safety_error", want: "content_filter"},
 		{identifier: "cyber_policy", want: "content_filter"},
+		{identifier: "invalid_prompt", want: "content_filter"},
 		{identifier: "invalid_request", want: "invalid_request", generic: true},
 		{identifier: "invalid_request_error", want: "invalid_request", generic: true},
 		{identifier: "bad_request_error", want: "invalid_request", generic: true},
