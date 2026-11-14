@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"unicode"
@@ -72,7 +74,7 @@ func validateCommonChatCompletionPolicy(state *State) error {
 	if err := validateInteger(raw, "max_tokens"); err != nil {
 		return err
 	}
-	metadata, err := parseMetadata(raw["metadata"])
+	metadata, err := parseMetadata(raw["metadata"], state.MetadataHeader)
 	if err != nil {
 		return err
 	}
@@ -386,18 +388,42 @@ func validateFalseOnlyBoolean(raw map[string]json.RawMessage, name string) error
 	return nil
 }
 
-// parseMetadata reads the metadata object that request records keep. JSON
-// writes a control character as six bytes, and PostgreSQL's jsonb refuses
-// U+0000, so neither keys nor values may contain one.
-func parseMetadata(raw json.RawMessage) (map[string]string, error) {
-	if len(raw) == 0 {
-		return nil, nil
+// MetadataHeader carries metadata for clients that can add headers but not body fields, such as
+// coding agents, as Portkey's x-portkey-metadata and Cloudflare's cf-aig-metadata do.
+const MetadataHeader = "Stogas-Request-Metadata"
+
+// parseMetadata reads the metadata object that request records keep, from the body and the
+// metadata header. A body key replaces the header's, since the body belongs to this one request.
+// JSON writes a control character as six bytes, and PostgreSQL's jsonb refuses U+0000, so
+// neither keys nor values may contain one.
+func parseMetadata(raw json.RawMessage, header []string) (map[string]string, error) {
+	if len(header) > 1 {
+		return nil, invalidRequest(MetadataHeader + " must appear at most once")
 	}
 	var metadata map[string]any
-	if err := sonic.Unmarshal(raw, &metadata); err != nil {
-		return nil, invalidRequest("metadata must be an object")
+	if len(header) == 1 {
+		if err := sonic.UnmarshalString(header[0], &metadata); err != nil || metadata == nil {
+			return nil, invalidRequest(MetadataHeader + " must be a JSON object")
+		}
+	}
+	if len(raw) != 0 {
+		var body map[string]any
+		if err := sonic.Unmarshal(raw, &body); err != nil {
+			return nil, invalidRequest("metadata must be an object")
+		}
+		if metadata == nil {
+			metadata = body
+		} else {
+			maps.Copy(metadata, body)
+		}
+	}
+	if metadata == nil && len(raw) == 0 {
+		return nil, nil
 	}
 	if len(metadata) > billing.MaxMetadataEntries {
+		if len(header) == 1 {
+			return nil, invalidRequest("metadata supports at most 16 keys, counting those of " + MetadataHeader)
+		}
 		return nil, invalidRequest("metadata supports at most 16 keys")
 	}
 	parsed := make(map[string]string, len(metadata))
@@ -456,6 +482,54 @@ func RequestSessionID(body map[string]json.RawMessage, header http.Header) (stri
 
 func validSessionID(id string) bool {
 	return len(id) <= billing.MaxSessionIDBytes && metadataText(id)
+}
+
+// App names the application that sent a request, as its attribution headers give it.
+type App struct {
+	Title string
+	URL   string
+}
+
+// RequestApp reads the attribution headers that OpenRouter and Vercel's AI Gateway define:
+// HTTP-Referer for the app's URL, and X-OpenRouter-Title, or the older X-Title, for its name.
+// Clients such as Cline and Roo Code send them on their own, so a missing, repeated or invalid
+// header names nothing and never fails the request. The URL loses its credentials, query and
+// fragment, which can hold secrets, and its final slash, so that one app has one URL.
+// Providers never receive either value.
+func RequestApp(header http.Header) App {
+	app := App{URL: appURL(singleHeader(header, "Http-Referer"))}
+	for _, name := range []string{"X-Openrouter-Title", "X-Title"} {
+		if title := strings.TrimSpace(singleHeader(header, name)); title != "" {
+			if len(title) <= billing.MaxMetadataValueBytes && metadataText(title) {
+				app.Title = title
+			}
+			break
+		}
+	}
+	return app
+}
+
+func singleHeader(header http.Header, name string) string {
+	if values := header.Values(name); len(values) == 1 {
+		return values[0]
+	}
+	return ""
+}
+
+func appURL(value string) string {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || parsed.Host == "" || parsed.Opaque != "" {
+		return ""
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return ""
+	}
+	text := scheme + "://" + strings.ToLower(parsed.Host) + strings.TrimRight(parsed.EscapedPath(), "/")
+	if len(text) > billing.MaxMetadataValueBytes || !metadataText(text) {
+		return ""
+	}
+	return text
 }
 
 // RequestTraceID reads the trace ID from the request's W3C traceparent

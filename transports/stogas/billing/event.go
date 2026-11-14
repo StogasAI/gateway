@@ -47,6 +47,8 @@ type EventInput struct {
 	TraceID               string
 	EncryptionKeyIDs      []string
 	Metadata              map[string]string
+	AppTitle              string
+	AppURL                string
 	Transport             string
 	StartedAt             time.Time
 	ToolCalls             []ToolCallInput
@@ -164,6 +166,8 @@ func NewRequestEvent(input EventInput) (RequestEvent, error) {
 		TraceID:          input.TraceID,
 		EncryptionKeyIDs: encryptionKeyIDs(input.EncryptionKeyIDs),
 		Metadata:         requestMetadata(input.Metadata),
+		AppTitle:         input.AppTitle,
+		AppURL:           input.AppURL,
 		Transport:        input.Transport,
 		Cancelled:        input.Cancelled,
 		ClientStopMS:     clientStopMS,

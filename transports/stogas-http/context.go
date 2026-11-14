@@ -71,6 +71,8 @@ func newRequestContext(ctx *requestContext, startedAt time.Time, resolution *cat
 		return nil, nil, nil, err
 	}
 	state.TraceID = stogas.RequestTraceID(ctx.request.Header)
+	state.MetadataHeader = ctx.request.Header.Values(stogas.MetadataHeader)
+	state.App = stogas.RequestApp(ctx.request.Header)
 	state.EncryptionKeyIDs = ctx.encryptionKeyIDs
 	state.Transport = ctx.transport()
 	state.StartedAt = startedAt

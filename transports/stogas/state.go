@@ -53,8 +53,12 @@ type State struct {
 	TraceID     string
 	// EncryptionKeyIDs are the roots the request needs, sorted: those of
 	// every pair it may try.
-	EncryptionKeyIDs        []string
+	EncryptionKeyIDs []string
+	// MetadataHeader holds the values of the request's metadata header, which body validation
+	// reads with the body's metadata.
+	MetadataHeader          []string
 	Metadata                map[string]string
+	App                     App
 	Transport               string
 	Response                *schemas.BifrostResponse
 	BifrostError            *schemas.BifrostError

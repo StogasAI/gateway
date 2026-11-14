@@ -1457,6 +1457,89 @@ func TestMetadataReachesRequestRecordsButNotProviders(t *testing.T) {
 	}
 }
 
+func TestMetadataHeaderAddsKeysThatTheBodyCanReplace(t *testing.T) {
+	sixteen := map[string]any{}
+	for i := range billing.MaxMetadataEntries {
+		sixteen[fmt.Sprintf("k%02d", i)] = "v"
+	}
+	full, err := json.Marshal(sixteen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name   string
+		body   string
+		header []string
+		want   map[string]string
+		err    string
+	}{
+		{name: "neither"},
+		{name: "header", header: []string{`{"team":"infra","app":"codex"}`}, want: map[string]string{"team": "infra", "app": "codex"}},
+		{name: "body replaces a header key", body: `{"team":"search"}`, header: []string{`{"team":"infra","app":"codex"}`}, want: map[string]string{"team": "search", "app": "codex"}},
+		{name: "null body", body: `null`, header: []string{`{"team":"infra"}`}, want: map[string]string{"team": "infra"}},
+		{name: "empty header", header: []string{`{}`}, want: map[string]string{}},
+		{name: "escaped text", header: []string{`{"team":"caf\u00e9"}`}, want: map[string]string{"team": "café"}},
+		{name: "sixteen in all", body: string(full), header: []string{`{"k00":"header"}`}, want: func() map[string]string {
+			want := map[string]string{}
+			for key := range sixteen {
+				want[key] = "v"
+			}
+			return want
+		}()},
+		{name: "seventeen in all", body: string(full), header: []string{`{"extra":"x"}`}, err: "at most 16 keys, counting those of Stogas-Request-Metadata"},
+		{name: "repeated header", header: []string{`{}`, `{}`}, err: "Stogas-Request-Metadata must appear at most once"},
+		{name: "not JSON", header: []string{`team=infra`}, err: "Stogas-Request-Metadata must be a JSON object"},
+		{name: "null header", header: []string{`null`}, err: "Stogas-Request-Metadata must be a JSON object"},
+		{name: "array header", header: []string{`["infra"]`}, err: "Stogas-Request-Metadata must be a JSON object"},
+		{name: "trailing text", header: []string{`{"team":"infra"} x`}, err: "Stogas-Request-Metadata must be a JSON object"},
+		{name: "number value", header: []string{`{"team":7}`}, err: "metadata values must be strings"},
+		{name: "control character", header: []string{`{"team":"a\nb"}`}, err: "without control characters"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseMetadata(json.RawMessage(tc.body), tc.header)
+			if tc.err != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.err) {
+					t.Fatalf("parseMetadata() error = %v, want %q", err, tc.err)
+				}
+				return
+			}
+			if err != nil || !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("parseMetadata() = (%#v, %v), want %#v", got, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestRequestAppReadsTheAttributionHeaders(t *testing.T) {
+	long := "https://example.com/" + strings.Repeat("a", billing.MaxMetadataValueBytes)
+	cases := []struct {
+		name    string
+		headers map[string][]string
+		want    App
+	}{
+		{name: "none"},
+		{name: "Cline", headers: map[string][]string{"Http-Referer": {"https://cline.bot"}, "X-Title": {"Cline"}}, want: App{Title: "Cline", URL: "https://cline.bot"}},
+		{name: "OpenRouter's title wins", headers: map[string][]string{"X-Openrouter-Title": {"Roo Code"}, "X-Title": {"Old"}}, want: App{Title: "Roo Code"}},
+		{name: "path kept, slash dropped", headers: map[string][]string{"Http-Referer": {"https://github.com/RooVetGit/Roo-Cline/"}}, want: App{URL: "https://github.com/RooVetGit/Roo-Cline"}},
+		{name: "secrets dropped", headers: map[string][]string{"Http-Referer": {"HTTPS://user:pass@App.Example.com/chat?token=x#y"}}, want: App{URL: "https://app.example.com/chat"}},
+		{name: "localhost with a title", headers: map[string][]string{"Http-Referer": {"http://localhost:3000/"}, "X-Title": {" My app "}}, want: App{Title: "My app", URL: "http://localhost:3000"}},
+		{name: "not a URL", headers: map[string][]string{"Http-Referer": {"Cline"}}},
+		{name: "other scheme", headers: map[string][]string{"Http-Referer": {"vscode://cline"}}},
+		{name: "URL too long", headers: map[string][]string{"Http-Referer": {long}}},
+		{name: "repeated", headers: map[string][]string{"Http-Referer": {"https://a.example", "https://b.example"}, "X-Title": {"A", "B"}}},
+		{name: "control character", headers: map[string][]string{"X-Title": {"a\x01b"}}},
+		{name: "blank OpenRouter title", headers: map[string][]string{"X-Openrouter-Title": {" "}, "X-Title": {"Cline"}}, want: App{Title: "Cline"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := RequestApp(tc.headers); got != tc.want {
+				t.Fatalf("RequestApp() = %#v, want %#v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestRequestSessionIDPrefersTheBodyThenXSessionID(t *testing.T) {
 	long := strings.Repeat("é", billing.MaxSessionIDBytes/2)
 	cases := []struct {

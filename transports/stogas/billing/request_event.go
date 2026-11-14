@@ -82,12 +82,16 @@ type RequestEvent struct {
 	// policies spell it.
 	Interface string `json:"interface"`
 	// Stream is true when the request body asked for a stream.
-	Stream           bool                  `json:"stream"`
-	RequestSettings  RequestSettings       `json:"request_settings"`
-	SessionID        string                `json:"session_id"`
-	TraceID          string                `json:"trace_id"`
-	EncryptionKeyIDs []string              `json:"encryption_key_ids"`
-	Metadata         map[string]string     `json:"metadata"`
+	Stream           bool              `json:"stream"`
+	RequestSettings  RequestSettings   `json:"request_settings"`
+	SessionID        string            `json:"session_id"`
+	TraceID          string            `json:"trace_id"`
+	EncryptionKeyIDs []string          `json:"encryption_key_ids"`
+	Metadata         map[string]string `json:"metadata"`
+	// AppTitle and AppURL name the application that sent the request, as its attribution
+	// headers give it; each is empty when absent.
+	AppTitle         string                `json:"app_title"`
+	AppURL           string                `json:"app_url"`
 	Transport        string                `json:"transport"`
 	Cancelled        bool                  `json:"cancelled"`
 	ClientStopMS     *uint32               `json:"client_stop_ms"`
