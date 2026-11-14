@@ -314,6 +314,8 @@ func TestUpstreamRecordReadsEachProvidersHeaders(t *testing.T) {
 			"x-ms-served-model": "gpt-5.6-sol-2026-07-09", "x-ms-region": "West US 3",
 		}, billing.UpstreamRecord{RequestID: "apim-1", Model: "gpt-5.6-sol-2026-07-09"}},
 		{schemas.Azure, map[string]string{"x-request-id": "x-1"}, billing.UpstreamRecord{RequestID: "x-1"}},
+		// Claude on Azure sends no such header, and its reply names the model, not the deployment.
+		{schemas.Azure, map[string]string{"apim-request-id": "apim-2", "request-id": "req_3"}, billing.UpstreamRecord{RequestID: "apim-2", Model: "customer-sol"}},
 		{catalog.ProviderAWS, map[string]string{"request-id": "req_2", "X-Amzn-Requestid": "aws-2"}, billing.UpstreamRecord{RequestID: "aws-2", Model: "customer-sol"}},
 		{catalog.ProviderGoogleCloud, nil, billing.UpstreamRecord{Model: "customer-sol"}},
 	} {
@@ -321,7 +323,11 @@ func TestUpstreamRecordReadsEachProvidersHeaders(t *testing.T) {
 		if test.headers != nil {
 			ctx.SetValue(schemas.BifrostContextKeyProviderResponseHeaders, test.headers)
 		}
-		if got := readUpstreamRecord(ctx, &catalog.ResolvedRequest{Provider: test.provider}, reply); got != test.want {
+		resolution := &catalog.ResolvedRequest{Provider: test.provider}
+		if test.headers["request-id"] == "req_3" {
+			resolution.Deployment.Upstream.ModelFormat = "Anthropic"
+		}
+		if got := readUpstreamRecord(ctx, resolution, reply); got != test.want {
 			t.Errorf("%s %v: record = %#v, want %#v", test.provider, test.headers, got, test.want)
 		}
 	}

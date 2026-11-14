@@ -216,9 +216,10 @@ func readUpstreamRecord(ctx *schemas.BifrostContext, resolution *catalog.Resolve
 	}
 	switch resolution.Provider {
 	case schemas.Azure:
-		// Azure replies can repeat the deployment's name, which the customer chose. Its header
-		// names the model with its version, where Azure reports it.
-		record.Model = upstreamHeader(headers, "x-ms-served-model")
+		// Its header names the model with its version, where Azure reports it.
+		if record.Model = upstreamHeader(headers, "x-ms-served-model"); record.Model == "" && replyNamesModel(resolution) {
+			record.Model = replyModel(response)
+		}
 	case catalog.ProviderChutes:
 		// Chutes sends no request ID on encrypted calls; its records name the instance.
 		record.Model = replyModel(response)
@@ -257,6 +258,13 @@ func upstreamHeader(headers map[string]string, name string) string {
 }
 
 // replyModel is the model that a reply names.
+// replyNamesModel says whether the model field of a pair's reply names the model that served. An
+// Azure reply can repeat the deployment's name, which the customer chose, except Claude's, which is
+// Anthropic's own reply and names the model whatever the deployment is called, without the header.
+func replyNamesModel(resolution *catalog.ResolvedRequest) bool {
+	return resolution.Provider != schemas.Azure || resolution.Deployment.Upstream.ModelFormat == "Anthropic"
+}
+
 func replyModel(response *schemas.BifrostResponse) string {
 	switch {
 	case response == nil:
