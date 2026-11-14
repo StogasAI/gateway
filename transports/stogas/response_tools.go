@@ -62,6 +62,8 @@ func validateProviderResponsesOutput(state *State, response *schemas.BifrostResp
 			return ErrProviderResponseMalformed
 		}
 	}
+	// Only a reply that the provider cut holds an unfinished call, or no call that the request required.
+	cut := response.Status != nil && *response.Status == schemas.ResponsesResponseStatusIncomplete
 	seenIDs := make(map[string]struct{}, len(response.Output))
 	for index := range response.Output {
 		item := &response.Output[index]
@@ -69,7 +71,7 @@ func validateProviderResponsesOutput(state *State, response *schemas.BifrostResp
 		if err != nil {
 			return err
 		}
-		if terminal && validateProviderResponsesTerminalItem(item) != nil {
+		if terminal && (validateProviderResponsesTerminalItem(item, false) != nil || !cut && providerResponsesItemIncompleteCall(item)) {
 			return ErrProviderResponseMalformed
 		}
 		if _, duplicate := seenIDs[observed.id]; duplicate {
@@ -94,7 +96,7 @@ func validateProviderResponsesOutput(state *State, response *schemas.BifrostResp
 			}
 		}
 	}
-	if terminal && state != nil {
+	if terminal && state != nil && !cut {
 		if providerResponsesToolCallRequired(state) && state.responsesDeclaredCalls == 0 {
 			return ErrProviderResponseMalformed
 		}
@@ -525,7 +527,7 @@ func validateProviderResponsesOutputItemEvent(state *State, response *schemas.Bi
 	}
 	if !exists || prior.done || response.Item.Status != nil && *response.Item.Status == "in_progress" ||
 		!sameProviderResponsesItem(prior, item) ||
-		validateProviderResponsesTerminalItem(response.Item) != nil ||
+		validateProviderResponsesTerminalItem(response.Item, responsesUsesAnthropicWire(state)) != nil ||
 		validateProviderResponsesCompletedStreamItem(prior, response.Item) != nil {
 		return ErrProviderResponseMalformed
 	}
@@ -600,7 +602,13 @@ func providerShellCommands(item *schemas.ResponsesMessage) []string {
 	return item.ResponsesToolMessage.Action.ResponsesShellToolCallAction.Commands
 }
 
-func validateProviderResponsesTerminalItem(item *schemas.ResponsesMessage) error {
+// validateProviderResponsesTerminalItem checks an item that the provider has ended. A function
+// call that it finished holds a JSON object. A reply that the provider cut keeps the call that it
+// was writing as an incomplete item with its unfinished arguments, as OpenAI sends it (capture
+// openai/tool-call-cut-at-output-limit). beforeStopReason says that the item ends in a stream
+// before the reply's stop reason arrives, as on Anthropic's wire, where core completes each item
+// and marks the last one incomplete in the terminal response.
+func validateProviderResponsesTerminalItem(item *schemas.ResponsesMessage, beforeStopReason bool) error {
 	if item == nil || item.Type == nil {
 		return ErrProviderResponseMalformed
 	}
@@ -634,8 +642,11 @@ func validateProviderResponsesTerminalItem(item *schemas.ResponsesMessage) error
 			return ErrProviderResponseMalformed
 		}
 	case schemas.ResponsesMessageTypeFunctionCall:
-		if *item.Status != "completed" || item.ResponsesToolMessage == nil || item.ResponsesToolMessage.Arguments == nil ||
-			!catalog.ValidateJSONObjectText(*item.ResponsesToolMessage.Arguments) {
+		if !stringInSet(*item.Status, "completed", "incomplete") || item.ResponsesToolMessage == nil || item.ResponsesToolMessage.Arguments == nil ||
+			!validProviderText(*item.ResponsesToolMessage.Arguments, maxProviderResponseBodySize, true) {
+			return ErrProviderResponseMalformed
+		}
+		if *item.Status == "completed" && !beforeStopReason && !catalog.ValidateJSONObjectText(*item.ResponsesToolMessage.Arguments) {
 			return ErrProviderResponseMalformed
 		}
 	case schemas.ResponsesMessageTypeCustomToolCall:
@@ -699,6 +710,12 @@ func providerResponsesStreamedItem(state *State, response *schemas.BifrostRespon
 	streamed := *item
 	streamed.Status = schemas.Ptr("completed")
 	return &streamed
+}
+
+// providerResponsesItemIncompleteCall reports a function call that the provider did not finish.
+func providerResponsesItemIncompleteCall(item *schemas.ResponsesMessage) bool {
+	return item.Type != nil && *item.Type == schemas.ResponsesMessageTypeFunctionCall &&
+		item.Status != nil && *item.Status == "incomplete"
 }
 
 func validateProviderResponsesCompletedStreamItem(streamItem providerResponsesItem, finalItem *schemas.ResponsesMessage) error {
@@ -1713,8 +1730,8 @@ func validateProviderResponsesToolValueEvent(state *State, response *schemas.Bif
 		}
 		return nil
 	case schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDone:
-		if response.Arguments == nil || item.value.String() != *response.Arguments ||
-			!catalog.ValidateJSONObjectText(*response.Arguments) {
+		// The item's end says whether the provider finished the call, and so whether these must be a JSON object.
+		if response.Arguments == nil || item.value.String() != *response.Arguments {
 			return ErrProviderResponseMalformed
 		}
 	case schemas.ResponsesStreamResponseTypeCustomToolCallInputDone:

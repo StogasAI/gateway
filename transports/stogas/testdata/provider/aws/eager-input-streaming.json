@@ -1,0 +1,1003 @@
+{
+	"shows": "Claude on Amazon Bedrock takes eager_input_streaming on a function tool without a beta header, alone and on a strict tool, streamed and whole. A stream that the output limit cuts inside the call reports stop_reason max_tokens without closing the call's block, whose JSON is unfinished.",
+	"recorded": "2026-11-14",
+	"exchanges": [
+		{
+			"name": "stream",
+			"provider": "aws",
+			"request": {
+				"path": "/anthropic/v1/messages",
+				"body": {
+					"model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+					"max_tokens": 300,
+					"messages": [
+						{
+							"role": "user",
+							"content": "Call write_file with path story.txt and a story of 60 words as its content."
+						}
+					],
+					"tools": [
+						{
+							"name": "write_file",
+							"description": "Writes text to a file.",
+							"eager_input_streaming": true,
+							"input_schema": {
+								"type": "object",
+								"properties": {
+									"path": {
+										"type": "string"
+									},
+									"content": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"path",
+									"content"
+								],
+								"additionalProperties": false
+							}
+						}
+					],
+					"tool_choice": {
+						"type": "tool",
+						"name": "write_file"
+					},
+					"stream": true
+				}
+			},
+			"response": {
+				"status": 200,
+				"events": [
+					{
+						"type": "message_start",
+						"message": {
+							"model": "anthropic.claude-haiku-4-5-20251001-v1:0",
+							"id": "msg_bdrk_j2xpp3esd3ubwrbsxmpfumcua6xig7okkdel5afwfnu34dz7s6ea",
+							"type": "message",
+							"role": "assistant",
+							"content": [],
+							"container": null,
+							"stop_reason": null,
+							"stop_sequence": null,
+							"stop_details": null,
+							"usage": {
+								"input_tokens": 695,
+								"cache_creation_input_tokens": 0,
+								"cache_read_input_tokens": 0,
+								"cache_creation": {
+									"ephemeral_5m_input_tokens": 0,
+									"ephemeral_1h_input_tokens": 0
+								},
+								"output_tokens": 10,
+								"service_tier": "standard"
+							}
+						}
+					},
+					{
+						"type": "content_block_start",
+						"index": 0,
+						"content_block": {
+							"type": "tool_use",
+							"id": "toolu_bdrk_01NUGzMdKyABbmdmywnjMJo9",
+							"name": "write_file",
+							"input": {}
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": ""
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": "{\"path\": \"story.txt"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": "\", \"content\": \"The old lighthouse"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " keeper clim"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": "bed the spiral stairs each"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " evening"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": "."
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " His"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " weathered hands guided"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " the"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " beam across"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " the dark"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " ocean"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": ", gu"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": "iding lost sailors home. One"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " night, a young"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " woman arrived"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " seeking"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " refuge from"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " a storm. She asked why"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " he kept the light burning."
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " He smiled and"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " said, \\\"Because"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " someone"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " always"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " needs to find"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " their way home.\\\" She"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " stayed"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": ", and together"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " they kept"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " the light alive"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": "."
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": "\"}"
+						}
+					},
+					{
+						"type": "content_block_stop",
+						"index": 0
+					},
+					{
+						"type": "message_delta",
+						"delta": {
+							"stop_reason": "tool_use",
+							"stop_sequence": null,
+							"stop_details": null,
+							"container": null
+						},
+						"usage": {
+							"input_tokens": 695,
+							"cache_creation_input_tokens": 0,
+							"cache_read_input_tokens": 0,
+							"output_tokens": 129
+						}
+					},
+					{
+						"type": "message_stop"
+					}
+				]
+			}
+		},
+		{
+			"name": "stream of a strict tool",
+			"provider": "aws",
+			"request": {
+				"path": "/anthropic/v1/messages",
+				"body": {
+					"model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+					"max_tokens": 300,
+					"messages": [
+						{
+							"role": "user",
+							"content": "Call write_file with path story.txt and a story of 60 words as its content."
+						}
+					],
+					"tools": [
+						{
+							"name": "write_file",
+							"description": "Writes text to a file.",
+							"eager_input_streaming": true,
+							"input_schema": {
+								"type": "object",
+								"properties": {
+									"path": {
+										"type": "string"
+									},
+									"content": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"path",
+									"content"
+								],
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"tool_choice": {
+						"type": "tool",
+						"name": "write_file"
+					},
+					"stream": true
+				}
+			},
+			"response": {
+				"status": 200,
+				"events": [
+					{
+						"type": "message_start",
+						"message": {
+							"model": "anthropic.claude-haiku-4-5-20251001-v1:0",
+							"id": "msg_bdrk_7dcq4fcxsyi6pfie5fnbvxnustdpmbp2vomeruwf4ti5ty4q5nja",
+							"type": "message",
+							"role": "assistant",
+							"content": [],
+							"container": null,
+							"stop_reason": null,
+							"stop_sequence": null,
+							"stop_details": null,
+							"usage": {
+								"input_tokens": 695,
+								"cache_creation_input_tokens": 0,
+								"cache_read_input_tokens": 0,
+								"cache_creation": {
+									"ephemeral_5m_input_tokens": 0,
+									"ephemeral_1h_input_tokens": 0
+								},
+								"output_tokens": 10,
+								"service_tier": "standard"
+							}
+						}
+					},
+					{
+						"type": "content_block_start",
+						"index": 0,
+						"content_block": {
+							"type": "tool_use",
+							"id": "toolu_bdrk_01JkfxHKzP2ERQbHNXNr7ExQ",
+							"name": "write_file",
+							"input": {}
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": ""
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": "{\"path\": \"story.txt"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": "\", \"content\": \"The old lighthouse"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " stood"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " alone"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " on the rocky cliff, its weathered"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " white"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " paint"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " peeling in"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " the"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " salt air"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": ". Maya"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " clim"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": "bed the spiral stairs"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": ", her footsteps echoing through"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " the tower"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": ". At"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " the top, she found a leather"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " journal filled with crypt"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": "ic entries"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " from"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " a keeper"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " long"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " gone"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": ". As"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " she read the"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " final page"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": ", a golden"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " light illumin"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": "ated the horizon"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": ". She"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " understood"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " now—"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": "some"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " guard"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": "ians never truly abandon"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": " their posts"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": "."
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": "\"}"
+						}
+					},
+					{
+						"type": "content_block_stop",
+						"index": 0
+					},
+					{
+						"type": "message_delta",
+						"delta": {
+							"stop_reason": "tool_use",
+							"stop_sequence": null,
+							"stop_details": null,
+							"container": null
+						},
+						"usage": {
+							"input_tokens": 695,
+							"cache_creation_input_tokens": 0,
+							"cache_read_input_tokens": 0,
+							"output_tokens": 137
+						}
+					},
+					{
+						"type": "message_stop"
+					}
+				]
+			}
+		},
+		{
+			"name": "whole",
+			"provider": "aws",
+			"request": {
+				"path": "/anthropic/v1/messages",
+				"body": {
+					"model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+					"max_tokens": 300,
+					"messages": [
+						{
+							"role": "user",
+							"content": "Call write_file with path story.txt and a story of 60 words as its content."
+						}
+					],
+					"tools": [
+						{
+							"name": "write_file",
+							"description": "Writes text to a file.",
+							"eager_input_streaming": true,
+							"input_schema": {
+								"type": "object",
+								"properties": {
+									"path": {
+										"type": "string"
+									},
+									"content": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"path",
+									"content"
+								],
+								"additionalProperties": false
+							}
+						}
+					],
+					"tool_choice": {
+						"type": "tool",
+						"name": "write_file"
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"model": "anthropic.claude-haiku-4-5-20251001-v1:0",
+					"id": "msg_bdrk_jfdncbcejdyruxb6rfg2pp6yolie3xqargzbvf2jfdn4qxbad3ia",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "tool_use",
+							"id": "toolu_bdrk_01Wm7ebLuF1GWWTDP6zhbzvm",
+							"name": "write_file",
+							"input": {
+								"path": "story.txt",
+								"content": "The old lighthouse stood alone on the rocky cliff, its beacon still shining after a hundred years. Sarah climbed the spiral stairs, remembering her grandfather's stories of guiding lost ships to safety. At the top, she lit the lamp one final time before the automated system took over. A single beam cut through the darkness, honoring the past while welcoming the future."
+							}
+						}
+					],
+					"container": null,
+					"stop_reason": "tool_use",
+					"stop_sequence": null,
+					"stop_details": null,
+					"usage": {
+						"input_tokens": 695,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"cache_creation": {
+							"ephemeral_5m_input_tokens": 0,
+							"ephemeral_1h_input_tokens": 0
+						},
+						"output_tokens": 127,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"name": "stream cut inside the call",
+			"provider": "aws",
+			"request": {
+				"path": "/anthropic/v1/messages",
+				"body": {
+					"model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+					"max_tokens": 30,
+					"messages": [
+						{
+							"role": "user",
+							"content": "Call write_file with path story.txt and a story of 60 words as its content."
+						}
+					],
+					"tools": [
+						{
+							"name": "write_file",
+							"description": "Writes text to a file.",
+							"eager_input_streaming": true,
+							"input_schema": {
+								"type": "object",
+								"properties": {
+									"path": {
+										"type": "string"
+									},
+									"content": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"path",
+									"content"
+								],
+								"additionalProperties": false
+							}
+						}
+					],
+					"tool_choice": {
+						"type": "tool",
+						"name": "write_file"
+					},
+					"stream": true
+				}
+			},
+			"response": {
+				"status": 200,
+				"events": [
+					{
+						"type": "message_start",
+						"message": {
+							"model": "anthropic.claude-haiku-4-5-20251001-v1:0",
+							"id": "msg_bdrk_4pvussozktjqxcis5lw3vhkaqohgt63xvord5gemvbna7fobyquq",
+							"type": "message",
+							"role": "assistant",
+							"content": [],
+							"container": null,
+							"stop_reason": null,
+							"stop_sequence": null,
+							"stop_details": null,
+							"usage": {
+								"input_tokens": 695,
+								"cache_creation_input_tokens": 0,
+								"cache_read_input_tokens": 0,
+								"cache_creation": {
+									"ephemeral_5m_input_tokens": 0,
+									"ephemeral_1h_input_tokens": 0
+								},
+								"output_tokens": 10,
+								"service_tier": "standard"
+							}
+						}
+					},
+					{
+						"type": "content_block_start",
+						"index": 0,
+						"content_block": {
+							"type": "tool_use",
+							"id": "toolu_bdrk_01CBBQgvUQRHYV59huFfehin",
+							"name": "write_file",
+							"input": {}
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": ""
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": "{\"path\": \"story.txt"
+						}
+					},
+					{
+						"type": "content_block_delta",
+						"index": 0,
+						"delta": {
+							"type": "input_json_delta",
+							"partial_json": "\", \"content\": \"The"
+						}
+					},
+					{
+						"type": "message_delta",
+						"delta": {
+							"stop_reason": "max_tokens",
+							"stop_sequence": null,
+							"stop_details": null,
+							"container": null
+						},
+						"usage": {
+							"input_tokens": 695,
+							"cache_creation_input_tokens": 0,
+							"cache_read_input_tokens": 0,
+							"output_tokens": 30
+						}
+					},
+					{
+						"type": "message_stop"
+					}
+				]
+			}
+		}
+	]
+}

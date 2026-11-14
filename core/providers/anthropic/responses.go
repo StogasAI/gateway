@@ -3318,6 +3318,14 @@ func (chunk *AnthropicStreamEvent) ToBifrostResponsesStream(ctx context.Context,
 				Response:       response,
 			}}, nil, false
 		}
+		// Bedrock reports an output limit that cut a tool call without closing the
+		// call's block (transports/stogas/testdata/provider/aws/eager-input-streaming.json),
+		// so close it here: the call's item must end before the terminal event.
+		for contentIndex, outputIndex := range state.ContentIndexToOutputIndex {
+			if _, open := state.ToolArgumentBuffers[outputIndex]; open {
+				return (&AnthropicStreamEvent{Type: AnthropicStreamEventTypeContentBlockStop, Index: &contentIndex}).ToBifrostResponsesStream(ctx, sequenceNumber, state)
+			}
+		}
 		// Message-level updates (like stop reason, usage, etc.)
 		// Note: We don't emit output_item.done here because items are already closed
 		// by content_block_stop. This event is informational only.

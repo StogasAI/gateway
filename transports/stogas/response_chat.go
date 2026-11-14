@@ -187,11 +187,9 @@ func validateProviderChatToolCalls(state *State, calls []schemas.ChatAssistantMe
 		if !streaming && (call.Type == nil || id == "" || name == "") {
 			return ErrProviderResponseMalformed
 		}
-		if !streaming && !catalog.ValidateJSONObjectText(call.Function.Arguments) {
-			return ErrProviderResponseMalformed
-		}
 		if state == nil {
-			if streaming && (call.Type == nil || id == "" || name == "") {
+			if streaming && (call.Type == nil || id == "" || name == "") ||
+				!streaming && !catalog.ValidateJSONObjectText(call.Function.Arguments) {
 				return ErrProviderResponseMalformed
 			}
 			continue
@@ -333,28 +331,33 @@ func validateProviderChatLogProbs(logProbs *schemas.BifrostLogProbs) error {
 	return nil
 }
 
+// validateProviderChatToolCompletion checks the calls of a reply against the reason that ended it.
+// A call that the provider finished holds a JSON object. A reply that the provider cut, at the
+// output limit or for its content filter, keeps the call that it was writing with its unfinished
+// arguments, as OpenAI sends it (capture openai/tool-call-cut-at-output-limit), and may hold no
+// call although the request required one.
 func validateProviderChatToolCompletion(state *State, finishReason string) error {
 	if !validProviderFinishReason(state, finishReason) {
 		return ErrProviderResponseMalformed
 	}
+	cut := finishReason == string(schemas.BifrostFinishReasonLength) || finishReason == "content_filter"
 	toolCalls := 0
 	if state != nil {
 		toolCalls = len(state.chatToolCalls)
 		for index := 0; index < toolCalls; index++ {
 			call, ok := state.chatToolCalls[uint16(index)]
-			if !ok {
+			if !ok || call.id == "" || call.name == "" || call.arguments == nil {
 				return ErrProviderResponseMalformed
 			}
-			if call.id == "" || call.name == "" || call.arguments == nil ||
-				!catalog.ValidateJSONObjectText(call.arguments.String()) {
+			if !(cut && index == toolCalls-1) && !catalog.ValidateJSONObjectText(call.arguments.String()) {
 				return ErrProviderResponseMalformed
 			}
 		}
-		if providerChatToolCallRequired(state) && toolCalls == 0 {
+		if !cut && providerChatToolCallRequired(state) && toolCalls == 0 {
 			return ErrProviderResponseMalformed
 		}
 	}
-	if (finishReason == string(schemas.BifrostFinishReasonToolCalls)) != (toolCalls > 0) {
+	if !cut && (finishReason == string(schemas.BifrostFinishReasonToolCalls)) != (toolCalls > 0) {
 		return ErrProviderResponseMalformed
 	}
 	return nil
