@@ -39,7 +39,7 @@ func TestGatewayTLSNegotiatesHTTP2AndDrainsActiveResponse(t *testing.T) {
 	if err := gateway.routes(); err != nil {
 		t.Fatal(err)
 	}
-	finish := make(chan struct{})
+	finish, waiting := make(chan struct{}), make(chan struct{})
 	var finishOnce sync.Once
 	defer finishOnce.Do(func() { close(finish) })
 	gateway.server.Handler = requestHandler(gateway.publicRequests(func(ctx *requestContext) {
@@ -50,6 +50,9 @@ func TestGatewayTLSNegotiatesHTTP2AndDrainsActiveResponse(t *testing.T) {
 		defer gateway.requests.end()
 		writer := &responseWriter{writer: ctx.writer, control: http.NewResponseController(ctx.writer), idle: time.Second}
 		_, _ = writer.Write([]byte("before"))
+		// The client can read these bytes before the write returns, and memory
+		// pressure ends an unpaid response while it writes.
+		close(waiting)
 		select {
 		case <-finish:
 		case <-ctx.request.Context().Done():
@@ -109,6 +112,7 @@ func TestGatewayTLSNegotiatesHTTP2AndDrainsActiveResponse(t *testing.T) {
 			break
 		}
 	}
+	<-waiting
 	shutdownContext, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	// Memory pressure cannot close the socket carrying this unfinished stream.
 	candidate, err := net.DialTimeout("tcp", listener.Addr().String(), time.Second)
@@ -128,8 +132,11 @@ func TestGatewayTLSNegotiatesHTTP2AndDrainsActiveResponse(t *testing.T) {
 	gateway.idleConnections.mu.Lock()
 	evicted := gateway.idleConnections.evicted
 	gateway.idleConnections.mu.Unlock()
-	if evicted != 0 || gateway.memory.diagnostics().ConfidentialReservationFailures != 1 {
-		t.Fatalf("pressure closed active work: %d evicted", evicted)
+	gateway.waitingClients.mu.Lock()
+	ended := gateway.waitingClients.ended
+	gateway.waitingClients.mu.Unlock()
+	if evicted != 0 || ended != 0 || gateway.memory.diagnostics().ConfidentialReservationFailures != 1 {
+		t.Fatalf("pressure closed active work: %d evicted, %d ended", evicted, ended)
 	}
 	defer cancel()
 	shutdownDone := make(chan struct{})
