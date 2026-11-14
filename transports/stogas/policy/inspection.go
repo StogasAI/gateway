@@ -238,7 +238,7 @@ func (v *Inspector) Finish() (*Inspection, error) {
 	if compiled.Timeouts != nil {
 		effective["timeouts"] = compiled.Timeouts
 	}
-	if compiled.Access != nil && len(compiled.Access.Deny) > 0 {
+	if compiled.Access != nil && (len(compiled.Access.Deny) > 0 || compiled.Access.Networks != nil) {
 		effective["access"] = compiled.Access
 	}
 	routing := map[string]any{}
@@ -469,7 +469,10 @@ func inspectionSetBy(entries []InspectionSource, sources []ScopedSource, compile
 	equal := func(value *int, other *int) bool { return value != nil && other != nil && *value == *other }
 	always := func(*Config) bool { return true }
 	if compiled.Access != nil && len(compiled.Access.Deny) > 0 {
-		add("access", permissionAccess, true, func(c *Config) bool { return c.Access != nil && len(c.Access.Deny) > 0 })
+		add("access.deny", permissionDeny, true, func(c *Config) bool { return c.Access != nil && len(c.Access.Deny) > 0 })
+	}
+	if compiled.Access != nil && compiled.Access.Networks != nil {
+		add("access.networks", permissionNetworks, true, func(c *Config) bool { return c.Access != nil && c.Access.Networks != nil })
 	}
 	if compiled.Input != nil {
 		add("input", permissionInput, true, func(c *Config) bool { return c.Input.applies() })
@@ -647,9 +650,9 @@ func ruleSettings(fields map[string]json.RawMessage) []string {
 	var settings []string
 	for name, raw := range fields {
 		switch name {
-		case "access", "input":
+		case "input":
 			settings = append(settings, name)
-		case "plugins", "routing", "timeouts":
+		case "access", "plugins", "routing", "timeouts":
 			var options map[string]json.RawMessage
 			if json.Unmarshal(raw, &options) == nil {
 				for option := range options {

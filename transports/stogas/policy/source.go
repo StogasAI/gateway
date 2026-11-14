@@ -10,6 +10,7 @@ import (
 	jsonv2 "encoding/json/v2"
 	"fmt"
 	"io"
+	"net/netip"
 	"reflect"
 	"regexp"
 	"slices"
@@ -888,7 +889,7 @@ func (c *Config) FilterOrigin(index int) (Origin, bool) {
 func (c *Config) DenyOrigin(now time.Time) (Origin, bool) {
 	for i, entry := range c.sources {
 		access := entry.Value.Config.Access
-		if access == nil || c.allowedSettings(entry.Value)&permissionAccess == 0 {
+		if access == nil || c.allowedSettings(entry.Value)&permissionDeny == 0 {
 			continue
 		}
 		for index := range access.Deny {
@@ -1075,6 +1076,7 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 	missingKeys := ""
 	seenPlugins := map[*Plugins]bool{}
 	seenWindows := map[string]bool{}
+	var networks []netip.Prefix
 	for index, entry := range sources {
 		scope, source := entry.Scope, entry.Value
 		if !scope.Valid() && scope != RequestScope || source == nil {
@@ -1125,7 +1127,7 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 				out.Timeouts.OutputIdleSeconds = value
 			}
 		}
-		if allowed&permissionAccess != 0 && config.Access != nil {
+		if allowed&permissionDeny != 0 && config.Access != nil && config.Access.Deny != nil {
 			if out.Access == nil {
 				out.Access = &Access{}
 			}
@@ -1135,6 +1137,14 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 					out.Access.Deny = append(out.Access.Deny, window)
 					seenWindows[string(raw)] = true
 				}
+			}
+		}
+		// A client must be in a network of every policy that lists networks.
+		if allowed&permissionNetworks != 0 && config.Access != nil && config.Access.Networks != nil {
+			if networks == nil {
+				networks = config.Access.networks
+			} else {
+				networks = intersectNetworks(networks, config.Access.networks)
 			}
 		}
 		if allowed&permissionNodes != 0 {
@@ -1161,6 +1171,16 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 	}
 	if !hasRequestPermission {
 		out.RequestPermission = 0
+	}
+	if networks != nil {
+		if out.Access == nil {
+			out.Access = &Access{}
+		}
+		out.Access.networks = networks
+		out.Access.Networks = make([]string, len(networks))
+		for index, network := range networks {
+			out.Access.Networks[index] = network.String()
+		}
 	}
 	if retries != nil {
 		out.Routing.Retries = *retries

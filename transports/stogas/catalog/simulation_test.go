@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"reflect"
 	"slices"
 	"strings"
@@ -47,6 +48,8 @@ func TestRoutingSimulationNamesWhatRemovedEachCandidate(t *testing.T) {
 		pairs, tried       int
 		removed, ambiguous []string
 		code               string
+		// client sends the request that the simulation is compared with.
+		client string
 	}{
 		{name: "every pair beyond the fallbacks", model: "gpt-5.6-sol", credentials: map[string][]int{"azure": {0}, "openai": {0}}, pairs: 6, tried: 3},
 		{name: "another interface", route: RouteResponses, model: "openai-gpt-5-search-api-2025-10-14", credentials: map[string][]int{"openai": {0}},
@@ -120,6 +123,11 @@ func TestRoutingSimulationNamesWhatRemovedEachCandidate(t *testing.T) {
 		{name: "deny period of the key", model: "openai-gpt-5.6-sol", credentials: map[string][]int{"openai": {0}},
 			base:    compose(`{}`, `{"access":{"deny":`+week+`}}`),
 			removed: []string{"deny openai/openai-gpt-5.6-sol#0 @1"}, code: "schedule_denied"},
+		// The simulation has no client address, which no network holds, yet it
+		// routes as a request from inside every network does.
+		{name: "networks", model: "openai-gpt-5.6-sol", credentials: map[string][]int{"openai": {0}}, client: "198.51.100.9",
+			base:  compose(`{"access":{"networks":["198.51.100.0/24"]}}`, `{"rules":{"office":{"when":"provider.id == 'openai'","access":{"networks":["198.51.100.0/28"]}}}}`),
+			pairs: 1, tried: 1},
 		{name: "false and undecided filters", model: "gpt-5.6-sol", credentials: map[string][]int{"azure": {0}, "openai": {0}},
 			base: compose(`{"routing":{"filter":"deployment.upstream.deploymentType == 'global_standard'"}}`),
 			removed: []string{
@@ -185,6 +193,9 @@ func TestRoutingSimulationNamesWhatRemovedEachCandidate(t *testing.T) {
 				t.Errorf("pairs %v, tried %d", describePairs(simulation.Pairs), simulation.Tried)
 			}
 			// A request tries the simulated pairs in order, or fails as simulated.
+			if test.client != "" {
+				input.ClientAddress = netip.MustParseAddr(test.client)
+			}
 			attempts, err := requestAttempts(input, route, test.model, test.tier, test.mode)
 			if simulation.Err != nil {
 				if PublicError(err).Code != test.code || len(attempts) != 0 {

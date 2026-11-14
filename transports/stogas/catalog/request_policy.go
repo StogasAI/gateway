@@ -294,6 +294,12 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 				}
 				continue
 			}
+			// A simulation runs from a dashboard and not from the client that
+			// sends the request, so it routes as a client inside every network.
+			if trace == nil && value.Config.NetworkDenied(input.ClientAddress) {
+				keep(selection, NetworkDenied(input.ClientAddress))
+				continue
+			}
 			candidate := template
 			candidate.CredentialIndex, candidate.policy = index, value.Config
 			groups[original] = &candidate

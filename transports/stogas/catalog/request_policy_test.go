@@ -200,6 +200,10 @@ func TestConditionalRulesExcludeOnlyTheirCandidates(t *testing.T) {
 	denied := func(when string) string {
 		return `{"closed":{"when":"` + when + `","access":{"deny":[{"days":["mon","tue","wed","thu","fri","sat","sun"],"start":"00:00","end":"24:00","timeZone":"UTC"}]}}}`
 	}
+	// The request states no client address, which no network holds.
+	networks := func(when string) string {
+		return `{"office":{"when":"` + when + `","access":{"networks":["198.51.100.0/24"]}}}`
+	}
 	// The catalog states an Azure deployment type and no OpenAI deployment type.
 	undecided := `{"typed":{"when":"deployment.upstream.deploymentType == 'global_standard'","input":{"asciiOnly":true}}}`
 	for _, test := range []struct {
@@ -209,6 +213,8 @@ func TestConditionalRulesExcludeOnlyTheirCandidates(t *testing.T) {
 		{name: "deny period leaves another provider", rules: denied("provider.id == 'azure'"), order: "azure", want: "openai-gpt-5.6-sol"},
 		{name: "deny period leaves another credential", rules: denied("provider.id == 'openai'"), want: "openai-gpt-5.6-sol", credentials: true},
 		{name: "deny period on every candidate", rules: denied("provider.id != 'blocked'"), order: "azure", code: "schedule_denied"},
+		{name: "networks leave another provider", rules: networks("provider.id == 'azure'"), order: "azure", want: "openai-gpt-5.6-sol"},
+		{name: "networks on every candidate", rules: networks("provider.id != 'blocked'"), order: "azure", code: "network_denied"},
 		{name: "undecided condition leaves another provider", rules: undecided, order: "openai", want: "azure-gpt-5.6-sol"},
 		{name: "undecided condition leaves another credential", rules: undecided, want: "openai-gpt-5.6-sol", credentials: true},
 		{name: "undecided condition on every candidate", rules: `{"geo":{"when":"deployment.upstream.inferenceGeo == 'us'","input":{"asciiOnly":true}}}`, order: "azure", code: "invalid_request"},

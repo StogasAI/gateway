@@ -2,6 +2,7 @@ package stogashttp
 
 import (
 	"net/http"
+	"net/netip"
 	"sync/atomic"
 	"time"
 
@@ -37,6 +38,18 @@ type requestContext struct {
 	providerRan atomic.Bool
 	// finalize settles a finished inference after its response is complete.
 	finalize func()
+}
+
+// clientAddress is the address that the client connected from. Behind the
+// load balancer it is the PROXY header's source, and forwarding headers never
+// set it. Clients of the onion service share its relay's address, so they have
+// none, which no network holds.
+func (s *Server) clientAddress(ctx *requestContext) netip.Addr {
+	peer, err := netip.ParseAddrPort(ctx.request.RemoteAddr)
+	if err != nil || peer.Addr().Unmap() == s.config.OnionRelayAddress {
+		return netip.Addr{}
+	}
+	return peer.Addr().Unmap()
 }
 
 // transport names how the client reached the gateway.

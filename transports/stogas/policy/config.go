@@ -9,6 +9,7 @@ import (
 	"io"
 	"math/big"
 	"mime"
+	"net/netip"
 	"regexp"
 	"slices"
 	"sort"
@@ -276,7 +277,15 @@ type AllowedCatalogNodes struct {
 }
 
 type Access struct {
-	Deny []DenyWindow `json:"deny"`
+	Deny []DenyWindow `json:"deny,omitzero"`
+	// Networks lists the client networks that may send requests. A composed
+	// config holds the networks that every policy allows, so an empty list
+	// allows none.
+	Networks []string `json:"networks,omitzero"`
+
+	// networks are the parsed entries, sorted and without one inside another,
+	// so at most one can hold an address: the last that starts at or before it.
+	networks []netip.Prefix
 }
 
 type DenyWindow struct {
@@ -450,8 +459,15 @@ func (a *Access) validate() error {
 	if a == nil {
 		return nil
 	}
-	if a.Deny == nil {
-		return configError("deny windows require an array")
+	if a.Deny == nil && a.Networks == nil {
+		return configError("access requires deny or networks")
+	}
+	if a.Networks != nil {
+		networks, err := parseNetworks(a.Networks)
+		if err != nil {
+			return err
+		}
+		a.networks = networks
 	}
 	locations := make(map[string]*time.Location)
 	for index := range a.Deny {
@@ -545,6 +561,100 @@ func (p *Plugins) validate() error {
 		seen[pattern] = true
 	}
 	return nil
+}
+
+// parseNetworks reads addresses and CIDR ranges. A range must name its first
+// address, and an IPv4 network takes its IPv4 form, because the gateway reads
+// an IPv4 client in that form.
+func parseNetworks(entries []string) ([]netip.Prefix, error) {
+	if len(entries) == 0 {
+		return nil, configError("networks require at least one address or range")
+	}
+	networks := make([]netip.Prefix, 0, len(entries))
+	for _, entry := range entries {
+		var network netip.Prefix
+		if strings.Contains(entry, "/") {
+			parsed, err := netip.ParsePrefix(entry)
+			if err != nil {
+				return nil, configError("network %q is not an IP address or CIDR range", entry)
+			}
+			network = parsed
+		} else {
+			address, err := netip.ParseAddr(entry)
+			if err != nil || address.Zone() != "" {
+				return nil, configError("network %q is not an IP address or CIDR range", entry)
+			}
+			network = netip.PrefixFrom(address, address.BitLen())
+		}
+		if network.Addr().Is4In6() {
+			return nil, configError("network %q must use its IPv4 form", entry)
+		}
+		if network != network.Masked() {
+			return nil, configError("network %q must start at %s", entry, network.Masked())
+		}
+		if slices.Contains(networks, network) {
+			return nil, configError("network %s is repeated", network)
+		}
+		networks = append(networks, network)
+	}
+	return disjointNetworks(networks), nil
+}
+
+// disjointNetworks sorts networks and drops each one inside another. Two CIDR
+// ranges either nest or do not overlap.
+func disjointNetworks(networks []netip.Prefix) []netip.Prefix {
+	slices.SortFunc(networks, func(a, b netip.Prefix) int {
+		if order := a.Addr().Compare(b.Addr()); order != 0 {
+			return order
+		}
+		return a.Bits() - b.Bits()
+	})
+	out := networks[:0]
+	for _, network := range networks {
+		if len(out) == 0 || !out[len(out)-1].Overlaps(network) {
+			out = append(out, network)
+		}
+	}
+	return slices.Clip(out)
+}
+
+// networkHolding returns the network of disjoint, sorted networks that holds
+// address.
+func networkHolding(networks []netip.Prefix, address netip.Addr) (netip.Prefix, bool) {
+	index, found := slices.BinarySearchFunc(networks, address, func(network netip.Prefix, address netip.Addr) int {
+		return network.Addr().Compare(address)
+	})
+	if found {
+		return networks[index], true
+	}
+	if index > 0 && networks[index-1].Contains(address) {
+		return networks[index-1], true
+	}
+	return netip.Prefix{}, false
+}
+
+// intersectNetworks returns the addresses in both disjoint, sorted lists: each
+// range of one list that lies inside a range of the other.
+func intersectNetworks(a, b []netip.Prefix) []netip.Prefix {
+	out := []netip.Prefix{}
+	for _, pair := range [2][2][]netip.Prefix{{a, b}, {b, a}} {
+		for _, network := range pair[0] {
+			if outer, ok := networkHolding(pair[1], network.Addr()); ok && outer.Bits() <= network.Bits() {
+				out = append(out, network)
+			}
+		}
+	}
+	return disjointNetworks(out)
+}
+
+// NetworkDenied reports whether the client address is outside the networks
+// that every policy allows. The gateway reads an IPv4 client in its IPv4 form.
+func (c *Config) NetworkDenied(client netip.Addr) bool {
+	if c == nil || c.Access == nil || c.Access.Networks == nil {
+		return false
+	}
+	_, ok := networkHolding(c.Access.networks, client.Unmap())
+	return !ok
 }
 
 func (c *Config) DeniedAt(now time.Time) bool {

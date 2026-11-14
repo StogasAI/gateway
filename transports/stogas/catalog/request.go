@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/netip"
 	"strings"
 	"sync"
 	"time"
@@ -84,6 +85,16 @@ func (e APIError) Error() string {
 	return e.Message
 }
 
+// NetworkDenied refuses a client outside the networks that a policy lists. It
+// names the address that the gateway saw, which is the one to allow.
+func NetworkDenied(client netip.Addr) APIError {
+	message := "Request is not allowed from this network"
+	if client.IsValid() {
+		message = "Request is not allowed from " + client.String()
+	}
+	return APIError{Code: "network_denied", StatusCode: http.StatusForbidden, Type: "permission_denied", Message: message}
+}
+
 func PublicError(err error) APIError {
 	if err == nil {
 		return APIError{}
@@ -104,9 +115,12 @@ type RequestInput struct {
 	tools *requestTools
 	Body  []byte
 	// Fields, when supplied, must come from DecodeRequestBody for this Body.
-	Fields              map[string]json.RawMessage
-	Method              string
-	Path                string
+	Fields map[string]json.RawMessage
+	Method string
+	Path   string
+	// ClientAddress is the address that the client connected from, which the
+	// load balancer's PROXY header states.
+	ClientAddress       netip.Addr
 	Policy              *policy.Config
 	RedactionPolicy     *redaction.Policy
 	LoadRedactionPolicy func() (*redaction.Policy, error)

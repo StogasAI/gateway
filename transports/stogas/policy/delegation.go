@@ -12,7 +12,7 @@ import (
 type Permission uint32
 
 const (
-	permissionAccess Permission = 1 << iota
+	permissionDeny Permission = 1 << iota
 	permissionInput
 	permissionLimits
 	permissionRedaction
@@ -28,12 +28,16 @@ const (
 	permissionTotalTimeout
 	permissionOutputIdleTimeout
 	permissionMissingKeys
-	allPermissions     = permissionMissingKeys | (permissionMissingKeys - 1)
+	permissionNetworks
+	allPermissions     = permissionNetworks | (permissionNetworks - 1)
 	requestPermissions = allPermissions &^ (permissionLimits | permissionDelegation)
 )
 
 var permissionSections = map[string]Permission{
-	"access": permissionAccess, "input": permissionInput, "limits": permissionLimits,
+	"access":          permissionDeny | permissionNetworks,
+	"access.deny":     permissionDeny,
+	"access.networks": permissionNetworks,
+	"input":           permissionInput, "limits": permissionLimits,
 	"timeouts":                   permissionTotalTimeout | permissionOutputIdleTimeout,
 	"timeouts.totalSeconds":      permissionTotalTimeout,
 	"timeouts.outputIdleSeconds": permissionOutputIdleTimeout,
@@ -92,7 +96,7 @@ func (p Permission) MarshalJSON() ([]byte, error) {
 func (p Permission) sectionNames() []string {
 	sections := make([]string, 0, len(permissionSections))
 	for section, mask := range permissionSections {
-		if section == "routing" || section == "plugins" || section == "timeouts" {
+		if section == "access" || section == "routing" || section == "plugins" || section == "timeouts" {
 			continue
 		}
 		if p&mask == mask {
@@ -223,7 +227,7 @@ func (d *SourceDocument) ownSections() Permission {
 func (d *SourceDocument) eachSection(visit func(name string, value json.RawMessage, section Permission)) {
 	for name, raw := range d.fields {
 		switch {
-		case name == "routing" || name == "plugins" || name == "timeouts":
+		case name == "access" || name == "routing" || name == "plugins" || name == "timeouts":
 			var settings map[string]json.RawMessage
 			if json.Unmarshal(raw, &settings) == nil {
 				for option, value := range settings {
