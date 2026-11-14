@@ -440,7 +440,7 @@ func (s *Service) ParseDashboardCredential(raw string) (*DashboardCredential, er
 }
 
 // UsageReservation records quantities once before authorization. Text remains
-// in exact UTF-8 bytes; STT presentation divides it by four.
+// in exact UTF-8 bytes; standard text tokens divide it by four.
 type UsageReservation struct {
 	Tokens         int64
 	InputTextBytes int64
