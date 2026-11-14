@@ -102,6 +102,15 @@ type DataHandling struct {
 	TEEVerified       bool  `json:"teeVerified"`
 }
 
+func (d DataHandling) equal(other DataHandling) bool {
+	same := func(a, b *int) bool { return a == nil && b == nil || a != nil && b != nil && *a == *b }
+	known := func(a, b *bool) bool { return a == nil && b == nil || a != nil && b != nil && *a == *b }
+	return d.ProcessingLocation == other.ProcessingLocation && d.StorageLocation == other.StorageLocation &&
+		d.EndToEndEncrypted == other.EndToEndEncrypted && same(d.RetentionDays, other.RetentionDays) &&
+		known(d.TrainingUse, other.TrainingUse) && d.ZeroDataRetention == other.ZeroDataRetention &&
+		d.TEE == other.TEE && d.TEEVerified == other.TEEVerified
+}
+
 // HostingUnknown is the hosting of a deployment whose provider forwards requests to a company that it does not name.
 const HostingUnknown = "unknown"
 

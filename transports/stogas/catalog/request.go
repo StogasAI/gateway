@@ -227,6 +227,19 @@ func (r *ResolvedRequest) EffectiveDataHandling() DataHandling {
 	return r.Deployment.EffectiveDataHandling(r.hostedTools)
 }
 
+// ToolDataHandling is the data handling of a call on the deployment where the hosted tools that
+// the request lets the model call change the deployment's own, and nil where they change nothing.
+func (r *ResolvedRequest) ToolDataHandling(deployment Deployment) *DataHandling {
+	if r == nil || len(r.hostedTools) == 0 {
+		return nil
+	}
+	effective := deployment.EffectiveDataHandling(r.hostedTools)
+	if effective.equal(deployment.DataHandling) {
+		return nil
+	}
+	return &effective
+}
+
 // ActivePolicyRules carries only matched counter names into the financial hold.
 // Source indexes refer to the selected credential's immutable policy snapshot.
 func (r *ResolvedRequest) ActivePolicyRules() []policy.RuleMatch {

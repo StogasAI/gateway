@@ -185,6 +185,7 @@ type providerResponsesAnnotation struct {
 
 type providerAttemptObservation struct {
 	CatalogChainHash string
+	DataHandling     *billing.DataHandling
 	Provider         string
 	Byok             string
 	StartedAt        time.Time
@@ -338,6 +339,7 @@ func (s *State) beginProviderAttempt(startedAt time.Time) int {
 	attempt := providerAttemptObservation{StartedAt: startedAt}
 	if s.Resolution != nil {
 		attempt.CatalogChainHash = s.Resolution.Deployment.ChainHash
+		attempt.DataHandling = toolDataHandling(s.Resolution, s.Resolution.Deployment)
 	}
 	if s.Authorization != nil {
 		attempt.Byok = s.Authorization.UpstreamByok
@@ -417,6 +419,25 @@ func (s *State) completeLatestProviderAttempt(completedAt time.Time) {
 	}
 }
 
+// toolDataHandling is the logged form of a call's data handling where the request's hosted tools
+// change the deployment's own.
+func toolDataHandling(resolution *catalog.ResolvedRequest, deployment catalog.Deployment) *billing.DataHandling {
+	handling := resolution.ToolDataHandling(deployment)
+	if handling == nil {
+		return nil
+	}
+	return &billing.DataHandling{
+		ProcessingLocation: handling.ProcessingLocation,
+		StorageLocation:    handling.StorageLocation,
+		RetentionDays:      handling.RetentionDays,
+		TrainingUse:        handling.TrainingUse,
+		ZeroDataRetention:  handling.ZeroDataRetention,
+		EndToEndEncrypted:  handling.EndToEndEncrypted,
+		TEE:                handling.TEE,
+		TEEVerified:        handling.TEEVerified,
+	}
+}
+
 func (s *State) providerAttemptInputs() []billing.ProviderAttemptInput {
 	if s == nil {
 		return nil
@@ -438,12 +459,15 @@ func (s *State) providerAttemptInputs() []billing.ProviderAttemptInput {
 			Response:                 attempt.Response,
 			Error:                    attempt.Error,
 			Upstream:                 attempt.Upstream,
+			DataHandling:             attempt.DataHandling,
 		}
 	}
 	// The final outcome belongs to the last call, which ran on the bound pair.
 	finalAttempt := &attempts[len(attempts)-1]
 	if s.Resolution != nil && finalAttempt.CatalogChainHash == s.Resolution.Deployment.ChainHash {
-		finalAttempt.CatalogChainHash = ExecutionDeployment(s).ChainHash
+		execution := ExecutionDeployment(s)
+		finalAttempt.CatalogChainHash = execution.ChainHash
+		finalAttempt.DataHandling = toolDataHandling(s.Resolution, execution)
 	}
 	if finalAttempt.CompletedAt.IsZero() {
 		finalAttempt.CompletedAt = maxProviderAttemptTime(s.ProviderCompletedAt, finalAttempt.StartedAt)

@@ -20,6 +20,9 @@ const (
 	maxProviderResponseIDBytes = 256
 	maxProviderModelBytes      = 128
 	maxProviderInstanceIDBytes = 64
+	// The catalog's location IDs are country codes and short names such as europe, in letters,
+	// digits and hyphens.
+	maxLocationBytes = 32
 )
 
 type EventInput struct {
@@ -70,6 +73,8 @@ type ProviderAttemptInput struct {
 	Response *schemas.BifrostResponse
 	Error    *schemas.BifrostError
 	Upstream UpstreamRecord
+	// DataHandling is the call's data handling where the request's hosted tools change the chain's.
+	DataHandling *DataHandling
 }
 
 // UpstreamRecord is what a provider said about one call, as far as it says it: the request ID
@@ -245,6 +250,17 @@ func requestProviderTiming(input EventInput, startedAt time.Time, finishedAt tim
 	)
 }
 
+// loggedDataHandling bounds the catalog's location IDs, which have no length limit of their own.
+func loggedDataHandling(handling *DataHandling) *DataHandling {
+	if handling == nil {
+		return nil
+	}
+	logged := *handling
+	logged.ProcessingLocation = boundedTelemetryValue(logged.ProcessingLocation, maxLocationBytes)
+	logged.StorageLocation = boundedTelemetryValue(logged.StorageLocation, maxLocationBytes)
+	return &logged
+}
+
 func requestProviderAttempts(input EventInput, startedAt time.Time, totalTimeMS uint32) []ProviderAttempt {
 	attempts := make([]ProviderAttempt, len(input.ProviderAttempts))
 	for index, observed := range input.ProviderAttempts {
@@ -264,6 +280,7 @@ func requestProviderAttempts(input EventInput, startedAt time.Time, totalTimeMS 
 			ProviderInstanceID:       boundedTelemetryValue(observed.Upstream.InstanceID, maxProviderInstanceIDBytes),
 			FinishReason:             finishReason(observed.Response),
 			Byok:                     loggedCredentialID(observed.Byok),
+			DataHandling:             loggedDataHandling(observed.DataHandling),
 		}
 	}
 	return attempts

@@ -628,6 +628,8 @@ func TestLargestRequestLogFitsTheLimit(t *testing.T) {
 			OutputObserved: true, ProviderRequestID: quotes(maxProviderRequestIDBytes), ProviderResponseID: quotes(maxProviderResponseIDBytes),
 			ProviderModel: quotes(maxProviderModelBytes), ProviderInstanceID: quotes(maxProviderInstanceIDBytes), FinishReason: quotes(maxProviderReasonBytes),
 			Byok: new(uuid.NewString()),
+			DataHandling: &DataHandling{ProcessingLocation: strings.Repeat("l", maxLocationBytes), StorageLocation: strings.Repeat("l", maxLocationBytes),
+				RetentionDays: new(int(integer)), TrainingUse: &flag, ZeroDataRetention: true, EndToEndEncrypted: true, TEE: true, TEEVerified: true},
 		})
 	}
 	for i := range 40 {
