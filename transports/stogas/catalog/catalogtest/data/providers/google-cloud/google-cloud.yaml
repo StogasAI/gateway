@@ -2,7 +2,7 @@ providers:
   name: Google Cloud
   aliases: [vertex, vertex-ai, agent-platform, gcp]
   credentialModes: [byok]
-  headquarteredCountry: US
+  companyId: google
   capabilities:
     streaming: true
     functionCalling: true

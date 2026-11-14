@@ -103,7 +103,7 @@ func attachmentError(provider schemas.ModelProvider, deployment Deployment, atta
 	}
 	// A Claude file ID names a file in the Files API of Anthropic's own platform, which Claude that
 	// a cloud hosts, on Azure too, lacks.
-	if claude && attachment.ID != "" && deployment.Hosting != "anthropic" {
+	if claude && attachment.ID != "" && deployment.Hosting != CompanyAnthropic {
 		return attachmentRefusal(attachment.Path, " file IDs are not supported by "+subject)
 	}
 	// Claude that AWS or Google runs fetches no URL.
@@ -248,7 +248,7 @@ const textExtractionHint = ". Set plugins.textExtraction to auto to send it as t
 // CloudRunsClaude reports whether AWS or Google runs a Claude deployment itself, rather than
 // Anthropic behind the cloud's sign-in.
 func CloudRunsClaude(provider schemas.ModelProvider, deployment Deployment) bool {
-	return (provider == ProviderAWS || provider == ProviderGoogleCloud) && deployment.Hosting != "anthropic"
+	return (provider == ProviderAWS || provider == ProviderGoogleCloud) && deployment.Hosting != CompanyAnthropic
 }
 
 // mediaTypeRefusal refuses the attachment at path when the policy's input.mediaTypes refuse

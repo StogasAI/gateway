@@ -362,9 +362,9 @@ func setCloudClaudeBase(ctx *schemas.BifrostContext) {
 func cloudClaudeBuildConfig(model, hosting string, streaming bool) anthropicprovider.AnthropicRequestBuildConfig {
 	config := anthropicprovider.AnthropicRequestBuildConfig{Provider: schemas.Anthropic, IsStreaming: streaming}
 	switch hosting {
-	case hostingAWS:
+	case hostingAmazon:
 		config.Provider, config.Model = schemas.BedrockMantle, model
-	case hostingGoogleCloud:
+	case hostingGoogle:
 		config.Provider, config.Model = schemas.Vertex, model
 	}
 	return config
@@ -375,7 +375,7 @@ func cloudClaudeBuildConfig(model, hosting string, streaming bool) anthropicprov
 // borrows, but Anthropic documents it as stable on Bedrock and on Google Cloud,
 // and Bedrock accepted it live without a beta header.
 func restoreStrictTools(body []byte, hosting string, strict map[string]bool) ([]byte, *schemas.BifrostError) {
-	if hosting != hostingAWS && hosting != hostingGoogleCloud {
+	if hosting != hostingAmazon && hosting != hostingGoogle {
 		return body, nil
 	}
 	for index, tool := range providerutils.GetJSONField(body, "tools").Array() {

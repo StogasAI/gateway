@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/maximhq/bifrost/core/schemas"
@@ -433,6 +434,8 @@ func TestResolvedPolicyValuesExposeTypedRegisteredCatalogAndRequestData(t *testi
 		{path: "author.id", fieldType: "string", value: "openai"},
 		{path: "author.name", fieldType: "string", value: "OpenAI"},
 		{path: "author.headquarteredCountry", fieldType: "string", value: "US"},
+		{path: "author.companyId", fieldType: "string", value: "openai"},
+		{path: "provider.companyId", fieldType: "string", value: "openai"},
 		{path: "model.id", fieldType: "string", value: "gpt-5.6-sol"},
 		{path: "model.name", fieldType: "string", value: "GPT-5.6 Sol"},
 		{path: "deployment.id", fieldType: "string", value: "openai-gpt-5.6-sol"},
@@ -522,6 +525,45 @@ func TestResolvedPolicyValuesExposeTypedRegisteredCatalogAndRequestData(t *testi
 		if value, exists := values.PolicyValue(path); exists {
 			t.Errorf("unknown PolicyValue(%q) = %#v", path, value)
 		}
+	}
+}
+
+// Policies read every company that receives a request: the provider's, the hosting, and each one
+// that the deployment or a hosted tool that the request enables shares it with.
+func TestPoliciesReadTheCompaniesThatReceiveARequest(t *testing.T) {
+	loadTestCatalog(t)
+	for _, test := range []struct {
+		name, deployment, tools string
+		hosting                 string
+		sharedWith, receive     []string
+	}{
+		{"a provider that runs the model", "anthropic-claude-opus-5", "", "anthropic", []string{}, []string{"anthropic"}},
+		{"a tool that sends content to website publishers", "anthropic-claude-opus-5", `,"tools":[{"type":"web_fetch"}]`,
+			"anthropic", []string{"unknown"}, []string{"anthropic", "unknown"}},
+		{"a model that its developer monitors", "google-cloud-claude-fable-5-1-eu", "", "google", []string{"anthropic"}, []string{"google", "anthropic"}},
+		{"a provider that sells its own service", "aws-claude-fable-5-1", "", "amazon", []string{}, []string{"amazon"}},
+		{"a provider that sells another company's service", "aws-claude-fable-5-1-anthropic-hosted", "", "anthropic", []string{}, []string{"amazon", "anthropic"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			provider, _, _ := strings.Cut(test.deployment, "-claude")
+			resolution, err := ResolveRequest(RequestInput{
+				Body:                 []byte(`{"model":"deployment:` + test.deployment + `","input":"hello"` + test.tools + `}`),
+				AvailableCredentials: map[string][]int{provider: {0}}, Method: "POST", Path: "/v1/responses",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			values, ok := newResolvedPolicyValues(resolution)
+			if !ok {
+				t.Fatal("the resolution has no policy values")
+			}
+			hosting, _ := values.PolicyValue("deployment.hosting")
+			shared, _ := values.PolicyValue("deployment.dataHandling.sharedWith")
+			companies, _ := values.PolicyValue("deployment.companies")
+			if hosting.String != test.hosting || !slices.Equal(shared.Strings, test.sharedWith) || !slices.Equal(companies.Strings, test.receive) {
+				t.Fatalf("hosting %q, shared with %v, received by %v", hosting.String, shared.Strings, companies.Strings)
+			}
+		})
 	}
 }
 

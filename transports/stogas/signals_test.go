@@ -883,7 +883,7 @@ func TestProviderExecutionReportsStayWithinAuthorizedClass(t *testing.T) {
 		{name: "Azure Claude Priority Tier capacity is not Fast", provider: schemas.Azure, modelFormat: "Anthropic", reportedTier: "priority"},
 		{name: "Anthropic-managed Google Claude Fast can fall back to Standard", provider: catalog.ProviderGoogleCloud, hosting: "anthropic", selectedTier: catalog.TierFast, reportedSpeed: "standard"},
 		{name: "Anthropic-managed Google Claude Standard cannot become Fast", provider: catalog.ProviderGoogleCloud, hosting: "anthropic", reportedSpeed: "fast", wantError: true},
-		{name: "Google-run Claude speed is ignored", provider: catalog.ProviderGoogleCloud, hosting: "google-cloud", reportedSpeed: "fast"},
+		{name: "Google-run Claude speed is ignored", provider: catalog.ProviderGoogleCloud, hosting: "google", reportedSpeed: "fast"},
 		{name: "unknown OpenAI tier is ignored", provider: schemas.OpenAI, reportedTier: "scale"},
 		{name: "OpenAI speed is ignored", provider: schemas.OpenAI, reportedSpeed: "fast"},
 		{name: "Chutes tier is ignored", provider: catalog.ProviderChutes, reportedTier: "priority"},

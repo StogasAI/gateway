@@ -22,8 +22,8 @@ import (
 )
 
 const (
-	catalogSchema     = "stogas.catalog.v16"
-	catalogPartSchema = "stogas.catalog.part.v16"
+	catalogSchema     = "stogas.catalog.v1"
+	catalogPartSchema = "stogas.catalog.part.v1"
 	// Evidence approves a release by the digest of its root, and the root names each part by
 	// digest and size. The build refuses a larger root, part or catalog, so the gateway refuses
 	// one before it downloads it.
@@ -476,7 +476,8 @@ func assemble(rootData []byte, files []PartFile, parts map[string][]byte, at tim
 		locations[id] = node.ParentIDs
 	}
 	return compiledCatalog{
-		Locations: locations, Graph: graph, Schedule: schedule, Retired: retired, Unsupported: unsupported, Paths: paths,
+		Locations: locations, Companies: root.Companies, Graph: graph, Schedule: schedule,
+		Retired: retired, Unsupported: unsupported, Paths: paths,
 	}, nil
 }
 
@@ -635,7 +636,12 @@ func snapshotFromCompiled(catalog compiledCatalog) (*snapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	base, err := stateFromGraph(catalog.Graph, places)
+	for id, company := range catalog.Companies {
+		if country := company.HeadquarteredCountry; id == HostingUnknown || !location.Country(country) || !places.Place(country) {
+			return nil, fmt.Errorf("company %s is invalid or headquartered in %q, which is not a country of the catalog", id, country)
+		}
+	}
+	base, err := stateFromGraph(catalog.Graph, places, catalog.Companies)
 	if err != nil {
 		return nil, err
 	}
@@ -671,12 +677,15 @@ func (base *snapshot) states() []*snapshot {
 }
 
 // stateFromGraph validates the base catalog state and indexes it for requests.
-func stateFromGraph(graph compiledGraph, places *location.Places) (*snapshot, error) {
+func stateFromGraph(graph compiledGraph, places *location.Places, companies map[string]company) (*snapshot, error) {
 	priceRoutes(graph.Deployments)
 	if err := validateCompiledGraph(graph); err != nil {
 		return nil, err
 	}
 	if err := validateLocations(graph, places); err != nil {
+		return nil, err
+	}
+	if err := validateCompanies(graph, companies); err != nil {
 		return nil, err
 	}
 	modelSelectors := make(map[string]string)
@@ -687,7 +696,7 @@ func stateFromGraph(graph compiledGraph, places *location.Places) (*snapshot, er
 		}
 	}
 	graph.Routes = indexedRoutes(graph)
-	state := &snapshot{graph: graph, modelSelectors: modelSelectors, index: newSelectorIndex(graph), places: places}
+	state := &snapshot{graph: graph, modelSelectors: modelSelectors, index: newSelectorIndex(graph), places: places, companies: companies}
 	if err := validatePolicyVocabulary(state, graph); err != nil {
 		return nil, err
 	}
@@ -710,10 +719,13 @@ func (base *snapshot) datedState(entry compiledGraph) (*snapshot, error) {
 	if err := validateLocations(entry, base.places); err != nil {
 		return nil, err
 	}
+	if err := validateCompanies(entry, base.companies); err != nil {
+		return nil, err
+	}
 	if len(entry.Deployments) > 0 || len(entry.Routes) > 0 {
 		graph.Routes = indexedRoutes(graph)
 	}
-	state := &snapshot{graph: graph, modelSelectors: base.modelSelectors, index: base.index, places: base.places}
+	state := &snapshot{graph: graph, modelSelectors: base.modelSelectors, index: base.index, places: base.places, companies: base.companies}
 	if err := validatePolicyVocabulary(state, entry); err != nil {
 		return nil, err
 	}
@@ -1041,7 +1053,7 @@ func validateCompiledDeployment(graph compiledGraph, selectors selectorRegistry,
 		}
 	}
 	// The provider's selector rules build on the route facts checked above.
-	if err := validateDeploymentUpstreamSelector(deploymentID, providerID, deployment); err != nil {
+	if err := validateDeploymentUpstreamSelector(deploymentID, providerID, graph.Providers[providerID].CompanyID, deployment); err != nil {
 		return err
 	}
 	if err := validateReasoningConfiguration(deploymentID, providerID, model.AuthorID, deployment, graph); err != nil {
@@ -1081,18 +1093,21 @@ func sortedRouteIDs(deployment *compiledDeployment) []string {
 	return slices.Sorted(maps.Keys(deployment.Routes))
 }
 
-func validateDeploymentUpstreamSelector(deploymentID, providerID string, deployment *compiledDeployment) error {
+// validateDeploymentUpstreamSelector checks what selects a deployment at its provider. company is
+// the provider's own, which runs a model that names no other hosting.
+func validateDeploymentUpstreamSelector(deploymentID, providerID, company string, deployment *compiledDeployment) error {
 	selector, hosting := deployment.Upstream, deployment.Hosting
 	if hosting == "" {
 		return fmt.Errorf("deployment %s has no hosting", deploymentID)
 	}
-	// Companies lists each company that receives a request once, in the order that they receive it:
-	// the provider first, then any company between it and the hosting, the hosting, and any company
-	// that the hosting shares it with.
-	companies := deployment.Companies
-	if len(companies) == 0 || companies[0] != providerID || !slices.Contains(companies, hosting) ||
-		len(slices.Compact(slices.Sorted(slices.Values(companies)))) != len(companies) {
-		return fmt.Errorf("deployment %s has an invalid list of companies", deploymentID)
+	// The provider's company and the hosting receive every request, so sharedWith lists only other
+	// companies, once each and in order.
+	for routeID, route := range deployment.Routes {
+		shared := route.DataHandling.SharedWith
+		if shared == nil || !slices.IsSorted(shared) || len(slices.Compact(slices.Clone(shared))) != len(shared) ||
+			slices.Contains(shared, company) || slices.Contains(shared, hosting) {
+			return fmt.Errorf("deployment %s route %s has an invalid list of companies that requests are shared with", deploymentID, routeID)
+		}
 	}
 	if _, offered := offeredTiers(schemas.ModelProvider(providerID), selector.ModelFormat, hosting)[selector.ServiceTier]; !offered {
 		return fmt.Errorf("deployment %s has a service tier that its provider does not offer", deploymentID)
@@ -1100,20 +1115,20 @@ func validateDeploymentUpstreamSelector(deploymentID, providerID string, deploym
 	switch providerID {
 	case "openai":
 		if selector.ChuteID != "" || selector.GPUCount != nil || selector.InferenceGeo != "" ||
-			hosting != providerID || selector.DeploymentType != "" || selector.ModelFormat != "" || selector.ModelVersion != "" {
+			hosting != company || selector.DeploymentType != "" || selector.ModelFormat != "" || selector.ModelVersion != "" {
 			return fmt.Errorf("deployment %s has an invalid OpenAI upstream selector", deploymentID)
 		}
 	case "anthropic":
 		if selector.ChuteID != "" || selector.GPUCount != nil || selector.ReasoningMode != "" ||
-			hosting != providerID || selector.DeploymentType != "" || selector.ModelFormat != "" || selector.ModelVersion != "" {
+			hosting != company || selector.DeploymentType != "" || selector.ModelFormat != "" || selector.ModelVersion != "" {
 			return fmt.Errorf("deployment %s has an invalid Anthropic upstream selector", deploymentID)
 		}
 	case "chutes":
-		return validateChutesUpstreamSelector(deploymentID, deployment)
+		return validateChutesUpstreamSelector(deploymentID, company, deployment)
 	case "azure":
 		return validateAzureUpstreamSelector(deploymentID, deployment)
 	case "aws", "google-cloud":
-		return validateCloudClaudeSelector(deploymentID, providerID, deployment)
+		return validateCloudClaudeSelector(deploymentID, providerID, company, deployment)
 	default:
 		return fmt.Errorf("deployment %s uses unsupported provider %s", deploymentID, providerID)
 	}
@@ -1123,7 +1138,7 @@ func validateDeploymentUpstreamSelector(deploymentID, providerID string, deploym
 // validateChutesUpstreamSelector checks a Chutes deployment's selector on each route. An end-to-end
 // encrypted route runs on Chutes, selected by its chute and GPU count. A standard route is hosted
 // by an operator that Chutes does not name, and has no GPU count.
-func validateChutesUpstreamSelector(deploymentID string, deployment *compiledDeployment) error {
+func validateChutesUpstreamSelector(deploymentID, company string, deployment *compiledDeployment) error {
 	selector := deployment.Upstream
 	if selector.ChuteID == "" || selector.InferenceGeo != "" || selector.ReasoningMode != "" ||
 		selector.DeploymentType != "" || selector.ModelFormat != "" || selector.ModelVersion != "" {
@@ -1135,7 +1150,7 @@ func validateChutesUpstreamSelector(deploymentID string, deployment *compiledDep
 		// that claims a TEE must be encrypted end to end, and a Standard route names no operator.
 		valid := route.DataHandling.TEE == route.DataHandling.EndToEndEncrypted
 		if route.DataHandling.EndToEndEncrypted {
-			valid = valid && gpuCounted && deployment.Hosting == "chutes"
+			valid = valid && gpuCounted && deployment.Hosting == company
 		} else {
 			valid = valid && selector.GPUCount == nil && deployment.Hosting == HostingUnknown
 		}
@@ -1164,13 +1179,14 @@ func validateAzureUpstreamSelector(deploymentID string, deployment *compiledDepl
 	return nil
 }
 
-// cloudClaudeRoutes names who runs Claude on each route of AWS and Google Cloud: the cloud itself,
-// or Anthropic with the cloud's sign-in and billing. Each product has its own endpoint and sign-in.
-var cloudClaudeRoutes = map[string]string{
-	"aws-bedrock-messages":                    "aws",
-	"aws-claude-platform-messages":            "anthropic",
-	"google-cloud-agent-platform-messages":    "google-cloud",
-	"google-cloud-anthropic-managed-messages": "anthropic",
+// cloudClaudeRoutes are the routes of AWS and Google Cloud that serve Claude, with whether
+// Anthropic runs it there, behind the cloud's sign-in and billing, in place of the cloud's own
+// company. Each product has its own endpoint and sign-in.
+var cloudClaudeRoutes = map[string]bool{
+	"aws-bedrock-messages":                    false,
+	"aws-claude-platform-messages":            true,
+	"google-cloud-agent-platform-messages":    false,
+	"google-cloud-anthropic-managed-messages": true,
 }
 
 // BedrockSourceRegions are, for each geography of Bedrock's inference profiles but global, the
@@ -1190,24 +1206,75 @@ var BedrockSourceRegions = map[string]map[string]bool{
 // validateCloudClaudeSelector checks Claude on AWS or Google Cloud. inferenceGeo is the
 // geography of Bedrock's inference profile, Google's endpoint location or Anthropic's inference
 // geography, which is global or us, and which Anthropic's models before Claude 4.6 do not take.
-func validateCloudClaudeSelector(deploymentID, providerID string, deployment *compiledDeployment) error {
+func validateCloudClaudeSelector(deploymentID, providerID, company string, deployment *compiledDeployment) error {
 	selector, hosting := deployment.Upstream, deployment.Hosting
+	if hosting != company && hosting != CompanyAnthropic {
+		return fmt.Errorf("deployment %s has a hosting that %s does not sell", deploymentID, providerID)
+	}
+	bedrock := providerID == string(ProviderAWS) && hosting == company
 	geo := selector.InferenceGeo == "global" || selector.InferenceGeo == "us" ||
-		selector.InferenceGeo == "" && hosting == "anthropic" ||
-		selector.InferenceGeo == "eu" && hosting == "google-cloud" ||
-		hosting == "aws" && BedrockSourceRegions[selector.InferenceGeo] != nil
+		selector.InferenceGeo == "" && hosting == CompanyAnthropic ||
+		selector.InferenceGeo == "eu" && providerID == string(ProviderGoogleCloud) && hosting == company ||
+		bedrock && BedrockSourceRegions[selector.InferenceGeo] != nil
 	if !geo || !schemas.IsAnthropicModel(deployment.ModelID) ||
 		selector.ChuteID != "" || selector.GPUCount != nil || selector.ReasoningMode != "" ||
 		selector.DeploymentType != "" || selector.ModelFormat != "" || selector.ModelVersion != "" {
 		return fmt.Errorf("deployment %s has an invalid %s upstream selector", deploymentID, providerID)
 	}
 	// Bedrock serves Claude only through inference profiles, whose IDs name the geography.
-	if hosting == "aws" && !strings.HasPrefix(selector.Model, selector.InferenceGeo+".anthropic.") {
+	if bedrock && !strings.HasPrefix(selector.Model, selector.InferenceGeo+".anthropic.") {
 		return fmt.Errorf("deployment %s must name the %s inference profile of its model", deploymentID, selector.InferenceGeo)
 	}
 	for routeID := range deployment.Routes {
-		if cloudClaudeRoutes[routeID] != hosting {
+		if anthropicRuns, ok := cloudClaudeRoutes[routeID]; !ok || anthropicRuns != (hosting == CompanyAnthropic) {
 			return fmt.Errorf("deployment %s cannot use route %s", deploymentID, routeID)
+		}
+	}
+	return nil
+}
+
+// validateCompanies checks that a graph names only the catalog's companies: each author and
+// provider names one and repeats its headquarters, and each deployment's hosting, and each
+// company that its requests or a hosted tool's content are shared with, is one of them or unknown.
+func validateCompanies(graph compiledGraph, companies map[string]company) error {
+	owned := func(owner, companyID, country string) error {
+		if listed, ok := companies[companyID]; !ok || listed.HeadquarteredCountry != country {
+			return fmt.Errorf("%s names company %q, which the catalog does not list with its headquarters", owner, companyID)
+		}
+		return nil
+	}
+	for id, author := range graph.Authors {
+		if err := owned("author "+id, author.CompanyID, author.HeadquarteredCountry); err != nil {
+			return err
+		}
+	}
+	for id, provider := range graph.Providers {
+		if err := owned("provider "+id, provider.CompanyID, provider.HeadquarteredCountry); err != nil {
+			return err
+		}
+	}
+	listed := func(ids ...string) bool {
+		for _, id := range ids {
+			if _, ok := companies[id]; !ok && id != HostingUnknown {
+				return false
+			}
+		}
+		return true
+	}
+	for deploymentID, deployment := range graph.Deployments {
+		if !listed(deployment.Hosting) {
+			return fmt.Errorf("deployment %s names a hosting that the catalog does not list", deploymentID)
+		}
+		for routeID, route := range deployment.Routes {
+			if !listed(route.DataHandling.SharedWith...) {
+				return fmt.Errorf("deployment %s route %s shares requests with a company that the catalog does not list", deploymentID, routeID)
+			}
+			for tool, offer := range route.HostedTools {
+				shared := offer.DataHandling.SharedWith
+				if !listed(shared...) || !slices.IsSorted(shared) || len(slices.Compact(slices.Clone(shared))) != len(shared) {
+					return fmt.Errorf("deployment %s route %s has an invalid list of companies that %s shares content with", deploymentID, routeID, tool)
+				}
+			}
 		}
 	}
 	return nil

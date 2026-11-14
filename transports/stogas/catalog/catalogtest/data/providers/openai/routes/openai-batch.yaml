@@ -5,7 +5,3 @@ routes:
   interfaces: [responses]
   batch: true
   inputModalities: [text, image]
-  documentFormats:
-    extensions: []
-    mediaTypes: []
-  notes: The gateway has no batch API and serves each request as it arrives.

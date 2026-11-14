@@ -1,7 +1,6 @@
 deployments:
   modelId: gpt-5.6-terra
   routeIds: [azure-chat-completions, azure-responses]
-  hosting: azure
   upstream:
     model: gpt-5.6-terra
     modelFormat: OpenAI

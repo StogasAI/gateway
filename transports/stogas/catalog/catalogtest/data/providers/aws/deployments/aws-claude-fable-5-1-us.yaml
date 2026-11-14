@@ -7,13 +7,11 @@
 deployments:
   modelId: claude-fable-5-1
   routeIds: [aws-bedrock-messages]
-  hosting: aws
   upstream:
     model: us.anthropic.claude-fable-5-1
     inferenceGeo: us
   overrides:
     dataHandling:
-      processingLocation: US
       storageLocation: US
       retentionDays: 30
   pricing:

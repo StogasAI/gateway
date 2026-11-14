@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	jsonv2 "encoding/json/v2"
 	"errors"
+	"maps"
 	"runtime"
 	"runtime/debug"
+	"slices"
 	_ "time/tzdata"
 	"unsafe"
 
@@ -30,6 +32,11 @@ var inspector *policy.Inspector
 //go:embed places.json
 var placesJSON []byte
 
+// companiesJSON is the companies of the same catalog, written with the places.
+//
+//go:embed companies.json
+var companiesJSON []byte
+
 func init() {
 	// Leave room in a 128-MiB host for its JavaScript heap and the JSON bridge.
 	// This is GC pacing, not an input-validation or hard memory boundary.
@@ -38,8 +45,13 @@ func init() {
 	if err != nil {
 		panic(err)
 	}
-	// A saved policy names only places that the catalog lists.
+	var companies map[string]json.RawMessage
+	if err := json.Unmarshal(companiesJSON, &companies); err != nil {
+		panic(err)
+	}
+	// A saved policy names only places and companies that the catalog lists.
 	policy.CheckPlaces(places)
+	policy.CheckCompanies(slices.Collect(maps.Keys(companies)))
 }
 
 //go:wasmexport allocate

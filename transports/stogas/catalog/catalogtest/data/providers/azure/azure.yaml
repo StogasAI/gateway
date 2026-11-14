@@ -2,7 +2,7 @@ providers:
   name: Azure
   aliases: [azure-ai-foundry, azure-openai]
   credentialModes: [byok]
-  headquarteredCountry: US
+  companyId: microsoft
   # A resource keeps data at rest in its Azure geography, so a credential's binding narrows storage
   # to the geography of its resource. These are the geographies that offer Foundry models.
   accountLocations:

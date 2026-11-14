@@ -258,14 +258,14 @@ func TestCredentialSnapshotRejectsConfusedScopeAndMaterial(t *testing.T) {
 		target   *CloudTarget
 		valid    bool
 	}{
-		{"aws", &CloudTarget{Hosting: []string{"anthropic", "aws"}, Region: "us-east-1"}, true},
+		{"aws", &CloudTarget{Hosting: []string{"amazon", "anthropic"}, Region: "us-east-1"}, true},
 		{"aws", nil, false},
-		{"aws", &CloudTarget{Hosting: []string{"aws"}}, false},
+		{"aws", &CloudTarget{Hosting: []string{"amazon"}}, false},
 		{"aws", &CloudTarget{Region: "us-east-1"}, false},
-		{"google-cloud", &CloudTarget{Hosting: []string{"google-cloud"}}, true},
-		{"google-cloud", &CloudTarget{Hosting: []string{"google-cloud"}, Region: "us-east-1"}, false},
-		{"google-cloud", &CloudTarget{Hosting: []string{"anthropic", "google-cloud", "aws"}}, false},
-		{"openai", &CloudTarget{Hosting: []string{"aws"}, Region: "us-east-1"}, false},
+		{"google-cloud", &CloudTarget{Hosting: []string{"google"}}, true},
+		{"google-cloud", &CloudTarget{Hosting: []string{"google"}, Region: "us-east-1"}, false},
+		{"google-cloud", &CloudTarget{Hosting: []string{"amazon", "anthropic", "google"}}, false},
+		{"openai", &CloudTarget{Hosting: []string{"amazon"}, Region: "us-east-1"}, false},
 	} {
 		credentials := valid()
 		selection := credentials["openai"][0]

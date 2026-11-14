@@ -1,7 +1,6 @@
 deployments:
   modelId: claude-sonnet-4-6
   routeIds: [anthropic-messages]
-  hosting: anthropic
   upstream:
     model: claude-sonnet-4-6
     inferenceGeo: global

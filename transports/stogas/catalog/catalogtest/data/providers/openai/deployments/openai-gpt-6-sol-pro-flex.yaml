@@ -1,7 +1,6 @@
 deployments:
   modelId: gpt-6-sol
   routeIds: [openai-responses]
-  hosting: openai
   upstream:
     model: gpt-6-sol
     reasoningMode: pro

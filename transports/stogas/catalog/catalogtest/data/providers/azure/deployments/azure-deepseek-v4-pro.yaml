@@ -1,7 +1,6 @@
 deployments:
   modelId: deepseek-v4-pro
   routeIds: [azure-chat-completions]
-  hosting: azure
   upstream:
     model: DeepSeek-V4-Pro
     modelFormat: DeepSeek

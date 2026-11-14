@@ -9,14 +9,12 @@
 deployments:
   modelId: claude-fable-5-1
   routeIds: [google-cloud-agent-platform-messages]
-  hosting: google-cloud
-  sharedWith: [anthropic]
   upstream:
     model: claude-fable-5-1
     inferenceGeo: eu
   overrides:
     dataHandling:
-      processingLocation: eu
+      sharedWith: [anthropic]
   pricing:
     input_tokens:
       per_mill_tokens: '11'

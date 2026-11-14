@@ -121,7 +121,7 @@ func TestBillingUpstreamTargetIncludesCatalogDataBoundaries(t *testing.T) {
 		return billingUpstreamTarget(&catalog.ResolvedRequest{
 			Provider: schemas.Azure,
 			Deployment: catalog.Deployment{
-				Hosting: "azure",
+				Hosting: "microsoft",
 				Upstream: catalog.Upstream{
 					DeploymentType: "data_zone_standard_eu",
 					Model:          "gpt-5.6-sol",

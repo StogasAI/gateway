@@ -3,8 +3,5 @@ routes:
   endpoint: https://api.chutes.ai/e2e/invoke
   interfaces: [chat_completions]
   inputModalities: [text]
-  documentFormats:
-    extensions: []
-    mediaTypes: []
   dataHandling:
     endToEndEncrypted: true

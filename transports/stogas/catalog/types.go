@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"slices"
 	"strings"
 	"time"
 
@@ -59,7 +60,7 @@ type Deployment struct {
 	ChainHash string
 	ModelID   string
 	RouteID   string
-	// Hosting is who runs the model: the provider's ID, the ID of a company whose service the
+	// Hosting is the company that runs the model: the provider's own, another whose service the
 	// provider resells, or HostingUnknown.
 	Hosting             string
 	Upstream            Upstream
@@ -100,6 +101,9 @@ type DataHandling struct {
 	ZeroDataRetention bool  `json:"zeroDataRetention"`
 	TEE               bool  `json:"tee"`
 	TEEVerified       bool  `json:"teeVerified"`
+	// SharedWith lists, in order, each company other than the provider's and the hosting that
+	// receives requests, or HostingUnknown for companies that the provider does not name.
+	SharedWith []string `json:"sharedWith"`
 }
 
 func (d DataHandling) equal(other DataHandling) bool {
@@ -108,10 +112,15 @@ func (d DataHandling) equal(other DataHandling) bool {
 	return d.ProcessingLocation == other.ProcessingLocation && d.StorageLocation == other.StorageLocation &&
 		d.EndToEndEncrypted == other.EndToEndEncrypted && same(d.RetentionDays, other.RetentionDays) &&
 		known(d.TrainingUse, other.TrainingUse) && d.ZeroDataRetention == other.ZeroDataRetention &&
-		d.TEE == other.TEE && d.TEEVerified == other.TEEVerified
+		d.TEE == other.TEE && d.TEEVerified == other.TEEVerified && slices.Equal(d.SharedWith, other.SharedWith)
 }
 
-// HostingUnknown is the hosting of a deployment whose provider forwards requests to a company that it does not name.
+// CompanyAnthropic is Anthropic's company, which runs Claude on its own API and behind the sign-in
+// and billing of other providers.
+const CompanyAnthropic = "anthropic"
+
+// HostingUnknown stands for a company that a provider does not name, as a hosting or as one that
+// requests are shared with.
 const HostingUnknown = "unknown"
 
 type Upstream struct {
@@ -148,8 +157,9 @@ type snapshot struct {
 	// parts holds each part of the root that the release came with, by SHA-256 in hex.
 	parts    map[string][]byte
 	schedule []datedState
-	// places are the catalog's locations, which every state shares.
-	places *location.Places
+	// places are the catalog's locations, and companies its companies, which every state shares.
+	places    *location.Places
+	companies map[string]company
 }
 
 type datedState struct {
@@ -170,22 +180,20 @@ type compiledGraph struct {
 // The root holds each author and provider whole. The gateway tells when records retire, and
 // whether Stogas serves them, from their deployments, so it skips both.
 type compiledAuthor struct {
-	Notes                shown    `json:"notes"`
-	RetirementDate       shown    `json:"retirementDate"`
-	StogasSupported      shown    `json:"stogasSupported"`
-	Aliases              []string `json:"aliases"`
-	HeadquarteredCountry string   `json:"headquarteredCountry"`
-	Name                 string   `json:"name"`
+	Notes           shown    `json:"notes"`
+	RetirementDate  shown    `json:"retirementDate"`
+	StogasSupported shown    `json:"stogasSupported"`
+	Aliases         []string `json:"aliases"`
+	// CompanyID names the author's company, whose headquarters HeadquarteredCountry repeats.
+	CompanyID            string `json:"companyId"`
+	HeadquarteredCountry string `json:"headquarteredCountry"`
+	Name                 string `json:"name"`
 }
 
 // A compiled deployment holds the facts that hold on all its routes, and for each route the
 // facts that combine the route with the model and deployment.
 type compiledDeployment struct {
-	ApprovalRequired bool `json:"approvalRequired"`
-	// Companies lists each company that receives a request once, in order: the provider, any
-	// company between it and the hosting, the hosting, and any company that the hosting shares it
-	// with.
-	Companies           []string                           `json:"companies"`
+	ApprovalRequired    bool                               `json:"approvalRequired"`
 	ContextWindowTokens int                                `json:"contextWindowTokens"`
 	Hosting             string                             `json:"hosting"`
 	MaxInputTokens      int                                `json:"maxInputTokens"`
@@ -266,11 +274,13 @@ type compiledModel struct {
 type compiledProvider struct {
 	// AccountLocations are the places where an account's resources can keep data. A credential
 	// narrows storage to its resource's place, which the gateway checks against the catalog's places.
-	AccountLocations     shown    `json:"accountLocations"`
-	Notes                shown    `json:"notes"`
-	RetirementDate       shown    `json:"retirementDate"`
-	StogasSupported      shown    `json:"stogasSupported"`
-	Aliases              []string `json:"aliases"`
+	AccountLocations shown    `json:"accountLocations"`
+	Notes            shown    `json:"notes"`
+	RetirementDate   shown    `json:"retirementDate"`
+	StogasSupported  shown    `json:"stogasSupported"`
+	Aliases          []string `json:"aliases"`
+	// CompanyID names the provider's company, whose headquarters HeadquarteredCountry repeats.
+	CompanyID            string   `json:"companyId"`
 	CredentialModes      []string `json:"credentialModes"`
 	HeadquarteredCountry string   `json:"headquarteredCountry"`
 	Name                 string   `json:"name"`

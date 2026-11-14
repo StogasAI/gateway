@@ -210,9 +210,9 @@ func TestByokCheckSignsInToAWSWithEachKindOfCredential(t *testing.T) {
 		bearer   string
 		workpace string
 	}{
-		{awsIAMSecret(t, "eu-west-1", ""), billing.CloudTarget{Hosting: []string{"aws"}, Region: "eu-west-1"},
+		{awsIAMSecret(t, "eu-west-1", ""), billing.CloudTarget{Hosting: []string{"amazon"}, Region: "eu-west-1"},
 			http.MethodPost, "sts.eu-west-1.amazonaws.com", "/", "", "", ""},
-		{awsAPIKeySecret(t, "us-east-1", ""), billing.CloudTarget{Hosting: []string{"aws"}, Region: "us-east-1"},
+		{awsAPIKeySecret(t, "us-east-1", ""), billing.CloudTarget{Hosting: []string{"amazon"}, Region: "us-east-1"},
 			http.MethodGet, "bedrock.us-east-1.amazonaws.com", "/foundation-models", "byProvider=Anthropic", "customer-api-key", ""},
 		{awsAPIKeySecret(t, "us-west-2", testWorkspaceID), billing.CloudTarget{Hosting: []string{"anthropic"}, Region: "us-west-2"},
 			http.MethodGet, "aws-external-anthropic.us-west-2.api.aws", "/v1/models", "limit=1", "customer-api-key", testWorkspaceID},
@@ -239,7 +239,7 @@ func TestByokCheckSignsInToAWSWithEachKindOfCredential(t *testing.T) {
 	verifySigV4(t, sts, "sts", "eu-west-1")
 
 	status = http.StatusForbidden
-	if got := checker.check(ctx, "aws", awsIAMSecret(t, "eu-west-1", ""), &billing.CloudTarget{Hosting: []string{"aws"}, Region: "eu-west-1"}); got != byokRejected("aws") {
+	if got := checker.check(ctx, "aws", awsIAMSecret(t, "eu-west-1", ""), &billing.CloudTarget{Hosting: []string{"amazon"}, Region: "eu-west-1"}); got != byokRejected("aws") {
 		t.Fatalf("rejected access key: %q", got)
 	}
 }
@@ -259,11 +259,11 @@ func TestByokCheckHoldsCloudSecretsToTheirTarget(t *testing.T) {
 		provider, secret string
 		target           *billing.CloudTarget
 	}{
-		"another Region":     {"aws", awsIAMSecret(t, "eu-west-1", ""), &billing.CloudTarget{Hosting: []string{"aws"}, Region: "us-east-1"}},
-		"no workspace":       {"aws", awsIAMSecret(t, "us-east-1", ""), &billing.CloudTarget{Hosting: []string{"anthropic", "aws"}, Region: "us-east-1"}},
+		"another Region":     {"aws", awsIAMSecret(t, "eu-west-1", ""), &billing.CloudTarget{Hosting: []string{"amazon"}, Region: "us-east-1"}},
+		"no workspace":       {"aws", awsIAMSecret(t, "us-east-1", ""), &billing.CloudTarget{Hosting: []string{"amazon", "anthropic"}, Region: "us-east-1"}},
 		"no target":          {"aws", awsIAMSecret(t, "us-east-1", ""), nil},
-		"Google workspace":   {"google-cloud", googleSecret(t, ""), &billing.CloudTarget{Hosting: []string{"anthropic", "google-cloud"}}},
-		"Google with Region": {"google-cloud", googleSecret(t, ""), &billing.CloudTarget{Hosting: []string{"google-cloud"}, Region: "us"}},
+		"Google workspace":   {"google-cloud", googleSecret(t, ""), &billing.CloudTarget{Hosting: []string{"anthropic", "google"}}},
+		"Google with Region": {"google-cloud", googleSecret(t, ""), &billing.CloudTarget{Hosting: []string{"google"}, Region: "us"}},
 	} {
 		if got := checker.check(ctx, c.provider, c.secret, c.target); got == "" || !strings.Contains(got, "stogas encrypt printed") {
 			t.Fatalf("%s: %q", name, got)
@@ -275,12 +275,12 @@ func TestByokCheckHoldsCloudSecretsToTheirTarget(t *testing.T) {
 
 	// Requests parse a secret the same way, so these would fail at every request too.
 	for _, secret := range []string{`{"schema":"stogas.aws-byok.v1"}`, "not json", awsIAMSecret(t, "mars-north-1", ""), strings.Replace(awsIAMSecret(t, "us-east-1", ""), `"region"`, `"unknown":"x","region"`, 1)} {
-		if got := checker.check(ctx, "aws", secret, &billing.CloudTarget{Hosting: []string{"aws"}, Region: "us-east-1"}); got != invalidByokSecret("aws") {
+		if got := checker.check(ctx, "aws", secret, &billing.CloudTarget{Hosting: []string{"amazon"}, Region: "us-east-1"}); got != invalidByokSecret("aws") {
 			t.Fatalf("invalid AWS secret: %q", got)
 		}
 	}
 
-	target := &billing.CloudTarget{Hosting: []string{"google-cloud"}}
+	target := &billing.CloudTarget{Hosting: []string{"google"}}
 	if got := checker.check(ctx, "google-cloud", googleSecret(t, ""), target); got != "" {
 		t.Fatalf("Google: %q", got)
 	}

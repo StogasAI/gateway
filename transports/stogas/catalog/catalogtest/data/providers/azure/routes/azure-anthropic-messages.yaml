@@ -25,6 +25,7 @@ routes:
         storageLocation: unknown
         retentionDays: null
         zeroDataRetention: false
+        sharedWith: [unknown]
   overrides:
     capabilities:
       implicitPromptCaching: false

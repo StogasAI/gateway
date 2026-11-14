@@ -15,7 +15,7 @@
 			"name": "stogas-west",
 			"checkError": null,
 			"bindings": [
-				{"deploymentName":"gpt-5.6-sol-2026-07-09","deploymentResourceId":"/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/stogas-west/projects/project_one","deploymentType":"instant","endpoint":"https://stogas-west.services.ai.azure.com/api/projects/project_one","hosting":"azure","processingLocation":"world","modelDeprecationAt":null,"modelFormat":"OpenAI","modelHostedOn":null,"modelName":"gpt-5.6-sol","modelPublisher":null,"modelVersion":"2026-07-09","skuName":"Instant","storageLocation":"US","tokenScope":"https://ai.azure.com/.default"}
+				{"deploymentName":"gpt-5.6-sol-2026-07-09","deploymentResourceId":"/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/stogas-west/projects/project_one","deploymentType":"instant","endpoint":"https://stogas-west.services.ai.azure.com/api/projects/project_one","hosting":"microsoft","processingLocation":"world","modelDeprecationAt":null,"modelFormat":"OpenAI","modelHostedOn":null,"modelName":"gpt-5.6-sol","modelPublisher":null,"modelVersion":"2026-07-09","skuName":"Instant","storageLocation":"US","tokenScope":"https://ai.azure.com/.default"}
 			],
 			"deployments": []
 		}

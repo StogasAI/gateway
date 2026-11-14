@@ -57,12 +57,12 @@ func TestEffectiveDataHandlingOnlyWorsens(t *testing.T) {
 	yes, no := true, false
 	deployment := Deployment{
 		DataHandling: DataHandling{ProcessingLocation: "US", StorageLocation: "none", RetentionDays: days(0),
-			ZeroDataRetention: true, EndToEndEncrypted: true, TEE: true, TEEVerified: true},
+			ZeroDataRetention: true, EndToEndEncrypted: true, TEE: true, TEEVerified: true, SharedWith: []string{"openai"}},
 		Locations: places,
 		HostedTools: map[HostedTool]HostedToolOffer{
 			HostedToolWebSearch: {DataHandling: HostedToolDataHandling{ProcessingLocation: "DE", RetentionDays: RetentionEffect{Set: true, Days: days(30)}}},
 			HostedToolWebFetch: {DataHandling: HostedToolDataHandling{ProcessingLocation: "unknown", StorageLocation: "unknown",
-				RetentionDays: RetentionEffect{Set: true}, ZeroDataRetention: &no}},
+				RetentionDays: RetentionEffect{Set: true}, ZeroDataRetention: &no, SharedWith: []string{"anthropic", "openai", "unknown"}}},
 			HostedToolMCP: {DataHandling: HostedToolDataHandling{TrainingUse: &yes, EndToEndEncrypted: &no, TEE: &no, TEEVerified: &no}},
 		},
 	}
@@ -75,7 +75,8 @@ func TestEffectiveDataHandlingOnlyWorsens(t *testing.T) {
 		t.Fatalf("web search: %+v", search)
 	}
 	fetch := deployment.EffectiveDataHandling([]HostedTool{HostedToolWebSearch, HostedToolWebFetch})
-	if fetch.ProcessingLocation != "unknown" || fetch.StorageLocation != "unknown" || fetch.RetentionDays != nil || fetch.ZeroDataRetention {
+	if fetch.ProcessingLocation != "unknown" || fetch.StorageLocation != "unknown" || fetch.RetentionDays != nil || fetch.ZeroDataRetention ||
+		!slices.Equal(fetch.SharedWith, []string{"anthropic", "openai", "unknown"}) || !slices.Equal(search.SharedWith, []string{"openai"}) {
 		t.Fatalf("web fetch: %+v", fetch)
 	}
 	mcp := deployment.EffectiveDataHandling([]HostedTool{HostedToolMCP})

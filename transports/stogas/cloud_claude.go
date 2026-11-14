@@ -32,9 +32,10 @@ const (
 	awsByokSchema         = "stogas.aws-byok.v1"
 	googleCloudByokSchema = "stogas.google-cloud-byok.v1"
 
-	hostingAnthropic   = "anthropic"
-	hostingAWS         = "aws"
-	hostingGoogleCloud = "google-cloud"
+	// The companies that run Claude on the two clouds, as the catalog names a deployment's hosting.
+	hostingAnthropic = catalog.CompanyAnthropic
+	hostingAmazon    = "amazon"
+	hostingGoogle    = "google"
 )
 
 var (
@@ -138,12 +139,12 @@ func cloudCredentialTarget(provider schemas.ModelProvider, secret string) (billi
 		if err != nil {
 			return billing.CloudTarget{}, err
 		}
-		hosting := []string{hostingAWS}
+		hosting := []string{hostingAmazon}
 		switch {
 		case credential.APIKey != "" && credential.WorkspaceID != "":
 			hosting = []string{hostingAnthropic}
 		case credential.WorkspaceID != "":
-			hosting = []string{hostingAnthropic, hostingAWS}
+			hosting = []string{hostingAmazon, hostingAnthropic}
 		}
 		return billing.CloudTarget{Hosting: hosting, Region: credential.Region}, nil
 	case catalog.ProviderGoogleCloud:
@@ -152,9 +153,9 @@ func cloudCredentialTarget(provider schemas.ModelProvider, secret string) (billi
 			return billing.CloudTarget{}, err
 		}
 		if credential.WorkspaceID != "" {
-			return billing.CloudTarget{Hosting: []string{hostingAnthropic, hostingGoogleCloud}}, nil
+			return billing.CloudTarget{Hosting: []string{hostingAnthropic, hostingGoogle}}, nil
 		}
-		return billing.CloudTarget{Hosting: []string{hostingGoogleCloud}}, nil
+		return billing.CloudTarget{Hosting: []string{hostingGoogle}}, nil
 	}
 	return billing.CloudTarget{}, errors.New("not a cloud provider")
 }
@@ -172,7 +173,7 @@ func cloudTargetServes(provider schemas.ModelProvider, target *billing.CloudTarg
 			return false
 		}
 		geo := deployment.Upstream.InferenceGeo
-		return deployment.Hosting != hostingAWS || geo == "global" || catalog.BedrockSourceRegions[geo][target.Region]
+		return deployment.Hosting != hostingAmazon || geo == "global" || catalog.BedrockSourceRegions[geo][target.Region]
 	case catalog.ProviderGoogleCloud:
 		return target.Region == ""
 	}
@@ -223,7 +224,7 @@ func cloudClaudeRequest(ctx context.Context, provider schemas.ModelProvider, sec
 		request := cloudRequest{headers: map[string]string{}}
 		service := "bedrock"
 		switch deployment.Hosting {
-		case hostingAWS:
+		case hostingAmazon:
 			request.url = "https://bedrock-runtime." + credential.Region + ".amazonaws.com/anthropic/v1/messages"
 		case hostingAnthropic:
 			if credential.WorkspaceID == "" {
@@ -250,7 +251,7 @@ func cloudClaudeRequest(ctx context.Context, provider schemas.ModelProvider, sec
 		}
 		request := cloudRequest{headers: map[string]string{}}
 		switch deployment.Hosting {
-		case hostingGoogleCloud:
+		case hostingGoogle:
 			host, ok := vertexHosts[upstream.InferenceGeo]
 			if !ok || !vertexModelPattern.MatchString(upstream.Model) {
 				return cloudRequest{}, billing.ErrByokTarget

@@ -1,7 +1,7 @@
 providers:
   name: Chutes
   credentialModes: [managed, byok]
-  headquarteredCountry: US
+  companyId: chutes
   capabilities:
     streaming: true
     functionCalling: true

@@ -14,7 +14,7 @@
 			"name": "stogas-swiss",
 			"checkError": "The application has no data role on this account, so requests to its deployments fail. Give it the Foundry User role on the account.",
 			"bindings": [
-				{"deploymentName":"customer-sol-eu","deploymentResourceId":"/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/stogas-swiss/deployments/customer-sol-eu","deploymentType":"data_zone_standard_eu","processingLocation":"europe","storageLocation":"CH","endpoint":"https://stogas-swiss.openai.azure.com","hosting":"azure","modelFormat":"OpenAI","modelDeprecationAt":null,"modelHostedOn":null,"modelName":"gpt-5.6-sol","modelPublisher":null,"modelVersion":"2026-07-09","skuName":"DataZoneStandard","tokenScope":"https://ai.azure.com/.default"}
+				{"deploymentName":"customer-sol-eu","deploymentResourceId":"/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/stogas-swiss/deployments/customer-sol-eu","deploymentType":"data_zone_standard_eu","processingLocation":"europe","storageLocation":"CH","endpoint":"https://stogas-swiss.openai.azure.com","hosting":"microsoft","modelFormat":"OpenAI","modelDeprecationAt":null,"modelHostedOn":null,"modelName":"gpt-5.6-sol","modelPublisher":null,"modelVersion":"2026-07-09","skuName":"DataZoneStandard","tokenScope":"https://ai.azure.com/.default"}
 			],
 			"deployments": [
 				{"id":"/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/stogas-swiss/deployments/customer-sol-eu","modelFormat":"OpenAI","modelName":"gpt-5.6-sol","modelVersion":"2026-07-09","skuName":"DataZoneStandard","state":"Succeeded"}

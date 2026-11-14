@@ -112,7 +112,7 @@ func recordedAuthorizations(t *testing.T) map[string]*authorizationArguments {
 	}
 	azure := UpstreamTarget{
 		DeploymentType: "global_standard",
-		Hosting:        "azure",
+		Hosting:        "microsoft",
 		Model:          "gpt-5.6-sol",
 		ModelFormat:    "OpenAI",
 		ModelVersion:   "2026-07-09",

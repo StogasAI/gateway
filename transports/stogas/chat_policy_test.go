@@ -2304,7 +2304,7 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 							t.Fatalf("decode provider wire request: %v\n%s", err, wireBytes)
 						}
 						wantModel := source.Upstream.Model
-						if cloudClaude && source.Hosting == hostingGoogleCloud {
+						if cloudClaude && source.Hosting == hostingGoogle {
 							// Vertex AI names the model in the URL.
 							wantModel = ""
 						}
@@ -2351,7 +2351,7 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 							switch source.Hosting {
 							case hostingAnthropic:
 								wantInferenceGeo = source.Upstream.InferenceGeo
-							case hostingGoogleCloud:
+							case hostingGoogle:
 								wantVersion = "vertex-2023-10-16"
 							}
 							if source.Upstream.ServiceTier == "fast" {

@@ -1,0 +1,46 @@
+# The companies that records name: the company of each author and provider, each company that
+# runs a provider's models in its place, and each company that requests are shared with. The build
+# names any company that no record names, to remove.
+companies:
+  alibaba:
+    name: Alibaba
+    headquarteredCountry: CN
+  amazon:
+    name: Amazon
+    headquarteredCountry: US
+  anthropic:
+    name: Anthropic
+    headquarteredCountry: US
+  chutes:
+    name: Chutes
+    headquarteredCountry: US
+  deepseek:
+    name: DeepSeek
+    headquarteredCountry: CN
+  fireworks:
+    name: Fireworks AI
+    headquarteredCountry: US
+  google:
+    name: Google
+    headquarteredCountry: US
+  microsoft:
+    name: Microsoft
+    headquarteredCountry: US
+  minimax:
+    name: MiniMax
+    headquarteredCountry: CN
+  mistral-ai:
+    name: Mistral AI
+    headquarteredCountry: FR
+  moonshot-ai:
+    name: Moonshot AI
+    headquarteredCountry: CN
+  nvidia:
+    name: NVIDIA
+    headquarteredCountry: US
+  openai:
+    name: OpenAI
+    headquarteredCountry: US
+  z-ai:
+    name: Z.ai
+    headquarteredCountry: CN

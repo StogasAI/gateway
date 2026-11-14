@@ -1,14 +1,12 @@
 deployments:
   modelId: claude-mythos-5-1
   routeIds: [anthropic-messages]
-  hosting: anthropic
   upstream:
     model: claude-mythos-5-1
     inferenceGeo: us
   approvalRequired: true
   overrides:
     dataHandling:
-      processingLocation: US
       storageLocation: unknown
       retentionDays: 30
   pricing:

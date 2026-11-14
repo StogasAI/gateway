@@ -1,7 +1,6 @@
 deployments:
   modelId: gpt-5.6-luna
   routeIds: [openai-responses]
-  hosting: openai
   upstream:
     model: gpt-5.6-luna
     reasoningMode: pro

@@ -38,6 +38,22 @@ func CheckPlaces(known *location.Places) {
 	places = known
 }
 
+// companies are the catalog's companies when a policy is saved, so that a company that no catalog
+// lists fails at once. The gateway leaves them nil and checks only an ID's form, as for places.
+var companies map[string]bool
+
+// CheckCompanies makes each company in a policy one of these, or unknown. Control's policy
+// compiler calls it with the companies of the catalog that it embeds.
+func CheckCompanies(known []string) {
+	companies = nil
+	if known != nil {
+		companies = make(map[string]bool, len(known))
+		for _, id := range known {
+			companies[id] = true
+		}
+	}
+}
+
 func validLocation(value string, storage bool) bool {
 	if places != nil {
 		return places.Valid(value, storage)
@@ -73,9 +89,14 @@ var (
 	mcpServer = patternDomain(`^[a-z0-9:][a-z0-9._:-]*$`, "a lowercase host, such as 'mcp.example.com', or a connector or tunnel ID")
 	mcpTool   = patternDomain(`^[a-z0-9:][a-z0-9._:-]*/.+$`,
 		"a server and one of its tools, such as 'mcp.example.com/search', or 'mcp.example.com/*' for every tool")
-	// A company that handles requests: a provider's ID, the ID of a company that the catalog lists
-	// no provider for, or unknown for one that the provider does not name.
-	company    = oneOf("anthropic", "aws", "azure", "chutes", "fireworks", "google-cloud", "openai", "unknown")
+	// A company that receives requests: one that the catalog lists, or unknown for one that the
+	// provider does not name.
+	company = fieldDomain{func(value string) bool {
+		if companies != nil {
+			return companies[value] || value == "unknown"
+		}
+		return catalogID.valid(value)
+	}, "a company that the catalog lists, such as 'anthropic', or 'unknown'", nil}
 	reasoning  = oneOf("unsupported", "optional", "required")
 	modalities = oneOf("text", "image", "audio", "video")
 	efforts    = oneOf(ReasoningEfforts...)
@@ -94,6 +115,9 @@ var fieldDomains = map[string]fieldDomain{
 	"deployment.modelId":                         catalogID,
 	"deployment.hosting":                         company,
 	"deployment.companies":                       company,
+	"deployment.dataHandling.sharedWith":         company,
+	"author.companyId":                           company,
+	"provider.companyId":                         company,
 	"deployment.inputModalities":                 modalities,
 	"deployment.outputModalities":                modalities,
 	"deployment.reasoning":                       reasoning,

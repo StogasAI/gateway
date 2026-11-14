@@ -649,7 +649,7 @@ func TestPrepareProviderRequestSendsBasicWebToolsToAzureHostedClaude(t *testing.
 	ctx.SetValue(schemas.BifrostContextKeyHTTPRequestType, request.RequestType)
 	state := providerRequestTestState(schemas.Azure, deploymentName, request.RequestType, 128000)
 	state.Resolution.Deployment.ModelID = "claude-opus-5"
-	state.Resolution.Deployment.Hosting = "azure"
+	state.Resolution.Deployment.Hosting = "microsoft"
 
 	if err := PrepareProviderRequest(ctx, state, request); err != nil {
 		t.Fatalf("PrepareProviderRequest returned error: %v", err)

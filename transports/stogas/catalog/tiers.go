@@ -49,7 +49,7 @@ var standardOnly = map[string]schemas.BifrostServiceTier{TierStandard: ""}
 var claudeOutsideAnthropic = map[string]schemas.BifrostServiceTier{TierStandard: "", TierFast: ""}
 
 func offeredTiers(provider schemas.ModelProvider, modelFormat, hosting string) map[string]schemas.BifrostServiceTier {
-	if provider == schemas.Azure && modelFormat == "Anthropic" || provider == ProviderGoogleCloud && hosting == "anthropic" {
+	if provider == schemas.Azure && modelFormat == "Anthropic" || provider == ProviderGoogleCloud && hosting == CompanyAnthropic {
 		return claudeOutsideAnthropic
 	}
 	if tiers, ok := providerServiceTiers[provider]; ok && (provider != schemas.Azure || modelFormat == "OpenAI") {
@@ -76,7 +76,7 @@ func requestedTier(value *schemas.BifrostServiceTier) (string, error) {
 // Providers without tiers can report nothing that Stogas bills.
 func ReportedTier(provider schemas.ModelProvider, deployment Deployment, serviceTier *schemas.BifrostServiceTier, speed *string) string {
 	if provider == schemas.Anthropic || provider == schemas.Azure && deployment.Upstream.ModelFormat == "Anthropic" ||
-		provider == ProviderGoogleCloud && deployment.Hosting == "anthropic" {
+		provider == ProviderGoogleCloud && deployment.Hosting == CompanyAnthropic {
 		serviceTier = (*schemas.BifrostServiceTier)(speed)
 	} else if _, tiered := providerServiceTiers[provider]; !tiered {
 		return ""

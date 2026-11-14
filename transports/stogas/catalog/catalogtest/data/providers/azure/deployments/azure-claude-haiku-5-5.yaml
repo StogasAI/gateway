@@ -1,7 +1,6 @@
 deployments:
   modelId: claude-haiku-5-5
   routeIds: [azure-anthropic-messages]
-  hosting: azure
   upstream:
     model: claude-haiku-5-5
     modelFormat: Anthropic

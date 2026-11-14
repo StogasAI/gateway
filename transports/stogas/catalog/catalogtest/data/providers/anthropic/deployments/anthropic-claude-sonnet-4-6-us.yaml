@@ -1,13 +1,9 @@
 deployments:
   modelId: claude-sonnet-4-6
   routeIds: [anthropic-messages]
-  hosting: anthropic
   upstream:
     model: claude-sonnet-4-6
     inferenceGeo: us
-  overrides:
-    dataHandling:
-      processingLocation: US
   pricing:
     input_tokens:
       per_mill_tokens: '3.3'

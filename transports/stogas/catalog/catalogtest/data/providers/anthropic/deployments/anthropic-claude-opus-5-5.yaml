@@ -1,7 +1,6 @@
 deployments:
   modelId: claude-opus-5-5
   routeIds: [anthropic-messages]
-  hosting: anthropic
   upstream:
     model: claude-opus-5-5
     inferenceGeo: global

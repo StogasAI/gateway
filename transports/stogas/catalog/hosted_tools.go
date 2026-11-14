@@ -48,6 +48,8 @@ type HostedToolDataHandling struct {
 	EndToEndEncrypted  *bool           `json:"endToEndEncrypted,omitzero"`
 	TEE                *bool           `json:"tee,omitzero"`
 	TEEVerified        *bool           `json:"teeVerified,omitzero"`
+	// SharedWith lists the companies that the tool sends request content to.
+	SharedWith []string `json:"sharedWith,omitzero"`
 }
 
 // RetentionEffect is a tool's retention. Unset leaves the deployment's; a nil Days is unknown.
@@ -111,6 +113,9 @@ func (d Deployment) EffectiveDataHandling(tools []HostedTool) DataHandling {
 		handling.EndToEndEncrypted = handling.EndToEndEncrypted && !isFalse(effect.EndToEndEncrypted)
 		handling.TEE = handling.TEE && !isFalse(effect.TEE)
 		handling.TEEVerified = handling.TEEVerified && !isFalse(effect.TEEVerified)
+		if len(effect.SharedWith) > 0 {
+			handling.SharedWith = slices.Compact(slices.Sorted(slices.Values(slices.Concat(handling.SharedWith, effect.SharedWith))))
+		}
 	}
 	return handling
 }

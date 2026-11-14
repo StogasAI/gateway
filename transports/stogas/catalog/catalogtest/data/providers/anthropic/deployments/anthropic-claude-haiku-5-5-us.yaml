@@ -1,13 +1,9 @@
 deployments:
   modelId: claude-haiku-5-5
   routeIds: [anthropic-messages]
-  hosting: anthropic
   upstream:
     model: claude-haiku-5-5
     inferenceGeo: us
-  overrides:
-    dataHandling:
-      processingLocation: US
   pricing:
     input_tokens:
       per_mill_tokens: '0.11'

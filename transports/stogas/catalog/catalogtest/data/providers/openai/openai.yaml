@@ -2,7 +2,7 @@ providers:
   name: OpenAI
   aliases: [open-ai]
   credentialModes: [byok]
-  headquarteredCountry: US
+  companyId: openai
   capabilities:
     streaming: true
     functionCalling: true

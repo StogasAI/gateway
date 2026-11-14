@@ -429,7 +429,7 @@ func newResolvedPolicyValues(candidate *ResolvedRequest) (*resolvedPolicyValues,
 				ReasoningMaxTokens: deployment.ReasoningMaxTokens,
 				RetirementDate:     compiledDeployment.RetirementDate,
 				Upstream:           compiledDeployment.Upstream,
-				Companies:          compiledDeployment.Companies,
+				Companies:          receivingCompanies(provider.CompanyID, deployment.Hosting, dataHandling.SharedWith),
 				ApprovalRequired:   deployment.ApprovalRequired,
 				WeightPrecision:    deployment.WeightPrecision,
 			},
@@ -439,6 +439,18 @@ func newResolvedPolicyValues(candidate *ResolvedRequest) (*resolvedPolicyValues,
 		"request":  {fields: candidate.policyRequestData(hostedTools)},
 		"route":    {id: ids.route, fields: route},
 	}}, true
+}
+
+// receivingCompanies lists each company that receives a request once: the provider's, the
+// hosting, and each one that the request is shared with, which a hosted tool can add to.
+func receivingCompanies(provider, hosting string, sharedWith []string) []string {
+	companies := []string{provider}
+	for _, company := range append([]string{hosting}, sharedWith...) {
+		if !slices.Contains(companies, company) {
+			companies = append(companies, company)
+		}
+	}
+	return companies
 }
 
 // policyRequestData is the request as policies read it. A candidate without a request, as when

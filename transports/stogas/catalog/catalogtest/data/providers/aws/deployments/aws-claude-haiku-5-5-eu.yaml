@@ -7,13 +7,9 @@
 deployments:
   modelId: claude-haiku-5-5
   routeIds: [aws-bedrock-messages]
-  hosting: aws
   upstream:
     model: eu.anthropic.claude-haiku-5-5
     inferenceGeo: eu
-  overrides:
-    dataHandling:
-      processingLocation: eu
   pricing:
     input_tokens:
       per_mill_tokens: '0.11'

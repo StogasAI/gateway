@@ -379,21 +379,30 @@ type azureRegionalModel struct {
 	format, name, version string
 }
 
+// hostingMicrosoft is Azure's own company, as the catalog names the hosting of a model that
+// Microsoft runs.
+const hostingMicrosoft = "microsoft"
+
+// azureModelHosting returns the company that runs a model, as the catalog names it, or "" for a
+// model that the catalog cannot place.
 func azureModelHosting(format string, metadata azureModelMetadata) string {
 	switch normalized := strings.ToLower(trimJS(format)); {
 	case normalized == "anthropic":
 		if metadata.hostedOn == nil {
 			// Azure's older Anthropic-hosted model records do not include hostedOn.
-			return "anthropic"
+			return hostingAnthropic
 		}
-		if hostedOn := strings.ToLower(*metadata.hostedOn); hostedOn == "azure" || hostedOn == "anthropic" {
-			return hostedOn
+		switch strings.ToLower(*metadata.hostedOn) {
+		case "azure":
+			return hostingMicrosoft
+		case "anthropic":
+			return hostingAnthropic
 		}
 		return ""
 	case normalized == "fireworks":
 		return "fireworks"
 	case azureAzureHostedFormats[normalized]:
-		return "azure"
+		return hostingMicrosoft
 	}
 	return ""
 }
@@ -456,7 +465,7 @@ func (c *azureDiscoveryContext) placement(skuName string, hosting string) (deplo
 		processing = "unknown"
 	}
 	storage = "unknown"
-	if hosting == "azure" {
+	if hosting == hostingMicrosoft {
 		storage = c.storageLocation()
 	}
 	return deploymentType, processing, storage, true
@@ -910,7 +919,7 @@ func (c *azureDiscoveryContext) instantBindings(values []json.RawMessage, names 
 				allowed != nil && !allowed[key] {
 				continue
 			}
-			if azureModelHosting(model.format, model.azureModelMetadata) != "azure" || !azureInstantVersion.MatchString(model.version) {
+			if azureModelHosting(model.format, model.azureModelMetadata) != hostingMicrosoft || !azureInstantVersion.MatchString(model.version) {
 				continue
 			}
 			deploymentName := model.name + "-" + model.version
@@ -922,7 +931,7 @@ func (c *azureDiscoveryContext) instantBindings(values []json.RawMessage, names 
 				DeploymentResourceID: resourceID,
 				DeploymentType:       "instant",
 				Endpoint:             endpoint,
-				Hosting:              "azure",
+				Hosting:              hostingMicrosoft,
 				ProcessingLocation:   "world",
 				ModelDeprecationAt:   model.deprecationAt,
 				ModelFormat:          model.format,

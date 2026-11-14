@@ -103,10 +103,10 @@ func TestCELRejectsStringsThatFieldsCannotHold(t *testing.T) {
 	}
 }
 
-// One condition on the companies covers the provider, each company between it and the hosting,
-// the hosting, and each company that the hosting shares a request with.
+// One condition on the companies covers the provider's company, the hosting and each company
+// that a request is shared with.
 func TestCELReadsTheCompaniesThatReceiveARequest(t *testing.T) {
-	program, err := CompileCEL(`deployment.companies.all(company, company in ["anthropic", "aws", "azure", "chutes", "google-cloud", "openai"])`)
+	program, err := CompileCEL(`deployment.companies.all(company, company in ["amazon", "anthropic", "chutes", "google", "microsoft", "openai"])`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,9 +115,9 @@ func TestCELReadsTheCompaniesThatReceiveARequest(t *testing.T) {
 		matches   bool
 	}{
 		{[]string{"anthropic"}, true},
-		{[]string{"aws", "anthropic"}, true},
-		{[]string{"azure", "fireworks"}, false},
-		{[]string{"azure", "aws", "fireworks", "anthropic"}, false},
+		{[]string{"amazon", "anthropic"}, true},
+		{[]string{"microsoft", "fireworks"}, false},
+		{[]string{"google", "anthropic", "unknown"}, false},
 		{[]string{"chutes", "unknown"}, false},
 	} {
 		values := testValues{"deployment.companies": {Type: "string_list", Strings: test.companies}}
@@ -125,12 +125,12 @@ func TestCELReadsTheCompaniesThatReceiveARequest(t *testing.T) {
 			t.Errorf("%v: known %v, matches %v, error %v", test.companies, known, matches, err)
 		}
 	}
-	for _, source := range []string{`deployment.hosting == provider.id`, `size(deployment.companies) == 1`, `"unknown" in deployment.companies`} {
+	for _, source := range []string{`deployment.hosting == provider.companyId`, `size(deployment.companies) == 1`, `"unknown" in deployment.companies`} {
 		if _, err := CompileCEL(source); err != nil {
 			t.Errorf("%s: %v", source, err)
 		}
 	}
-	for _, source := range []string{`deployment.hosting == "Azure"`, `"fire works" in deployment.companies`, `deployment.companies.exists(c, c == "AWS")`} {
+	for _, source := range []string{`deployment.hosting == "Microsoft"`, `"fire works" in deployment.companies`, `deployment.companies.exists(c, c == "aws")`} {
 		if _, err := CompileCEL(source); err == nil || !strings.Contains(err.Error(), "cannot be") {
 			t.Errorf("%s: error = %v", source, err)
 		}

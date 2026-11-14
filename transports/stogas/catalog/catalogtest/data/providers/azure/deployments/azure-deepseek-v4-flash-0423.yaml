@@ -1,7 +1,6 @@
 deployments:
   modelId: deepseek-v4-flash-0423
   routeIds: [azure-chat-completions]
-  hosting: azure
   upstream:
     model: DeepSeek-V4-Flash
     modelFormat: DeepSeek

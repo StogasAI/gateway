@@ -8,6 +8,7 @@
 # anywhere. Website publishers can keep the URLs that web fetch requests.
 routes:
   providerId: aws
+  hosting: anthropic
   interfaces: [chat_completions, responses]
   inputModalities: [text, image]
   documentFormats:
@@ -29,3 +30,4 @@ routes:
         storageLocation: unknown
         retentionDays: null
         zeroDataRetention: false
+        sharedWith: [unknown]

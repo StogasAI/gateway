@@ -74,7 +74,6 @@ func (s *snapshot) sibling(routeNode compiledRoute, current *compiledDeployment,
 			candidate.ModelID == current.ModelID &&
 			candidate.Upstream.ReasoningMode == mode &&
 			candidate.Hosting == current.Hosting &&
-			slices.Equal(candidate.Companies, current.Companies) &&
 			candidate.Upstream.ModelFormat == current.Upstream.ModelFormat &&
 			candidate.Upstream.ModelVersion == current.Upstream.ModelVersion &&
 			candidate.Upstream.DeploymentType == current.Upstream.DeploymentType &&

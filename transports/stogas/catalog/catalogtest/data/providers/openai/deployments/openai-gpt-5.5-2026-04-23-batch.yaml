@@ -1,7 +1,6 @@
 deployments:
   modelId: gpt-5.5-2026-04-23
   routeIds: [openai-batch]
-  hosting: openai
   upstream:
     model: gpt-5.5-2026-04-23
   pricing:

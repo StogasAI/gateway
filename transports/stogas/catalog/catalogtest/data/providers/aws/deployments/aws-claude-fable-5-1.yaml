@@ -6,7 +6,6 @@
 deployments:
   modelId: claude-fable-5-1
   routeIds: [aws-bedrock-messages]
-  hosting: aws
   upstream:
     model: global.anthropic.claude-fable-5-1
     inferenceGeo: global

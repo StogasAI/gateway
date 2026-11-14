@@ -1,7 +1,6 @@
 deployments:
   modelId: gpt-oss-120b
   routeIds: [azure-chat-completions]
-  hosting: azure
   upstream:
     model: gpt-oss-120b
     modelFormat: OpenAI-OSS

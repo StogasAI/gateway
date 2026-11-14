@@ -33,7 +33,7 @@ func azureTestBinding() billing.AzureBinding {
 		DeploymentName:     "customer-sol",
 		DeploymentType:     "global_standard",
 		Endpoint:           "https://example.openai.azure.com",
-		Hosting:            "azure",
+		Hosting:            "microsoft",
 		ModelFormat:        "OpenAI",
 		ModelName:          "gpt-5.6-sol",
 		ModelVersion:       "2026-07-09",
@@ -52,7 +52,7 @@ func azureTestResolution() *catalog.ResolvedRequest {
 				ProcessingLocation: "world",
 				StorageLocation:    "unknown",
 			},
-			Hosting:   "azure",
+			Hosting:   "microsoft",
 			Locations: testPlaces,
 			Upstream: catalog.Upstream{
 				DeploymentType: "global_standard",

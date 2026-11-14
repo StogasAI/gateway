@@ -270,8 +270,8 @@ func TestSnapshotValidationRejectsEndToEndEncryptionWithoutTEE(t *testing.T) {
 func TestSnapshotReadsOnlyCurrentSchema(t *testing.T) {
 	release := testCatalogRelease(t)
 	for _, schema := range []struct{ root, part string }{
-		{"stogas.catalog.v15", "stogas.catalog.part.v15"},
-		{"stogas.catalog.v16", "stogas.catalog.part.v16"},
+		{"stogas.catalog.v2", "stogas.catalog.part.v2"},
+		{"stogas.catalog.v1", "stogas.catalog.part.v1"},
 	} {
 		release.root["schema"] = schema.root
 		for _, part := range release.parts {
@@ -312,7 +312,7 @@ func TestChutesSelectorMatchesItsRoute(t *testing.T) {
 		{name: "standard with GPUs", deployment: standard(HostingUnknown, &eight)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			err := validateChutesUpstreamSelector("deployment", test.deployment)
+			err := validateChutesUpstreamSelector("deployment", "chutes", test.deployment)
 			if (err == nil) != test.valid {
 				t.Fatalf("validateChutesUpstreamSelector() = %v, want valid %v", err, test.valid)
 			}
@@ -1673,41 +1673,42 @@ func TestSnapshotValidationRejectsUnbillablePricingAndReasoning(t *testing.T) {
 	}
 }
 
-// A deployment lists each company that receives a request once: its provider first and its
-// hosting last.
+// A deployment's route lists each company, other than the provider's and the hosting, that
+// receives a request, once and in order, and the catalog lists every company that a record names.
 func TestSnapshotValidationChecksTheCompanies(t *testing.T) {
 	const hosted, own = "azure-claude-fable-5-1-anthropic-hosted", "azure-gpt-5.6-sol"
+	const invalid = "has an invalid list of companies that requests are shared with"
 	for _, test := range []struct {
 		name, deployment string
-		companies        any
-		valid            bool
+		sharedWith       any
+		want             string
 	}{
-		{"the provider and the hosting", hosted, []any{"azure", "anthropic"}, true},
-		{"one company between", hosted, []any{"azure", "fireworks", "anthropic"}, true},
-		{"an unnamed company between", hosted, []any{"azure", "aws", "unknown", "anthropic"}, true},
-		{"a provider that runs the model", own, []any{"azure"}, true},
-		{"a company that the hosting shares requests with", hosted, []any{"azure", "anthropic", "fireworks"}, true},
-		{"a provider that runs the model and shares requests", own, []any{"azure", "openai"}, true},
-		{"no list", hosted, nil, false},
-		{"no company", hosted, []any{}, false},
-		{"no provider first", hosted, []any{"fireworks", "anthropic"}, false},
-		{"no hosting", hosted, []any{"azure", "fireworks"}, false},
-		{"a company twice", hosted, []any{"azure", "fireworks", "aws", "fireworks", "anthropic"}, false},
-		{"a provider that runs the model twice", own, []any{"azure", "azure"}, false},
+		{"no other company", hosted, []any{}, ""},
+		{"a company that requests are shared with", hosted, []any{"fireworks"}, ""},
+		{"companies that the provider does not name", own, []any{"openai", "unknown"}, ""},
+		{"no list", hosted, nil, invalid},
+		{"the provider's company", own, []any{"microsoft"}, invalid},
+		{"the hosting", hosted, []any{"anthropic"}, invalid},
+		{"a company twice", hosted, []any{"fireworks", "fireworks"}, invalid},
+		{"companies out of order", hosted, []any{"openai", "fireworks"}, invalid},
+		{"a company that the catalog does not list", hosted, []any{"example"}, "shares requests with a company that the catalog does not list"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var whole map[string]any
 			if err := json.Unmarshal(testCatalogJSON, &whole); err != nil {
 				t.Fatal(err)
 			}
-			whole["graph"].(map[string]any)["deployments"].(map[string]any)[test.deployment].(map[string]any)["companies"] = test.companies
+			routes := whole["graph"].(map[string]any)["deployments"].(map[string]any)[test.deployment].(map[string]any)["routes"].(map[string]any)
+			for _, route := range routes {
+				route.(map[string]any)["dataHandling"].(map[string]any)["sharedWith"] = test.sharedWith
+			}
 			data, err := json.Marshal(whole)
 			if err != nil {
 				t.Fatal(err)
 			}
 			loaded, err := snapshotFromCatalogBytes(data)
-			if !test.valid {
-				if err == nil || !strings.Contains(err.Error(), "has an invalid list of companies") {
+			if test.want != "" {
+				if err == nil || !strings.Contains(err.Error(), test.want) {
 					t.Fatalf("catalog was accepted or failed for another reason: %v", err)
 				}
 				return
@@ -1715,8 +1716,50 @@ func TestSnapshotValidationChecksTheCompanies(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := loaded.graph.Deployments[test.deployment].Companies; len(got) != len(test.companies.([]any)) {
-				t.Fatalf("companies = %v, want %v", got, test.companies)
+			for routeID, route := range loaded.graph.Deployments[test.deployment].Routes {
+				if got := route.DataHandling.SharedWith; len(got) != len(test.sharedWith.([]any)) {
+					t.Fatalf("%s shares with %v, want %v", routeID, got, test.sharedWith)
+				}
+			}
+		})
+	}
+	for _, test := range []struct {
+		name   string
+		change func(whole, graph map[string]any)
+		want   string
+	}{
+		{"a hosting that the catalog does not list", func(_, graph map[string]any) {
+			graph["deployments"].(map[string]any)[hosted].(map[string]any)["hosting"] = "example"
+		}, "names a hosting that the catalog does not list"},
+		{"a provider without its company", func(whole, _ map[string]any) {
+			delete(whole["companies"].(map[string]any), "microsoft")
+		}, `provider azure names company "microsoft", which the catalog does not list with its headquarters`},
+		{"an author whose headquarters differ from its company's", func(whole, _ map[string]any) {
+			whole["companies"].(map[string]any)["openai"].(map[string]any)["headquarteredCountry"] = "CA"
+		}, `names company "openai", which the catalog does not list with its headquarters`},
+		{"a company headquartered outside the catalog's countries", func(whole, _ map[string]any) {
+			whole["companies"].(map[string]any)["openai"].(map[string]any)["headquarteredCountry"] = "world"
+		}, "company openai is invalid or headquartered"},
+		{"a company named unknown", func(whole, _ map[string]any) {
+			whole["companies"].(map[string]any)["unknown"] = map[string]any{"name": "Unknown", "headquarteredCountry": "US"}
+		}, "company unknown is invalid or headquartered"},
+		{"a hosted tool that shares content with an unlisted company", func(_, graph map[string]any) {
+			route := graph["deployments"].(map[string]any)["anthropic-claude-opus-5"].(map[string]any)["routes"].(map[string]any)["anthropic-messages"].(map[string]any)
+			route["hostedTools"].(map[string]any)["web_fetch"].(map[string]any)["dataHandling"].(map[string]any)["sharedWith"] = []any{"example"}
+		}, "has an invalid list of companies that web_fetch shares content with"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var whole map[string]any
+			if err := json.Unmarshal(testCatalogJSON, &whole); err != nil {
+				t.Fatal(err)
+			}
+			test.change(whole, whole["graph"].(map[string]any))
+			data, err := json.Marshal(whole)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := snapshotFromCatalogBytes(data); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("catalog was accepted or failed for another reason: %v", err)
 			}
 		})
 	}
@@ -1822,12 +1865,7 @@ func TestSnapshotRejectsValuesThatPoliciesCannotName(t *testing.T) {
 		apply func(graph map[string]any)
 		want  string
 	}{
-		{"hosting", func(g map[string]any) {
-			deployment(g)["hosting"], deployment(g)["companies"] = "Azure", []any{"azure", "Azure"}
-		}, vocabulary},
-		{"a company on the way to the hosting", func(g map[string]any) {
-			deployment(g)["hosting"], deployment(g)["companies"] = "anthropic", []any{"azure", "Fireworks", "anthropic"}
-		}, vocabulary},
+		{"hosting", func(g map[string]any) { deployment(g)["hosting"] = "Microsoft" }, "names a hosting that the catalog does not list"},
 		{"deployment type", func(g map[string]any) { upstream(g)["deploymentType"] = "GlobalStandard" }, vocabulary},
 		{"weight precision", func(g map[string]any) { deployment(g)["weightPrecision"] = "fp7" }, vocabulary},
 		// Locations are the catalog's places, which name the European Union eu.

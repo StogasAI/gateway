@@ -801,14 +801,14 @@ func configError(format string, arguments ...any) error {
 }
 
 var exactFieldTypes = map[string]string{
-	"author.headquarteredCountry": "string", "author.name": "string", "author.id": "string",
+	"author.companyId": "string", "author.headquarteredCountry": "string", "author.name": "string", "author.id": "string",
 	"deployment.approvalRequired": "boolean", "deployment.contextWindowTokens": "integer", "deployment.maxInputTokens": "integer",
 	"deployment.dataHandling.endToEndEncrypted": "boolean", "deployment.dataHandling.processingLocation": "string",
 	"deployment.dataHandling.processingWithin": "string_list", "deployment.dataHandling.retentionDays": "integer",
 	"deployment.dataHandling.storageLocation": "string", "deployment.dataHandling.storageWithin": "string_list",
 	"deployment.dataHandling.tee": "boolean", "deployment.dataHandling.teeVerified": "boolean",
 	"deployment.dataHandling.trainingUse": "boolean", "deployment.dataHandling.zeroDataRetention": "boolean",
-	"deployment.hosting": "string", "deployment.companies": "string_list",
+	"deployment.hosting": "string", "deployment.companies": "string_list", "deployment.dataHandling.sharedWith": "string_list",
 	"deployment.inputModalities": "string_list", "deployment.maxOutputTokens": "integer",
 	"deployment.modelId": "string", "deployment.outputModalities": "string_list",
 	"deployment.reasoning": "string", "deployment.reasoningEfforts": "string_list",
@@ -823,7 +823,7 @@ var exactFieldTypes = map[string]string{
 	"model.maxOutputTokens": "integer", "model.name": "string", "model.reasoning": "string",
 	"model.reasoningEfforts": "string_list", "model.reasoningMaxTokens.maximum": "integer",
 	"model.reasoningMaxTokens.minimum": "integer", "model.releaseDate": "string", "model.id": "string",
-	"provider.credentialModes": "string_list", "provider.headquarteredCountry": "string",
+	"provider.companyId": "string", "provider.credentialModes": "string_list", "provider.headquarteredCountry": "string",
 	"provider.name": "string", "provider.id": "string",
 	"request.bodyBytes": "integer", "request.clientTools": "string_list", "request.hostedTools": "string_list",
 	"request.interface": "string", "request.mcpServers": "string_list", "request.mcpTools": "string_list",

@@ -39,12 +39,13 @@ func sharedJSON[T any]() *json.Unmarshalers {
 	})
 }
 
-// catalogRoot is a release's root: the places that data handling names, a summary of every
-// record, current or retired, the parts that hold the records that are not whole in it, and the
-// dated states.
+// catalogRoot is a release's root: the places that data handling names, the companies that
+// records name, a summary of every record, current or retired, the parts that hold the records
+// that are not whole in it, and the dated states.
 type catalogRoot struct {
 	Schema    string                  `json:"schema"`
 	Locations map[string]locationNode `json:"locations"`
+	Companies map[string]company      `json:"companies"`
 	Summaries rootSummaries           `json:"summaries"`
 	Parts     []PartFile              `json:"parts"`
 	Periods   shown                   `json:"periods"`
@@ -107,6 +108,14 @@ type locationNode struct {
 	ParentIDs []string `json:"parentIds"`
 }
 
+// company is what the gateway reads of a company: the country of its headquarters, which the
+// authors and providers that name the company repeat.
+type company struct {
+	Name shown `json:"name"`
+
+	HeadquarteredCountry string `json:"headquarteredCountry"`
+}
+
 // rootState is a dated state as the root lists it: when it starts, and the summaries that
 // differ then. The parts hold the records that differ.
 type rootState struct {
@@ -139,10 +148,11 @@ type partGraph struct {
 }
 
 // compiledCatalog is a release as the gateway reads it at an instant: each place with the places
-// that directly contain it, the graph, how each dated state changes it, the day that each
+// that directly contain it, the companies, the graph, how each dated state changes it, the day that each
 // selector of a record that has retired retired, and every path that the root summarizes.
 type compiledCatalog struct {
 	Locations map[string][]string `json:"locations"`
+	Companies map[string]company  `json:"companies"`
 	Graph     compiledGraph       `json:"graph"`
 	Schedule  []scheduleEntry     `json:"schedule"`
 	Retired   map[string]string   `json:"retired"`

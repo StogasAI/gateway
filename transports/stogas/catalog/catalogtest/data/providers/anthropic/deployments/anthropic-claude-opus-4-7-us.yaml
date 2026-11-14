@@ -1,13 +1,9 @@
 deployments:
   modelId: claude-opus-4-7
   routeIds: [anthropic-messages]
-  hosting: anthropic
   upstream:
     model: claude-opus-4-7
     inferenceGeo: us
-  overrides:
-    dataHandling:
-      processingLocation: US
   pricing:
     input_tokens:
       per_mill_tokens: '5.5'

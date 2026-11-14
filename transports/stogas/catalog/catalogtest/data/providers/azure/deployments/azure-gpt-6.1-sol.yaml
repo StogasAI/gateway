@@ -1,7 +1,6 @@
 deployments:
   modelId: gpt-6.1-sol
   routeIds: [azure-chat-completions, azure-responses]
-  hosting: azure
   upstream:
     model: gpt-6.1-sol
     modelFormat: OpenAI

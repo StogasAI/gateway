@@ -1,7 +1,6 @@
 deployments:
   modelId: gpt-5.5-2026-04-23
   routeIds: [azure-chat-completions, azure-responses]
-  hosting: azure
   upstream:
     model: gpt-5.5
     modelFormat: OpenAI
@@ -12,9 +11,6 @@ deployments:
     # Microsoft caps the GPT-5.5 Responses prompt and output together at about 922,000 tokens.
     # Reviewed 2026-10-13: https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure#responses-api-token-budget
     contextWindowTokens: 922000
-    dataHandling:
-      processingLocation: europe
-      storageLocation: europe
   pricing:
     input_tokens:
       per_mill_tokens: '5.5'
