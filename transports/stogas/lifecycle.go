@@ -279,10 +279,10 @@ func literalSecret(value string) schemas.SecretVar {
 // others. Core's own list of Fast models names them one by one and drops speed from a model it does
 // not name, which would run a Fast deployment of a newer model at Standard.
 //
-// Fine-grained tool streaming: core opts Claude's tools into it on Google Cloud only. Claude checks
-// that `tools` is unchanged before it accepts earlier reasoning, so a conversation that moves
-// between hostings must send the same tools everywhere, and clients cannot set the flag through
-// OpenAI's request shapes.
+// Fine-grained tool streaming: core opts Claude's tools into it by hosting and model name, and
+// adds a beta header that no hosting needs. Claude checks that `tools` is unchanged before it
+// accepts earlier reasoning, so a conversation that moves between hostings must send the same
+// tools everywhere. The gateway sets the field itself on every hosting (streamToolInput).
 var modelCapabilities = schemas.ModelCapabilities{
 	SupportsFastMode:            schemas.Ptr(true),
 	SupportsEagerInputStreaming: schemas.Ptr(false),

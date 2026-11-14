@@ -216,6 +216,14 @@ func providerEndUserIDs(ctx *schemas.BifrostContext, provider schemas.ModelProvi
 }
 
 func prepareChatProviderBody(ctx *schemas.BifrostContext, request *schemas.BifrostChatRequest, streaming bool, hosting string) ([]byte, *schemas.BifrostError) {
+	body, bifrostErr := chatProviderBody(ctx, request, streaming, hosting)
+	if bifrostErr != nil || !usesAnthropicWireFormat(ctx, request.Provider, request.Model) {
+		return body, bifrostErr
+	}
+	return streamToolInput(body)
+}
+
+func chatProviderBody(ctx *schemas.BifrostContext, request *schemas.BifrostChatRequest, streaming bool, hosting string) ([]byte, *schemas.BifrostError) {
 	switch request.Provider {
 	case catalog.ProviderAWS, catalog.ProviderGoogleCloud:
 		setCloudClaudeBase(ctx)
@@ -256,6 +264,14 @@ func prepareChatProviderBody(ctx *schemas.BifrostContext, request *schemas.Bifro
 }
 
 func prepareResponsesProviderBody(ctx *schemas.BifrostContext, request *schemas.BifrostResponsesRequest, streaming bool, hosting string) ([]byte, *schemas.BifrostError) {
+	body, bifrostErr := responsesProviderBody(ctx, request, streaming, hosting)
+	if bifrostErr != nil || !usesAnthropicWireFormat(ctx, request.Provider, request.Model) {
+		return body, bifrostErr
+	}
+	return streamToolInput(body)
+}
+
+func responsesProviderBody(ctx *schemas.BifrostContext, request *schemas.BifrostResponsesRequest, streaming bool, hosting string) ([]byte, *schemas.BifrostError) {
 	switch request.Provider {
 	case catalog.ProviderAWS, catalog.ProviderGoogleCloud:
 		setCloudClaudeBase(ctx)
@@ -385,6 +401,27 @@ func restoreStrictTools(body []byte, hosting string, strict map[string]bool) ([]
 		}
 		var err error
 		if body, err = providerutils.SetJSONField(body, "tools."+strconv.Itoa(index)+".strict", true); err != nil {
+			return nil, providerutils.NewBifrostOperationError(schemas.ErrProviderRequestMarshal, err)
+		}
+	}
+	return body, nil
+}
+
+// streamToolInput has Claude send the input of each function tool as it writes it
+// (`eager_input_streaming`). Claude otherwise holds each parameter back until it is complete, so
+// a long one, such as a file's content, arrives in one piece after a silence that can outlast the
+// request's output idle limit. Every Claude hosting takes the field without a beta header. Each
+// gets it, on streamed and whole requests alike, because Claude compares `tools` before it
+// accepts earlier thinking, and only the tools that the client defines take it. The input is
+// then not checked before it streams; a finished call that holds no JSON object fails the reply,
+// as it does from every provider.
+func streamToolInput(body []byte) ([]byte, *schemas.BifrostError) {
+	for index, tool := range providerutils.GetJSONField(body, "tools").Array() {
+		if toolType := tool.Get("type").String(); toolType != "" && toolType != "custom" {
+			continue
+		}
+		var err error
+		if body, err = providerutils.SetJSONField(body, "tools."+strconv.Itoa(index)+".eager_input_streaming", true); err != nil {
 			return nil, providerutils.NewBifrostOperationError(schemas.ErrProviderRequestMarshal, err)
 		}
 	}

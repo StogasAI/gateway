@@ -23,7 +23,7 @@ const (
 func TestAnthropicClientToolsReachClaudeAsNamed(t *testing.T) {
 	const tools = `"tools":[` + anthropicBashTool + `,{"type":"text_editor_20250728","name":"str_replace_based_edit_tool","max_characters":10000,"cache_control":{"type":"ephemeral"}},{"type":"function","name":"lookup"}],`
 	const forcedTools = tools + `"tool_choice":{"type":"function","name":"str_replace_based_edit_tool"},`
-	const wantTools = `[{"name":"bash","type":"bash_20250124"},{"name":"str_replace_based_edit_tool","type":"text_editor_20250728","cache_control":{"type":"ephemeral"},"max_characters":10000},{"name":"lookup","input_schema":{"type":"object","properties":{}}}]`
+	const wantTools = `[{"name":"bash","type":"bash_20250124"},{"name":"str_replace_based_edit_tool","type":"text_editor_20250728","cache_control":{"type":"ephemeral"},"max_characters":10000},{"name":"lookup","input_schema":{"type":"object","properties":{}},"eager_input_streaming":true}]`
 	check := func(t *testing.T, wire []byte, forced bool) {
 		t.Helper()
 		var sent struct {
