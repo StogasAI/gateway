@@ -3746,7 +3746,7 @@ func TestAnthropicChatMCPToolsetFailsBeforeProviderRequest(t *testing.T) {
 
 // A request without max_tool_calls sends twice the calls that its hold covers,
 // so the hold is never less than half of what the calls can cost.
-func TestResponsesHostedToolsWithoutACapSendTwiceTheCallsTheHoldCovers(t *testing.T) {
+func TestResponsesHostedToolsWithoutACapSendNone(t *testing.T) {
 	cases := []struct {
 		name     string
 		body     string
@@ -4122,7 +4122,7 @@ func TestResponsesToolChoiceRequiresNamedFunctionSelectors(t *testing.T) {
 	}
 }
 
-func TestResponsesOmittedHostedToolCapCoversAllowance(t *testing.T) {
+func TestResponsesWithoutAHostedToolCapHoldTenCallsAndSettleAll(t *testing.T) {
 	cases := []struct {
 		name     string
 		body     string
@@ -4180,10 +4180,23 @@ func TestResponsesOmittedHostedToolCapCoversAllowance(t *testing.T) {
 			}
 			finalMeter := findMeterEstimate(state.FinalMeters, tc.meterKey)
 			if finalMeter == nil || finalMeter.Quantity != "10" || finalMeter.HoldRequired {
-				t.Fatalf("expected final hosted calls at the authorized maximum, got %#v in %#v", finalMeter, state.FinalMeters)
+				t.Fatalf("expected ten final hosted calls, got %#v in %#v", finalMeter, state.FinalMeters)
 			}
 			if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD) < 0 {
 				t.Fatalf("hold must cover omitted-cap final hosted-tool charge: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD, state.Hold.Meters, state.FinalMeters)
+			}
+
+			// The provider received no cap, so the model can call more, and every call settles.
+			state.Signals = &StandardSignals{Prompt: 1, WebSearch: 4 * defaultResponsesHostedToolCalls}
+			if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
+				t.Fatalf("CalculateUpstreamCost returned error: %v", err)
+			}
+			finalMeter = findMeterEstimate(state.FinalMeters, tc.meterKey)
+			if finalMeter == nil || finalMeter.Quantity != "40" || state.BifrostError != nil {
+				t.Fatalf("expected forty hosted calls to settle, got %#v in %#v", finalMeter, state.FinalMeters)
+			}
+			if compareMoneyStrings(holdMeter.AmountUSD, finalMeter.AmountUSD) >= 0 {
+				t.Fatalf("forty calls must cost more than the ten that the hold reserved: hold=%s final=%s", holdMeter.AmountUSD, finalMeter.AmountUSD)
 			}
 		})
 	}
