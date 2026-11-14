@@ -547,9 +547,8 @@ func validateActualResponseModel(state *State, model string) error {
 	resolution := state.Resolution
 	// An operator that the catalog does not know names the model in its own terms. A customer's
 	// Azure deployment answers for whatever its account serves now: one that Azure upgraded or its
-	// owner changed since the last check of the account still answers, and the check that such a
-	// reply starts stops its target (Server.azureTargetMoved). Both replies are checked only for
-	// changing model within one reply.
+	// owner changed since the last check of the account still answers, and the account's next
+	// check updates its target. Both replies are checked only for changing model within one reply.
 	if resolution.Deployment.Hosting == catalog.HostingUnknown || resolution.Provider == schemas.Azure {
 		if state.ActualModel != "" && state.ActualModel != model {
 			return ErrProviderExecutionMismatch

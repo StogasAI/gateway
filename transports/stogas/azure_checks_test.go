@@ -250,19 +250,6 @@ func settle(checks *AzureChecks, key string) {
 	checks.flights.Do(key, func() (any, error) { return nil, nil })
 }
 
-func TestAzureChecksRecheckAGoneTargetOnceAtATime(t *testing.T) {
-	store := &fakeAzureCheckStore{claims: []billing.AzureClaim{{Claimed: true, StartedAt: time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)}}}
-	checks, requests, clock := newTestAzureChecks(t, store, map[string]any{"value": []any{}})
-	target := testCheckTarget(clock.Ago(time.Minute))
-	for range 3 {
-		checks.Recheck(target)
-	}
-	waitFor(func() bool { _, recorded := store.counts(); return recorded == 1 })
-	if claimed, _ := store.counts(); claimed != 1 || requests.Load() != 1 || store.staleAfter[0] != azureCheckPace {
-		t.Fatalf("rechecks: claims=%d requests=%d stale after %v", claimed, requests.Load(), store.staleAfter)
-	}
-}
-
 // A request never waits for Azure: it keeps the target that its hold found in service, however old
 // the last confirmation, while the check that it started goes on for later requests.
 func TestAzureChecksNeverHoldARequestForACheck(t *testing.T) {

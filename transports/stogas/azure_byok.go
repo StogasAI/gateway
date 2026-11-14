@@ -145,21 +145,6 @@ func azureRetired(retiresAt *time.Time, now time.Time) bool {
 	return !now.Before(time.Date(day.Year(), day.Month(), day.Day(), 36, 0, 0, 0, time.UTC))
 }
 
-// AzureServedModelChanged reports whether an Azure reply named another model or version than its
-// target's. Azure names the deployment's model name and version joined by a hyphen on Responses,
-// and on Chat Completions for OpenAI models. A reply that names nothing, or only the model, is no
-// evidence. Azure moved the deployment after its last check, so the reply is the customer's own
-// deployment's answer and goes to the caller, and a check of the account stops the target.
-func AzureServedModelChanged(authorization *billing.Authorization, served string) bool {
-	if authorization == nil || authorization.AzureBinding == nil {
-		return false
-	}
-	binding := authorization.AzureBinding
-	served = strings.TrimSpace(served)
-	return served != "" && !strings.EqualFold(served, binding.ModelName) &&
-		!strings.EqualFold(served, binding.ModelName+"-"+binding.ModelVersion)
-}
-
 func azureDirectKey(authorization *billing.Authorization, resolution *catalog.ResolvedRequest) (schemas.Key, string, error) {
 	if authorization == nil || resolution == nil || resolution.Provider != schemas.Azure || authorization.AzureBinding == nil {
 		return schemas.Key{}, "", billing.ErrByok

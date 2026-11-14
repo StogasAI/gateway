@@ -204,45 +204,6 @@ func anthropicRefusal(status int, message string) *schemas.BifrostError {
 	return &schemas.BifrostError{StatusCode: schemas.Ptr(status), Error: &schemas.ErrorField{Type: schemas.Ptr(errorType), Message: message}}
 }
 
-// A reply that shows its Azure target moved asks for a check of the account and stands as it is.
-func TestAzureReplyThatShowsItsTargetMovedAsksForACheck(t *testing.T) {
-	binding := billing.AzureBinding{ID: "binding-1", ModelName: "gpt-5.6-sol", ModelVersion: "2026-07-09"}
-	authorization := &billing.Authorization{AzureBinding: &binding, UpstreamByok: "byok-1"}
-	server := &Server{}
-	for _, headers := range []map[string]string{
-		{"X-Ms-Served-Model": "gpt-5.6-sol-2026-07-09"},
-		{"x-ms-served-model": "GPT-5.6-sol-2026-07-09"},
-		// A reply that names no version, or none at all, is no evidence.
-		{"x-ms-served-model": "gpt-5.6-sol"},
-		nil,
-	} {
-		if server.azureTargetMoved(retryAfterContext(headers), authorization, nil) {
-			t.Fatalf("headers %v asked for a check", headers)
-		}
-	}
-	changed := retryAfterContext(map[string]string{"x-ms-served-model": "gpt-5.6-sol-2026-10-28"})
-	if !server.azureTargetMoved(changed, authorization, nil) {
-		t.Fatal("a reply from another version asked for no check")
-	}
-	failure := func(status int, code string) *schemas.BifrostError {
-		return &schemas.BifrostError{StatusCode: schemas.Ptr(status), Error: &schemas.ErrorField{Code: schemas.Ptr(code), Message: code}}
-	}
-	for _, test := range []struct {
-		failure *schemas.BifrostError
-		want    bool
-	}{
-		{failure(http.StatusNotFound, "DeploymentNotFound"), true},
-		{failure(http.StatusGone, "ModelDeprecated"), true},
-		{failure(http.StatusTooManyRequests, "RateLimitReached"), false},
-		{failure(http.StatusInternalServerError, "InternalServerError"), false},
-	} {
-		// A failure's headers say nothing about the target.
-		if got := server.azureTargetMoved(changed, authorization, test.failure); got != test.want {
-			t.Errorf("%s: asks for a check = %v, want %v", *test.failure.Error.Code, got, test.want)
-		}
-	}
-}
-
 func retryAfterContext(headers map[string]string) *schemas.BifrostContext {
 	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 	if headers != nil {

@@ -245,27 +245,6 @@ func TestAzureTargetsServeUntilTheirRetirementDateHasEndedEverywhere(t *testing.
 	}
 }
 
-func TestAzureServedModelChangedReadsTheReplysModel(t *testing.T) {
-	binding := azureTestBinding()
-	authorization := &billing.Authorization{AzureBinding: &binding}
-	for served, want := range map[string]bool{
-		"gpt-5.6-sol-2026-07-09": false,
-		"GPT-5.6-SOL-2026-07-09": false,
-		// A reply that names no version, or nothing, is no evidence.
-		" gpt-5.6-sol ":          false,
-		"":                       false,
-		"gpt-5.6-sol-2026-10-28": true,
-		"gpt-5.7-sol-2026-10-28": true,
-	} {
-		if got := AzureServedModelChanged(authorization, served); got != want {
-			t.Errorf("%q: changed = %v, want %v", served, got, want)
-		}
-	}
-	if AzureServedModelChanged(&billing.Authorization{}, "gpt-5.6-sol-2026-10-28") {
-		t.Fatal("a request without an Azure target was judged")
-	}
-}
-
 func TestParseAzureByokCredential(t *testing.T) {
 	valid := azureTestCredential(t)
 	parsed, err := parseAzureByokCredential(valid)

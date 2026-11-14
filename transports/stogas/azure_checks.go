@@ -31,8 +31,7 @@ const (
 	azureCheckFresh = 10 * time.Minute
 	// While checks here fail, requests keep their targets until the last confirmation is this old.
 	azureCheckGrace = 2 * time.Hour
-	// A gateway starts a credential's checks no closer together than this, and a reply that shows
-	// a target out of service (Recheck) is answered by a check that any gateway made this recently.
+	// A gateway starts a credential's checks no closer together than this.
 	azureCheckPace = 5 * time.Second
 	// A gateway retries a failed check no sooner than this.
 	azureCheckRetry   = 30 * time.Second
@@ -142,13 +141,6 @@ func (c *AzureChecks) age(verifiedAt time.Time) time.Duration {
 		return azureCheckGrace
 	}
 	return c.now().Sub(verifiedAt)
-}
-
-// Recheck checks a target's account in the background after a reply showed that its deployment
-// is gone, retired or serving another model version, so the fleet stops the target now rather
-// than at the next due check. A check that any gateway made in the last few seconds answers it.
-func (c *AzureChecks) Recheck(target azureCheckTarget) {
-	c.background(target, target.ByokID+"/recheck", azureCheckPace)
 }
 
 // background checks target unless a confirmation is younger than fresh or this gateway tried

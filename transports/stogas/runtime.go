@@ -106,25 +106,6 @@ func (r *Runtime) ApplyUpstreamCredentials(ctx *schemas.BifrostContext, state *S
 	return applyUpstreamCredentials(ctx, state, r.azureTokens, r.googleTokens, r.azureChecks)
 }
 
-// RecheckAzureTarget checks a request's Azure account in the background after a reply showed that
-// the target's deployment is gone, retired or serving another model version.
-func (r *Runtime) RecheckAzureTarget(authorization *billing.Authorization) {
-	if r == nil || r.azureChecks == nil || authorization == nil || authorization.AzureBinding == nil ||
-		!azureAccountIDPattern.MatchString(authorization.AzureAccountID) {
-		return
-	}
-	credential, err := parseAzureByokCredential(authorization.UpstreamByokSecret)
-	if err != nil {
-		return
-	}
-	r.azureChecks.Recheck(azureCheckTarget{
-		ByokID:     authorization.UpstreamByok,
-		AccountID:  authorization.AzureAccountID,
-		VerifiedAt: authorization.AzureVerifiedAt,
-		Credential: azureauth.Credential{TenantID: credential.TenantID, ClientID: credential.ClientID, Secret: credential.ClientSecret},
-	})
-}
-
 func (r *Runtime) AzureAuthDiagnostics() azureauth.Diagnostics {
 	if r == nil {
 		return azureauth.Diagnostics{}

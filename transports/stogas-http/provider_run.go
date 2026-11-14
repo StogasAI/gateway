@@ -501,7 +501,7 @@ func startProviderCall[T any](r *providerRun, wait time.Duration, call providerC
 		stogas.SetChutesCall(attempt, resolution, 1+resolution.Retries()-r.retries, r.waiting)
 	}
 	request, state, idle := r.pair.request, r.state, r.pair.Resolution.RequestTimeouts().OutputIdle()
-	server, resolution, provider, authorization := r.server, r.pair.Resolution, r.pair.Resolution.Provider, r.pair.Authorization
+	server, resolution, provider := r.server, r.pair.Resolution, r.pair.Resolution.Provider
 	ready := make(chan providerResult[T], 1)
 	go func() {
 		result := providerResult[T]{ctx: attempt}
@@ -536,26 +536,9 @@ func startProviderCall[T any](r *providerRun, wait time.Duration, call providerC
 		}
 		if server != nil {
 			server.providers.observe(provider, result.failure)
-			if authorization != nil && authorization.AzureBinding != nil && server.azureTargetMoved(attempt, authorization, result.failure) {
-				server.runtime.RecheckAzureTarget(authorization)
-			}
 		}
 	}()
 	return ready
-}
-
-// azureTargetMoved reports a call on an Azure target whose reply shows that the target no longer
-// serves its model version: the deployment is gone or retired, or the reply names another version.
-// The account then needs a check at once, which stops the target for the fleet. The reply itself
-// stands: a failure moves the request on as any other does, and an answer from another version is
-// the answer of the customer's own deployment, which Azure moved after the last check, so it goes
-// to the caller and the log names the version that served it.
-func (s *Server) azureTargetMoved(attempt *schemas.BifrostContext, authorization *billing.Authorization, failure *schemas.BifrostError) bool {
-	if failure != nil {
-		status := billing.NormalizeUpstreamStatus(failure)
-		return status == "model_unavailable" || status == "model_retired"
-	}
-	return stogas.AzureServedModelChanged(authorization, providerResponseHeader(attempt, "x-ms-served-model"))
 }
 
 // runProvider calls the bound pair, and the pairs after it, until a call
