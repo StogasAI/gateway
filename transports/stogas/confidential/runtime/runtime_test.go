@@ -29,12 +29,12 @@ func TestDisabledRuntimeAndIncompleteAdmission(t *testing.T) {
 func TestStartupRetryStopsOnCancellationAndDefinitiveRejection(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	calls := 0
-	err := retryStartup(ctx, func() (time.Duration, error) { calls++; cancel(); return 0, errors.New("delivery unavailable") })
+	err := retryStartup(ctx, "step", func() (time.Duration, error) { calls++; cancel(); return 0, errors.New("delivery unavailable") })
 	if !errors.Is(err, context.Canceled) || calls != 1 {
 		t.Fatal("cancellation did not stop retry", calls, err)
 	}
 	denied := &provision.HTTPResponseError{StatusCode: http.StatusForbidden, Code: "instance_stopped"}
-	err = retryStartup(t.Context(), func() (time.Duration, error) { return 0, denied })
+	err = retryStartup(t.Context(), "step", func() (time.Duration, error) { return 0, denied })
 	if !errors.Is(err, denied) {
 		t.Fatal("definitive rejection retried", err)
 	}
@@ -58,7 +58,7 @@ func TestStartupRetryWaitsAsControlAsksWithinItsBound(t *testing.T) {
 	}
 	synctest.Test(t, func(t *testing.T) {
 		calls, last := 0, time.Now()
-		err := retryStartup(t.Context(), func() (time.Duration, error) {
+		err := retryStartup(t.Context(), "step", func() (time.Duration, error) {
 			if calls > 0 {
 				previous := attempts[calls-1]
 				if waited := time.Since(last); waited < previous.min || waited > previous.max {
@@ -73,6 +73,35 @@ func TestStartupRetryWaitsAsControlAsksWithinItsBound(t *testing.T) {
 			t.Fatal("startup retry did not finish", calls, err)
 		}
 	})
+}
+
+// A guest that cannot start waits without failing, so it names the step once its
+// failures reach the longest wait, and not again while that step keeps failing.
+func TestStartupRetryReportsAStepThatKeepsFailing(t *testing.T) {
+	var reported []string
+	previous := startupWaiting
+	startupWaiting = func(step string) { reported = append(reported, step) }
+	defer func() { startupWaiting = previous }()
+	synctest.Test(t, func(t *testing.T) {
+		started, calls := time.Now(), 0
+		err := retryStartup(t.Context(), "boot_verification", func() (time.Duration, error) {
+			calls++
+			if len(reported) == 0 && time.Since(started) > 40*time.Second {
+				t.Error("no report after", time.Since(started))
+			}
+			if calls == 12 {
+				return 0, nil
+			}
+			return 0, errors.New("evidence unreadable")
+		})
+		if err != nil || len(reported) != 1 || reported[0] != "boot_verification" {
+			t.Fatal("reports", reported, err)
+		}
+	})
+	reported = nil
+	if err := retryStartup(t.Context(), "boot_registration", func() (time.Duration, error) { return 0, nil }); err != nil || reported != nil {
+		t.Fatal("a step that succeeds was reported", reported, err)
+	}
 }
 
 func TestDrainSignalIsTerminalAndIdempotent(t *testing.T) {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"os"
 	"sync"
 	"time"
 
@@ -140,7 +141,7 @@ func startBoot(ctx context.Context, config stogas.ConfidentialConfig, resources 
 	// confirms that it expired unconsumed. Lost replies retry the exact boot and CSR.
 	for {
 		var challenge *provision.RegistrationChallenge
-		err = retryStartup(ctx, func() (time.Duration, error) {
+		err = retryStartup(ctx, "registration_challenge", func() (time.Duration, error) {
 			var e error
 			challenge, e = client.RegistrationChallenge(ctx, config.InstanceID)
 			return 0, e
@@ -152,7 +153,7 @@ func startBoot(ctx context.Context, config stogas.ConfidentialConfig, resources 
 		if e != nil {
 			return nil, e
 		}
-		err = retryStartup(ctx, func() (time.Duration, error) {
+		err = retryStartup(ctx, "boot_verification", func() (time.Duration, error) {
 			var e error
 			boot, e = quoted.prepare(ctx, evidence, environment, material, keys)
 			return 0, e
@@ -168,7 +169,7 @@ func startBoot(ctx context.Context, config stogas.ConfidentialConfig, resources 
 			return nil, e
 		}
 		request := provision.NewBootRegistration(config.InstanceID, boot.document, csr)
-		err = retryStartup(ctx, func() (time.Duration, error) {
+		err = retryStartup(ctx, "boot_registration", func() (time.Duration, error) {
 			var e error
 			response, e = client.RegisterBoot(ctx, request, boot.identity.NodeID)
 			if e != nil {
@@ -188,7 +189,7 @@ func startBoot(ctx context.Context, config stogas.ConfidentialConfig, resources 
 		}
 		break
 	}
-	err = retryStartup(ctx, func() (time.Duration, error) {
+	err = retryStartup(ctx, "logged_boot_verification", func() (time.Duration, error) {
 		return 0, evidence.refresh(ctx, func(snapshot *verifier.EvidenceSnapshot, _ evidenceSummary) error {
 			_, e := snapshot.VerifyLoggedBootAt(boot.document, response.Inclusion, evidence.now())
 			return e
@@ -240,9 +241,11 @@ func startBoot(ctx context.Context, config stogas.ConfidentialConfig, resources 
 // Startup retries are bounded in pace and memory, not by an arbitrary fleet
 // provisioning timeout. Cancellation and definitive Control rejection stop them.
 // An attempt returns zero when it is done, or the wait Control asked for while
-// its work is pending. Failures back off instead.
-func retryStartup(ctx context.Context, attempt func() (time.Duration, error)) error {
-	delay := time.Second
+// its work is pending. Failures back off instead, and a step whose failures reach
+// the longest wait, about 30 seconds in, is reported once so that a guest which
+// cannot start says where it waits.
+func retryStartup(ctx context.Context, step string, attempt func() (time.Duration, error)) error {
+	delay, reported := time.Second, false
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -257,6 +260,10 @@ func retryStartup(ctx context.Context, attempt func() (time.Duration, error)) er
 		if err == nil {
 			delay, wait = time.Second, min(wait, maxStartupWait)
 		} else {
+			if delay == maxStartupWait && !reported {
+				reported = true
+				startupWaiting(step)
+			}
 			wait = jitter(delay)
 			delay = min(delay*2, maxStartupWait)
 		}
@@ -264,6 +271,12 @@ func retryStartup(ctx context.Context, attempt func() (time.Duration, error)) er
 			return err
 		}
 	}
+}
+
+// startupWaiting writes the step to the guest's console. It names no error, because
+// an error can carry text from Control, a store or a certificate.
+var startupWaiting = func(step string) {
+	fmt.Fprintf(os.Stderr, "{\"event\":\"gateway_startup_waiting\",\"reasonCode\":%q,\"severity\":\"warn\"}\n", step)
 }
 
 func jitter(interval time.Duration) time.Duration {
