@@ -41,7 +41,6 @@
       (with-imported-modules '((guix build utils))
         #~(begin
             (use-modules (guix build utils)
-                         (ice-9 ftw)
                          (ice-9 match)
                          (ice-9 popen)
                          (ice-9 textual-ports)
@@ -72,8 +71,6 @@
             (define work (string-append (getcwd) "/work"))
             (define source (string-append work "/source"))
             (define rootfs (string-append work "/rootfs"))
-            (define ca-bundle
-              (string-append rootfs "/etc/ssl/certs/ca-certificates.crt"))
             (define initramfs (string-append work "/initramfs.cpio.zst"))
             (define uki (string-append work "/gateway.efi"))
             (define igvm (string-append #$output "/gateway.igvm"))
@@ -141,30 +138,10 @@
 
             (for-each (lambda (directory)
                         (mkdir-p (string-append rootfs directory)))
-                      '("/etc/ntpd-rs" "/etc/ssl/certs" "/stogas"))
+                      '("/etc/ntpd-rs" "/stogas"))
             ;; Kernel DHCP writes the resolver settings to /proc/net/pnp
             ;; before init starts, so one image works in every subnet.
             (symlink "/proc/net/pnp" (string-append rootfs "/etc/resolv.conf"))
-            ;; Guix removes distrusted roots with a graft, which reaches
-            ;; references but not copied files, so the bundle comes from the
-            ;; grafted package itself.
-            (let ((certificates
-                   #$(file-append
-                      (let ((nss-certs (specification->package "nss-certs")))
-                        (or (package-replacement nss-certs) nss-certs))
-                      "/etc/ssl/certs")))
-              (call-with-output-file ca-bundle
-                (lambda (port)
-                  (for-each
-                   (lambda (name)
-                     (display (call-with-input-file
-                                  (string-append certificates "/" name)
-                                get-string-all)
-                              port)
-                     (newline port))
-                   (scandir certificates
-                            (lambda (name) (string-suffix? ".pem" name))
-                            string<?)))))
             (copy-file ntp-config (string-append rootfs "/etc/ntpd-rs/ntp.toml"))
             (copy-file #$(file-append stogas-ntpd-rs "/bin/ntp-daemon")
                        (string-append rootfs "/stogas/ntp-daemon"))
@@ -191,7 +168,6 @@
                         ((file mode)
                          (chmod (string-append rootfs file) mode)))
                       '(("/etc/ntpd-rs/ntp.toml" #o444)
-                        ("/etc/ssl/certs/ca-certificates.crt" #o444)
                         ("/init" #o555)
                         ("/stogas/gateway.init" #o555)
                         ("/stogas/ntp-daemon" #o555)))
@@ -263,7 +239,6 @@
                      ("go_vendor_tree_sha256"
                       . #$(environment "STOGAS_RELEASE_VENDOR_SHA256"))
                      ("go_version" . ,(output-of "go" "version"))
-                     ("guest_ca_bundle_path" . "/etc/ssl/certs/ca-certificates.crt")
                      ("guix_channel_commit" . #$%guix-commit)
                      ("input_sha256"
                       ,@(map (match-lambda
@@ -274,7 +249,6 @@
                                 . ,(string-append source "/transports/go.mod"))
                                ("transports/go.sum"
                                 . ,(string-append source "/transports/go.sum"))
-                               ("guix/nss-certs/ca-certificates.crt" . ,ca-bundle)
                                ("stogas/release/guix/cmdline.txt" . ,cmdline)
                                ("stogas/release/guix/ntp.toml" . ,ntp-config)
                                ("stogas/release/guix/os-release" . ,os-release)

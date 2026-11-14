@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -11,12 +12,14 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/maximhq/bifrost/transports/stogas/confidential/clock"
+	"golang.org/x/crypto/x509roots/fallback/bundle"
 )
 
 const (
@@ -25,6 +28,8 @@ const (
 	envFallbackPath = "/stogas/env"
 	envFWCfgPath    = "/sys/firmware/qemu_fw_cfg/by_name/opt/stogas/env/raw"
 	gatewayPath     = "/stogas/gateway.init"
+	// The clock daemon reads the standard bundle path.
+	trustedRootsPath = "/etc/ssl/certs/ca-certificates.crt"
 )
 
 type initReasonCode string
@@ -41,6 +46,7 @@ const (
 	initMountFailed              initReasonCode = "mount_failed"
 	initMountProcFailed          initReasonCode = "mount_proc_failed"
 	initMountSysFailed           initReasonCode = "mount_sys_failed"
+	initTrustedRootsFailed       initReasonCode = "trusted_roots_write_failed"
 	initUnsupportedConfigKey     initReasonCode = "unsupported_configuration_key"
 	initUpstreamConnectionFailed initReasonCode = "upstream_connection_failed"
 	initUpstreamConnectionOK     initReasonCode = "upstream_connection_succeeded"
@@ -87,10 +93,14 @@ func main() {
 	command := exec.Command(args[0], args[1:]...)
 	// The host writes and reads this console, so the gateway reads no input
 	// from it, and a gateway crash must not print the registers and stack
-	// contents that the Go runtime prints by default.
+	// contents that the Go runtime prints by default. The gateway checks
+	// certificates only against the roots compiled into it, which keep their
+	// distrust dates, and ignores the bundle file.
 	command.Stdout, command.Stderr = os.Stdout, os.Stderr
-	command.Env = append(os.Environ(), "GOTRACEBACK=none")
-	if err := raiseClock(os.Stderr, time.Now(), releaseTime, setClock); err != nil {
+	command.Env = append(os.Environ(), "GOTRACEBACK=none", "GODEBUG=x509usefallbackroots=1")
+	if err := writeTrustedRoots(trustedRootsPath); err != nil {
+		writeInitEvent(os.Stderr, "guest_init_failed", "error", initTrustedRootsFailed)
+	} else if err := raiseClock(os.Stderr, time.Now(), releaseTime, setClock); err != nil {
 		writeInitEvent(os.Stderr, "guest_init_failed", "error", initClockSetFailed)
 	} else if err := runGuest(daemon, command, shutdown, clock.Synchronized); errors.Is(err, errClockDaemon) {
 		writeInitEvent(os.Stderr, "guest_init_failed", "error", initClockDaemonFailed)
@@ -102,6 +112,22 @@ func main() {
 	_ = syscall.Reboot(syscall.LINUX_REBOOT_CMD_POWER_OFF)
 	_ = syscall.Reboot(syscall.LINUX_REBOOT_CMD_RESTART)
 	os.Exit(127)
+}
+
+// writeTrustedRoots gives the clock daemon the gateway's roots: the Go team's
+// copy of Mozilla's TLS roots. A bundle file cannot carry a distrust date, so
+// it leaves out the roots that have one.
+func writeTrustedRoots(path string) error {
+	var roots []byte
+	for root := range bundle.Roots() {
+		if root.Constraint == nil {
+			roots = append(roots, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: root.Certificate})...)
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, roots, 0o444)
 }
 
 func mount(output io.Writer, source, target, fstype string) {

@@ -2,12 +2,46 @@ package main
 
 import (
 	"bytes"
+	"crypto/x509"
+	"encoding/pem"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.org/x/crypto/x509roots/fallback/bundle"
 )
+
+func TestTrustedRootsLeaveOutRootsWithDistrustDates(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "certs", "ca-certificates.crt")
+	if err := writeTrustedRoots(path); err != nil {
+		t.Fatal(err)
+	}
+	written, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for block, rest := pem.Decode(written); block != nil; block, rest = pem.Decode(rest) {
+		certificate, err := x509.ParseCertificate(block.Bytes)
+		if err != nil || !certificate.IsCA {
+			t.Fatalf("the bundle holds a block that is not a CA certificate: %v", err)
+		}
+		got[string(block.Bytes)] = true
+	}
+	want := 0
+	for root := range bundle.Roots() {
+		if root.Constraint == nil {
+			want++
+		} else if got[string(root.Certificate)] {
+			t.Fatal("the bundle holds a root that has a distrust date")
+		}
+	}
+	if len(got) != want || want == 0 {
+		t.Fatalf("the bundle holds %d roots, want %d", len(got), want)
+	}
+}
 
 func TestForwardConfigEnvIsWhitelisted(t *testing.T) {
 	t.Setenv("STOGAS_ENVIRONMENT", "")

@@ -19,6 +19,8 @@ import (
 	stogashttp "github.com/maximhq/bifrost/transports/stogas-http"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	secretstore "github.com/maximhq/bifrost/transports/stogas/confidential/secrets"
+	// The guest's init makes these the only roots that the gateway trusts.
+	_ "golang.org/x/crypto/x509roots/fallback"
 )
 
 const requiredOpenFiles = 65536
