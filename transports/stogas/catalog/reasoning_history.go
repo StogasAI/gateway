@@ -60,17 +60,19 @@ func (r *ResolvedRequest) SetAccountTag(tag string) {
 }
 
 // RebindAccount names the account that serves the pair after its checks, when it can differ from
-// the one that SetAccountTag named. For another account, the pair leaves out the encrypted
-// reasoning that its checks kept: that carries the provider's own content, which no account claims.
-func (r *ResolvedRequest) RebindAccount(tag string) {
+// the one that SetAccountTag named, and reports whether it did. For another account, the pair
+// leaves out the encrypted reasoning that its checks kept: that carries the provider's own content,
+// which no account claims.
+func (r *ResolvedRequest) RebindAccount(tag string) bool {
 	if r == nil || r.accountTag == tag {
-		return
+		return false
 	}
 	r.accountTag = tag
 	if r.wire != nil {
 		r.wire.accountTag = tag
 	}
 	r.KeepReadableReasoning()
+	return true
 }
 
 // BindEncryptedReasoning returns encrypted reasoning that the deployment returned, bound to the

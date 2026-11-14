@@ -131,12 +131,13 @@ func TestAzureCredentialEligibilityRetainsMultipleTargetsAndRequestVariants(t *t
 	}
 }
 
-// An Azure pair takes back the encrypted reasoning of the resource that serves it: the one of the
-// deployment that the cached credential selects, until its hold chooses a deployment in another
-// resource, which then binds what the pair returns.
+// An Azure pair names the deployment that the cached credential selects and takes back the
+// encrypted reasoning of its resource, until its hold chooses another deployment, which the body
+// then names and which binds what the pair returns.
 func TestAzureReasoningFollowsTheResourceOfTheHeldDeployment(t *testing.T) {
-	cached, moved := azureTestBinding(), azureTestBinding()
+	cached, moved, renamed := azureTestBinding(), azureTestBinding(), azureTestBinding()
 	moved.Endpoint = "https://moved.openai.azure.com"
+	renamed.DeploymentName = "customer-sol-2"
 	snapshot := &billing.KeyConfigSnapshot{Credentials: map[string][]billing.CredentialSelection{
 		"azure": {{Mode: "stored", ID: "credential", Credential: &billing.CachedCredential{
 			ID: "credential", EncryptedSecret: "sealed", Bindings: []billing.AzureCredentialBinding{{AzureBinding: cached}},
@@ -147,7 +148,7 @@ func TestAzureReasoningFollowsTheResourceOfTheHeldDeployment(t *testing.T) {
 		`{"type":"reasoning","id":"rs_cached","summary":[],"encrypted_content":"openai:` + tag(cached) + `:from-cached"},` +
 		`{"type":"reasoning","id":"rs_moved","summary":[],"encrypted_content":"openai:` + tag(moved) + `:from-moved"},` +
 		`{"role":"assistant","content":"Hello."},{"role":"user","content":"again"}]}`
-	for held, want := range map[*billing.AzureBinding]string{&cached: "from-cached", &moved: ""} {
+	for held, want := range map[*billing.AzureBinding]string{&cached: "from-cached", &moved: "", &renamed: "from-cached"} {
 		resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 			Body: []byte(body), Method: "POST", Path: "/v1/responses",
 			AvailableCredentials: map[string][]int{"azure": {0}},
@@ -157,15 +158,28 @@ func TestAzureReasoningFollowsTheResourceOfTheHeldDeployment(t *testing.T) {
 			t.Fatal(err)
 		}
 		BindAccount(snapshot, resolution)
+		if resolution.Model != cached.DeploymentName || resolution.ReportedModel() != "gpt-5.6-sol" {
+			t.Fatalf("the body names %q before the hold, reporting %q", resolution.Model, resolution.ReportedModel())
+		}
 		state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
 		if err := state.Adapter.ValidateRequest(state); err != nil {
 			t.Fatal(err)
 		}
 		state.Authorization = &billing.Authorization{AzureBinding: held}
-		BindHeldAccount(snapshot, state)
+		wireModel := resolution.Model
+		// ApplyUpstreamCredentials names the held deployment.
+		if err := resolution.SetWireModel(held.DeploymentName); err != nil {
+			t.Fatal(err)
+		}
+		if changed := BindHeldAccount(snapshot, state, wireModel); changed != (held != &cached) {
+			t.Fatalf("held %s %s: changed %v", held.Endpoint, held.DeploymentName, changed)
+		}
 		request, err := resolution.ToBifrost(nil)
 		if err != nil {
 			t.Fatal(err)
+		}
+		if request.ResponsesRequest.Model != held.DeploymentName {
+			t.Fatalf("held %s: body names %q", held.DeploymentName, request.ResponsesRequest.Model)
 		}
 		var kept []string
 		for _, item := range request.ResponsesRequest.Input {

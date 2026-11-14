@@ -173,12 +173,12 @@ func (r *providerRun) prepare(pair *providerPair, resolution *catalog.ResolvedRe
 	if err != nil {
 		return billingFailure{err}
 	}
+	wireModel := resolution.Model
 	if err := r.server.runtime.ApplyUpstreamCredentials(pair.ctx, state); err != nil {
 		return billingFailure{err}
 	}
-	if resolution.Provider == schemas.Azure {
-		stogas.BindHeldAccount(r.keyConfig, state)
-		// The credential names the Azure deployment that the body addresses.
+	// The body names the Azure deployment that the hold chose.
+	if stogas.BindHeldAccount(r.keyConfig, state, wireModel) {
 		if request, err = resolution.ToBifrost(pair.ctx); err != nil {
 			return err
 		}

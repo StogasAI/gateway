@@ -98,7 +98,6 @@ func AuthorizeState(ctx *schemas.BifrostContext, caller context.Context, billing
 		state.StartedAt = time.Now()
 	}
 	state.RequestType = string(state.Resolution.RequestType)
-	state.Model = state.Resolution.Model
 
 	if state.RawAPIKey == "" && state.DashboardCredential == nil {
 		return gatewaybilling.ErrInvalidAPIKey

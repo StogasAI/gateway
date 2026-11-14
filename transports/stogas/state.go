@@ -31,7 +31,6 @@ type Pair struct {
 	PolicyVersions     *billing.LoggedPolicyVersions
 	Authorization      *billing.Authorization
 	RequestSettings    billing.RequestSettings
-	Model              string
 	PluginMetrics      plugins.Metrics
 }
 

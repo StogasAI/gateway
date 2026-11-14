@@ -2021,7 +2021,6 @@ func TestFinalizeStateLogsPricingMeters(t *testing.T) {
 					},
 				},
 			},
-			Model: "gpt-5",
 		},
 		RequestType:       string(schemas.ChatCompletionRequest),
 		GatewayVersion:    "v1.5.13",

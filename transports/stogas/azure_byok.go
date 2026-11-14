@@ -91,23 +91,28 @@ func BindAccount(snapshot *billing.KeyConfigSnapshot, resolution *catalog.Resolv
 	provider, index, endpoint := string(resolution.Provider), resolution.CredentialIndex, ""
 	if provider == "azure" && snapshot.UsesBYOK(provider, index) {
 		if credential := snapshot.Credentials[provider][index].Credential; credential != nil {
+			// The cache holds the one deployment that the owner selected for the target, which the
+			// hold also takes, so the body names it before the hold. An invalid name fails there.
 			if bindings := credential.AzureBindingLookup()(credentialTarget(resolution.Deployment)); len(bindings) > 0 {
 				endpoint = bindings[0].Endpoint
+				_ = resolution.SetWireModel(bindings[0].DeploymentName)
 			}
 		}
 	}
 	resolution.SetAccountTag(snapshot.AccountTag(provider, index, endpoint))
 }
 
-// BindHeldAccount binds an Azure pair to the deployment that its hold chose. After its owner selects
-// a deployment in another resource, the cache can name the previous one for up to the cache's
-// lifetime, and the pair then leaves out the encrypted reasoning that it kept for that one.
-func BindHeldAccount(snapshot *billing.KeyConfigSnapshot, state *State) {
+// BindHeldAccount binds an Azure pair to the deployment that its hold chose and reports whether
+// that changed the body. After its owner selects another deployment, the cache can name the
+// previous one for up to the cache's lifetime; a deployment in another resource also leaves out the
+// encrypted reasoning that the pair kept for the previous one.
+func BindHeldAccount(snapshot *billing.KeyConfigSnapshot, state *State, wireModel string) bool {
 	if state.Authorization == nil || state.Authorization.AzureBinding == nil {
-		return
+		return false
 	}
 	resolution := state.Resolution
-	resolution.RebindAccount(snapshot.AccountTag(string(resolution.Provider), resolution.CredentialIndex, state.Authorization.AzureBinding.Endpoint))
+	rebound := resolution.RebindAccount(snapshot.AccountTag(string(resolution.Provider), resolution.CredentialIndex, state.Authorization.AzureBinding.Endpoint))
+	return rebound || resolution.Model != wireModel
 }
 
 // ValidatePreparedCredential checks the selected secret before input work. An
