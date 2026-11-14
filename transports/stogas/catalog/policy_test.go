@@ -78,7 +78,7 @@ func policyChatBody(extra string) []byte {
 // testDefaultSort orders like the default that new organizations get, with
 // deployment ID in place of random() so that tests repeat.
 func testDefaultSort() []policy.Sort {
-	return []policy.Sort{{By: "model.releaseDate", Direction: "desc"}, {By: "blended_price(3, 1)"}, {By: "deployment.id"}}
+	return []policy.Sort{{By: "model.releaseDate", Direction: "desc"}, {By: "blendedPrice(3, 1)"}, {By: "deployment.id"}}
 }
 
 func policyConfig(pairs int) *policy.Config {
@@ -482,9 +482,9 @@ func TestResolvedPolicyValuesExposeTypedRegisteredCatalogAndRequestData(t *testi
 		source string
 		want   bool
 	}{
-		{`blended_price(1, 0, 272000) == deployment.pricing.input_tokens.per_mill_tokens`, true},
-		{`blended_price(1, 0, 272001) > deployment.pricing.input_tokens.per_mill_tokens`, true},
-		{`blended_price(3, 1, 272001) > blended_price(3, 1)`, true},
+		{`blendedPrice(1, 0, 272000) == deployment.pricing.input_tokens.per_mill_tokens`, true},
+		{`blendedPrice(1, 0, 272001) > deployment.pricing.input_tokens.per_mill_tokens`, true},
+		{`blendedPrice(3, 1, 272001) > blendedPrice(3, 1)`, true},
 	} {
 		query, err := policy.CompileRouting(test.source, nil)
 		if err != nil {

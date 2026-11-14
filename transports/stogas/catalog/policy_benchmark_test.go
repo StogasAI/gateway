@@ -101,7 +101,7 @@ func BenchmarkRoutingSingleBlend(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	source, err := policy.CompileSource([]byte(`{"routing":{"filter": "blended_price(1, 3) < decimal(\"100\")", "sort": [{"by":"blended_price(1, 3)","direction":"asc"}]}}`))
+	source, err := policy.CompileSource([]byte(`{"routing":{"filter": "blendedPrice(1, 3) < decimal(\"100\")", "sort": [{"by":"blendedPrice(1, 3)","direction":"asc"}]}}`))
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -161,10 +161,10 @@ func BenchmarkRoutingBlendedPrices(b *testing.B) {
 						if unique {
 							weight -= scope*len(predicates) + i
 						}
-						predicates[i] = fmt.Sprintf("blended_price(%d, 9007199254740990) < decimal('1000000000000')", weight)
+						predicates[i] = fmt.Sprintf("blendedPrice(%d, 9007199254740990) < decimal('1000000000000')", weight)
 					}
 					filter := strings.Join(predicates, " && ")
-					raw, err := json.Marshal(map[string]any{"routing": map[string]any{"filter": filter, "sort": []policy.Sort{{By: "blended_price(1, 3)", Direction: "asc"}}, "fallbacks": 2}})
+					raw, err := json.Marshal(map[string]any{"routing": map[string]any{"filter": filter, "sort": []policy.Sort{{By: "blendedPrice(1, 3)", Direction: "asc"}}, "fallbacks": 2}})
 					if err != nil {
 						b.Fatal(err)
 					}

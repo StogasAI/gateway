@@ -553,7 +553,7 @@ func TestAutoTextExtractionFollowsTheDeployment(t *testing.T) {
 		{"OpenAI Responses reads CSV", "openai-gpt-5.6-luna", "responses", "text/csv", `{"plugins":{"textExtraction":"auto"}}`, false},
 		{"OpenAI Chat does not read CSV", "openai-gpt-5.6-luna", "chat/completions", "text/csv", `{"plugins":{"textExtraction":"auto"}}`, true},
 		{"input checks read the text", "openai-gpt-5.6-luna", "responses", "text/csv", `{"plugins":{"textExtraction":"auto"},"input":{"asciiOnly":true}}`, true},
-		{"redaction reads the text", "anthropic-claude-opus-4-8", "responses", "text/plain", `{"plugins":{"textExtraction":"auto","redaction":{"email_address":true}}}`, true},
+		{"redaction reads the text", "anthropic-claude-opus-4-8", "responses", "text/plain", `{"plugins":{"textExtraction":"auto","redaction":{"presets":["email_address"]}}}`, true},
 		{"always", "anthropic-claude-opus-4-8", "responses", "text/plain", `{"plugins":{"textExtraction":"always"}}`, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

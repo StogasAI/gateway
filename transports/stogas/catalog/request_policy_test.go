@@ -361,7 +361,7 @@ func TestRequestPolicyCompilesOnceAndCombinesRedactionBeforeScanning(t *testing.
 	loadTestCatalog(t)
 	for _, path := range []string{"/v1/chat/completions", "/v1/responses"} {
 		t.Run(path, func(t *testing.T) {
-			org, err := policy.CompileSource([]byte(`{"routing":{"fallbacks": 1,"sort":[{"by":"blended_price(3, 1)"},{"by":"deployment.id"}]},"plugins":{"redaction":{"literals":[{"values":["SAVED_PRIVATE"]}]}}}`))
+			org, err := policy.CompileSource([]byte(`{"routing":{"fallbacks": 1,"sort":[{"by":"blendedPrice(3, 1)"},{"by":"deployment.id"}]},"plugins":{"redaction":{"literals":[{"values":["SAVED_PRIVATE"]}]}}}`))
 			if err != nil {
 				t.Fatal(err)
 			}

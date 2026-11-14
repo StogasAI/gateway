@@ -116,7 +116,7 @@ func TestRequestPolicyPermissionsAndClosedDocument(t *testing.T) {
 func TestRequestSortsFollowRequiredSorts(t *testing.T) {
 	parent := requestParent(t, `{"delegation":{"request":true},"routing":{"sort":[{"by":"provider.id","direction":"desc"}]},"rules":{"d":{"mode":"default","routing":{"sort":[{"by":"random()"}]}}}}`)
 	before, _ := json.Marshal(parent)
-	for _, sortBy := range []string{"model.id", "blended_price(3, 1)"} {
+	for _, sortBy := range []string{"model.id", "blendedPrice(3, 1)"} {
 		raw, _ := json.Marshal(map[string]any{"routing": map[string]any{"sort": []Sort{{By: sortBy, Direction: "desc"}}}})
 		child, err := applyRequestJSON(parent, raw)
 		if err != nil {
@@ -144,7 +144,7 @@ func TestRequestSortsFollowRequiredSorts(t *testing.T) {
 }
 
 func FuzzSourceQuery(f *testing.F) {
-	for _, seed := range []string{"provider.id == 'openai'", "!has(provider.id)", "blended_price(0,0) < decimal('5')", "blended_price(1,1,300000) < decimal('5')", "(", strings.Repeat("!", 64)} {
+	for _, seed := range []string{"provider.id == 'openai'", "!has(provider.id)", "blendedPrice(0,0) < decimal('5')", "blendedPrice(1,1,300000) < decimal('5')", "(", strings.Repeat("!", 64)} {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, source string) {

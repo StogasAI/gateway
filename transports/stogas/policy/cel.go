@@ -160,7 +160,7 @@ func (c *celCompiler) compile(source string, condition bool) (*CELExpression, er
 			if _, valid := DecimalValue(string(text)); !ok || !valid {
 				validationErr = configError("invalid exact decimal")
 			}
-		case "blended_price":
+		case "blendedPrice":
 			if len(args) != 2 && len(args) != 3 {
 				validationErr = configError("invalid price expression")
 				return
@@ -313,13 +313,13 @@ func newCELEnvironment() (*cel.Env, error) {
 		}
 		blend := &BlendedPrice{InputWeight: numbers[0] / divisor, OutputWeight: numbers[1] / divisor, PromptTokens: numbers[2]}
 		value, ok := blendedPriceValue(blend, args[0].(*celPolicyNode).values)
-		return celPolicyValue(value, ok, "blended_price")
+		return celPolicyValue(value, ok, "blendedPrice")
 	})
 	options = append(options,
-		cel.Macros(cel.GlobalVarArgMacro("blended_price", func(factory cel.MacroExprFactory, _ ast.Expr, args []ast.Expr) (ast.Expr, *cel.Error) {
-			return factory.NewMemberCall("blended_price", factory.NewIdent("deployment"), args...), nil
+		cel.Macros(cel.GlobalVarArgMacro("blendedPrice", func(factory cel.MacroExprFactory, _ ast.Expr, args []ast.Expr) (ast.Expr, *cel.Error) {
+			return factory.NewMemberCall("blendedPrice", factory.NewIdent("deployment"), args...), nil
 		})),
-		cel.Function("blended_price",
+		cel.Function("blendedPrice",
 			cel.MemberOverload("policy_blended_price",
 				[]*cel.Type{deploymentType, cel.IntType, cel.IntType}, decimalCELType, blendedPrice),
 			cel.MemberOverload("policy_blended_price_prompt",

@@ -136,7 +136,7 @@
     "sources": [
       {
         "routing": {
-          "filter": "blended_price(3, 1) <= decimal(\"5\")"
+          "filter": "blendedPrice(3, 1) <= decimal(\"5\")"
         }
       },
       null,
@@ -155,7 +155,7 @@
         }
       }
     ],
-    "digest": "b158ab572168461b8a41e2b7a86621299334bb0874175d3a59cc9dddc4b0d286",
+    "digest": "85af632c9d546f2ed33dc4a93e32ba48e55b7e07319c9aa2610ab0737a384708",
     "compiled": {
       "access": null,
       "compilerVersion": 1,
@@ -176,7 +176,7 @@
         "allowedCatalogNodes": null,
         "query": {
           "filters": [
-            "blended_price(3, 1) <= decimal(\"5\")"
+            "blendedPrice(3, 1) <= decimal(\"5\")"
           ],
           "orderBy": []
         },
@@ -234,7 +234,9 @@
       {
         "plugins": {
           "redaction": {
-            "email_address": true,
+            "presets": [
+              "email_address"
+            ],
             "customPattern": "ABCD",
             "literals": [
               {
@@ -255,7 +257,6 @@
       {
         "plugins": {
           "redaction": {
-            "email_address": false,
             "customPattern": "BCDE",
             "literals": [
               {
@@ -295,7 +296,7 @@
         }
       }
     ],
-    "digest": "27ca945bcc7163ef8eeee63cbd798c28ac7c81cb14158e0a6a4bec58b19c2544",
+    "digest": "189ef2680b11ec0a383791c536cadc2694a23a97a8ed6ec92e695d34630005fa",
     "compiled": {
       "access": null,
       "compilerVersion": 1,
@@ -739,7 +740,9 @@
             },
             "plugins": {
               "redaction": {
-                "email_address": true
+                "presets": [
+                  "email_address"
+                ]
               }
             },
             "limits": {
@@ -753,7 +756,7 @@
       null,
       {}
     ],
-    "digest": "6e7c41b5a4daa6540821d99c95a8c09947d2193d844d2892b9379df9c4681d4d",
+    "digest": "8c634143153be14ef36be50791d83d1110694803cc6dccb9d29e3e5c48482d36",
     "compiled": {
       "access": null,
       "compilerVersion": 1,

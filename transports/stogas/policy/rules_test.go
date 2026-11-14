@@ -112,7 +112,7 @@ func TestRuleFragmentsPreserveCanonicalIdentityAndStrictFields(t *testing.T) {
 		`{"rules":{"selected":{"Input":{"asciiOnly":true}}}}`,
 		`{"rules":{"selected":{"input":{"ASCIIOnly":true}}}}`,
 		`{"rules":{"selected":{"input":{"asciiOnly":null}}}}`,
-		`{"rules":{"selected":{"plugins":{"redaction":{"email_address":null}}}}}`,
+		`{"rules":{"selected":{"plugins":{"redaction":{"presets":null}}}}}`,
 		`{"rules":{"selected":{"limits":{"lifetime":{"usd":null}}}}}`,
 		`{"rules":{"selected":{"rules":{"nested":{"input":{"asciiOnly":true}}}}}}`,
 		`{"rules":null}`,
@@ -166,8 +166,8 @@ func ruleSource(t *testing.T, raw string) *Source {
 }
 
 func TestRulesDefaultsAndRequirementsAreOrderIndependent(t *testing.T) {
-	org := ruleSource(t, `{"delegation":{"request":true},"rules":{"baseline":{"mode":"default","input":{"asciiOnly":true},"plugins":{"redaction":{"email_address":true}},"routing":{"sort":[{"by":"provider.id","direction":"asc"}]}}}}`)
-	role := ruleSource(t, `{"rules":{"chat":{"when":"request.interface == 'chat_completions'","input":{"asciiOnly":false},"plugins":{"redaction":{"credit_card_number":true}}}}}`)
+	org := ruleSource(t, `{"delegation":{"request":true},"rules":{"baseline":{"mode":"default","input":{"asciiOnly":true},"plugins":{"redaction":{"presets":["email_address"]}},"routing":{"sort":[{"by":"provider.id","direction":"asc"}]}}}}`)
+	role := ruleSource(t, `{"rules":{"chat":{"when":"request.interface == 'chat_completions'","input":{"asciiOnly":false},"plugins":{"redaction":{"presets":["credit_card_number"]}}}}}`)
 	other := ruleSource(t, `{"routing":{"filter":"provider.id != 'blocked'"}}`)
 	for _, sources := range [][]ScopedSource{
 		{{Scope: OrganizationScope, Value: org}, {Scope: RoleScope, Value: role}, {Scope: RoleScope, Value: other}},
@@ -292,7 +292,7 @@ func TestTimeoutRulesComposeIndependentlyWithoutMutatingSavedPolicies(t *testing
 }
 
 func TestRulesExplicitEmptySettingsReplaceDefaultsWithoutWeakeningRequirements(t *testing.T) {
-	settings := `"access":{"deny":[{"days":["mon"],"start":"09:00","end":"17:00","timeZone":"UTC"}]},"input":{"asciiOnly":true},"plugins":{"redaction":{"email_address":true}},"routing":{"allowedCatalogNodes":{"providers":["openai"]},"filter":"provider.id == 'openai'","sort":[{"by":"provider.id","direction":"asc"}],"retries":1,"fallbacks":0}`
+	settings := `"access":{"deny":[{"days":["mon"],"start":"09:00","end":"17:00","timeZone":"UTC"}]},"input":{"asciiOnly":true},"plugins":{"redaction":{"presets":["email_address"]}},"routing":{"allowedCatalogNodes":{"providers":["openai"]},"filter":"provider.id == 'openai'","sort":[{"by":"provider.id","direction":"asc"}],"retries":1,"fallbacks":0}`
 	org := ruleSource(t, `{"rules":{"baseline":{"mode":"default",`+settings+`}}}`)
 	empty := ruleSource(t, `{"access":{"deny":[]},"input":{"asciiOnly":false},"plugins":{"redaction":{}},"routing":{"allowedCatalogNodes":{},"filter":"true","sort":[],"retries":3,"fallbacks":2}}`)
 	required := ruleSource(t, `{`+settings+`}`)
@@ -526,10 +526,10 @@ func TestReplacedDefaultsNameTheRequirementOnEachDeployment(t *testing.T) {
 		t.Fatal(err)
 	}
 	org := ruleSource(t, `{"plugins":{"textExtraction":"always"},"rules":{`+
-		`"base":{"mode":"default","input":{"asciiOnly":true},"plugins":{"textExtraction":"off","redaction":{"email_address":true}},"routing":{"retries":2,"sort":[{"by":"provider.id"}]}},`+
-		`"strict_openai":{"when":"provider.id == 'openai'","plugins":{"redaction":{"credit_card_number":true}}}}}`)
+		`"base":{"mode":"default","input":{"asciiOnly":true},"plugins":{"textExtraction":"off","redaction":{"presets":["email_address"]}},"routing":{"retries":2,"sort":[{"by":"provider.id"}]}},`+
+		`"strict_openai":{"when":"provider.id == 'openai'","plugins":{"redaction":{"presets":["credit_card_number"]}}}}}`)
 	role := ruleSource(t, `{"rules":{`+
-		`"openai_too":{"when":"provider.id == 'openai'","plugins":{"redaction":{"phone_number":true}}},`+
+		`"openai_too":{"when":"provider.id == 'openai'","plugins":{"redaction":{"presets":["phone_number"]}}},`+
 		`"private":{"mode":"default","when":"provider.id != 'openai'","plugins":{"redaction":{"encrypted":`+string(envelope)+`}}},`+
 		`"never":{"mode":"default","when":"provider.id == 'none'","timeouts":{"outputIdleSeconds":5}}}}`)
 	key := ruleSource(t, `{"routing":{"retries":0,"sort":[{"by":"provider.id","direction":"desc"}]},"rules":{`+
@@ -603,7 +603,7 @@ func TestFallbacksAndTotalTimeoutCannotDependOnTheCandidate(t *testing.T) {
 	for _, raw := range []string{
 		`{"rules":{"r":{"when":"provider.id == 'chutes'","routing":{"fallbacks":0}}}}`,
 		`{"rules":{"r":{"when":"request.interface == 'chat_completions' && author.id == 'openai'","routing":{"fallbacks":1}}}}`,
-		`{"rules":{"r":{"when":"blended_price(3, 1) < decimal('5')","routing":{"fallbacks":1}}}}`,
+		`{"rules":{"r":{"when":"blendedPrice(3, 1) < decimal('5')","routing":{"fallbacks":1}}}}`,
 		`{"rules":{"r":{"when":"'claude-opus' in model.groupIds","timeouts":{"totalSeconds":60}}}}`,
 	} {
 		if _, err := CompileSource([]byte(raw)); err == nil || !strings.Contains(err.Error(), "author, model, deployment, route or provider fields") {

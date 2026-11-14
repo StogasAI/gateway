@@ -65,13 +65,15 @@ func BenchmarkRequestThreeMillionContext(b *testing.B) {
 				"selected_provider": map[string]any{
 					"when":    "provider.id == 'openai'",
 					"limits":  map[string]any{"spend": map[string]any{"usd": "100000"}},
-					"plugins": map[string]any{"redaction": map[string]any{"email_address": true}},
+					"plugins": map[string]any{"redaction": map[string]any{"presets": []string{"email_address"}}},
 				},
 			},
 			"plugins": map[string]any{"redaction": map[string]any{
-				"email_address": true, "phone_number": true, "social_security_number": true,
-				"credit_card_number": true, "ip_address": true, "api_keys_and_secrets": true,
-				"bank_identifiers": true, "national_identifiers": true, "health_identifiers": true,
+				"presets": []string{
+					"email_address", "phone_number", "social_security_number",
+					"credit_card_number", "ip_address", "api_keys_and_secrets",
+					"bank_identifiers", "national_identifiers", "health_identifiers",
+				},
 				"customPattern": fmt.Sprintf("CONFIDENTIAL_%d_[0-9]{8}", i%3),
 				"literals":      groups,
 			}},

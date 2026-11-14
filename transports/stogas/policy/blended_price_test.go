@@ -117,20 +117,20 @@ func TestBlendedPriceExactCatalogRates(t *testing.T) {
 		source string
 		want   bool
 	}{
-		{`blended_price(3, 1) == decimal('3')`, true},
-		{`blended_price(6, 2) in [decimal('2'), decimal('3')]`, true},
-		{`blended_price(3, 1, 0) == decimal('3')`, true},
-		{`blended_price(3, 1, 300000) == decimal('8')`, true},
-		{`blended_price(3, 1, 300000) < decimal('5')`, false},
-		{`blended_price(3, 1, 300000) > blended_price(3, 1)`, true},
+		{`blendedPrice(3, 1) == decimal('3')`, true},
+		{`blendedPrice(6, 2) in [decimal('2'), decimal('3')]`, true},
+		{`blendedPrice(3, 1, 0) == decimal('3')`, true},
+		{`blendedPrice(3, 1, 300000) == decimal('8')`, true},
+		{`blendedPrice(3, 1, 300000) < decimal('5')`, false},
+		{`blendedPrice(3, 1, 300000) > blendedPrice(3, 1)`, true},
 		{`has(deployment.pricing.input_tokens.per_mill_tokens) && has(deployment.pricing.output_tokens.per_mill_tokens)`, true},
-		{`blended_price(9007199254740991, 9007199254740990, 9007199254740991) < decimal('5')`, true},
+		{`blendedPrice(9007199254740991, 9007199254740990, 9007199254740991) < decimal('5')`, true},
 	} {
 		check(item.source, item.want)
 	}
 	// A repeating third must remain greater than its finite 36-digit truncation.
 	values["deployment.pricing.output_tokens.per_mill_tokens"] = decimal("0")
-	check(`blended_price(1, 2) > decimal('0.`+strings.Repeat("3", 36)+`')`, true)
+	check(`blendedPrice(1, 2) > decimal('0.`+strings.Repeat("3", 36)+`')`, true)
 	if got := decimalRat(values["deployment.pricing.input_tokens.per_mill_tokens"].Decimal).RatString(); got != "1" {
 		t.Fatal("evaluation mutated a catalog price")
 	}
@@ -139,13 +139,13 @@ func TestBlendedPriceExactCatalogRates(t *testing.T) {
 		source string
 		want   bool
 	}{
-		{`blended_price(3, 1) < decimal('5')`, false},
-		{`!(blended_price(3, 1) < decimal('5'))`, false},
+		{`blendedPrice(3, 1) < decimal('5')`, false},
+		{`!(blendedPrice(3, 1) < decimal('5'))`, false},
 		{`has(deployment.pricing.output_tokens.per_mill_tokens)`, false},
 		{`!has(deployment.pricing.output_tokens.per_mill_tokens)`, true},
-		{`blended_price(1, 0) == decimal('1')`, true},
+		{`blendedPrice(1, 0) == decimal('1')`, true},
 		{`has(deployment.pricing.input_tokens.per_mill_tokens)`, true},
-		{`blended_price(3, 1, 300000) == decimal('8')`, true},
+		{`blendedPrice(3, 1, 300000) == decimal('8')`, true},
 	} {
 		query, err := CompileRouting(item.source, nil)
 		if err != nil {
@@ -163,8 +163,8 @@ func TestBlendedPriceSortingAndIntersection(t *testing.T) {
 	expensive, _ := DecimalValue("9")
 	left := testValues{"deployment.pricing.input_tokens.per_mill_tokens": cheap, "deployment.pricing.output_tokens.per_mill_tokens": expensive}
 	right := testValues{"deployment.pricing.input_tokens.per_mill_tokens": expensive, "deployment.pricing.output_tokens.per_mill_tokens": cheap}
-	parent := requestParent(t, `{"delegation":{"request":true},"rules":{"baseline":{"mode":"default","routing":{"sort":[{"by":"blended_price(3, 1)","direction":"asc"}]}}}}`)
-	child, err := applyRequestJSON(parent, []byte(`{"routing":{"sort":[{"by":"blended_price(6, 2)","direction":"desc"},{"by":"blended_price(1, 3)","direction":"desc"}]}}`))
+	parent := requestParent(t, `{"delegation":{"request":true},"rules":{"baseline":{"mode":"default","routing":{"sort":[{"by":"blendedPrice(3, 1)","direction":"asc"}]}}}}`)
+	child, err := applyRequestJSON(parent, []byte(`{"routing":{"sort":[{"by":"blendedPrice(6, 2)","direction":"desc"},{"by":"blendedPrice(1, 3)","direction":"desc"}]}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +178,7 @@ func TestBlendedPriceSortingAndIntersection(t *testing.T) {
 		t.Fatalf("blended ordering=%v err=%v", order, err)
 	}
 	for _, direction := range []string{"asc", "desc"} {
-		query, err := CompileRouting("", []Sort{{By: `blended_price(3, 1)`, Direction: direction}})
+		query, err := CompileRouting("", []Sort{{By: `blendedPrice(3, 1)`, Direction: direction}})
 		if err != nil {
 			t.Fatal(err)
 		}

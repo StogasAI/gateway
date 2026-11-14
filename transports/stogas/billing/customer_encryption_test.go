@@ -201,7 +201,7 @@ func TestSuppressedEncryptedDefaultPluginNeedsNoRoot(t *testing.T) {
 		required []string
 	}{
 		{"defaults apply", `{}`, []string{keys["exports"].ID(), keys["redactions"].ID()}},
-		{"a required redaction replaces the default one", `{"plugins":{"redaction":{"email_address":true}}}`, []string{keys["exports"].ID()}},
+		{"a required redaction replaces the default one", `{"plugins":{"redaction":{"presets":["email_address"]}}}`, []string{keys["exports"].ID()}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			cache := &keyConfigCache{}
@@ -427,10 +427,10 @@ func TestCheckWithoutKeysNamesWhatIsWrong(t *testing.T) {
 	check := func(plugins string) (*PolicyValidation, error) {
 		return validation.ValidatePolicySources(validationSources([]json.RawMessage{json.RawMessage(`{"plugins":` + plugins + `}`), json.RawMessage(`null`), json.RawMessage(`{}`)}), "test-organization", nil)
 	}
-	if result, err := check(`{"redaction":{"email_address":true,"literals":[{"values":["Project Falcon"]}]}}`); err != nil || result.Status != "valid" || len(result.UncheckedPlugins) != 0 {
+	if result, err := check(`{"redaction":{"presets":["email_address"],"literals":[{"values":["Project Falcon"]}]}}`); err != nil || result.Status != "valid" || len(result.UncheckedPlugins) != 0 {
 		t.Fatalf("readable settings were not checked: %+v %v", result, err)
 	}
-	if _, err := check(`{"redaction":{"email_adress":true}}`); !errors.Is(err, policy.ErrInvalidConfig) || !strings.HasSuffix(err.Error(), ": unknown redaction preset email_adress") {
+	if _, err := check(`{"redaction":{"presets":["email_adress"]}}`); !errors.Is(err, policy.ErrInvalidConfig) || !strings.HasSuffix(err.Error(), `: unknown redaction preset "email_adress"`) {
 		t.Fatalf("an unknown preset was not named: %v", err)
 	}
 }

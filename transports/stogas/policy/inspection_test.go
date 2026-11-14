@@ -102,7 +102,7 @@ func TestInspectionPreservesOpaqueSourcesWithoutChargingTheirEncodingToCompiledS
 	}
 	encoded, _ := json.Marshal(map[string]any{"plugins": map[string]any{"redaction": map[string]any{"encrypted": envelope}}})
 	entries := []InspectionSource{
-		{Scope: OrganizationScope, Config: json.RawMessage(`{"plugins":{"redaction":{"email_address":true}}}`)},
+		{Scope: OrganizationScope, Config: json.RawMessage(`{"plugins":{"redaction":{"presets":["email_address"]}}}`)},
 		{Scope: RoleScope, ID: "first", Config: encoded},
 		{Scope: RoleScope, ID: "second", Config: encoded},
 		{Scope: KeyScope, Config: json.RawMessage(`{}`)},
@@ -460,7 +460,7 @@ func TestInspectionShowsWhichPolicySetsEachSortCriterion(t *testing.T) {
 
 func TestInspectionShowsWhichRequirementsReplaceDefaults(t *testing.T) {
 	org := `{"plugins":{"textExtraction":"off"},"timeouts":{"totalSeconds":900},"rules":{"openai":{"when":"provider.id == 'openai'","timeouts":{"outputIdleSeconds":60}}}}`
-	key := `{"routing":{"retries":1},"rules":{"prefs":{"mode":"default","plugins":{"redaction":{"credit_card_number":true},"textExtraction":"always"},"timeouts":{"totalSeconds":60,"outputIdleSeconds":30},"routing":{"retries":2,"sort":[{"by":"provider.id"}]}}}}`
+	key := `{"routing":{"retries":1},"rules":{"prefs":{"mode":"default","plugins":{"redaction":{"presets":["credit_card_number"]},"textExtraction":"always"},"timeouts":{"totalSeconds":60,"outputIdleSeconds":30},"routing":{"retries":2,"sort":[{"by":"provider.id"}]}}}}`
 	inspection, err := InspectSources([]InspectionSource{
 		{Scope: OrganizationScope, Config: json.RawMessage(org)},
 		{Scope: KeyScope, ID: "key", Config: json.RawMessage(key)},
@@ -685,7 +685,7 @@ func TestReplacedDefaultsAgreeWithActivation(t *testing.T) {
 		{"routing", "filter", `"provider.id != 'x'"`},
 		{"routing", "allowedCatalogNodes", `{"providers":["openai"]}`},
 		{"plugins", "textExtraction", `"off"`},
-		{"plugins", "redaction", `{"email_address":true}`},
+		{"plugins", "redaction", `{"presets":["email_address"]}`},
 	}
 	const when = "request.interface == 'chat_completions'"
 	scopes := []Scope{OrganizationScope, FolderScope, GrantScope, KeyScope}

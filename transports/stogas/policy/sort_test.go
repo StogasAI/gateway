@@ -81,7 +81,7 @@ func TestSortCriteriaTakeOneKind(t *testing.T) {
 	}
 	for _, raw := range []string{
 		`{"routing":{"sort":[{"authors":["openai"]},{"models":["gpt-5.5"]},{"deployments":["openai-gpt-5.5"]},{"routes":["openai"]}]}}`,
-		`{"routing":{"sort":[{"deployments":["d"]},{"providers":["openai"]},{"by":"blended_price(3, 1)"},{"by":"random()"}]}}`,
+		`{"routing":{"sort":[{"deployments":["d"]},{"providers":["openai"]},{"by":"blendedPrice(3, 1)"},{"by":"random()"}]}}`,
 	} {
 		if _, err := CompileSource([]byte(raw)); err != nil {
 			t.Errorf("%s: %v", raw, err)

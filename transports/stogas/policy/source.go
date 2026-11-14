@@ -566,9 +566,9 @@ func (d *SourceDocument) compile(plugins map[[32]byte]*Plugins, compiler *celCom
 
 func compileSourcePlugins(raw []byte) (*Plugins, error) {
 	var doc struct {
-		Export         *exportconfig.Config       `json:"export"`
-		Redaction      map[string]json.RawMessage `json:"redaction"`
-		TextExtraction *string                    `json:"textExtraction"`
+		Export         *exportconfig.Config `json:"export"`
+		Redaction      *sourceRedaction     `json:"redaction"`
+		TextExtraction *string              `json:"textExtraction"`
 	}
 	if err := decodeStrict(raw, &doc); err != nil {
 		return nil, configError("invalid plugins: %v", err)
@@ -587,58 +587,55 @@ func compileSourcePlugins(raw []byte) (*Plugins, error) {
 	return result, result.validate()
 }
 
-func compileSourceRedaction(values map[string]json.RawMessage) (*Redaction, error) {
-	if values == nil {
+type sourceRedaction struct {
+	Presets       []string `json:"presets"`
+	CustomPattern *string  `json:"customPattern"`
+	Literals      []struct {
+		Values     []string `json:"values"`
+		IgnoreCase bool     `json:"ignoreCase"`
+		WholeWord  *bool    `json:"wholeWord"`
+		Fuzzy      bool     `json:"fuzzy"`
+	} `json:"literals"`
+}
+
+func compileSourceRedaction(source *sourceRedaction) (*Redaction, error) {
+	if source == nil {
 		return nil, nil
 	}
+	if source.Presets != nil && len(source.Presets) == 0 {
+		return nil, configError("redaction presets require at least one preset")
+	}
 	selected := &Redaction{Presets: []string{}}
-	for name, value := range values {
-		switch name {
-		case "customPattern":
-			var pattern string
-			if err := json.Unmarshal(value, &pattern); err != nil {
-				return nil, configError("invalid custom pattern")
-			}
-			selected.CustomPatterns = []string{pattern}
-		case "literals":
-			var groups []struct {
-				Values     []string `json:"values"`
-				IgnoreCase bool     `json:"ignoreCase"`
-				WholeWord  *bool    `json:"wholeWord"`
-				Fuzzy      bool     `json:"fuzzy"`
-			}
-			if err := decodeStrict(value, &groups); err != nil || len(groups) == 0 {
-				return nil, configError("invalid literal groups")
-			}
-			if err := validateSourceMembers(value, reflect.TypeOf(groups)); err != nil {
-				return nil, err
-			}
-			for _, group := range groups {
-				if len(group.Values) == 0 || len(selected.Literals)+len(group.Values) > redaction.MaxLiterals {
-					return nil, configError("literal groups require 1–1,000 values in total")
-				}
-				for _, text := range group.Values {
-					selected.Literals = append(selected.Literals, redaction.Literal{Text: text, IgnoreCase: group.IgnoreCase, WholeWord: group.WholeWord, Fuzzy: group.Fuzzy})
-				}
-			}
-			if err := redaction.ValidateLiterals(selected.Literals); err != nil {
-				return nil, err
-			}
-			selected.Literals = redaction.NormalizeLiterals(selected.Literals)
-		default:
-			if !redactionPresets[name] {
-				return nil, configError("unknown redaction preset %s", name)
-			}
-			var enabled bool
-			if err := json.Unmarshal(value, &enabled); err != nil {
-				return nil, configError("invalid redaction preset")
-			}
-			if enabled {
-				selected.Presets = append(selected.Presets, name)
-			}
+	for _, name := range source.Presets {
+		if !redactionPresets[name] {
+			return nil, configError("unknown redaction preset %q", name)
 		}
+		if slices.Contains(selected.Presets, name) {
+			return nil, configError("duplicate redaction preset %q", name)
+		}
+		selected.Presets = append(selected.Presets, name)
 	}
 	sort.Strings(selected.Presets)
+	if source.CustomPattern != nil {
+		selected.CustomPatterns = []string{*source.CustomPattern}
+	}
+	if source.Literals != nil && len(source.Literals) == 0 {
+		return nil, configError("invalid literal groups")
+	}
+	for _, group := range source.Literals {
+		if len(group.Values) == 0 || len(selected.Literals)+len(group.Values) > redaction.MaxLiterals {
+			return nil, configError("literal groups require 1–1,000 values in total")
+		}
+		for _, text := range group.Values {
+			selected.Literals = append(selected.Literals, redaction.Literal{Text: text, IgnoreCase: group.IgnoreCase, WholeWord: group.WholeWord, Fuzzy: group.Fuzzy})
+		}
+	}
+	if len(selected.Literals) > 0 {
+		if err := redaction.ValidateLiterals(selected.Literals); err != nil {
+			return nil, err
+		}
+		selected.Literals = redaction.NormalizeLiterals(selected.Literals)
+	}
 	compiled := &Plugins{Redaction: selected}
 	if err := compiled.validate(); err != nil {
 		return nil, err

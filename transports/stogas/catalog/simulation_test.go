@@ -106,7 +106,7 @@ func TestRoutingSimulationNamesWhatRemovedEachCandidate(t *testing.T) {
 			},
 			removed: []string{"credential openai/openai-gpt-5.6-sol#0 credential_expired"}, pairs: 1, tried: 1},
 		{name: "undecided condition", model: "gpt-5.6-sol", credentials: map[string][]int{"azure": {0}, "openai": {0}},
-			base:    compose(`{"routing":{"sort":[{"by":"blended_price(3, 1)"},{"by":"deployment.id"}]},"rules":{"typed":{"when":"deployment.upstream.deploymentType == 'global_standard'","input":{"asciiOnly":true}}}}`),
+			base:    compose(`{"routing":{"sort":[{"by":"blendedPrice(3, 1)"},{"by":"deployment.id"}]},"rules":{"typed":{"when":"deployment.upstream.deploymentType == 'global_standard'","input":{"asciiOnly":true}}}}`),
 			removed: []string{"condition openai/openai-gpt-5.6-sol#0 @0typed deployment.upstream.deploymentType == 'global_standard'"}, pairs: 5, tried: 3},
 		// A deny period removes only a pair that the filters keep, so a client that waits for the
 		// period to end is not refused for another reason then.
@@ -232,7 +232,7 @@ func TestRoutingSimulationLocatesOrderAndFallbacks(t *testing.T) {
 
 func TestRoutingSimulationGivesEachPairTheRetriesOfItsPolicy(t *testing.T) {
 	loadTestCatalog(t)
-	source, err := policy.CompileSource([]byte(`{"routing":{"sort":[{"by":"blended_price(3, 1)"},{"by":"deployment.id"}]},"rules":{"openai":{"when":"provider.id == 'openai'","routing":{"retries":2}}}}`))
+	source, err := policy.CompileSource([]byte(`{"routing":{"sort":[{"by":"blendedPrice(3, 1)"},{"by":"deployment.id"}]},"rules":{"openai":{"when":"provider.id == 'openai'","routing":{"retries":2}}}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -273,7 +273,7 @@ func TestRoutingSimulationGivesEachPairTheRetriesOfItsPolicy(t *testing.T) {
 func TestRoutingSimulationNamesTheDefaultsThatEachTriedPairReplaces(t *testing.T) {
 	loadTestCatalog(t)
 	source, err := policy.CompileSource([]byte(`{"routing":{"fallbacks":1,"sort":[{"by":"provider.id","direction":"desc"},{"by":"deployment.id"}]},"rules":{` +
-		`"base":{"mode":"default","plugins":{"redaction":{"email_address":true}}},` +
+		`"base":{"mode":"default","plugins":{"redaction":{"presets":["email_address"]}}},` +
 		`"azure_redaction":{"when":"provider.id == 'azure'","plugins":{"redaction":{}}}}}`))
 	if err != nil {
 		t.Fatal(err)

@@ -684,7 +684,7 @@ func TestServiceTierSpellingsSelectOneTier(t *testing.T) {
 	loadTestCatalog(t)
 	// Claude runs in several regions, so the request must choose one.
 	multiRegion := `"policy":{"routing":{"filter":"deployment.upstream.inferenceGeo == 'global'"}}`
-	source, err := policy.CompileSource([]byte(`{"delegation":{"request":["routing.filter"]},"routing":{"sort":[{"by":"model.releaseDate","direction":"desc"},{"by":"blended_price(3, 1)"},{"by":"deployment.id"}]}}`))
+	source, err := policy.CompileSource([]byte(`{"delegation":{"request":["routing.filter"]},"routing":{"sort":[{"by":"model.releaseDate","direction":"desc"},{"by":"blendedPrice(3, 1)"},{"by":"deployment.id"}]}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1085,20 +1085,20 @@ func TestGroupsFollowThePolicyOrder(t *testing.T) {
 		{
 			body:        `{"model":"group:gpt-5.6","input":"hello"}`,
 			credentials: openAI,
-			policy:      `{"routing":{"sort":[{"by":"blended_price(3, 1)","direction":"asc"}]}}`,
+			policy:      `{"routing":{"sort":[{"by":"blendedPrice(3, 1)","direction":"asc"}]}}`,
 			deployment:  "openai-gpt-5.6-luna",
 		},
 		// A price sort alone picks the cheapest Claude, whatever its age.
 		{
 			body:        `{"model":"group:claude","input":"hello"}`,
 			credentials: anthropic,
-			policy:      `{"routing":{"sort":[{"by":"blended_price(3, 1)"},{"by":"deployment.id"}]}}`,
+			policy:      `{"routing":{"sort":[{"by":"blendedPrice(3, 1)"},{"by":"deployment.id"}]}}`,
 			deployment:  "anthropic-claude-haiku-5-5",
 		},
 		{
 			body:        `{"model":"group:claude","input":"hello"}`,
 			credentials: anthropic,
-			policy:      `{"routing":{"filter":"'claude-opus' in model.groupIds","sort":[{"by":"model.releaseDate","direction":"desc"},{"by":"blended_price(3, 1)"},{"by":"deployment.id"}]}}`,
+			policy:      `{"routing":{"filter":"'claude-opus' in model.groupIds","sort":[{"by":"model.releaseDate","direction":"desc"},{"by":"blendedPrice(3, 1)"},{"by":"deployment.id"}]}}`,
 			deployment:  "anthropic-claude-opus-5-5",
 		},
 	} {

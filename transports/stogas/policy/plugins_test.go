@@ -121,7 +121,7 @@ func TestInputCheckNamesTheSettingThatReadsAllInputText(t *testing.T) {
 		{"text extraction", `{"plugins":{"textExtraction":"always"}}`, ""},
 		{"empty redaction", `{"plugins":{"redaction":{}}}`, ""},
 		{"ASCII input", `{"input":{"asciiOnly":true}}`, "input.asciiOnly"},
-		{"redaction", `{"plugins":{"redaction":{"email_address":true}}}`, "plugins.redaction"},
+		{"redaction", `{"plugins":{"redaction":{"presets":["email_address"]}}}`, "plugins.redaction"},
 		{"encrypted redaction", `{` + encrypted + `}`, "plugins.redaction"},
 		{"encrypted redaction of a matched rule", `{"rules":{"private":{"when":"provider.id == 'openai'",` + encrypted + `}}}`, "plugins.redaction"},
 		{"encrypted redaction of an unmatched rule", `{"rules":{"private":{"when":"provider.id == 'azure'",` + encrypted + `}}}`, ""},

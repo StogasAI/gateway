@@ -246,7 +246,11 @@ func TestEveryPolicyDetectorReachesChatAndResponsesRedaction(t *testing.T) {
 	for _, fixture := range fixtures {
 		t.Run(fixture.pattern, func(t *testing.T) {
 			for _, enabled := range []bool{true, false} {
-				encoded, err := json.Marshal(map[string]any{"plugins": map[string]any{"redaction": map[string]bool{fixture.pattern: enabled}}})
+				settings := map[string]any{}
+				if enabled {
+					settings["presets"] = []string{fixture.pattern}
+				}
+				encoded, err := json.Marshal(map[string]any{"plugins": map[string]any{"redaction": settings}})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -528,7 +532,7 @@ func TestDelayedSourceRefreshCannotReplaceNewerParentSnapshot(t *testing.T) {
 
 func TestConcurrentSourceMissesInternOnceAndCleanUpPins(t *testing.T) {
 	var cache keyConfigCache
-	raw := []byte(`{"plugins":{"redaction":{"email_address":true}}}`)
+	raw := []byte(`{"plugins":{"redaction":{"presets":["email_address"]}}}`)
 	refs := make(chan *sharedPolicySource, 32)
 	errs := make(chan error, 32)
 	var workers sync.WaitGroup

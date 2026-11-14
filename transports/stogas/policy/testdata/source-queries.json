@@ -216,7 +216,7 @@
     "valid": true
   },
   {
-    "filter": "blended_price(3, 1) < decimal(\"5\")",
+    "filter": "blendedPrice(3, 1) < decimal(\"5\")",
     "valid": true
   },
   {
@@ -226,7 +226,7 @@
   {
     "sort": [
       {
-        "by": "blended_price(3, 1, 272001)",
+        "by": "blendedPrice(3, 1, 272001)",
         "direction": "desc"
       }
     ],
@@ -269,71 +269,71 @@
     "valid": true
   },
   {
-    "filter": "!(blended_price(1, 2, 300000) in [decimal(\"0\"), decimal(\"0.5\")])",
+    "filter": "!(blendedPrice(1, 2, 300000) in [decimal(\"0\"), decimal(\"0.5\")])",
     "valid": true
   },
   {
-    "filter": "blended_price(9007199254740991, 1, 9007199254740991) > decimal(\"0\")",
+    "filter": "blendedPrice(9007199254740991, 1, 9007199254740991) > decimal(\"0\")",
     "valid": true
   },
   {
-    "filter": "where blended_price(3, 1) < 5",
+    "filter": "where blendedPrice(3, 1) < 5",
     "valid": false
   },
   {
-    "filter": "blended_price(0, 0) < decimal(\"5\")",
+    "filter": "blendedPrice(0, 0) < decimal(\"5\")",
     "valid": false
   },
   {
-    "filter": "blended_price(-1, 1) < decimal(\"5\")",
+    "filter": "blendedPrice(-1, 1) < decimal(\"5\")",
     "valid": false
   },
   {
-    "filter": "blended_price(1.5, 1) < decimal(\"5\")",
+    "filter": "blendedPrice(1.5, 1) < decimal(\"5\")",
     "valid": false
   },
   {
-    "filter": "blended_price(1, 1, 1.0) < decimal(\"5\")",
+    "filter": "blendedPrice(1, 1, 1.0) < decimal(\"5\")",
     "valid": false
   },
   {
-    "filter": "blended_price(1, 1, -1) < decimal(\"5\")",
+    "filter": "blendedPrice(1, 1, -1) < decimal(\"5\")",
     "valid": false
   },
   {
-    "filter": "blended_price(9007199254740992, 1) < decimal(\"5\")",
+    "filter": "blendedPrice(9007199254740992, 1) < decimal(\"5\")",
     "valid": false
   },
   {
-    "filter": "blended_price(1, 1, per_mill_tokens) < decimal(\"5\")",
+    "filter": "blendedPrice(1, 1, per_mill_tokens) < decimal(\"5\")",
     "valid": false
   },
   {
-    "filter": "blended_price(1, 1, 'per_mill_tokens') < decimal(\"5\")",
+    "filter": "blendedPrice(1, 1, 'per_mill_tokens') < decimal(\"5\")",
     "valid": false
   },
   {
-    "filter": "blended_price(1, 1, 1, 1) < decimal(\"5\")",
+    "filter": "blendedPrice(1, 1, 1, 1) < decimal(\"5\")",
     "valid": false
   },
   {
-    "filter": "blended_price(1, 1) < '5'",
+    "filter": "blendedPrice(1, 1) < '5'",
     "valid": false
   },
   {
-    "filter": "blended_price(1, 1, deployment.maxInputTokens) < decimal(\"5\")",
+    "filter": "blendedPrice(1, 1, deployment.maxInputTokens) < decimal(\"5\")",
     "valid": false
   },
   {
-    "filter": "provider.id == blended_price(1, 1)",
+    "filter": "provider.id == blendedPrice(1, 1)",
     "valid": false
   },
   {
-    "filter": "order by blended_price(3, 1), blended_price(6, 2)",
+    "filter": "order by blendedPrice(3, 1), blendedPrice(6, 2)",
     "valid": false
   },
   {
-    "filter": "blended_price(1, 1) < 5",
+    "filter": "blendedPrice(1, 1) < 5",
     "valid": false
   },
   {

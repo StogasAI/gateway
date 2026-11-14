@@ -730,7 +730,7 @@ func init() {
 	} {
 		exactFieldTypes["deployment.capabilities."+capability] = "boolean"
 	}
-	// Long prompt prices vary by deployment; blended_price reads them for a
+	// Long prompt prices vary by deployment; blendedPrice reads them for a
 	// stated prompt size.
 	for _, meter := range []string{
 		"cache_write_1h_input_tokens", "cache_write_5m_input_tokens", "cache_write_input_tokens",

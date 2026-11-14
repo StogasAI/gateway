@@ -219,7 +219,7 @@ func TestWeightedRandomSortSplitsFirstAttemptsByWeight(t *testing.T) {
 func TestPolicyCriteriaDecideEveryTriedTie(t *testing.T) {
 	loadTestCatalog(t)
 	anthropic := map[string][]int{"anthropic": {0}}
-	tiebreak := `{"by":"blended_price(3, 1)"},{"by":"deployment.id"}`
+	tiebreak := `{"by":"blendedPrice(3, 1)"},{"by":"deployment.id"}`
 	for _, test := range []struct {
 		name, body, policy, deployment, code string
 		credentials                          map[string][]int
@@ -251,7 +251,7 @@ func TestPolicyCriteriaDecideEveryTriedTie(t *testing.T) {
 			name:        "cheapest model in a group",
 			body:        `{"input":"hello"}`,
 			credentials: anthropic,
-			policy:      `{"routing":{"filter":"'claude' in model.groupIds","sort":[{"by":"blended_price(3, 1)"}]}}`,
+			policy:      `{"routing":{"filter":"'claude' in model.groupIds","sort":[{"by":"blendedPrice(3, 1)"}]}}`,
 			deployment:  "anthropic-claude-haiku-5-5",
 		},
 		{
@@ -259,14 +259,14 @@ func TestPolicyCriteriaDecideEveryTriedTie(t *testing.T) {
 			name:        "equal prices tie",
 			body:        `{"input":"hello"}`,
 			credentials: anthropic,
-			policy:      `{"routing":{"filter":"'claude-sonnet' in model.groupIds","sort":[{"by":"blended_price(3, 1)"}]}}`,
+			policy:      `{"routing":{"filter":"'claude-sonnet' in model.groupIds","sort":[{"by":"blendedPrice(3, 1)"}]}}`,
 			code:        ErrModelAmbiguous.Code,
 		},
 		{
 			name:        "a later criterion breaks a price tie",
 			body:        `{"input":"hello"}`,
 			credentials: anthropic,
-			policy:      `{"routing":{"filter":"'claude-sonnet' in model.groupIds","sort":[{"by":"blended_price(3, 1)"},{"by":"model.releaseDate","direction":"desc"},{"by":"deployment.id"}]}}`,
+			policy:      `{"routing":{"filter":"'claude-sonnet' in model.groupIds","sort":[{"by":"blendedPrice(3, 1)"},{"by":"model.releaseDate","direction":"desc"},{"by":"deployment.id"}]}}`,
 			deployment:  "anthropic-claude-sonnet-5-5",
 		},
 		{
@@ -294,7 +294,7 @@ func TestPolicyCriteriaDecideEveryTriedTie(t *testing.T) {
 			name:        "the order outranks the sort",
 			body:        `{"input":"hello"}`,
 			credentials: anthropic,
-			policy:      `{"routing":{"sort":[{"deployments":["anthropic-claude-opus-5-5-us"]},{"by":"blended_price(3, 1)"}]}}`,
+			policy:      `{"routing":{"sort":[{"deployments":["anthropic-claude-opus-5-5-us"]},{"by":"blendedPrice(3, 1)"}]}}`,
 			deployment:  "anthropic-claude-opus-5-5-us",
 		},
 		{
