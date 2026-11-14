@@ -122,7 +122,9 @@ func openPool(ctx context.Context, config *pgxpool.Config) (*pgxpool.Pool, error
 	if err != nil {
 		return nil, fmt.Errorf("create postgres pool: %w", err)
 	}
-	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	// Go waits 5 seconds for a resolver that does not answer before it asks the next one, so the
+	// first connection gets the time to pass one such resolver.
+	pingCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	if err := pool.Ping(pingCtx); err != nil {
 		pool.Close()
