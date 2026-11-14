@@ -64,7 +64,8 @@ const (
 // starts on Anthropic wire, which keeps it in place as Claude requires: right after a user message
 // or tool results, and last or right before the assistant's turn. Consecutive system messages count
 // as one. Anywhere else it gets 400, because moving it or turning it into user text would change
-// what it means.
+// what it means. Claude also takes one after an assistant turn that ends in a server tool result,
+// which no input holds: the gateway accepts no server tool results in Anthropic-format input.
 type claudeSystemPlacement struct {
 	started   bool   // a user or assistant item has come
 	afterUser bool   // the last such item was on the user side
