@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math/rand/v2"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/maximhq/bifrost/core/network"
@@ -64,6 +65,9 @@ type providerRun struct {
 	// kept from the earlier pairs, or current, the latest failure of the last
 	// pair that failed.
 	settled, current *runFailure
+	// tests are the pairs that the plan let this request test after a wait
+	// that failed calls started, until the run binds them.
+	tests []pairKey
 }
 
 // providerPair keeps a pair's state and its context, which holds the prepared
@@ -72,7 +76,9 @@ type providerPair struct {
 	stogas.Pair
 	ctx     *schemas.BifrostContext
 	request *schemas.BifrostRequest
-	number  int // its place among the run's pairs
+	number  int     // its place among the run's pairs
+	wait    pairKey // its entry among the gateway's waits; none on Stogas's own credential
+	tests   bool    // its call tests the pair after a wait that failed calls started
 }
 
 type providerCall[T any] func(*schemas.BifrostContext, *schemas.BifrostRequest) (T, *schemas.BifrostError)
@@ -115,6 +121,12 @@ func (r *providerRun) bind(resolution *catalog.ResolvedRequest) error {
 	}
 	if err != nil {
 		return err
+	}
+	if key, ok := pairWaitKey(r.keyConfig, resolution.Provider, resolution.CredentialIndex, resolution.Deployment.ID); ok {
+		next.wait = key
+		if i := slices.Index(r.tests, key); i >= 0 {
+			next.tests, r.tests = true, slices.Delete(r.tests, i, i+1)
+		}
 	}
 	previous, r.pair, r.retries = r.pair, next, 0
 	r.retire(previous)
@@ -273,6 +285,7 @@ func (r *providerRun) failed(failure *schemas.BifrostError, attempt *schemas.Bif
 	if count <= r.attempts {
 		r.local = &unsentCall{failure, attempt}
 		r.noteLocal(r.local, r.pair.number)
+		r.recordOutcome(failure, attempt, false)
 		return false
 	}
 	// Chutes calls again inside its transport when the provider proves that it
@@ -286,6 +299,7 @@ func (r *providerRun) failed(failure *schemas.BifrostError, attempt *schemas.Bif
 		r.client.providerRan.Store(true)
 	}
 	f := callFailure(r.state, failure, attempt, r.action, r.pair.number, count, r.pair.Resolution.Deployment.ID)
+	r.recordOutcome(failure, attempt, true)
 	r.recordWait(f, failure)
 	r.note(f)
 	return true
@@ -591,6 +605,7 @@ func (r *providerRun) stopped() {
 
 // releasePlan drops what only later pairs need.
 func (r *providerRun) releasePlan() {
+	r.releaseTests()
 	r.plan.ReleasePlan()
 	r.plan = nil
 	r.keyConfig = nil
@@ -628,6 +643,11 @@ func (r *providerRun) commit() {
 // gets unless the request's own processing of that call fails.
 func (r *providerRun) end() (*schemas.BifrostError, *schemas.BifrostContext) {
 	r.releasePlan()
+	if r.pair != nil && r.pair.tests {
+		// The caller left before the call that would have tested the pair.
+		r.pair.tests = false
+		r.server.pairWaits.release(r.pair.wait)
+	}
 	final := r.called
 	if final == nil {
 		final = r.held
