@@ -525,8 +525,8 @@ func TestReplacedDefaultsNameTheRequirementOnEachDeployment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	org := ruleSource(t, `{"plugins":{"textExtraction":"always"},"rules":{`+
-		`"base":{"mode":"default","input":{"asciiOnly":true},"plugins":{"textExtraction":"off","redaction":{"presets":["email_address"]}},"routing":{"retries":2,"sort":[{"by":"provider.id"}]}},`+
+	org := ruleSource(t, `{"plugins":{"textExtraction":{"text":"always"}},"rules":{`+
+		`"base":{"mode":"default","input":{"asciiOnly":true},"plugins":{"textExtraction":{"text":"off"},"redaction":{"presets":["email_address"]}},"routing":{"retries":2,"sort":[{"by":"provider.id"}]}},`+
 		`"strict_openai":{"when":"provider.id == 'openai'","plugins":{"redaction":{"presets":["credit_card_number"]}}}}}`)
 	role := ruleSource(t, `{"rules":{`+
 		`"openai_too":{"when":"provider.id == 'openai'","plugins":{"redaction":{"presets":["phone_number"]}}},`+
@@ -542,7 +542,7 @@ func TestReplacedDefaultsNameTheRequirementOnEachDeployment(t *testing.T) {
 	if got := combined.ReplacedDefaults(); got != nil {
 		t.Fatalf("replaced before activation: %+v", got)
 	}
-	textExtraction := ReplacedDefault{Setting: "plugins.textExtraction", Default: Origin{Source: 0, Rule: "base"}, By: Origin{Source: 0}}
+	textExtraction := ReplacedDefault{Setting: "plugins.textExtraction.text", Default: Origin{Source: 0, Rule: "base"}, By: Origin{Source: 0}}
 	retries := ReplacedDefault{Setting: "routing.retries", Default: Origin{Source: 0, Rule: "base"}, By: Origin{Source: 2}}
 	for provider, want := range map[string][]ReplacedDefault{
 		// Two required rules replace the default redaction; the first in the chain is named. The
@@ -591,7 +591,8 @@ func TestEveryReplaceableKindHasOneName(t *testing.T) {
 		t.Fatalf("named kinds %b, want %b", kinds, want)
 	}
 	if want := []string{
-		"access.deny", "access.networks", "input", "plugins.export", "plugins.redaction", "plugins.textExtraction",
+		"access.deny", "access.networks", "input", "plugins.export", "plugins.redaction",
+		"plugins.textExtraction.office", "plugins.textExtraction.text",
 		"routing.allowedCatalogNodes", "routing.fallbacks", "routing.filter", "routing.missingEncryptionKeys",
 		"routing.retries", "timeouts.outputIdleSeconds", "timeouts.totalSeconds",
 	}; !slices.Equal(names, want) {

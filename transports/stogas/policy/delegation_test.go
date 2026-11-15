@@ -47,6 +47,34 @@ func TestDelegationChecksSectionsAndExactResourceIDs(t *testing.T) {
 	}
 }
 
+func TestDelegationPermitsTextExtractionByFamily(t *testing.T) {
+	edit := &InspectionEdit{Scope: KeyScope, Previous: json.RawMessage(`{}`)}
+	inspect := func(sections, key string) error {
+		_, err := InspectSources([]InspectionSource{
+			{Scope: OrganizationScope, Config: json.RawMessage(`{"delegation":{"keys":` + sections + `}}`)},
+			{Scope: KeyScope, Config: json.RawMessage(key)},
+		}, edit)
+		return err
+	}
+	const office, both = `{"plugins":{"textExtraction":{"office":"auto"}}}`, `{"plugins":{"textExtraction":{"office":"auto","text":"auto"}}}`
+	if err := inspect(`["plugins.textExtraction.office"]`, office); err != nil {
+		t.Fatalf("permitted family: %v", err)
+	}
+	if err := inspect(`["plugins.textExtraction.office"]`, both); !errors.Is(err, ErrPolicyEditForbidden) || !strings.Contains(err.Error(), "plugins.textExtraction.text") {
+		t.Fatalf("other family: %v", err)
+	}
+	if err := inspect(`["plugins.textExtraction"]`, both); err != nil {
+		t.Fatalf("every family: %v", err)
+	}
+	var sections Permission
+	if err := json.Unmarshal([]byte(`["plugins.textExtraction"]`), &sections); err != nil {
+		t.Fatal(err)
+	}
+	if raw, _ := json.Marshal(sections); string(raw) != `["plugins.textExtraction.office","plugins.textExtraction.text"]` {
+		t.Fatalf("sections %s", raw)
+	}
+}
+
 func TestDelegationFollowsResourceOwnershipAndRequestPermissionsIntersect(t *testing.T) {
 	for _, owner := range []Scope{OrganizationScope, FolderScope, GrantScope, RoleScope, MemberScope, CredentialScope, KeyScope} {
 		for _, target := range []Scope{FolderScope, GrantScope, RoleScope, MemberScope, CredentialScope, KeyScope} {

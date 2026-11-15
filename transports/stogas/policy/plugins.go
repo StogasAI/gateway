@@ -8,38 +8,65 @@ import (
 // ActivePlugins contains the request's selected and decrypted plugin settings.
 type ActivePlugins struct {
 	Redaction *redaction.Policy
-	// TextExtraction is the text extraction mode, one of the TextExtraction constants.
-	TextExtraction string
+	// TextExtraction is the text extraction mode of each family of files.
+	TextExtraction TextExtractionModes
 	Export         *exportconfig.Config
 }
 
-// TextExtraction returns the strongest text extraction mode that the policy's plugins set, or
-// TextExtractionAuto when none sets one: auto differs from off only where off would leave a
-// deployment out or refuse a file.
-func (c *Config) TextExtraction() string {
-	if mode := c.textExtractionSet(); mode != "" {
-		return mode
+// TextExtraction returns, for each family of files, the strongest text extraction mode that the
+// policy's plugins set, or TextExtractionOff when none sets one: the gateway changes no file
+// unless a policy says so.
+func (c *Config) TextExtraction() TextExtractionModes {
+	modes := TextExtractionModes{Text: TextExtractionOff, Office: TextExtractionOff}
+	if set := c.textExtractionSet(); set != nil {
+		if set.Text != nil {
+			modes.Text = *set.Text
+		}
+		if set.Office != nil {
+			modes.Office = *set.Office
+		}
 	}
-	return TextExtractionAuto
+	return modes
 }
 
-// textExtractionSet returns the strongest text extraction mode that the policy's plugins set, or
-// "".
-func (c *Config) textExtractionSet() string {
-	mode := ""
+// textExtractionSet returns the strongest text extraction mode that the policy's plugins set for
+// each family, or nil when they set none.
+func (c *Config) textExtractionSet() *TextExtraction {
 	if c == nil {
-		return mode
+		return nil
 	}
 	parts := c.PluginSources
 	if len(parts) == 0 && c.Plugins != nil {
 		parts = []*Plugins{c.Plugins}
 	}
+	return combineTextExtraction(parts)
+}
+
+// combineTextExtraction returns the strongest mode that the parts set for each family, or nil
+// when they set none.
+func combineTextExtraction(parts []*Plugins) *TextExtraction {
+	var combined *TextExtraction
 	for _, part := range parts {
-		if part != nil && part.TextExtraction != nil {
-			mode = strongerTextExtraction(mode, *part.TextExtraction)
+		if part == nil || part.TextExtraction == nil {
+			continue
+		}
+		if combined == nil {
+			combined = &TextExtraction{}
+		}
+		into := combined.families()
+		for i, family := range part.TextExtraction.families() {
+			set := *family.mode
+			if set == nil {
+				continue
+			}
+			mode := *set
+			if current := *into[i].mode; current != nil {
+				mode = strongerTextExtraction(*current, mode)
+			}
+			*into[i].mode = &mode
 		}
 	}
-	return mode
+	return combined
 }
 
 // MediaTypes returns the policy's input.mediaTypes, or nil.

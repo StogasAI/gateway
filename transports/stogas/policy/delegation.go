@@ -24,6 +24,7 @@ const (
 	permissionFallbacks
 	permissionDelegation
 	permissionTextExtraction
+	permissionOfficeExtraction
 	permissionExport
 	permissionTotalTimeout
 	permissionOutputIdleTimeout
@@ -38,19 +39,41 @@ var permissionSections = map[string]Permission{
 	"access.deny":     permissionDeny,
 	"access.networks": permissionNetworks,
 	"input":           permissionInput, "limits": permissionLimits,
-	"timeouts":                   permissionTotalTimeout | permissionOutputIdleTimeout,
-	"timeouts.totalSeconds":      permissionTotalTimeout,
-	"timeouts.outputIdleSeconds": permissionOutputIdleTimeout,
-	"plugins":                    permissionRedaction | permissionEncryptedPlugins | permissionTextExtraction | permissionExport,
-	"plugins.export":             permissionExport,
-	"plugins.textExtraction":     permissionTextExtraction,
-	"plugins.redaction":          permissionRedaction, "plugins.encrypted": permissionEncryptedPlugins,
+	"timeouts":                      permissionTotalTimeout | permissionOutputIdleTimeout,
+	"timeouts.totalSeconds":         permissionTotalTimeout,
+	"timeouts.outputIdleSeconds":    permissionOutputIdleTimeout,
+	"plugins":                       permissionRedaction | permissionEncryptedPlugins | textExtractionUnits | permissionExport,
+	"plugins.export":                permissionExport,
+	"plugins.textExtraction":        textExtractionUnits,
+	"plugins.textExtraction.text":   permissionTextExtraction,
+	"plugins.textExtraction.office": permissionOfficeExtraction,
+	"plugins.redaction":             permissionRedaction, "plugins.encrypted": permissionEncryptedPlugins,
 	"routing":        permissionFilter | permissionSort | permissionNodes | permissionRetries | permissionFallbacks | permissionMissingKeys,
 	"routing.filter": permissionFilter, "routing.sort": permissionSort,
 	"routing.allowedCatalogNodes": permissionNodes, "routing.retries": permissionRetries,
 	"routing.fallbacks":             permissionFallbacks,
 	"routing.missingEncryptionKeys": permissionMissingKeys,
 	"delegation":                    permissionDelegation,
+}
+
+// sectionGroups name several settings. Text extraction is a group of its
+// families, because each family combines on its own.
+var sectionGroups = map[string]bool{
+	"access": true, "routing": true, "plugins": true, "timeouts": true, "plugins.textExtraction": true,
+}
+
+// eachSetting visits the settings of one top-level field with their values.
+func eachSetting(name string, raw json.RawMessage, visit func(name string, value json.RawMessage)) {
+	if !sectionGroups[name] {
+		visit(name, raw)
+		return
+	}
+	var settings map[string]json.RawMessage
+	if json.Unmarshal(raw, &settings) == nil {
+		for option, value := range settings {
+			eachSetting(name+"."+option, value, visit)
+		}
+	}
 }
 
 var policyEntityID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
@@ -96,10 +119,7 @@ func (p Permission) MarshalJSON() ([]byte, error) {
 func (p Permission) sectionNames() []string {
 	sections := make([]string, 0, len(permissionSections))
 	for section, mask := range permissionSections {
-		if section == "access" || section == "routing" || section == "plugins" || section == "timeouts" {
-			continue
-		}
-		if p&mask == mask {
+		if !sectionGroups[section] && p&mask == mask {
 			sections = append(sections, section)
 		}
 	}
@@ -226,22 +246,14 @@ func (d *SourceDocument) ownSections() Permission {
 // eachSection visits the document's own sections with their canonical values.
 func (d *SourceDocument) eachSection(visit func(name string, value json.RawMessage, section Permission)) {
 	for name, raw := range d.fields {
-		switch {
-		case name == "access" || name == "routing" || name == "plugins" || name == "timeouts":
-			var settings map[string]json.RawMessage
-			if json.Unmarshal(raw, &settings) == nil {
-				for option, value := range settings {
-					section := permissionSections[name+"."+option]
-					// Ciphertext also needs permission to hide a plugin's settings.
-					if name == "plugins" && d.EncryptedUnits()&section != 0 {
-						section |= permissionEncryptedPlugins
-					}
-					visit(name+"."+option, value, section)
-				}
+		eachSetting(name, raw, func(setting string, value json.RawMessage) {
+			section := permissionSections[setting]
+			// Ciphertext also needs permission to hide a plugin's settings.
+			if name == "plugins" && d.EncryptedUnits()&section != 0 {
+				section |= permissionEncryptedPlugins
 			}
-		default:
-			visit(name, raw, permissionSections[name])
-		}
+			visit(setting, value, section)
+		})
 	}
 }
 

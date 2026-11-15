@@ -52,9 +52,9 @@ type requestVariants struct {
 	budget        policy.SourceBudget
 	// attachments are the request's attachments, where they can narrow the candidates.
 	attachments []Attachment
-	// textFiles are its inline text files, which stay files where a pair's deployment reads
-	// them, unless the pair's policy extracts every text file.
-	textFiles []Attachment
+	// files are its inline text and Office files, which stay files where a pair's deployment
+	// reads them, unless the pair's policy extracts every file of their family.
+	files []Attachment
 	// hostedTools are the hosted tools that the request lets the model call, whose data
 	// handling joins each candidate's.
 	hostedTools []HostedTool
@@ -333,8 +333,8 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 	}
 	// Later pairs are prepared with their own checks, which read the attachments in full.
 	for _, attachment := range variants.attachments {
-		if attachment.text {
-			variants.textFiles = append(variants.textFiles, attachment)
+		if attachment.family != "" {
+			variants.files = append(variants.files, attachment)
 		}
 	}
 	variants.attachments = nil
@@ -560,8 +560,8 @@ func (v *requestVariants) reserve(bytes int) error {
 	return nil
 }
 
-// bodyFor prepares the request's body for a pair: its deployment, which decides which text
-// files stay files where extraction is auto, and its policy.
+// bodyFor prepares the request's body for a pair: its deployment, which decides which text and
+// Office files stay files where extraction is auto, and its policy.
 func (v *requestVariants) bodyFor(selection routingSelection, value RequestPolicy) (*requestBodyVariant, error) {
 	surface := redaction.SurfaceChat
 	if v.route == RouteResponses {
@@ -633,15 +633,23 @@ func (v *requestVariants) prepareBody(selection routingSelection, value RequestP
 	if check == "" && compiled.Enabled() {
 		check = "plugins.redaction"
 	}
-	options := inputfiles.Options{Extract: extraction != policy.TextExtractionOff, Reserve: reserveExpansion}
-	// A text file that the deployment reads stays a file, unless the policy extracts every text
-	// file or the check must read it. fileTexts are the texts of those files, for the token hold.
+	options := inputfiles.Options{Reserve: reserveExpansion}
+	options.Extract = inputfiles.Families{Text: extraction.Text != policy.TextExtractionOff, Office: extraction.Office != policy.TextExtractionOff}
+	// A text or Office file that the deployment reads stays a file, unless the policy extracts
+	// every file of its family or the check must read it. fileTexts are the texts of the text
+	// files that stay, for the token hold.
 	var fileTexts []string
-	if extraction != policy.TextExtractionAlways && check == "" {
+	if check == "" {
 		options.File = func(path string) (string, bool) {
-			for _, attachment := range v.textFiles {
-				if attachment.Path == path {
+			for _, attachment := range v.files {
+				switch {
+				case attachment.Path != path:
+				case extractionMode(extraction, attachment.family) == policy.TextExtractionAlways:
+					return "", false
+				case attachment.family == inputfiles.FamilyText:
 					return textFileDeclaration(selection.provider, selection.deployment, attachment)
+				default:
+					return "", attachmentError(selection.provider, selection.deployment, attachment, routingSubject) == nil
 				}
 			}
 			return "", false
@@ -664,8 +672,8 @@ func (v *requestVariants) prepareBody(selection routingSelection, value RequestP
 	}
 	if files.Opaque != "" && check != "" {
 		refusal := PublicError(inputCheckRefusal(files.Opaque, check))
-		if slices.ContainsFunc(v.textFiles, func(file Attachment) bool { return file.Path == files.Opaque }) {
-			refusal.Message += textExtractionHint
+		if i := slices.IndexFunc(v.files, func(file Attachment) bool { return file.Path == files.Opaque }); i >= 0 {
+			refusal.Message += textExtractionHint(v.files[i].family)
 		}
 		return nil, refusal
 	}

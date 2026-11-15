@@ -303,19 +303,29 @@ type DenyWindow struct {
 type Plugins struct {
 	Export         *exportconfig.Config `json:"export,omitempty"`
 	Redaction      *Redaction           `json:"redaction,omitempty"`
-	TextExtraction *string              `json:"textExtraction,omitempty"`
+	TextExtraction *TextExtraction      `json:"textExtraction,omitempty"`
+}
+
+// TextExtraction holds the mode of each family of files that text extraction turns into prompt
+// text. A family that it leaves out is not set, so a later family never applies to a policy that
+// does not name it.
+type TextExtraction struct {
+	// Text is the mode of text files, such as CSV, JSON and source code.
+	Text *string `json:"text,omitempty"`
+	// Office is the mode of Word, Excel, PowerPoint and OpenDocument files.
+	Office *string `json:"office,omitempty"`
 }
 
 // Text extraction modes, from the weakest to the strongest: a policy that sets a stronger one
-// overrides a weaker one, and auto applies when no policy sets one.
+// for a family overrides a weaker one, and off applies to a family that no policy sets.
 const (
-	// TextExtractionOff sends every text file as a file, which only a deployment that reads
-	// text files takes.
+	// TextExtractionOff sends every file of the family as a file, which only a deployment that
+	// reads it takes.
 	TextExtractionOff = "off"
-	// TextExtractionAuto turns a text file into prompt text where the deployment reads no text
-	// file, or where input checks or redaction must read it.
+	// TextExtractionAuto turns a file into prompt text where the deployment does not read it,
+	// or where input checks or redaction must read it.
 	TextExtractionAuto = "auto"
-	// TextExtractionAlways turns every text file into prompt text.
+	// TextExtractionAlways turns every file of the family into prompt text.
 	TextExtractionAlways = "always"
 )
 
@@ -329,6 +339,29 @@ func strongerTextExtraction(a, b string) string {
 	return a
 }
 
+// TextExtractionModes are the modes that apply to a request, one for each family of files.
+type TextExtractionModes struct {
+	Text, Office string
+}
+
+// textExtractionUnits are the families of text extraction. Each combines on its own, so a
+// requirement for one family leaves the default of another in place.
+const textExtractionUnits = permissionTextExtraction | permissionOfficeExtraction
+
+// textExtractionFamilies names the families in the order of families.
+var textExtractionFamilies = [2]string{"text", "office"}
+
+// families lists each family's mode with its unit.
+func (t *TextExtraction) families() [2]struct {
+	mode **string
+	unit Permission
+} {
+	return [2]struct {
+		mode **string
+		unit Permission
+	}{{&t.Text, permissionTextExtraction}, {&t.Office, permissionOfficeExtraction}}
+}
+
 type Redaction struct {
 	digestOnce     sync.Once
 	digest         [32]byte
@@ -339,7 +372,7 @@ type Redaction struct {
 
 // pluginUnits are the plugins that combine on their own: a required plugin
 // setting replaces only the defaults of the same plugin.
-const pluginUnits = permissionRedaction | permissionTextExtraction | permissionExport
+const pluginUnits = permissionRedaction | textExtractionUnits | permissionExport
 
 func (p *Plugins) units() Permission {
 	var units Permission
@@ -347,7 +380,11 @@ func (p *Plugins) units() Permission {
 		units |= permissionRedaction
 	}
 	if p != nil && p.TextExtraction != nil {
-		units |= permissionTextExtraction
+		for _, family := range p.TextExtraction.families() {
+			if *family.mode != nil {
+				units |= family.unit
+			}
+		}
 	}
 	if p != nil && p.Export != nil {
 		units |= permissionExport
@@ -369,8 +406,14 @@ func (p *Plugins) only(units Permission) *Plugins {
 	if units&permissionRedaction != 0 {
 		part.Redaction = p.Redaction
 	}
-	if units&permissionTextExtraction != 0 {
-		part.TextExtraction = p.TextExtraction
+	if units&set&textExtractionUnits != 0 {
+		part.TextExtraction = &TextExtraction{}
+		from := p.TextExtraction.families()
+		for i, family := range part.TextExtraction.families() {
+			if units&family.unit != 0 {
+				*family.mode = *from[i].mode
+			}
+		}
 	}
 	if units&permissionExport != 0 {
 		part.Export = p.Export
@@ -523,8 +566,15 @@ func (p *Plugins) validate() error {
 		if err := p.Export.Validate(); err != nil {
 			return configError("invalid export configuration")
 		}
-		if p.TextExtraction != nil && !slices.Contains(textExtractionModes, *p.TextExtraction) {
-			return configError("plugins.textExtraction must be off, auto or always")
+		if p.TextExtraction != nil {
+			if p.units()&textExtractionUnits == 0 {
+				return configError("plugins.textExtraction must set text or office")
+			}
+			for _, family := range p.TextExtraction.families() {
+				if mode := *family.mode; mode != nil && !slices.Contains(textExtractionModes, *mode) {
+					return configError("a plugins.textExtraction mode must be off, auto or always")
+				}
+			}
 		}
 	}
 	if p == nil || p.Redaction == nil {

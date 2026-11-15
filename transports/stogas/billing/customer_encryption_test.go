@@ -290,7 +290,7 @@ func TestPolicyValidationOpensEachPluginWithItsOwnRoot(t *testing.T) {
 	t.Cleanup(keys.Clear)
 	export := sealTestEnvelope(t, roots["exports"], keys["exports"].ID(), org, "plugins/export", `{"destinations":[{"url":"https://collector.example/v1/traces","headers":{"Authorization":"Bearer private"}}]}`)
 	redaction := sealTestEnvelope(t, roots["redactions"], keys["redactions"].ID(), org, "plugins/redaction", `{"literals":[{"values":["CUSTOMER_PRIVATE_VALUE"]}]}`)
-	plugins := map[string]any{"textExtraction": "always", "export": map[string]any{"encrypted": json.RawMessage(export)}, "redaction": map[string]any{"encrypted": json.RawMessage(redaction)}}
+	plugins := map[string]any{"textExtraction": map[string]any{"text": "always"}, "export": map[string]any{"encrypted": json.RawMessage(export)}, "redaction": map[string]any{"encrypted": json.RawMessage(redaction)}}
 	base, _ := json.Marshal(map[string]any{"plugins": plugins})
 	rule, _ := json.Marshal(map[string]any{"rules": map[string]any{"private": map[string]any{"when": `provider.id == "openai"`, "plugins": plugins}}})
 	s := &Service{}
@@ -327,7 +327,7 @@ func TestPolicyValidationOpensEachPluginWithItsOwnRoot(t *testing.T) {
 		}
 	}
 	// A readable setting that fails its checks still fails without any root.
-	invalid, _ := json.Marshal(map[string]any{"rules": map[string]any{"private": map[string]any{"when": `provider.id == "openai"`, "plugins": map[string]any{"textExtraction": "yes", "redaction": plugins["redaction"]}}}})
+	invalid, _ := json.Marshal(map[string]any{"rules": map[string]any{"private": map[string]any{"when": `provider.id == "openai"`, "plugins": map[string]any{"textExtraction": map[string]any{"text": "yes"}, "redaction": plugins["redaction"]}}}})
 	if _, err := s.ValidatePolicySources(validationSources([]json.RawMessage{base, json.RawMessage(`null`), invalid}), org, nil); err == nil {
 		t.Fatal("a readable plugin beside an unchecked one escaped its check")
 	}

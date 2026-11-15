@@ -1,0 +1,12 @@
+## Slide 1
+Launch plan
+Ship in May
+  Price: $20
+Notes:
+Mention the beta users.
+
+## Slide 2
+Risks
+| Risk | Owner |
+| --- | --- |
+| Supply is late | Ana |

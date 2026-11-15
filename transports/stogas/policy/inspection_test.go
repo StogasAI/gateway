@@ -182,7 +182,7 @@ func TestEncryptedSectionsShareTheCombinedByteBudget(t *testing.T) {
 
 func TestOpenedSourceKeepsTheSavedCiphertextBudget(t *testing.T) {
 	fixture, key := loadWebcryptoFixture(t)
-	raw, _ := json.Marshal(map[string]any{"plugins": map[string]any{"textExtraction": "always", "redaction": map[string]any{"encrypted": fixture.Envelope}}})
+	raw, _ := json.Marshal(map[string]any{"plugins": map[string]any{"textExtraction": map[string]any{"text": "always"}, "redaction": map[string]any{"encrypted": fixture.Envelope}}})
 	document, err := ParseSourceDocument(raw)
 	if err != nil {
 		t.Fatal(err)
@@ -192,7 +192,7 @@ func TestOpenedSourceKeepsTheSavedCiphertextBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	plugins := opened.Config.Plugins
-	if !reflect.DeepEqual(opened.size, document.size) || plugins == nil || plugins.Redaction == nil || plugins.TextExtraction == nil || *plugins.TextExtraction != TextExtractionAlways {
+	if !reflect.DeepEqual(opened.size, document.size) || plugins == nil || plugins.Redaction == nil || plugins.TextExtraction == nil || plugins.TextExtraction.Text == nil || *plugins.TextExtraction.Text != TextExtractionAlways {
 		t.Fatal("opening changed the saved budget or lost a readable or decrypted plugin")
 	}
 }
@@ -459,8 +459,8 @@ func TestInspectionShowsWhichPolicySetsEachSortCriterion(t *testing.T) {
 }
 
 func TestInspectionShowsWhichRequirementsReplaceDefaults(t *testing.T) {
-	org := `{"plugins":{"textExtraction":"off"},"timeouts":{"totalSeconds":900},"rules":{"openai":{"when":"provider.id == 'openai'","timeouts":{"outputIdleSeconds":60}}}}`
-	key := `{"routing":{"retries":1},"rules":{"prefs":{"mode":"default","plugins":{"redaction":{"presets":["credit_card_number"]},"textExtraction":"always"},"timeouts":{"totalSeconds":60,"outputIdleSeconds":30},"routing":{"retries":2,"sort":[{"by":"provider.id"}]}}}}`
+	org := `{"plugins":{"textExtraction":{"text":"off"}},"timeouts":{"totalSeconds":900},"rules":{"openai":{"when":"provider.id == 'openai'","timeouts":{"outputIdleSeconds":60}}}}`
+	key := `{"routing":{"retries":1},"rules":{"prefs":{"mode":"default","plugins":{"redaction":{"presets":["credit_card_number"]},"textExtraction":{"text":"always"}},"timeouts":{"totalSeconds":60,"outputIdleSeconds":30},"routing":{"retries":2,"sort":[{"by":"provider.id"}]}}}}`
 	inspection, err := InspectSources([]InspectionSource{
 		{Scope: OrganizationScope, Config: json.RawMessage(org)},
 		{Scope: KeyScope, ID: "key", Config: json.RawMessage(key)},
@@ -476,7 +476,7 @@ func TestInspectionShowsWhichRequirementsReplaceDefaults(t *testing.T) {
 	// replaces its own default. Nothing requires an ordering, so the default
 	// sort applies.
 	want := []map[string]any{
-		{"setting": "plugins.textExtraction", "policy": organization},
+		{"setting": "plugins.textExtraction.text", "policy": organization},
 		{"setting": "routing.retries", "policy": own},
 		{"setting": "timeouts.outputIdleSeconds", "policy": organization, "rule": "openai", "conditional": true},
 		{"setting": "timeouts.totalSeconds", "policy": organization},
@@ -487,7 +487,7 @@ func TestInspectionShowsWhichRequirementsReplaceDefaults(t *testing.T) {
 	}
 	// The key hears about the organization's requirements, not its own.
 	notes := []InspectionNote{
-		{Kind: "replaced", Scope: OrganizationScope, Sections: []string{"plugins.textExtraction", "timeouts.totalSeconds"}},
+		{Kind: "replaced", Scope: OrganizationScope, Sections: []string{"plugins.textExtraction.text", "timeouts.totalSeconds"}},
 		{Kind: "replaced", Scope: OrganizationScope, Sections: []string{"timeouts.outputIdleSeconds"}, Rules: []string{"openai"}},
 	}
 	if !reflect.DeepEqual(inspection.Notes, notes) {
@@ -585,9 +585,9 @@ func TestInspectionBoundsReplacedDefaults(t *testing.T) {
 		fmt.Fprintf(&org, `"r%03d":{"when":"model.id == 'm%d'","timeouts":{"outputIdleSeconds":60}}`, i, i)
 		fmt.Fprintf(&key, `"d%03d":{"mode":"default","timeouts":{"outputIdleSeconds":30,"totalSeconds":900}}`, i)
 	}
-	org.WriteString(`},"plugins":{"textExtraction":"off"}}`)
+	org.WriteString(`},"plugins":{"textExtraction":{"text":"off"}}}`)
 	key.WriteString(`}}`)
-	folder := `{"rules":{"strict":{"plugins":{"textExtraction":"off"}}}}`
+	folder := `{"rules":{"strict":{"plugins":{"textExtraction":{"text":"off"}}}}}`
 	inspection, err := InspectSources([]InspectionSource{
 		{Scope: OrganizationScope, Config: json.RawMessage(org.String())},
 		{Scope: FolderScope, ID: "folder", Config: json.RawMessage(folder)},
@@ -620,9 +620,9 @@ func TestInspectionBoundsReplacedDefaults(t *testing.T) {
 	// A required rule without a condition replaces a default on every
 	// request, and the first requirement is named with how many others agree.
 	key = strings.Builder{}
-	key.WriteString(`{"rules":{"d":{"mode":"default","plugins":{"textExtraction":"always"}}}}`)
+	key.WriteString(`{"rules":{"d":{"mode":"default","plugins":{"textExtraction":{"text":"always"}}}}}`)
 	inspection, err = InspectSources([]InspectionSource{
-		{Scope: OrganizationScope, Config: json.RawMessage(`{"plugins":{"textExtraction":"off"}}`)},
+		{Scope: OrganizationScope, Config: json.RawMessage(`{"plugins":{"textExtraction":{"text":"off"}}}`)},
 		{Scope: FolderScope, ID: "folder", Config: json.RawMessage(folder)},
 		{Scope: KeyScope, ID: "key", Config: json.RawMessage(key.String())},
 	}, &InspectionEdit{Scope: KeyScope, ID: "key", Previous: json.RawMessage(key.String())})
@@ -630,13 +630,13 @@ func TestInspectionBoundsReplacedDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	rules, _ = inspection.Effective["rules"].([]map[string]any)
-	want = []map[string]any{{"setting": "plugins.textExtraction", "policy": map[string]any{"scope": OrganizationScope}, "others": 1}}
+	want = []map[string]any{{"setting": "plugins.textExtraction.text", "policy": map[string]any{"scope": OrganizationScope}, "others": 1}}
 	if !reflect.DeepEqual(rules[len(rules)-1]["replaced"], want) {
 		t.Fatalf("replaced: %+v", rules[len(rules)-1]["replaced"])
 	}
 	notes := []InspectionNote{
-		{Kind: "replaced", Scope: OrganizationScope, Sections: []string{"plugins.textExtraction"}},
-		{Kind: "replaced", Scope: FolderScope, ID: "folder", Sections: []string{"plugins.textExtraction"}},
+		{Kind: "replaced", Scope: OrganizationScope, Sections: []string{"plugins.textExtraction.text"}},
+		{Kind: "replaced", Scope: FolderScope, ID: "folder", Sections: []string{"plugins.textExtraction.text"}},
 	}
 	if !reflect.DeepEqual(inspection.Notes, notes) {
 		t.Fatalf("notes: %+v", inspection.Notes)
@@ -684,7 +684,7 @@ func TestReplacedDefaultsAgreeWithActivation(t *testing.T) {
 		{"routing", "retries", "1"},
 		{"routing", "filter", `"provider.id != 'x'"`},
 		{"routing", "allowedCatalogNodes", `{"providers":["openai"]}`},
-		{"plugins", "textExtraction", `"off"`},
+		{"plugins", "textExtraction", `{"text":"off"}`},
 		{"plugins", "redaction", `{"presets":["email_address"]}`},
 	}
 	const when = "request.interface == 'chat_completions'"

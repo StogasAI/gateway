@@ -57,9 +57,10 @@ type Attachment struct {
 	URL, Data, ID string
 	Filename      string
 	FileType      string
-	// text marks an inline text file, which a deployment that reads text files gets as a file,
-	// and which text extraction turns into prompt text.
-	text bool
+	// family names the family of an inline text or Office file, which a deployment that reads
+	// it gets as a file, and which text extraction turns into prompt text. It is "" for any
+	// other attachment.
+	family inputfiles.Family
 	// mediaType is what the part and the start of its content say of its type, for the
 	// policy's input.mediaTypes, and mediaTypeErr why the two disagree.
 	mediaType    inputfiles.MediaType
@@ -132,7 +133,7 @@ func documentError(claude bool, formats DocumentFormats, attachment Attachment, 
 	if err != nil {
 		return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: path + " " + err.Error(), Param: path}
 	}
-	if attachment.text {
+	if attachment.family == inputfiles.FamilyText {
 		if _, ok := textDeclaration(claude, formats, mediaType, extension, strings.HasPrefix(attachment.Data, "data:")); ok {
 			return nil
 		}
@@ -240,10 +241,20 @@ func inputCheckRefusal(path, setting string) error {
 	return attachmentRefusal(path, " is an attachment, which "+setting+" cannot check")
 }
 
-// textExtractionHint ends the refusal of an inline text file that a pair whose policy turns text
-// extraction off cannot read. Text extraction turns the file into text, which every deployment and
-// input check reads.
-const textExtractionHint = ". Set plugins.textExtraction to auto to send it as text"
+// textExtractionHint ends the refusal of an inline text or Office file that a pair whose policy
+// does not extract its family cannot read. Text extraction turns the file into text, which every
+// deployment and input check reads.
+func textExtractionHint(family inputfiles.Family) string {
+	return ". Set plugins.textExtraction." + string(family) + " to auto to send it as text"
+}
+
+// extractionMode returns the text extraction mode of a family.
+func extractionMode(modes policy.TextExtractionModes, family inputfiles.Family) string {
+	if family == inputfiles.FamilyOffice {
+		return modes.Office
+	}
+	return modes.Text
+}
 
 // CloudRunsClaude reports whether AWS or Google runs a Claude deployment itself, rather than
 // Anthropic behind the cloud's sign-in.
@@ -273,16 +284,18 @@ type attachmentPair struct {
 	selection routingSelection
 	// mediaTypes are the policy's input.mediaTypes.
 	mediaTypes *policy.MediaTypes
-	// extracts turns inline text files into prompt text, as a file or as text depending on the
-	// mode. Text extraction is never encrypted.
-	extracts bool
+	// extracts names the families of inline files that the pair reads whatever its deployment
+	// reads, as a file or as text depending on the mode. Text extraction is never encrypted.
+	extracts inputfiles.Families
 	// check names the setting that refuses an attachment that stays opaque, input.asciiOnly or
 	// plugins.redaction, or is "".
 	check string
 }
 
 func newAttachmentPair(selection routingSelection, config *policy.Config) attachmentPair {
-	return attachmentPair{selection: selection, mediaTypes: config.MediaTypes(), extracts: config.TextExtraction() != policy.TextExtractionOff, check: config.InputCheck()}
+	modes := config.TextExtraction()
+	extracts := inputfiles.Families{Text: modes.Text != policy.TextExtractionOff, Office: modes.Office != policy.TextExtractionOff}
+	return attachmentPair{selection: selection, mediaTypes: config.MediaTypes(), extracts: extracts, check: config.InputCheck()}
 }
 
 // typeRefusal reports why the pair's policy refuses an attachment's media type, or nil.
@@ -296,7 +309,7 @@ func (p attachmentPair) refusal(attachment Attachment, subject string) error {
 	if err := p.typeRefusal(attachment); err != nil {
 		return err
 	}
-	if attachment.text && p.extracts {
+	if p.extracts.Has(attachment.family) {
 		return nil
 	}
 	if err := attachmentError(p.selection.provider, p.selection.deployment, attachment, subject); err != nil {
@@ -319,10 +332,10 @@ func (p attachmentPair) reads(attachments []Attachment) bool {
 }
 
 // deploymentReads reports whether a deployment reads every attachment that no policy can make
-// readable. An inline text file counts as read, since a policy can extract it.
+// readable. An inline text or Office file counts as read, since a policy can extract it.
 func deploymentReads(attachments []Attachment, selection routingSelection) bool {
 	for _, attachment := range attachments {
-		if !attachment.text && attachmentError(selection.provider, selection.deployment, attachment, routingSubject) != nil {
+		if attachment.family == "" && attachmentError(selection.provider, selection.deployment, attachment, routingSubject) != nil {
 			return false
 		}
 	}
@@ -388,10 +401,10 @@ func unreadAttachment(attachment Attachment, reasons []attachmentReason) error {
 		}
 		refusal.Message = strings.Join(messages, ". ")
 	}
-	// Text extraction makes an inline text file readable to every pair whose policy allows its
-	// type, and a pair that extracts it reads it.
-	if attachment.text && slices.ContainsFunc(reasons, func(reason attachmentReason) bool { return reason.pair.typeRefusal(attachment) == nil }) {
-		refusal.Message += textExtractionHint
+	// Text extraction makes an inline text or Office file readable to every pair whose policy
+	// allows its type, and a pair that extracts it reads it.
+	if attachment.family != "" && slices.ContainsFunc(reasons, func(reason attachmentReason) bool { return reason.pair.typeRefusal(attachment) == nil }) {
+		refusal.Message += textExtractionHint(attachment.family)
 	}
 	return refusal
 }
@@ -517,7 +530,9 @@ func readAttachment(block map[string]json.RawMessage, path string, responses boo
 		if declared, payload, err = inputfiles.ParseInline(inline, attachment.FileType); err != nil {
 			return Attachment{}, false
 		}
-		attachment.text = document && inputfiles.TextFile(declared, payload)
+		if document {
+			attachment.family = inputfiles.FileFamily(declared, payload, attachment.Filename)
+		}
 	}
 	if format != "" {
 		declared = inputfiles.AudioMediaType(format)

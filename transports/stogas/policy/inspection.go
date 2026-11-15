@@ -391,18 +391,11 @@ func inspectionPlugins(parts []*Plugins) (*Plugins, error) {
 	}
 	presets, patterns := map[string]bool{}, map[string]bool{}
 	selected := &Redaction{Presets: []string{}}
-	plugins := &Plugins{}
+	plugins := &Plugins{TextExtraction: combineTextExtraction(parts)}
 	var exports []*exportconfig.Config
 	for _, part := range parts {
 		if part.Export != nil {
 			exports = append(exports, part.Export)
-		}
-		if part.TextExtraction != nil {
-			mode := *part.TextExtraction
-			if plugins.TextExtraction != nil {
-				mode = strongerTextExtraction(*plugins.TextExtraction, mode)
-			}
-			plugins.TextExtraction = &mode
 		}
 		if part.Redaction == nil {
 			continue
@@ -490,13 +483,16 @@ func inspectionSetBy(entries []InspectionSource, sources []ScopedSource, compile
 			}
 		}
 	}
-	// The strongest text extraction mode wins, so it names the first policy that
-	// sets that mode.
-	for _, part := range compiled.PluginSources {
-		if part.units()&permissionTextExtraction != 0 {
-			mode := compiled.textExtractionSet()
-			add("plugins.textExtraction", permissionTextExtraction, false, func(c *Config) bool { return c.textExtractionSet() == mode })
-			break
+	// The strongest text extraction mode of a family wins, so each family names the first
+	// policy that sets that mode.
+	if set := compiled.textExtractionSet(); set != nil {
+		for i, family := range set.families() {
+			if mode := *family.mode; mode != nil {
+				add("plugins.textExtraction."+textExtractionFamilies[i], family.unit, false, func(c *Config) bool {
+					own := c.textExtractionSet()
+					return own != nil && *own.families()[i].mode != nil && **own.families()[i].mode == *mode
+				})
+			}
 		}
 	}
 	if compiled.Routing.AllowedCatalogNodes != nil {
@@ -650,15 +646,8 @@ func ruleSettings(fields map[string]json.RawMessage) []string {
 	var settings []string
 	for name, raw := range fields {
 		switch name {
-		case "input":
-			settings = append(settings, name)
-		case "access", "plugins", "routing", "timeouts":
-			var options map[string]json.RawMessage
-			if json.Unmarshal(raw, &options) == nil {
-				for option := range options {
-					settings = append(settings, name+"."+option)
-				}
-			}
+		case "input", "access", "plugins", "routing", "timeouts":
+			eachSetting(name, raw, func(setting string, _ json.RawMessage) { settings = append(settings, setting) })
 		}
 	}
 	sort.Strings(settings)

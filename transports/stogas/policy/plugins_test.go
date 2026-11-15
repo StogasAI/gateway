@@ -9,19 +9,27 @@ import (
 )
 
 func TestTextExtractionRequirementsAndDefaults(t *testing.T) {
+	both := func(mode string) TextExtractionModes {
+		return TextExtractionModes{Text: mode, Office: TextExtractionOff}
+	}
 	for _, tc := range []struct {
 		name    string
 		sources []string
-		want    string
+		want    TextExtractionModes
 	}{
-		{"omitted", []string{`{}`}, TextExtractionAuto},
-		{"off where nothing is stronger", []string{`{}`, `{"plugins":{"textExtraction":"off"}}`}, TextExtractionOff},
-		{"the strongest requirement", []string{`{"plugins":{"textExtraction":"always"}}`, `{"plugins":{"textExtraction":"off"}}`}, TextExtractionAlways},
-		{"auto over off", []string{`{"plugins":{"textExtraction":"off"}}`, `{"plugins":{"textExtraction":"auto"}}`}, TextExtractionAuto},
-		{"always over auto", []string{`{"plugins":{"textExtraction":"auto"}}`, `{"plugins":{"textExtraction":"always"}}`}, TextExtractionAlways},
-		{"default", []string{`{"rules":{"extract":{"mode":"default","plugins":{"textExtraction":"auto"}}}}`}, TextExtractionAuto},
-		{"a requirement replaces the default", []string{`{"rules":{"extract":{"mode":"default","plugins":{"textExtraction":"always"}}}}`, `{"plugins":{"textExtraction":"off"}}`}, TextExtractionOff},
-		{"another plugin's requirement", []string{`{"rules":{"extract":{"mode":"default","plugins":{"textExtraction":"always"}}}}`, `{"plugins":{"redaction":{}}}`}, TextExtractionAlways},
+		// The gateway changes no file unless a policy says so.
+		{"omitted", []string{`{}`}, both(TextExtractionOff)},
+		{"off where nothing is stronger", []string{`{}`, `{"plugins":{"textExtraction":{"text":"off"}}}`}, both(TextExtractionOff)},
+		{"the strongest requirement", []string{`{"plugins":{"textExtraction":{"text":"always"}}}`, `{"plugins":{"textExtraction":{"text":"off"}}}`}, both(TextExtractionAlways)},
+		{"auto over off", []string{`{"plugins":{"textExtraction":{"text":"off"}}}`, `{"plugins":{"textExtraction":{"text":"auto"}}}`}, both(TextExtractionAuto)},
+		{"always over auto", []string{`{"plugins":{"textExtraction":{"text":"auto"}}}`, `{"plugins":{"textExtraction":{"text":"always"}}}`}, both(TextExtractionAlways)},
+		{"default", []string{`{"rules":{"extract":{"mode":"default","plugins":{"textExtraction":{"text":"auto"}}}}}`}, both(TextExtractionAuto)},
+		{"a requirement replaces the default", []string{`{"rules":{"extract":{"mode":"default","plugins":{"textExtraction":{"text":"always"}}}}}`, `{"plugins":{"textExtraction":{"text":"off"}}}`}, both(TextExtractionOff)},
+		{"another plugin's requirement", []string{`{"rules":{"extract":{"mode":"default","plugins":{"textExtraction":{"text":"always"}}}}}`, `{"plugins":{"redaction":{}}}`}, both(TextExtractionAlways)},
+		// Each family combines on its own.
+		{"families of two policies", []string{`{"plugins":{"textExtraction":{"text":"auto"}}}`, `{"plugins":{"textExtraction":{"office":"always"}}}`}, TextExtractionModes{Text: TextExtractionAuto, Office: TextExtractionAlways}},
+		{"the strongest of each family", []string{`{"plugins":{"textExtraction":{"text":"always","office":"auto"}}}`, `{"plugins":{"textExtraction":{"text":"auto","office":"off"}}}`}, TextExtractionModes{Text: TextExtractionAlways, Office: TextExtractionAuto}},
+		{"a requirement replaces the default of its family alone", []string{`{"rules":{"extract":{"mode":"default","plugins":{"textExtraction":{"text":"auto","office":"auto"}}}}}`, `{"plugins":{"textExtraction":{"office":"off"}}}`}, TextExtractionModes{Text: TextExtractionAuto, Office: TextExtractionOff}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sources := []ScopedSource{{Scope: OrganizationScope, Value: ruleSource(t, `{}`)}}
@@ -53,8 +61,8 @@ func TestTextExtractionRequirementsAndDefaults(t *testing.T) {
 	}
 }
 
-func TestTextExtractionTakesOnlyItsModes(t *testing.T) {
-	for _, value := range []string{`true`, `false`, `"yes"`, `"Always"`, `""`, `null`} {
+func TestTextExtractionTakesOnlyItsFamiliesAndModes(t *testing.T) {
+	for _, value := range []string{`true`, `"auto"`, `null`, `{}`, `[]`, `{"text":"yes"}`, `{"text":"Always"}`, `{"text":""}`, `{"text":true}`, `{"text":null}`, `{"pdf":"auto"}`, `{"text":"auto","pdf":"auto"}`} {
 		if _, err := CompileSource([]byte(`{"plugins":{"textExtraction":` + value + `}}`)); err == nil {
 			t.Errorf("accepted %s", value)
 		}
@@ -62,7 +70,7 @@ func TestTextExtractionTakesOnlyItsModes(t *testing.T) {
 }
 
 func TestTextExtractionRequiresItsOwnRequestPermission(t *testing.T) {
-	request, err := CompileRequest([]byte(`{"plugins":{"textExtraction":"always"}}`), "org", nil)
+	request, err := CompileRequest([]byte(`{"plugins":{"textExtraction":{"text":"always"}}}`), "org", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,9 +95,9 @@ func TestTextExtractionRequiresItsOwnRequestPermission(t *testing.T) {
 // policy that sets a mode.
 func TestInspectionNamesThePolicyWhoseTextExtractionModeWins(t *testing.T) {
 	result, err := InspectSources([]InspectionSource{
-		{Scope: OrganizationScope, Config: json.RawMessage(`{"plugins":{"textExtraction":"auto"}}`)},
-		{Scope: RoleScope, ID: "role", Config: json.RawMessage(`{"plugins":{"textExtraction":"always"}}`)},
-		{Scope: KeyScope, ID: "key", Config: json.RawMessage(`{"plugins":{"textExtraction":"always"}}`)},
+		{Scope: OrganizationScope, Config: json.RawMessage(`{"plugins":{"textExtraction":{"text":"auto"}}}`)},
+		{Scope: RoleScope, ID: "role", Config: json.RawMessage(`{"plugins":{"textExtraction":{"text":"always"}}}`)},
+		{Scope: KeyScope, ID: "key", Config: json.RawMessage(`{"plugins":{"textExtraction":{"text":"always"}}}`)},
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -97,12 +105,12 @@ func TestInspectionNamesThePolicyWhoseTextExtractionModeWins(t *testing.T) {
 	var setBy []string
 	entries, _ := result.Effective["setBy"].([]map[string]any)
 	for _, entry := range entries {
-		if entry["setting"] == "plugins.textExtraction" {
+		if entry["setting"] == "plugins.textExtraction.text" {
 			setBy = append(setBy, fmt.Sprint(entry["policy"]))
 		}
 	}
 	if len(setBy) != 1 || !strings.Contains(setBy[0], "role") {
-		t.Fatalf("plugins.textExtraction set by %v", setBy)
+		t.Fatalf("plugins.textExtraction.text set by %v", setBy)
 	}
 }
 
@@ -118,7 +126,7 @@ func TestInputCheckNamesTheSettingThatReadsAllInputText(t *testing.T) {
 	encrypted := `"plugins":{"redaction":{"encrypted":` + string(envelope) + `}}`
 	for _, tc := range []struct{ name, source, want string }{
 		{"nothing", `{}`, ""},
-		{"text extraction", `{"plugins":{"textExtraction":"always"}}`, ""},
+		{"text extraction", `{"plugins":{"textExtraction":{"text":"always"}}}`, ""},
 		{"empty redaction", `{"plugins":{"redaction":{}}}`, ""},
 		{"ASCII input", `{"input":{"asciiOnly":true}}`, "input.asciiOnly"},
 		{"redaction", `{"plugins":{"redaction":{"presets":["email_address"]}}}`, "plugins.redaction"},

@@ -1,6 +1,6 @@
 // Package inputfiles inspects declared attachments without fetching remote
-// resources or decoding binary formats. Only opted-in UTF-8 text is expanded,
-// and content sniffing reads no more than a payload's first 512 bytes.
+// resources. Only opted-in files are expanded: UTF-8 text, and the XML of Office
+// files. Content sniffing reads no more than a payload's first 512 bytes.
 package inputfiles
 
 import (
@@ -29,7 +29,7 @@ type Stats struct {
 	InlineBytes int
 	// Opaque names the first attachment whose content the gateway does not read, or is "" when
 	// there is none: a URL, a file ID, or a file that stays one, unless it is a text file, which
-	// Text reads.
+	// Text reads. An Office file that stays a file is opaque.
 	Opaque string
 }
 
@@ -43,11 +43,12 @@ func (e *PartError) Error() string { return e.Path + " " + e.Reason }
 
 // Options say what Process does with a request's attachments.
 type Options struct {
-	// Extract turns inline text files into prompt text.
-	Extract bool
-	// File reports whether the deployment reads the text file at a path, such as
-	// messages[0].content[1], as a file, which then stays one, and the media type that the file
-	// must declare for it, or "" for its own. Nil keeps no text file.
+	// Extract names the families of inline files that become prompt text.
+	Extract Families
+	// File reports whether the text or Office file at a path, such as messages[0].content[1],
+	// stays a file, because the deployment reads it and nothing requires its text, and the media
+	// type that a text file must declare for the deployment, or "" for its own. Nil keeps no
+	// such file.
 	File func(path string) (mediaType string, ok bool)
 	// Text receives the text of each text file that stays a file, which the provider reads as
 	// prompt text, so that the caller can count it.
@@ -289,20 +290,24 @@ func (p *processor) block(path string, block map[string]json.RawMessage, respons
 		p.opaque(path)
 		return nil, nil
 	}
-	if document && TextFile(mediaType, payload) {
+	if family := Family(""); document && data != "" {
+		family = FileFamily(mediaType, payload, stringField(file, "filename"))
 		fileType, kept := "", false
-		if p.File != nil {
+		if family != "" && p.File != nil {
 			fileType, kept = p.File(path)
 		}
-		if kept || p.Extract {
+		switch {
+		case family == FamilyText && (kept || p.Extract.Text):
 			replacement, text, err := p.text(path, block, file, responses, mediaType, payload, fileType, kept)
 			if text || err != nil {
 				return replacement, err
 			}
+		case family == FamilyOffice && !kept && p.Extract.Office:
+			return p.office(path, block, file, responses, mediaType, payload)
 		}
 	}
 	// A bounded decoder validates and counts binary input without retaining a
-	// second decoded file. No image, archive, document, or media parser runs here.
+	// second decoded file. No image or media parser runs here.
 	count, err := io.Copy(io.Discard, base64.NewDecoder(base64.StdEncoding.Strict(), strings.NewReader(payload)))
 	if err != nil {
 		return nil, refuse("has invalid base64")
@@ -373,6 +378,56 @@ func (p *processor) text(path string, block, file map[string]json.RawMessage, re
 		encoded, err := sonic.Marshal(replacement)
 		return encoded, true, err
 	}
+	// Only a text type says more of the file than its name.
+	if !TextMediaType(mediaType) {
+		mediaType = ""
+	}
+	replacement, err := textBlock(path, block, file, responses, mediaType, string(decoded))
+	return replacement, true, err
+}
+
+// office reads the inline Office file of a block and returns the text block that replaces it.
+func (p *processor) office(path string, block, file map[string]json.RawMessage, responses bool, mediaType, payload string) (json.RawMessage, error) {
+	refuse := func(reason string) (json.RawMessage, error) { return nil, &PartError{Path: path, Reason: reason} }
+	// The request lease covers the decoded archive, and then what the extraction keeps.
+	retain := func(bytes int) error {
+		p.expansion += bytes
+		if p.Reserve != nil {
+			return p.Reserve(p.expansion)
+		}
+		return nil
+	}
+	if err := retain(base64.StdEncoding.DecodedLen(len(payload))); err != nil {
+		return nil, err
+	}
+	decoded, err := base64.StdEncoding.Strict().DecodeString(payload)
+	if err != nil {
+		return refuse("has invalid base64")
+	}
+	text, err := extractOffice(decoded, officeFile(mediaType, payload, stringField(file, "filename")), retain)
+	var capacity capacityError
+	var reason officeError
+	switch {
+	case errors.As(err, &capacity):
+		return nil, capacity.error
+	case errors.As(err, &reason):
+		return refuse(string(reason))
+	case err != nil:
+		return nil, err
+	}
+	p.stats.InlineBytes += len(decoded)
+	// Only a type that names the Office format says more than the filename.
+	if officeMediaTypes[strings.ToLower(mediaType)] == 0 {
+		mediaType = ""
+	}
+	return textBlock(path, block, file, responses, mediaType, text)
+}
+
+// textBlock builds the text block that replaces a file part: the file's text below a first line
+// that keeps what the part said of the file, its name and its media type. mediaType is "" for a
+// type that says nothing of the format.
+func textBlock(path string, block, file map[string]json.RawMessage, responses bool, mediaType, text string) (json.RawMessage, error) {
+	refuse := func(reason string) (json.RawMessage, error) { return nil, &PartError{Path: path, Reason: reason} }
 	// Reject extra members rather than silently removing request semantics. Sorted keys name
 	// the same member each time.
 	for _, key := range slices.Sorted(maps.Keys(file)) {
@@ -392,15 +447,13 @@ func (p *processor) text(path string, block, file map[string]json.RawMessage, re
 			return refuse("filename must be a non-empty string")
 		}
 	}
-	// The first line keeps what the file part said of the file: its name and media type.
 	header := ""
-	if TextMediaType(mediaType) {
+	if mediaType != "" {
 		header = "(" + mediaType + ")"
 	}
 	if name := stringField(file, "filename"); name != "" {
 		header = strings.TrimSpace(name + " " + header)
 	}
-	text := string(decoded)
 	if header != "" {
 		text = header + "\n" + text
 	}
@@ -414,11 +467,11 @@ func (p *processor) text(path string, block, file map[string]json.RawMessage, re
 	if responses {
 		replacement["type"] = json.RawMessage(`"input_text"`)
 	}
+	var err error
 	if replacement["text"], err = sonic.Marshal(text); err != nil {
-		return nil, false, err
+		return nil, err
 	}
-	encoded, err := sonic.Marshal(replacement)
-	return encoded, true, err
+	return sonic.Marshal(replacement)
 }
 
 func (p *processor) opaque(path string) {

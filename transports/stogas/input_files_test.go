@@ -73,13 +73,15 @@ func TestTextExtractionPrecedesASCIIAndRedaction(t *testing.T) {
 			name, plugins, data      string
 			ascii, reject, encrypted bool
 		}{
-			{"opt in", `"textExtraction":"always"`, "aGVsbG8=", false, false, false},
-			{"redaction after extraction", `"textExtraction":"always","redaction":{"customPattern":"hello"}`, "aGVsbG8=", false, false, false},
-			{"encrypted redaction after extraction", `"textExtraction":"always","redaction":{"customPattern":"hello"}`, "aGVsbG8=", false, false, true},
-			{"ASCII after extraction", `"textExtraction":"always"`, "w6k=", true, true, false},
-			{"opaque cannot bypass ASCII", `"textExtraction":"off"`, "aGVsbG8=", true, true, false},
-			{"opaque cannot bypass redaction", `"textExtraction":"off","redaction":{"customPattern":"hello"}`, "aGVsbG8=", false, true, false},
-			{"auto by default before redaction", `"redaction":{"customPattern":"hello"}`, "aGVsbG8=", false, false, false},
+			{"opt in", `"textExtraction":{"text":"always"}`, "aGVsbG8=", false, false, false},
+			{"redaction after extraction", `"textExtraction":{"text":"always"},"redaction":{"customPattern":"hello"}`, "aGVsbG8=", false, false, false},
+			{"encrypted redaction after extraction", `"textExtraction":{"text":"always"},"redaction":{"customPattern":"hello"}`, "aGVsbG8=", false, false, true},
+			{"ASCII after extraction", `"textExtraction":{"text":"always"}`, "w6k=", true, true, false},
+			{"opaque cannot bypass ASCII", `"textExtraction":{"text":"off"}`, "aGVsbG8=", true, true, false},
+			{"opaque cannot bypass redaction", `"textExtraction":{"text":"off"},"redaction":{"customPattern":"hello"}`, "aGVsbG8=", false, true, false},
+			{"auto before redaction", `"textExtraction":{"text":"auto"},"redaction":{"customPattern":"hello"}`, "aGVsbG8=", false, false, false},
+			{"no extraction before redaction", `"redaction":{"customPattern":"hello"}`, "aGVsbG8=", false, true, false},
+			{"another family's extraction before redaction", `"textExtraction":{"office":"always"},"redaction":{"customPattern":"hello"}`, "aGVsbG8=", false, true, false},
 		} {
 			t.Run(route+"/"+tc.name, func(t *testing.T) {
 				ascii := "false"
@@ -96,7 +98,7 @@ func TestTextExtractionPrecedesASCIIAndRedaction(t *testing.T) {
 					defer key.Clear()
 					// Independently generated with Node crypto for this organization and purpose.
 					const envelope = `{"version":1,"keyId":"3a1121028ba40964d5f10b47662650a021d736bd671f4083b5066d9bd51c9ef0","salt":"AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM","nonce":"BAQEBAQEBAQEBAQE","blob":"MUgKUlBwNjuw0aMvsAVKMdfwJ_mzeyhYggR0-E20ahBYWNcbmyo_HmA"}`
-					document := []byte(`{"plugins":{"textExtraction":"always","redaction":{"encrypted":` + envelope + `}}}`)
+					document := []byte(`{"plugins":{"textExtraction":{"text":"always"},"redaction":{"encrypted":` + envelope + `}}}`)
 					if _, missingErr := policy.OpenSource(document, "org-test", nil); missingErr == nil {
 						t.Fatal("encrypted redaction accepted without key")
 					}
@@ -380,7 +382,7 @@ func TestNativeFileFormatsFollowSelectedRouteAfterTextExtraction(t *testing.T) {
 		chatPart      = "messages[0].content[0]"
 		responsesPart = "input[0].content[0]"
 		subject       = " any deployment that this request can use"
-		hint          = ". Set plugins.textExtraction to auto to send it as text"
+		hint          = ". Set plugins.textExtraction.text to auto to send it as text"
 		// text is "hello", and binary are bytes that no format's signature matches.
 		text   = "aGVsbG8="
 		binary = "AAECAwQ="
@@ -394,8 +396,8 @@ func TestNativeFileFormatsFollowSelectedRouteAfterTextExtraction(t *testing.T) {
 		refusal string
 	}{
 		{"OpenAI Chat PDF", "openai-gpt-5.6-luna", "chat/completions", "application/pdf", "note.pdf", binary, "", false, ""},
-		{"OpenAI Chat CSV by default", "openai-gpt-5.6-luna", "chat/completions", "text/csv", "note.csv", text, "", false, ""},
-		{"OpenAI Chat CSV", "openai-gpt-5.6-luna", "chat/completions", "text/csv", "note.csv", text, "off", false, chatPart + " is text/csv, which is not supported by" + subject + hint},
+		{"OpenAI Chat CSV", "openai-gpt-5.6-luna", "chat/completions", "text/csv", "note.csv", text, "", false, chatPart + " is text/csv, which is not supported by" + subject + hint},
+		{"OpenAI Chat CSV where needed", "openai-gpt-5.6-luna", "chat/completions", "text/csv", "note.csv", text, "auto", false, ""},
 		{"OpenAI Chat untyped source file", "openai-gpt-5.6-luna", "chat/completions", "", "main.rs", text, "off", true, chatPart + " has no media type, and its filename extension is not supported by" + subject + hint},
 		{"OpenAI Chat extracted CSV", "openai-gpt-5.6-luna", "chat/completions", "text/csv", "note.csv", text, "always", false, ""},
 		{"OpenAI Responses CSV", "openai-gpt-5.6-luna", "responses", "text/csv", "note.csv", text, "", false, ""},
@@ -414,7 +416,7 @@ func TestNativeFileFormatsFollowSelectedRouteAfterTextExtraction(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var config *policy.Config
 			if tc.mode != "" {
-				source, err := policy.CompileSource([]byte(`{"plugins":{"textExtraction":"` + tc.mode + `"}}`))
+				source, err := policy.CompileSource([]byte(`{"plugins":{"textExtraction":{"text":"` + tc.mode + `"}}}`))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -423,8 +425,8 @@ func TestNativeFileFormatsFollowSelectedRouteAfterTextExtraction(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			// File bytes deliberately remain opaque: the gateway validates metadata;
-			// parsing PDF/Office documents and their size limits belongs upstream.
+			// A file that stays a file remains opaque: the gateway checks its type, and the
+			// provider parses it and applies its size limits.
 			data := tc.payload
 			if !tc.raw {
 				data = "data:" + tc.mime + ";base64," + data
@@ -480,17 +482,17 @@ func TestTextFilesReachTheProviderAsItReadsThem(t *testing.T) {
 		{"Claude reads a source file with no type", claude, "responses", `{}`, `"file_data":"aGVsbG8=","filename":"main.rs"`, claudeText, false},
 		{"Claude reads a source file that a browser calls binary", claude, "chat/completions", `{}`, `"file_data":"data:application/octet-stream;base64,aGVsbG8=","filename":"main.go"`, claudeText, false},
 		{"Claude reads raw text with file_type", claude, "chat/completions", `{}`, `"file_data":"aGVsbG8=","file_type":"text/plain","filename":"note.txt"`, claudeText, false},
-		{"auto keeps a file that Claude reads", claude, "responses", `{"plugins":{"textExtraction":"auto"}}`, `"file_data":"data:text/x-python;base64,aGVsbG8=","filename":"main.py"`, claudeText, false},
+		{"auto keeps a file that Claude reads", claude, "responses", `{"plugins":{"textExtraction":{"text":"auto"}}}`, `"file_data":"data:text/x-python;base64,aGVsbG8=","filename":"main.py"`, claudeText, false},
 		{"OpenAI Responses reads a type that it lists as it is", openai, "responses", `{}`, `"file_data":"data:text/csv;base64,aGVsbG8=","filename":"orders.csv"`, `"file_data":"data:text/csv;base64,aGVsbG8="`, false},
 		{"OpenAI Responses reads a type that it does not list as plain text", openai, "responses", `{}`, `"file_data":"data:text/x-zig;base64,aGVsbG8=","filename":"main.zig"`, `"file_data":"data:text/plain;base64,aGVsbG8="`, false},
 		// Core names the type of a file that names none, from its content.
 		{"OpenAI Responses reads an extension that it lists", openai, "responses", `{}`, `"file_data":"aGVsbG8=","filename":"main.py"`, `"file_data":"data:text/plain;base64,aGVsbG8="`, false},
 		{"OpenAI Responses reads an extension that it does not list", openai, "responses", `{}`, `"file_data":"aGVsbG8=","filename":"main.zig"`, `"file_data":"data:text/plain;base64,aGVsbG8="`, false},
-		{"OpenAI Chat needs extraction", openai, "chat/completions", `{"plugins":{"textExtraction":"auto"}}`, `"file_data":"data:text/csv;base64,aGVsbG8=","filename":"orders.csv"`, `"text":"orders.csv (text/csv)\nhello"`, false},
-		{"extraction names a file with no type", openai, "chat/completions", `{"plugins":{"textExtraction":"auto"}}`, `"file_data":"aGVsbG8=","filename":"main.rs"`, `"text":"main.rs\nhello"`, false},
-		{"always extracts a file that the deployment reads", openai, "responses", `{"plugins":{"textExtraction":"always"}}`, `"file_data":"aGVsbG8=","filename":"main.py"`, `"text":"main.py\nhello"`, false},
+		{"OpenAI Chat needs extraction", openai, "chat/completions", `{"plugins":{"textExtraction":{"text":"auto"}}}`, `"file_data":"data:text/csv;base64,aGVsbG8=","filename":"orders.csv"`, `"text":"orders.csv (text/csv)\nhello"`, false},
+		{"extraction names a file with no type", openai, "chat/completions", `{"plugins":{"textExtraction":{"text":"auto"}}}`, `"file_data":"aGVsbG8=","filename":"main.rs"`, `"text":"main.rs\nhello"`, false},
+		{"always extracts a file that the deployment reads", openai, "responses", `{"plugins":{"textExtraction":{"text":"always"}}}`, `"file_data":"aGVsbG8=","filename":"main.py"`, `"text":"main.py\nhello"`, false},
 		// "café" in Latin-1 starts as text and is not UTF-8.
-		{"text in another encoding with no type stays a file", openai, "responses", `{"plugins":{"textExtraction":"always"}}`, `"file_data":"Y2Fm6Q==","filename":"note.txt"`, `"file_data":"data:text/plain;base64,Y2Fm6Q=="`, true},
+		{"text in another encoding with no type stays a file", openai, "responses", `{"plugins":{"textExtraction":{"text":"always"}}}`, `"file_data":"Y2Fm6Q==","filename":"note.txt"`, `"file_data":"data:text/plain;base64,Y2Fm6Q=="`, true},
 		{"the provider decides on text in another encoding", openai, "responses", `{}`, `"file_data":"data:text/x-zig;base64,Y2Fm6Q==","filename":"main.zig"`, `"file_data":"data:text/plain;base64,Y2Fm6Q=="`, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -548,13 +550,13 @@ func TestAutoTextExtractionFollowsTheDeployment(t *testing.T) {
 		name, model, route, mime, policy string
 		extracted                        bool
 	}{
-		{"Anthropic reads plain text", "anthropic-claude-opus-4-8", "responses", "text/plain", `{"plugins":{"textExtraction":"auto"}}`, false},
-		{"Anthropic reads CSV as plain text", "anthropic-claude-opus-4-8", "responses", "text/csv", `{"plugins":{"textExtraction":"auto"}}`, false},
-		{"OpenAI Responses reads CSV", "openai-gpt-5.6-luna", "responses", "text/csv", `{"plugins":{"textExtraction":"auto"}}`, false},
-		{"OpenAI Chat does not read CSV", "openai-gpt-5.6-luna", "chat/completions", "text/csv", `{"plugins":{"textExtraction":"auto"}}`, true},
-		{"input checks read the text", "openai-gpt-5.6-luna", "responses", "text/csv", `{"plugins":{"textExtraction":"auto"},"input":{"asciiOnly":true}}`, true},
-		{"redaction reads the text", "anthropic-claude-opus-4-8", "responses", "text/plain", `{"plugins":{"textExtraction":"auto","redaction":{"presets":["email_address"]}}}`, true},
-		{"always", "anthropic-claude-opus-4-8", "responses", "text/plain", `{"plugins":{"textExtraction":"always"}}`, true},
+		{"Anthropic reads plain text", "anthropic-claude-opus-4-8", "responses", "text/plain", `{"plugins":{"textExtraction":{"text":"auto"}}}`, false},
+		{"Anthropic reads CSV as plain text", "anthropic-claude-opus-4-8", "responses", "text/csv", `{"plugins":{"textExtraction":{"text":"auto"}}}`, false},
+		{"OpenAI Responses reads CSV", "openai-gpt-5.6-luna", "responses", "text/csv", `{"plugins":{"textExtraction":{"text":"auto"}}}`, false},
+		{"OpenAI Chat does not read CSV", "openai-gpt-5.6-luna", "chat/completions", "text/csv", `{"plugins":{"textExtraction":{"text":"auto"}}}`, true},
+		{"input checks read the text", "openai-gpt-5.6-luna", "responses", "text/csv", `{"plugins":{"textExtraction":{"text":"auto"}},"input":{"asciiOnly":true}}`, true},
+		{"redaction reads the text", "anthropic-claude-opus-4-8", "responses", "text/plain", `{"plugins":{"textExtraction":{"text":"auto"},"redaction":{"presets":["email_address"]}}}`, true},
+		{"always", "anthropic-claude-opus-4-8", "responses", "text/plain", `{"plugins":{"textExtraction":{"text":"always"}}}`, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			source, err := policy.CompileSource([]byte(tc.policy))
