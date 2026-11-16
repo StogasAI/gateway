@@ -401,7 +401,7 @@ func NormalizeUpstreamStatus(bifrostErr *schemas.BifrostError) string {
 	switch {
 	case identifiers.has(schemas.RequestCancelled) || statusCode == 499:
 		return "cancelled"
-	case identifiers.has(schemas.RequestTimedOut, "timeout", "timeout_error"):
+	case identifiers.has(schemas.RequestTimedOut, "timeout", "timeout_error", "vector_store_timeout"):
 		return "timeout"
 	case identifiers.has(schemas.ProviderConnectionFailed):
 		return "connection_error"
@@ -409,36 +409,50 @@ func NormalizeUpstreamStatus(bifrostErr *schemas.BifrostError) string {
 		return "context_length_exceeded"
 	case identifiers.has("request_too_large", "payload_too_large"):
 		return "request_too_large"
-	case identifiers.has("invalid_image", "image_too_large", "image_too_small", "unsupported_image_format", "image_not_found", "image_download_failed"):
+	// OpenAI's Responses API names each image problem with a code of its own.
+	case identifiers.has("invalid_image", "image_too_large", "image_too_small", "unsupported_image_format", "image_not_found", "image_download_failed",
+		"invalid_image_format", "invalid_base64_image", "invalid_image_url", "image_parse_error", "invalid_image_mode", "image_file_too_large",
+		"unsupported_image_media_type", "empty_image_file", "failed_to_download_image", "image_file_not_found"):
 		return "invalid_image"
-	case identifiers.has("overloaded_error", "provider_overloaded"):
+	case identifiers.has("overloaded_error", "provider_overloaded", "server_overloaded"):
 		return "provider_overloaded"
 	case identifiers.has("upstream_response_invalid", "upstream_execution_invalid", "upstream_protocol_error", "upstream_response_too_large"):
 		return "invalid_response"
-	// AWS sends UnrecognizedClientException, as a 403, for an access key that no longer exists.
+	// AWS sends UnrecognizedClientException, as a 403, for an access key that no longer exists, and
+	// ExpiredTokenException for temporary credentials past their expiry.
 	case identifiers.has("authentication_error", "invalid_api_key", "unauthorized", "upstream_authentication_failed",
-		"unrecognizedclientexception"):
+		"unrecognizedclientexception", "expiredtokenexception"):
 		return "authentication_error"
-	// OpenAI sends missing_scope, as a 401, for a restricted key that lacks a permission.
-	case identifiers.has("permission_error", "permission_denied", "forbidden", "upstream_access_denied", "missing_scope"):
+	// OpenAI sends missing_scope, as a 401, for a restricted key that lacks a permission. Google
+	// sends FAILED_PRECONDITION, as a 400, for a model that needs allowlisting or that an
+	// organization policy disallows (https://docs.cloud.google.com/vertex-ai/generative-ai/docs/model-reference/api-errors).
+	case identifiers.has("permission_error", "permission_denied", "forbidden", "upstream_access_denied", "missing_scope",
+		"failed_precondition"):
 		return "permission_error"
 	case identifiers.has("billing_error", "insufficient_quota", "over_budget", "upstream_quota_exceeded", "payment_required",
 		// Anthropic's monthly spend cap, a 429 that retries cannot pass until the next month.
-		"enforced_spend_limit_reached"):
+		"enforced_spend_limit_reached",
+		// OpenAI's account limits, which its API reference lists among its error codes.
+		"billing_not_active", "credit_balance_exhausted", "usage_limit_exceeded", "project_spend_limit_exceeded",
+		"organization_spend_limit_exceeded", "organization_usage_limit_exceeded"):
 		return "over_budget"
 	case messageRefusal(bifrostErr) != "":
 		return messageRefusal(bifrostErr)
-	case identifiers.has("rate_limit_error", "rate_limited", "too_many_requests", "upstream_rate_limit_error", "rate_limit_exceeded"):
+	// Bedrock sends ServiceQuotaExceededException, as a 400, for an account quota that a later
+	// request can pass.
+	case identifiers.has("rate_limit_error", "rate_limited", "too_many_requests", "upstream_rate_limit_error", "rate_limit_exceeded",
+		"servicequotaexceededexception"):
 		return "rate_limited"
-	case identifiers.has("content_filter", "content_filter_error", "safety_error", "content_policy_violation", "refusal", "cyber_policy"),
+	case identifiers.has("content_filter", "content_filter_error", "safety_error", "content_policy_violation", "refusal", "cyber_policy",
+		"bio_policy", "misalignment_policy_violation", "image_content_policy_violation"),
 		flaggedPrompt(bifrostErr, identifiers):
 		return "content_filter"
 	case identifiers.has("model_decommissioned", "servicemodeldeprecating"):
 		// The provider retired the model, whatever status it sends: Groq and Azure
 		// send a retirement as 400.
 		return "model_retired"
-	case identifiers.has("unsupported_country_region_territory"):
-		// The provider does not serve the model to our region.
+	case identifiers.has("unsupported_country_region_territory", "data_residency_mismatch"):
+		// The provider does not serve the model to our region, or to the project's.
 		return "model_unavailable"
 	case statusCode == 401:
 		return "authentication_error"
