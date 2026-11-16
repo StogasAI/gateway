@@ -699,11 +699,17 @@ func intersectNetworks(a, b []netip.Prefix) []netip.Prefix {
 
 // NetworkDenied reports whether the client address is outside the networks
 // that every policy allows. The gateway reads an IPv4 client in its IPv4 form.
+// A client without a known address, such as one of the onion service, is
+// certainly inside only a list that holds 0.0.0.0/0 and ::/0.
 func (c *Config) NetworkDenied(client netip.Addr) bool {
 	if c == nil || c.Access == nil || c.Access.Networks == nil {
 		return false
 	}
-	_, ok := networkHolding(c.Access.networks, client.Unmap())
+	networks := c.Access.networks
+	if !client.IsValid() {
+		return len(networks) != 2 || networks[0].Bits() != 0 || networks[1].Bits() != 0
+	}
+	_, ok := networkHolding(networks, client.Unmap())
 	return !ok
 }
 

@@ -14,6 +14,8 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+
+	stogas "github.com/maximhq/bifrost/transports/stogas"
 )
 
 func TestIPAdmissionBudgetsCanonicalAddressesAndRefill(t *testing.T) {
@@ -90,6 +92,25 @@ func TestIPAdmissionExemptsOnlyTheRelayAddress(t *testing.T) {
 		}
 		if l.diagnostics().Entries != 1 {
 			t.Fatalf("%s relay kept an allowance", c.relay)
+		}
+	}
+}
+
+// Every Tor client of the relay arrives from its address, so none of them has
+// a client address that a network list could hold.
+func TestRelayClientsHaveNoClientAddress(t *testing.T) {
+	s := &Server{config: stogas.Config{OnionRelayAddress: netip.MustParseAddr("192.0.2.9")}}
+	for remote, want := range map[string]netip.Addr{
+		"192.0.2.9:80":           {},
+		"[::ffff:192.0.2.9]:80":  {},
+		"192.0.2.10:80":          netip.MustParseAddr("192.0.2.10"),
+		"[::ffff:192.0.2.10]:80": netip.MustParseAddr("192.0.2.10"),
+		"[2001:db8::9]:80":       netip.MustParseAddr("2001:db8::9"),
+	} {
+		request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+		request.RemoteAddr = remote
+		if got := s.clientAddress(&requestContext{request: request}); got != want {
+			t.Errorf("%s: client address %v, want %v", remote, got, want)
 		}
 	}
 }

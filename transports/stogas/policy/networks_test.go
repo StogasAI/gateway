@@ -20,12 +20,20 @@ func TestNetworksTakeAddressesAndRangesThatStartAtTheirFirstAddress(t *testing.T
 			t.Errorf("%s: denied=%v", address, denied)
 		}
 	}
-	// An address that does not parse is outside every network.
-	if !source.Config.NetworkDenied(netip.Addr{}) {
-		t.Fatal("an unknown client passed")
+	// A client without a known address, such as one of the onion service, is
+	// inside only a list that holds every IPv4 and IPv6 address.
+	for raw, allowed := range map[string]bool{
+		`{}`: true,
+		`{"access":{"networks":["0.0.0.0/0","::/0"]}}`:              true,
+		`{"access":{"networks":["::/0","10.0.0.0/8","0.0.0.0/0"]}}`: true,
+		`{"access":{"networks":["0.0.0.0/0"]}}`:                     false,
+	} {
+		if ruleSource(t, raw).Config.NetworkDenied(netip.Addr{}) == allowed {
+			t.Errorf("%s: unknown client allowed=%v", raw, !allowed)
+		}
 	}
-	if ruleSource(t, `{}`).Config.NetworkDenied(netip.Addr{}) {
-		t.Fatal("a policy without networks denied a client")
+	if !source.Config.NetworkDenied(netip.Addr{}) {
+		t.Fatal("an unknown client passed a list of some networks")
 	}
 
 	for raw, message := range map[string]string{
@@ -77,12 +85,12 @@ func TestEveryPolicysNetworksApply(t *testing.T) {
 
 func TestDefaultNetworksYieldOnlyToRequiredNetworks(t *testing.T) {
 	org := ruleSource(t, `{"rules":{"office":{"mode":"default","access":{"networks":["10.0.0.0/8"]}}}}`)
-	for key, allowed := range map[string][2]bool{
+	for key, allowed := range map[string][3]bool{
 		// A deny period is another setting, so the default networks still apply.
-		`{"access":{"deny":[{"days":["sun"],"start":"00:00","end":"01:00","timeZone":"UTC"}]}}`: {true, false},
-		`{"access":{"networks":["192.0.2.0/24"]}}`:                                              {false, true},
+		`{"access":{"deny":[{"days":["sun"],"start":"00:00","end":"01:00","timeZone":"UTC"}]}}`: {true, false, false},
+		`{"access":{"networks":["192.0.2.0/24"]}}`:                                              {false, true, false},
 		// Every address replaces the default without a restriction of its own.
-		`{"access":{"networks":["0.0.0.0/0","::/0"]}}`: {true, true},
+		`{"access":{"networks":["0.0.0.0/0","::/0"]}}`: {true, true, true},
 	} {
 		config, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: org}, {Scope: KeyScope, Value: ruleSource(t, key)}})
 		if err != nil {
@@ -92,8 +100,9 @@ func TestDefaultNetworksYieldOnlyToRequiredNetworks(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for index, address := range []string{"10.0.0.1", "192.0.2.1"} {
-			if active.NetworkDenied(netip.MustParseAddr(address)) == allowed[index] {
+		// The last client has no known address, as one of the onion service.
+		for index, address := range []netip.Addr{netip.MustParseAddr("10.0.0.1"), netip.MustParseAddr("192.0.2.1"), {}} {
+			if active.NetworkDenied(address) == allowed[index] {
 				t.Errorf("%s: %s allowed=%v", key, address, !allowed[index])
 			}
 		}
