@@ -172,7 +172,7 @@ func applyUpstreamCredentials(
 	ctx *schemas.BifrostContext,
 	state *State,
 	azureTokens azureTokenSource,
-	googleTokens googleTokenSource,
+	signIns cloudSignIns,
 	azureChecks azureTargetChecker,
 ) error {
 	if ctx == nil || state == nil || state.Authorization == nil || state.Resolution == nil {
@@ -210,7 +210,7 @@ func applyUpstreamCredentials(
 		switch state.Resolution.Provider {
 		case catalog.ProviderAWS, catalog.ProviderGoogleCloud:
 			var err error
-			if directKey, err = applyCloudClaudeRequest(ctx, state, googleTokens); err != nil {
+			if directKey, err = applyCloudClaudeRequest(ctx, state, signIns); err != nil {
 				return err
 			}
 		case schemas.Azure:
@@ -235,19 +235,21 @@ func applyUpstreamCredentials(
 					DiscoverAt: authorization.AzureDiscoverAt,
 					Envelope:   authorization.UpstreamByokEnvelope,
 					Credential: azureauth.Credential{
-						TenantID: azure.TenantID.GetValue(),
-						ClientID: azure.ClientID.GetValue(),
-						Secret:   azure.ClientSecret.GetValue(),
+						TenantID:       azure.TenantID.GetValue(),
+						ClientID:       azure.ClientID.GetValue(),
+						Secret:         azure.ClientSecret.GetValue(),
+						OrganizationID: authorization.OrganizationID,
 					},
 				}); err != nil {
 					return err
 				}
 			}
 			token, err := azureTokens.Token(ctx, azureauth.Credential{
-				TenantID: azure.TenantID.GetValue(),
-				ClientID: azure.ClientID.GetValue(),
-				Secret:   azure.ClientSecret.GetValue(),
-				Scope:    azure.Scopes[0],
+				TenantID:       azure.TenantID.GetValue(),
+				ClientID:       azure.ClientID.GetValue(),
+				Secret:         azure.ClientSecret.GetValue(),
+				Scope:          azure.Scopes[0],
+				OrganizationID: authorization.OrganizationID,
 			})
 			if err != nil {
 				if errors.Is(err, azureauth.ErrCredential) {

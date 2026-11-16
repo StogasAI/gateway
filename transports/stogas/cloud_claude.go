@@ -17,6 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/transports/stogas/awsauth"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 	"github.com/maximhq/bifrost/transports/stogas/googleauth"
@@ -39,13 +40,17 @@ const (
 )
 
 var (
-	awsRegionPattern          = regexp.MustCompile(`^(af|ap|ca|eu|il|me|mx|sa|us)-(central|east|west|north|south|northeast|northwest|southeast|southwest)-[1-9][0-9]?$`)
-	awsAccessKeyIDPattern     = regexp.MustCompile(`^AKIA[A-Z0-9]{16}$`)
-	awsSecretKeyPattern       = regexp.MustCompile(`^[A-Za-z0-9/+]{40}$`)
+	awsRegionPattern      = regexp.MustCompile(`^(af|ap|ca|eu|il|me|mx|sa|us)-(central|east|west|north|south|northeast|northwest|southeast|southwest)-[1-9][0-9]?$`)
+	awsAccessKeyIDPattern = regexp.MustCompile(`^AKIA[A-Z0-9]{16}$`)
+	awsSecretKeyPattern   = regexp.MustCompile(`^[A-Za-z0-9/+]{40}$`)
+	// A role of the commercial partition, with its path.
+	awsRoleARNPattern         = regexp.MustCompile(`^arn:aws:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]{1,576}$`)
 	anthropicWorkspacePattern = regexp.MustCompile(`^wrkspc_[A-Za-z0-9]{1,64}$`)
 	googleProjectPattern      = regexp.MustCompile(`^[a-z][a-z0-9-]{4,28}[a-z0-9]$`)
 	googleClientEmailPattern  = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}@[a-z0-9][a-z0-9.-]{0,200}\.gserviceaccount\.com$`)
 	googleKeyIDPattern        = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	// A workload identity pool provider by its resource path, which names the project by number.
+	googleProviderPattern = regexp.MustCompile(`^projects/[0-9]{1,20}/locations/global/workloadIdentityPools/[a-z0-9-]{4,32}/providers/[a-z0-9-]{4,32}$`)
 )
 
 // vertexHosts are Vertex AI's endpoints for Claude by location: the global
@@ -56,27 +61,42 @@ var vertexHosts = map[string]string{
 	"eu":     "aiplatform.eu.rep.googleapis.com",
 }
 
-// awsByokCredential signs in with an IAM access key, which serves Bedrock and,
-// with a workspace, Claude Platform on AWS; or with an API key, which serves
-// Claude Platform on AWS when a workspace is given and Bedrock otherwise.
+// awsByokCredential signs in with an IAM role that trusts the organization's
+// federation issuer or with an IAM access key, which serve Bedrock and, with a
+// workspace, Claude Platform on AWS; or with an API key, which serves Claude
+// Platform on AWS when a workspace is given and Bedrock otherwise. A role holds
+// no secret.
 type awsByokCredential struct {
 	Schema          string `json:"schema"`
 	Region          string `json:"region"`
+	RoleARN         string `json:"roleArn"`
 	AccessKeyID     string `json:"accessKeyId"`
 	SecretAccessKey string `json:"secretAccessKey"`
 	APIKey          string `json:"apiKey"`
 	WorkspaceID     string `json:"workspaceId"`
 }
 
-// googleCloudByokCredential is a service-account key. It serves Vertex AI and,
-// with a workspace, Claude on Google Cloud managed by Anthropic.
+// googleCloudByokCredential is a service-account key, or a workload identity
+// pool provider that trusts the organization's federation issuer, with the
+// service account to act as if the pool grants access through one. It serves
+// Vertex AI and, with a workspace, Claude on Google Cloud managed by Anthropic.
 type googleCloudByokCredential struct {
-	Schema       string `json:"schema"`
-	ProjectID    string `json:"projectId"`
-	ClientEmail  string `json:"clientEmail"`
-	PrivateKeyID string `json:"privateKeyId"`
-	PrivateKey   string `json:"privateKey"`
-	WorkspaceID  string `json:"workspaceId"`
+	Schema                   string `json:"schema"`
+	ProjectID                string `json:"projectId"`
+	ClientEmail              string `json:"clientEmail"`
+	PrivateKeyID             string `json:"privateKeyId"`
+	PrivateKey               string `json:"privateKey"`
+	WorkloadIdentityProvider string `json:"workloadIdentityProvider"`
+	ServiceAccountEmail      string `json:"serviceAccountEmail"`
+	WorkspaceID              string `json:"workspaceId"`
+}
+
+// signIn is how the credential signs in to Google for one organization.
+func (c googleCloudByokCredential) signIn(organizationID string) googleauth.Credential {
+	if c.WorkloadIdentityProvider != "" {
+		return googleauth.Credential{ClientEmail: c.ServiceAccountEmail, OrganizationID: organizationID, Provider: c.WorkloadIdentityProvider}
+	}
+	return googleauth.Credential{ClientEmail: c.ClientEmail, PrivateKeyID: c.PrivateKeyID, PrivateKey: c.PrivateKey}
 }
 
 func decodeStrictJSON(raw string, target any) error {
@@ -99,10 +119,13 @@ func parseAWSByokCredential(raw string) (awsByokCredential, error) {
 	accessKey := credential.AccessKeyID != "" || credential.SecretAccessKey != ""
 	valid := credential.Schema == awsByokSchema && awsRegionPattern.MatchString(credential.Region) &&
 		(credential.WorkspaceID == "" || anthropicWorkspacePattern.MatchString(credential.WorkspaceID))
-	if accessKey {
+	switch {
+	case credential.RoleARN != "":
+		valid = valid && !accessKey && credential.APIKey == "" && awsRoleARNPattern.MatchString(credential.RoleARN)
+	case accessKey:
 		valid = valid && credential.APIKey == "" &&
 			awsAccessKeyIDPattern.MatchString(credential.AccessKeyID) && awsSecretKeyPattern.MatchString(credential.SecretAccessKey)
-	} else {
+	default:
 		// A short-term Bedrock API key expires within 12 hours, so it cannot be stored.
 		valid = valid && validUpstreamAPIKey(credential.APIKey) && !strings.HasPrefix(credential.APIKey, "bedrock-api-key-")
 	}
@@ -119,9 +142,20 @@ func parseGoogleCloudByokCredential(raw string) (googleCloudByokCredential, erro
 	}
 	if credential.Schema != googleCloudByokSchema ||
 		!googleProjectPattern.MatchString(credential.ProjectID) ||
-		!googleClientEmailPattern.MatchString(credential.ClientEmail) ||
-		!googleKeyIDPattern.MatchString(credential.PrivateKeyID) ||
 		(credential.WorkspaceID != "" && !anthropicWorkspacePattern.MatchString(credential.WorkspaceID)) {
+		return googleCloudByokCredential{}, errors.New("invalid Google Cloud BYOK")
+	}
+	if credential.WorkloadIdentityProvider != "" {
+		if credential.ClientEmail != "" || credential.PrivateKeyID != "" || credential.PrivateKey != "" ||
+			!googleProviderPattern.MatchString(credential.WorkloadIdentityProvider) ||
+			(credential.ServiceAccountEmail != "" && !googleClientEmailPattern.MatchString(credential.ServiceAccountEmail)) {
+			return googleCloudByokCredential{}, errors.New("invalid Google Cloud BYOK")
+		}
+		return credential, nil
+	}
+	if credential.ServiceAccountEmail != "" ||
+		!googleClientEmailPattern.MatchString(credential.ClientEmail) ||
+		!googleKeyIDPattern.MatchString(credential.PrivateKeyID) {
 		return googleCloudByokCredential{}, errors.New("invalid Google Cloud BYOK")
 	}
 	if _, err := googleauth.ParsePrivateKey(credential.PrivateKey); err != nil {
@@ -203,6 +237,16 @@ type googleTokenSource interface {
 	Token(context.Context, googleauth.Credential) (string, error)
 }
 
+type awsRoleSource interface {
+	Credentials(context.Context, awsauth.Credential) (aws.Credentials, error)
+}
+
+// cloudSignIns are the sign-ins that cloud credentials exchange for tokens.
+type cloudSignIns struct {
+	google googleTokenSource
+	roles  awsRoleSource
+}
+
 // cloudRequest is how one attempt reaches a cloud-hosted Claude deployment.
 type cloudRequest struct {
 	url     string
@@ -211,9 +255,10 @@ type cloudRequest struct {
 }
 
 // cloudClaudeRequest builds the URL, headers and per-attempt signer for a
-// deployment from the customer's secret. A Google token is fetched once here,
-// so a rejected key fails before any provider call.
-func cloudClaudeRequest(ctx context.Context, provider schemas.ModelProvider, secret string, deployment catalog.Deployment, streaming bool, googleTokens googleTokenSource) (cloudRequest, error) {
+// deployment from the customer's secret. A Google token and a role's
+// credentials are fetched once here, so a rejected credential fails before any
+// provider call.
+func cloudClaudeRequest(ctx context.Context, provider schemas.ModelProvider, organizationID, secret string, deployment catalog.Deployment, streaming bool, signIns cloudSignIns) (cloudRequest, error) {
 	upstream := deployment.Upstream
 	switch provider {
 	case catalog.ProviderAWS:
@@ -238,10 +283,24 @@ func cloudClaudeRequest(ctx context.Context, provider schemas.ModelProvider, sec
 		}
 		// Both offerings take an API key as a bearer token; Bedrock also takes
 		// x-api-key, but AWS documents the bearer form for every Bedrock API.
-		if credential.APIKey != "" {
+		switch {
+		case credential.APIKey != "":
 			request.signer = staticHeaders("Authorization", "Bearer "+credential.APIKey)
-		} else {
-			request.signer = sigV4Signer(aws.Credentials{AccessKeyID: credential.AccessKeyID, SecretAccessKey: credential.SecretAccessKey}, service, credential.Region, request.url)
+		case credential.RoleARN != "":
+			if signIns.roles == nil {
+				return cloudRequest{}, billing.ErrGatewayUnavailable
+			}
+			role := awsauth.Credential{OrganizationID: organizationID, Region: credential.Region, RoleARN: credential.RoleARN}
+			if _, err := signIns.roles.Credentials(ctx, role); err != nil {
+				if errors.Is(err, awsauth.ErrCredential) {
+					return cloudRequest{}, billing.ErrByok
+				}
+				return cloudRequest{}, billing.ErrGatewayUnavailable
+			}
+			request.signer = sigV4Signer(func() (aws.Credentials, error) { return signIns.roles.Credentials(ctx, role) }, service, credential.Region, request.url)
+		default:
+			key := aws.Credentials{AccessKeyID: credential.AccessKeyID, SecretAccessKey: credential.SecretAccessKey}
+			request.signer = sigV4Signer(func() (aws.Credentials, error) { return key, nil }, service, credential.Region, request.url)
 		}
 		return request, nil
 	case catalog.ProviderGoogleCloud:
@@ -271,10 +330,11 @@ func cloudClaudeRequest(ctx context.Context, provider schemas.ModelProvider, sec
 		default:
 			return cloudRequest{}, billing.ErrByokTarget
 		}
+		googleTokens := signIns.google
 		if googleTokens == nil {
 			return cloudRequest{}, billing.ErrGatewayUnavailable
 		}
-		signIn := googleauth.Credential{ClientEmail: credential.ClientEmail, PrivateKeyID: credential.PrivateKeyID, PrivateKey: credential.PrivateKey}
+		signIn := credential.signIn(organizationID)
 		if _, err := googleTokens.Token(ctx, signIn); err != nil {
 			if errors.Is(err, googleauth.ErrCredential) {
 				return cloudRequest{}, billing.ErrByok
@@ -297,11 +357,17 @@ func staticHeaders(name, value string) schemas.RequestSigner {
 }
 
 // sigV4Signer signs each attempt's exact body when it is sent, so a retry
-// never reuses a signature that AWS would reject as expired. It signs only the
-// host and date, which the gateway and AWS both fix.
-func sigV4Signer(credentials aws.Credentials, service, region, url string) schemas.RequestSigner {
+// never reuses a signature that AWS would reject as expired, and reads the
+// credentials for each attempt, so a retry late in a long request signs with a
+// role's current ones. It signs only the host, the date and a role's session
+// token, which the gateway and AWS both fix.
+func sigV4Signer(current func() (aws.Credentials, error), service, region, url string) schemas.RequestSigner {
 	signer := v4.NewSigner()
 	return func(body []byte) (map[string]string, *schemas.BifrostError) {
+		credentials, err := current()
+		if err != nil {
+			return nil, upstreamSignInFailure(err)
+		}
 		request, err := http.NewRequest(http.MethodPost, url, nil)
 		if err != nil {
 			return nil, upstreamSignInFailure(err)
@@ -310,7 +376,11 @@ func sigV4Signer(credentials aws.Credentials, service, region, url string) schem
 		if err := signer.SignHTTP(context.Background(), credentials, request, hex.EncodeToString(digest[:]), service, region, time.Now()); err != nil {
 			return nil, upstreamSignInFailure(err)
 		}
-		return map[string]string{"Authorization": request.Header.Get("Authorization"), "X-Amz-Date": request.Header.Get("X-Amz-Date")}, nil
+		headers := map[string]string{"Authorization": request.Header.Get("Authorization"), "X-Amz-Date": request.Header.Get("X-Amz-Date")}
+		if token := request.Header.Get("X-Amz-Security-Token"); token != "" {
+			headers["X-Amz-Security-Token"] = token
+		}
+		return headers, nil
 	}
 }
 
@@ -330,6 +400,7 @@ func googleBearer(ctx context.Context, tokens googleTokenSource, credential goog
 // rejected credential as 401, anything else as 503, which a retry may fix.
 func upstreamSignInFailure(err error) *schemas.BifrostError {
 	status, message := http.StatusServiceUnavailable, "Upstream sign-in is unavailable"
+	// Every sign-in reports a rejected credential as accesstoken.ErrCredential.
 	if errors.Is(err, googleauth.ErrCredential) {
 		status, message = http.StatusUnauthorized, "Upstream credential rejected"
 	}
@@ -338,14 +409,14 @@ func upstreamSignInFailure(err error) *schemas.BifrostError {
 
 // applyCloudClaudeRequest installs one pair's cloud request. The body was
 // built for the deployment's hosting; this adds what depends on the secret.
-func applyCloudClaudeRequest(ctx *schemas.BifrostContext, state *State, googleTokens googleTokenSource) (schemas.Key, error) {
+func applyCloudClaudeRequest(ctx *schemas.BifrostContext, state *State, signIns cloudSignIns) (schemas.Key, error) {
 	resolution := state.Resolution
 	authorization := state.Authorization
 	if !cloudTargetServesSecret(resolution.Provider, authorization.UpstreamByokSecret, resolution.Deployment) {
 		return schemas.Key{}, billing.ErrByokTarget
 	}
 	streaming := resolution.RequestType == schemas.ChatCompletionStreamRequest || resolution.RequestType == schemas.ResponsesStreamRequest
-	request, err := cloudClaudeRequest(ctx, resolution.Provider, authorization.UpstreamByokSecret, resolution.Deployment, streaming, googleTokens)
+	request, err := cloudClaudeRequest(ctx, resolution.Provider, authorization.OrganizationID, authorization.UpstreamByokSecret, resolution.Deployment, streaming, signIns)
 	if err != nil {
 		return schemas.Key{}, err
 	}

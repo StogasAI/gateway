@@ -1,6 +1,8 @@
-// Package azureauth signs in to Microsoft Entra with a client secret. Tokens
-// live in a bounded accesstoken cache; client secrets are used only for a cache
-// miss and are never retained in cache entries.
+// Package azureauth signs in to Microsoft Entra as an application: with its
+// client secret, or without one when the application holds a federated
+// credential that trusts an organization's federation issuer. Tokens live in a
+// bounded accesstoken cache; client secrets are used only for a cache miss and
+// are never retained in cache entries.
 package azureauth
 
 import (
@@ -13,6 +15,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/maximhq/bifrost/transports/stogas/accesstoken"
+	"github.com/maximhq/bifrost/transports/stogas/federation"
 )
 
 var (
@@ -20,11 +23,15 @@ var (
 	ErrUnavailable = accesstoken.ErrUnavailable
 )
 
+// Credential is an application and the scope to sign in for. Without a
+// Secret, the application signs in with the token of OrganizationID.
 type Credential struct {
 	TenantID string
 	ClientID string
 	Secret   string
 	Scope    string
+
+	OrganizationID string
 }
 
 type Diagnostics = accesstoken.Diagnostics
@@ -32,22 +39,35 @@ type Diagnostics = accesstoken.Diagnostics
 type Cache struct {
 	tokens *accesstoken.Cache
 	client *http.Client
+	issuer *federation.Issuer
 }
 
-func New(ctx context.Context) *Cache {
+// New starts the token cache. issuer signs the tokens of federated
+// applications and is nil where the gateway holds no signing key.
+func New(ctx context.Context, issuer *federation.Issuer) *Cache {
 	client, transport := accesstoken.NewClient(false)
 	return &Cache{tokens: accesstoken.New(ctx, func(ctx context.Context, parts []string) (accesstoken.Token, error) {
-		return signIn(ctx, client, Credential{TenantID: parts[0], ClientID: parts[1], Secret: parts[2], Scope: parts[3]})
-	}, transport), client: client}
+		return signIn(ctx, client, issuer, Credential{TenantID: parts[0], ClientID: parts[1], Secret: parts[2], Scope: parts[3], OrganizationID: parts[4]})
+	}, transport), client: client, issuer: issuer}
 }
 
-func signIn(ctx context.Context, client *http.Client, credential Credential) (accesstoken.Token, error) {
-	auth, err := azidentity.NewClientSecretCredential(credential.TenantID, credential.ClientID, credential.Secret, &azidentity.ClientSecretCredentialOptions{
-		ClientOptions: azcore.ClientOptions{
-			Transport: accesstoken.BoundedTransport{Client: client},
-			Retry:     policy.RetryOptions{MaxRetries: -1},
-		},
-	})
+func signIn(ctx context.Context, client *http.Client, issuer *federation.Issuer, credential Credential) (accesstoken.Token, error) {
+	options := azcore.ClientOptions{
+		Transport: accesstoken.BoundedTransport{Client: client},
+		Retry:     policy.RetryOptions{MaxRetries: -1},
+	}
+	var auth azcore.TokenCredential
+	var err error
+	if credential.Secret == "" {
+		if issuer == nil {
+			return accesstoken.Token{}, ErrUnavailable
+		}
+		auth, err = azidentity.NewClientAssertionCredential(credential.TenantID, credential.ClientID, func(context.Context) (string, error) {
+			return issuer.Token(credential.OrganizationID, federation.AudienceAzure, time.Now())
+		}, &azidentity.ClientAssertionCredentialOptions{ClientOptions: options})
+	} else {
+		auth, err = azidentity.NewClientSecretCredential(credential.TenantID, credential.ClientID, credential.Secret, &azidentity.ClientSecretCredentialOptions{ClientOptions: options})
+	}
 	if err != nil {
 		return accesstoken.Token{}, ErrCredential
 	}
@@ -71,7 +91,7 @@ func (c *Cache) SignIn(ctx context.Context, credential Credential) (string, erro
 	if c == nil {
 		return "", ErrUnavailable
 	}
-	token, err := signIn(ctx, c.client, credential)
+	token, err := signIn(ctx, c.client, c.issuer, credential)
 	if err != nil {
 		return "", err
 	}
@@ -85,7 +105,7 @@ func (c *Cache) Token(ctx context.Context, credential Credential) (string, error
 	if c == nil {
 		return "", ErrUnavailable
 	}
-	return c.tokens.Token(ctx, credential.TenantID, credential.ClientID, credential.Secret, credential.Scope)
+	return c.tokens.Token(ctx, credential.TenantID, credential.ClientID, credential.Secret, credential.Scope, credential.OrganizationID)
 }
 
 func (c *Cache) Diagnostics() Diagnostics {

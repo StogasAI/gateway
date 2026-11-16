@@ -114,7 +114,7 @@ func checkStoredByok(ctx context.Context, opener storedByokOpener, checker *byok
 	if err != nil {
 		return nil, err
 	}
-	found, failure, err := checker.run(ctx, grant.Provider, secret, storedCloudTarget(grant.Provider, secret), request.AzureAccountID, startedAt)
+	found, failure, err := checker.run(ctx, grant.OrganizationID, grant.Provider, secret, storedCloudTarget(grant.Provider, secret), request.AzureAccountID, startedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +172,7 @@ func listStoredAzureAccounts(ctx context.Context, opener storedByokOpener, check
 	if err != nil {
 		return nil, err
 	}
-	accounts, failure, err := checker.accounts(ctx, secret, request.SubscriptionIDs)
+	accounts, failure, err := checker.accounts(ctx, grant.OrganizationID, secret, request.SubscriptionIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -187,7 +187,7 @@ func listStoredAzureAccounts(ctx context.Context, opener storedByokOpener, check
 
 // accounts lists the model accounts in subscriptionIDs that the application in secret can read,
 // while it holds one of the checker's slots.
-func (c *byokChecker) accounts(ctx context.Context, secret string, subscriptionIDs []string) ([]StoredAzureAccount, byokFailure, error) {
+func (c *byokChecker) accounts(ctx context.Context, organizationID, secret string, subscriptionIDs []string) ([]StoredAzureAccount, byokFailure, error) {
 	select {
 	case c.slots <- struct{}{}:
 	case <-ctx.Done():
@@ -200,7 +200,7 @@ func (c *byokChecker) accounts(ctx context.Context, secret string, subscriptionI
 	}
 	ctx, cancel := context.WithTimeout(ctx, azureDiscoveryTimeout)
 	defer cancel()
-	token, failure := c.signIn(ctx, app)
+	token, failure := c.signIn(ctx, organizationID, app)
 	if failure.message != "" {
 		return nil, failure, nil
 	}

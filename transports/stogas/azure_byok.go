@@ -23,6 +23,9 @@ var (
 	azureUUIDPattern        = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 )
 
+// azureByokCredential is the application that signs in to an account: with its
+// client secret, or without one when the application holds a federated
+// credential that trusts the organization's federation issuer.
 type azureByokCredential struct {
 	ClientID     string `json:"clientId"`
 	ClientSecret string `json:"clientSecret"`
@@ -184,7 +187,7 @@ func parseAzureByokCredential(raw string) (azureByokCredential, error) {
 	if credential.Schema != azureByokSchema ||
 		!azureUUIDPattern.MatchString(credential.ClientID) ||
 		!azureUUIDPattern.MatchString(credential.TenantID) ||
-		!validUpstreamAPIKey(credential.ClientSecret) {
+		(credential.ClientSecret != "" && !validUpstreamAPIKey(credential.ClientSecret)) {
 		return azureByokCredential{}, errors.New("invalid Azure BYOK")
 	}
 	return credential, nil

@@ -10,10 +10,12 @@ import (
 	bifrost "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/providers/utils"
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/transports/stogas/awsauth"
 	"github.com/maximhq/bifrost/transports/stogas/azureauth"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 	"github.com/maximhq/bifrost/transports/stogas/chutese2ee"
+	"github.com/maximhq/bifrost/transports/stogas/federation"
 	"github.com/maximhq/bifrost/transports/stogas/googleauth"
 	"github.com/maximhq/bifrost/transports/stogas/providerio"
 	"github.com/valyala/fasthttp"
@@ -28,6 +30,7 @@ type Runtime struct {
 	billing      *billing.Service
 	chutesE2EE   *chutese2ee.Transport
 	azureTokens  *azureauth.Cache
+	awsRoles     *awsauth.Cache
 	azureChecks  *AzureChecks
 	googleTokens *googleauth.Cache
 	byokChecks   *byokChecker
@@ -47,6 +50,12 @@ func NewRuntime(ctx context.Context, config Config, nodeID string) (*Runtime, er
 	byokChecks, err := newByokChecker(config)
 	if err != nil {
 		return nil, err
+	}
+	var issuer *federation.Issuer
+	if config.FederationSigningKey != "" {
+		if issuer, err = federation.NewIssuer(config.FederationSigningKey, federationOrigin(config)); err != nil {
+			return nil, err
+		}
 	}
 	runtimeCtx, cancel := context.WithCancel(ctx)
 	chutesTransport, err := newChutesE2EETransport(config)
@@ -83,10 +92,12 @@ func NewRuntime(ctx context.Context, config Config, nodeID string) (*Runtime, er
 		return nil, err
 	}
 
-	azureTokens := azureauth.New(runtimeCtx)
-	googleTokens := googleauth.New(runtimeCtx, confidentialProduction(config))
+	azureTokens := azureauth.New(runtimeCtx, issuer)
+	googleTokens := googleauth.New(runtimeCtx, confidentialProduction(config), issuer)
+	awsRoles := awsauth.New(runtimeCtx, issuer, confidentialProduction(config))
 	byokChecks.google = googleTokens
 	byokChecks.azure = azureTokens
+	byokChecks.roles = awsRoles
 	return &Runtime{
 		client:       client,
 		billing:      billingService,
@@ -94,6 +105,7 @@ func NewRuntime(ctx context.Context, config Config, nodeID string) (*Runtime, er
 		azureTokens:  azureTokens,
 		azureChecks:  NewAzureChecks(runtimeCtx, billingService, azureTokens),
 		googleTokens: googleTokens,
+		awsRoles:     awsRoles,
 		byokChecks:   byokChecks,
 		cancel:       cancel,
 	}, nil
@@ -103,7 +115,7 @@ func (r *Runtime) ApplyUpstreamCredentials(ctx *schemas.BifrostContext, state *S
 	if r == nil {
 		return billing.ErrGatewayUnavailable
 	}
-	return applyUpstreamCredentials(ctx, state, r.azureTokens, r.googleTokens, r.azureChecks)
+	return applyUpstreamCredentials(ctx, state, r.azureTokens, cloudSignIns{google: r.googleTokens, roles: r.awsRoles}, r.azureChecks)
 }
 
 func (r *Runtime) AzureAuthDiagnostics() azureauth.Diagnostics {
@@ -188,6 +200,9 @@ func (r *Runtime) Close() {
 	}
 	if r.chutesE2EE != nil {
 		r.chutesE2EE.Close()
+	}
+	if r.awsRoles != nil {
+		r.awsRoles.Close()
 	}
 	if r.azureTokens != nil {
 		r.azureTokens.Close()

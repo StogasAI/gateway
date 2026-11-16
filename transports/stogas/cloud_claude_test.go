@@ -19,8 +19,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	providerutils "github.com/maximhq/bifrost/core/providers/utils"
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/transports/stogas/awsauth"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 	"github.com/maximhq/bifrost/transports/stogas/googleauth"
@@ -31,6 +33,10 @@ const (
 	testAWSSecretKey   = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
 	testGoogleKeyID    = "0123456789abcdef0123456789abcdef01234567"
 	testWorkspaceID    = "wrkspc_01Test"
+
+	testOrganizationID = "01990000-0000-7000-8000-000000000001"
+	testAWSRoleARN     = "arn:aws:iam::123456789012:role/gateways/stogas"
+	testGoogleProvider = "projects/123456789012/locations/global/workloadIdentityPools/stogas/providers/stogas"
 )
 
 var testGooglePrivateKey = func() string {
@@ -68,6 +74,30 @@ func awsAPIKeySecret(t *testing.T, region, workspace string) string {
 		fields["workspaceId"] = workspace
 	}
 	return cloudSecret(t, fields)
+}
+
+// awsRoleSecret and googleFederatedSecret hold no secret: the cloud trusts the organization's
+// federation issuer.
+func awsRoleSecret(t *testing.T, region, workspace string) string {
+	fields := map[string]string{"schema": awsByokSchema, "region": region, "roleArn": testAWSRoleARN}
+	if workspace != "" {
+		fields["workspaceId"] = workspace
+	}
+	return cloudSecret(t, fields)
+}
+
+func googleFederatedSecret(t *testing.T, serviceAccount string) string {
+	fields := map[string]string{"schema": googleCloudByokSchema, "projectId": "stogas-test", "workloadIdentityProvider": testGoogleProvider}
+	if serviceAccount != "" {
+		fields["serviceAccountEmail"] = serviceAccount
+	}
+	return cloudSecret(t, fields)
+}
+
+type awsRoleFunc func(context.Context, awsauth.Credential) (aws.Credentials, error)
+
+func (f awsRoleFunc) Credentials(ctx context.Context, credential awsauth.Credential) (aws.Credentials, error) {
+	return f(ctx, credential)
 }
 
 func googleSecret(t *testing.T, workspace string) string {
@@ -137,6 +167,10 @@ func TestCloudCredentialTargetNamesWhatEachSecretServes(t *testing.T) {
 		{"IAM key with workspace", catalog.ProviderAWS, awsIAMSecret(t, "eu-west-1", testWorkspaceID), billing.CloudTarget{Hosting: []string{"amazon", "anthropic"}, Region: "eu-west-1"}},
 		{"Bedrock API key", catalog.ProviderAWS, awsAPIKeySecret(t, "us-west-2", ""), billing.CloudTarget{Hosting: []string{"amazon"}, Region: "us-west-2"}},
 		{"Claude Platform API key", catalog.ProviderAWS, awsAPIKeySecret(t, "us-east-1", testWorkspaceID), billing.CloudTarget{Hosting: []string{"anthropic"}, Region: "us-east-1"}},
+		{"role", catalog.ProviderAWS, awsRoleSecret(t, "us-east-1", ""), billing.CloudTarget{Hosting: []string{"amazon"}, Region: "us-east-1"}},
+		{"role with workspace", catalog.ProviderAWS, awsRoleSecret(t, "eu-west-1", testWorkspaceID), billing.CloudTarget{Hosting: []string{"amazon", "anthropic"}, Region: "eu-west-1"}},
+		{"workload identity pool", catalog.ProviderGoogleCloud, googleFederatedSecret(t, ""), billing.CloudTarget{Hosting: []string{"google"}}},
+		{"workload identity pool with service account", catalog.ProviderGoogleCloud, googleFederatedSecret(t, "runner@stogas-test.iam.gserviceaccount.com"), billing.CloudTarget{Hosting: []string{"google"}}},
 		{"service account", catalog.ProviderGoogleCloud, googleSecret(t, ""), billing.CloudTarget{Hosting: []string{"google"}}},
 		{"service account with workspace", catalog.ProviderGoogleCloud, googleSecret(t, testWorkspaceID), billing.CloudTarget{Hosting: []string{"anthropic", "google"}}},
 	} {
@@ -183,6 +217,16 @@ func TestCloudCredentialsRejectEveryMalformedSecret(t *testing.T) {
 		"AWS key without secret":     {catalog.ProviderAWS, cloudSecret(t, with(iam, "secretAccessKey", ""))},
 		"AWS key and API key":        {catalog.ProviderAWS, cloudSecret(t, with(iam, "apiKey", "customer-api-key"))},
 		"AWS no sign-in":             {catalog.ProviderAWS, cloudSecret(t, map[string]string{"schema": awsByokSchema, "region": "us-east-1"})},
+		"AWS role and access key":    {catalog.ProviderAWS, cloudSecret(t, with(iam, "roleArn", testAWSRoleARN))},
+		"AWS role and API key":       {catalog.ProviderAWS, cloudSecret(t, map[string]string{"schema": awsByokSchema, "region": "us-east-1", "roleArn": testAWSRoleARN, "apiKey": "customer-api-key"})},
+		"AWS user instead of a role": {catalog.ProviderAWS, cloudSecret(t, map[string]string{"schema": awsByokSchema, "region": "us-east-1", "roleArn": "arn:aws:iam::123456789012:user/stogas"})},
+		"AWS GovCloud role":          {catalog.ProviderAWS, cloudSecret(t, map[string]string{"schema": awsByokSchema, "region": "us-east-1", "roleArn": "arn:aws-us-gov:iam::123456789012:role/stogas"})},
+		"AWS role with a query":      {catalog.ProviderAWS, cloudSecret(t, map[string]string{"schema": awsByokSchema, "region": "us-east-1", "roleArn": testAWSRoleARN + "&Action=GetCallerIdentity"})},
+		"Google pool and key":        {catalog.ProviderGoogleCloud, cloudSecret(t, with(google, "workloadIdentityProvider", testGoogleProvider))},
+		"Google pool by project ID":  {catalog.ProviderGoogleCloud, cloudSecret(t, map[string]string{"schema": googleCloudByokSchema, "projectId": "stogas-test", "workloadIdentityProvider": "projects/stogas-test/locations/global/workloadIdentityPools/stogas/providers/stogas"})},
+		"Google pool in a URL":       {catalog.ProviderGoogleCloud, cloudSecret(t, map[string]string{"schema": googleCloudByokSchema, "projectId": "stogas-test", "workloadIdentityProvider": "//iam.googleapis.com/" + testGoogleProvider})},
+		"Google pool, user account":  {catalog.ProviderGoogleCloud, cloudSecret(t, map[string]string{"schema": googleCloudByokSchema, "projectId": "stogas-test", "workloadIdentityProvider": testGoogleProvider, "serviceAccountEmail": "person@example.com"})},
+		"Google key, second account": {catalog.ProviderGoogleCloud, cloudSecret(t, with(google, "serviceAccountEmail", "runner@stogas-test.iam.gserviceaccount.com"))},
 		"AWS bad workspace":          {catalog.ProviderAWS, cloudSecret(t, with(iam, "workspaceId", "workspace-1"))},
 		"AWS API key with space":     {catalog.ProviderAWS, cloudSecret(t, map[string]string{"schema": awsByokSchema, "region": "us-east-1", "apiKey": "two words"})},
 		"AWS short-term API key":     {catalog.ProviderAWS, cloudSecret(t, map[string]string{"schema": awsByokSchema, "region": "us-east-1", "apiKey": "bedrock-api-key-YmVkcm9jay5hbWF6b25hd3MuY29t"})},
@@ -374,7 +418,7 @@ func TestCloudClaudeRequestReachesEachOfferingWithItsOwnSignIn(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			request, err := cloudClaudeRequest(ctx, test.provider, test.secret, cloudDeployment(t, test.deployment), test.streaming, tokens)
+			request, err := cloudClaudeRequest(ctx, test.provider, testOrganizationID, test.secret, cloudDeployment(t, test.deployment), test.streaming, cloudSignIns{google: tokens})
 			if err != nil || request.url != test.url || request.signer == nil || len(request.headers) != len(test.headers) {
 				t.Fatalf("request %+v, error %v", request, err)
 			}
@@ -422,13 +466,13 @@ func TestCloudClaudeRequestRefusesSecretsThatCannotServeTheHosting(t *testing.T)
 	ctx := context.Background()
 	platform := cloudDeployment(t, "aws-claude-fable-5-1-anthropic-hosted")
 	managed := cloudDeployment(t, "google-cloud-claude-fable-5-1-anthropic-hosted")
-	if _, err := cloudClaudeRequest(ctx, catalog.ProviderAWS, awsIAMSecret(t, "us-east-1", ""), platform, false, nil); !errors.Is(err, billing.ErrByokTarget) {
+	if _, err := cloudClaudeRequest(ctx, catalog.ProviderAWS, testOrganizationID, awsIAMSecret(t, "us-east-1", ""), platform, false, cloudSignIns{}); !errors.Is(err, billing.ErrByokTarget) {
 		t.Fatalf("Claude Platform without a workspace: %v", err)
 	}
-	if _, err := cloudClaudeRequest(ctx, catalog.ProviderGoogleCloud, googleSecret(t, ""), managed, false, nil); !errors.Is(err, billing.ErrByokTarget) {
+	if _, err := cloudClaudeRequest(ctx, catalog.ProviderGoogleCloud, testOrganizationID, googleSecret(t, ""), managed, false, cloudSignIns{}); !errors.Is(err, billing.ErrByokTarget) {
 		t.Fatalf("Claude on Google Cloud without a workspace: %v", err)
 	}
-	if _, err := cloudClaudeRequest(ctx, catalog.ProviderAWS, googleSecret(t, ""), platform, false, nil); !errors.Is(err, billing.ErrByok) {
+	if _, err := cloudClaudeRequest(ctx, catalog.ProviderAWS, testOrganizationID, googleSecret(t, ""), platform, false, cloudSignIns{}); !errors.Is(err, billing.ErrByok) {
 		t.Fatalf("Google key for AWS: %v", err)
 	}
 }
@@ -445,7 +489,7 @@ func TestGoogleSignInSeparatesRejectedKeysFromOutages(t *testing.T) {
 		{"rejected key", googleTokenFunc(func(context.Context, googleauth.Credential) (string, error) { return "", googleauth.ErrCredential }), billing.ErrByok},
 		{"outage", googleTokenFunc(func(context.Context, googleauth.Credential) (string, error) { return "", googleauth.ErrUnavailable }), billing.ErrGatewayUnavailable},
 	} {
-		if _, err := cloudClaudeRequest(ctx, catalog.ProviderGoogleCloud, googleSecret(t, ""), vertex, false, test.tokens); !errors.Is(err, test.want) {
+		if _, err := cloudClaudeRequest(ctx, catalog.ProviderGoogleCloud, testOrganizationID, googleSecret(t, ""), vertex, false, cloudSignIns{google: test.tokens}); !errors.Is(err, test.want) {
 			t.Errorf("%s: error %v, want %v", test.name, err, test.want)
 		}
 	}
@@ -453,8 +497,8 @@ func TestGoogleSignInSeparatesRejectedKeysFromOutages(t *testing.T) {
 	// Each attempt reads the token again, so a late retry gets a fresh one, and a
 	// key revoked mid-request answers as the provider would.
 	calls := 0
-	request, err := cloudClaudeRequest(ctx, catalog.ProviderGoogleCloud, googleSecret(t, ""), vertex, false,
-		googleTokenFunc(func(context.Context, googleauth.Credential) (string, error) {
+	request, err := cloudClaudeRequest(ctx, catalog.ProviderGoogleCloud, testOrganizationID, googleSecret(t, ""), vertex, false,
+		cloudSignIns{google: googleTokenFunc(func(context.Context, googleauth.Credential) (string, error) {
 			calls++
 			switch calls {
 			case 1, 2:
@@ -465,7 +509,7 @@ func TestGoogleSignInSeparatesRejectedKeysFromOutages(t *testing.T) {
 				return "", googleauth.ErrCredential
 			}
 			return "", googleauth.ErrUnavailable
-		}))
+		})})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -480,6 +524,84 @@ func TestGoogleSignInSeparatesRejectedKeysFromOutages(t *testing.T) {
 	}
 }
 
+func TestFederatedCredentialsSignInAsTheOrganization(t *testing.T) {
+	ctx := context.Background()
+	bedrock := cloudDeployment(t, "aws-claude-fable-5-1")
+	vertex := cloudDeployment(t, "google-cloud-claude-fable-5-1-eu")
+
+	// A role's credentials are read for each attempt, so a retry late in a long request signs
+	// with the current ones, and the session token travels with the signature.
+	var asked []awsauth.Credential
+	roles := awsRoleFunc(func(_ context.Context, credential awsauth.Credential) (aws.Credentials, error) {
+		asked = append(asked, credential)
+		switch len(asked) {
+		case 1, 2:
+			return aws.Credentials{AccessKeyID: "ASIAFIRST", SecretAccessKey: "first", SessionToken: "session-1"}, nil
+		case 3:
+			return aws.Credentials{AccessKeyID: "ASIASECOND", SecretAccessKey: "second", SessionToken: "session-2"}, nil
+		}
+		return aws.Credentials{}, awsauth.ErrCredential
+	})
+	request, err := cloudClaudeRequest(ctx, catalog.ProviderAWS, testOrganizationID, awsRoleSecret(t, "us-east-1", ""), bedrock, false, cloudSignIns{roles: roles})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (awsauth.Credential{OrganizationID: testOrganizationID, Region: "us-east-1", RoleARN: testAWSRoleARN}); asked[0] != want {
+		t.Fatalf("assumed %+v", asked[0])
+	}
+	first, _ := request.signer([]byte("{}"))
+	second, _ := request.signer([]byte("{}"))
+	_, rejected := request.signer([]byte("{}"))
+	if first["X-Amz-Security-Token"] != "session-1" || !strings.Contains(first["Authorization"], "Credential=ASIAFIRST/") ||
+		second["X-Amz-Security-Token"] != "session-2" || !strings.Contains(second["Authorization"], "Credential=ASIASECOND/") {
+		t.Fatalf("signatures %v, %v", first, second)
+	}
+	if !strings.Contains(first["Authorization"], "SignedHeaders=host;x-amz-date;x-amz-security-token") {
+		t.Fatalf("the signature leaves the session token out: %s", first["Authorization"])
+	}
+	if rejected == nil || *rejected.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("a role that AWS stopped trusting answered %+v", rejected)
+	}
+
+	for _, test := range []struct {
+		name  string
+		roles awsRoleSource
+		want  error
+	}{
+		{"no role cache", nil, billing.ErrGatewayUnavailable},
+		{"AWS refuses the role", awsRoleFunc(func(context.Context, awsauth.Credential) (aws.Credentials, error) {
+			return aws.Credentials{}, awsauth.ErrCredential
+		}), billing.ErrByok},
+		{"outage", awsRoleFunc(func(context.Context, awsauth.Credential) (aws.Credentials, error) {
+			return aws.Credentials{}, awsauth.ErrUnavailable
+		}), billing.ErrGatewayUnavailable},
+	} {
+		if _, err := cloudClaudeRequest(ctx, catalog.ProviderAWS, testOrganizationID, awsRoleSecret(t, "us-east-1", ""), bedrock, false, cloudSignIns{roles: test.roles}); !errors.Is(err, test.want) {
+			t.Errorf("%s: error %v, want %v", test.name, err, test.want)
+		}
+	}
+
+	// Google signs in through the pool as the organization, and as the service account when the
+	// credential names one.
+	var signIn googleauth.Credential
+	tokens := googleTokenFunc(func(_ context.Context, credential googleauth.Credential) (string, error) {
+		signIn = credential
+		return "ya29.federated", nil
+	})
+	for _, account := range []string{"", "runner@stogas-test.iam.gserviceaccount.com"} {
+		request, err := cloudClaudeRequest(ctx, catalog.ProviderGoogleCloud, testOrganizationID, googleFederatedSecret(t, account), vertex, false, cloudSignIns{google: tokens})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := (googleauth.Credential{ClientEmail: account, OrganizationID: testOrganizationID, Provider: testGoogleProvider}); signIn != want {
+			t.Fatalf("signed in as %+v", signIn)
+		}
+		if headers, _ := request.signer(nil); headers["Authorization"] != "Bearer ya29.federated" {
+			t.Fatalf("headers %v", headers)
+		}
+	}
+}
+
 func TestApplyCloudClaudeRequestKeepsBetaHeadersAndSendsNoKey(t *testing.T) {
 	state := resolveCloudState(t, "/v1/responses", "aws-claude-fable-5-1-anthropic-hosted", `"input":"hi","stream":true,`)
 	state.Authorization = &billing.Authorization{
@@ -489,7 +611,7 @@ func TestApplyCloudClaudeRequestKeepsBetaHeadersAndSendsNoKey(t *testing.T) {
 	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 	beta := map[string][]string{"anthropic-beta": {"compact-2026-01-12"}}
 	ctx.SetValue(schemas.BifrostContextKeyExtraHeaders, beta)
-	if err := applyUpstreamCredentials(ctx, state, nil, nil, nil); err != nil {
+	if err := applyUpstreamCredentials(ctx, state, nil, cloudSignIns{}, nil); err != nil {
 		t.Fatal(err)
 	}
 	headers, _ := ctx.Value(schemas.BifrostContextKeyExtraHeaders).(map[string][]string)
@@ -514,14 +636,14 @@ func TestApplyCloudClaudeRequestKeepsBetaHeadersAndSendsNoKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	state.Authorization.UpstreamByokSecret = indented.String()
-	if err := applyUpstreamCredentials(schemas.NewBifrostContext(context.Background(), schemas.NoDeadline), state, nil, nil, nil); err != nil {
+	if err := applyUpstreamCredentials(schemas.NewBifrostContext(context.Background(), schemas.NoDeadline), state, nil, cloudSignIns{}, nil); err != nil {
 		t.Fatalf("indented credential: %v", err)
 	}
 
 	// A secret that cannot serve the routed deployment is refused before any
 	// provider call, whatever the registered target claimed.
 	state.Authorization.UpstreamByokSecret = awsIAMSecret(t, "us-east-1", "")
-	if err := applyUpstreamCredentials(schemas.NewBifrostContext(context.Background(), schemas.NoDeadline), state, nil, nil, nil); !errors.Is(err, billing.ErrByokTarget) {
+	if err := applyUpstreamCredentials(schemas.NewBifrostContext(context.Background(), schemas.NoDeadline), state, nil, cloudSignIns{}, nil); !errors.Is(err, billing.ErrByokTarget) {
 		t.Fatalf("error %v", err)
 	}
 }

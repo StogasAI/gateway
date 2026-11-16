@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/maximhq/bifrost/transports/stogas/awsauth"
 	"github.com/maximhq/bifrost/transports/stogas/azureauth"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/customerkey"
@@ -98,7 +99,7 @@ func TestByokCheckReadsEachProvider(t *testing.T) {
 	ctx := context.Background()
 
 	for _, provider := range []string{"openai", "anthropic", "chutes"} {
-		if failure := checker.check(ctx, provider, "secret-"+provider, nil); failure != (byokFailure{}) {
+		if failure := checker.check(ctx, testOrganizationID, provider, "secret-"+provider, nil); failure != (byokFailure{}) {
 			t.Fatalf("%s: %+v", provider, failure)
 		}
 	}
@@ -127,13 +128,13 @@ func TestByokCheckReadsEachProvider(t *testing.T) {
 		302: unavailable, 500: unavailable, 503: unavailable,
 	} {
 		status = code
-		if got := checker.check(ctx, "openai", "sk-test", nil); got != want {
+		if got := checker.check(ctx, testOrganizationID, "openai", "sk-test", nil); got != want {
 			t.Fatalf("status %d: %+v, want %+v", code, got, want)
 		}
 	}
 	// A secret that no request could send is refused before any provider call.
 	before := len(seen())
-	if got := checker.check(ctx, "openai", "sk test", nil); got != invalidSecret("openai") {
+	if got := checker.check(ctx, testOrganizationID, "openai", "sk test", nil); got != invalidSecret("openai") {
 		t.Fatalf("invalid secret: %+v", got)
 	}
 	if len(seen()) != before {
@@ -143,7 +144,7 @@ func TestByokCheckReadsEachProvider(t *testing.T) {
 	unreachable := newTestByokChecker(server, nil, now)
 	unreachable.openAIBaseURL = "http://127.0.0.1:1"
 	status = http.StatusOK
-	if got := unreachable.check(ctx, "openai", "sk-test", nil); got != unavailable {
+	if got := unreachable.check(ctx, testOrganizationID, "openai", "sk-test", nil); got != unavailable {
 		t.Fatalf("unreachable provider: %+v", got)
 	}
 }
@@ -214,7 +215,7 @@ func TestByokCheckSignsInToAWSWithEachKindOfCredential(t *testing.T) {
 			http.MethodGet, "aws-external-anthropic.us-west-2.api.aws", "/v1/models", "limit=1", "customer-api-key", testWorkspaceID},
 	}
 	for i, c := range cases {
-		if failure := checker.check(ctx, "aws", c.secret, &c.target); failure != (byokFailure{}) {
+		if failure := checker.check(ctx, testOrganizationID, "aws", c.secret, &c.target); failure != (byokFailure{}) {
 			t.Fatalf("case %d: %+v", i, failure)
 		}
 		r := seen()[i]
@@ -235,8 +236,52 @@ func TestByokCheckSignsInToAWSWithEachKindOfCredential(t *testing.T) {
 	verifySigV4(t, sts, "sts", "eu-west-1")
 
 	status = http.StatusForbidden
-	if got := checker.check(ctx, "aws", awsIAMSecret(t, "eu-west-1", ""), &billing.CloudTarget{Hosting: []string{"amazon"}, Region: "eu-west-1"}); got != refusal(byokRejected("aws")) {
+	if got := checker.check(ctx, testOrganizationID, "aws", awsIAMSecret(t, "eu-west-1", ""), &billing.CloudTarget{Hosting: []string{"amazon"}, Region: "eu-west-1"}); got != refusal(byokRejected("aws")) {
 		t.Fatalf("rejected access key: %+v", got)
+	}
+}
+
+type awsRoleSignInFunc func(context.Context, awsauth.Credential) error
+
+func (f awsRoleSignInFunc) SignIn(ctx context.Context, credential awsauth.Credential) error {
+	return f(ctx, credential)
+}
+
+// A role holds no secret, so its check assumes it anew as the organization.
+func TestByokCheckAssumesARoleAsTheOrganization(t *testing.T) {
+	status := http.StatusOK
+	server, seen := byokCheckTestServer(t, &status)
+	checker := newTestByokChecker(server, nil, time.Now())
+	target := &billing.CloudTarget{Hosting: []string{"amazon"}, Region: "eu-west-1"}
+	secret := awsRoleSecret(t, "eu-west-1", "")
+	ctx := context.Background()
+	if got := checker.check(ctx, testOrganizationID, "aws", secret, target); got != unverified(byokUnavailable("aws")) {
+		t.Fatalf("a gateway without a role cache answered %+v", got)
+	}
+	var assumed awsauth.Credential
+	var answer error
+	checker.roles = awsRoleSignInFunc(func(_ context.Context, credential awsauth.Credential) error {
+		assumed = credential
+		return answer
+	})
+	for _, test := range []struct {
+		answer error
+		want   byokFailure
+	}{
+		{nil, byokFailure{}},
+		{awsauth.ErrCredential, refusal(byokRejected("aws"))},
+		{awsauth.ErrUnavailable, unverified(byokUnavailable("aws"))},
+	} {
+		answer = test.answer
+		if got := checker.check(ctx, testOrganizationID, "aws", secret, target); got != test.want {
+			t.Errorf("answer %v: %+v, want %+v", test.answer, got, test.want)
+		}
+	}
+	if want := (awsauth.Credential{OrganizationID: testOrganizationID, Region: "eu-west-1", RoleARN: testAWSRoleARN}); assumed != want {
+		t.Fatalf("assumed %+v", assumed)
+	}
+	if requests := seen(); len(requests) != 0 {
+		t.Fatalf("a role's check made %d other requests", len(requests))
 	}
 }
 
@@ -261,7 +306,7 @@ func TestByokCheckHoldsCloudSecretsToTheirTarget(t *testing.T) {
 		"Google workspace":   {"google-cloud", googleSecret(t, ""), &billing.CloudTarget{Hosting: []string{"anthropic", "google"}}},
 		"Google with Region": {"google-cloud", googleSecret(t, ""), &billing.CloudTarget{Hosting: []string{"google"}, Region: "us"}},
 	} {
-		if got := checker.check(ctx, c.provider, c.secret, c.target); !got.rejected || !strings.Contains(got.message, "stogas encrypt printed") {
+		if got := checker.check(ctx, testOrganizationID, c.provider, c.secret, c.target); !got.rejected || !strings.Contains(got.message, "stogas encrypt printed") {
 			t.Fatalf("%s: %+v", name, got)
 		}
 	}
@@ -271,13 +316,13 @@ func TestByokCheckHoldsCloudSecretsToTheirTarget(t *testing.T) {
 
 	// Requests parse a secret the same way, so these would fail at every request too.
 	for _, secret := range []string{`{"schema":"stogas.aws-byok.v1"}`, "not json", awsIAMSecret(t, "mars-north-1", ""), strings.Replace(awsIAMSecret(t, "us-east-1", ""), `"region"`, `"unknown":"x","region"`, 1)} {
-		if got := checker.check(ctx, "aws", secret, &billing.CloudTarget{Hosting: []string{"amazon"}, Region: "us-east-1"}); got != invalidSecret("aws") {
+		if got := checker.check(ctx, testOrganizationID, "aws", secret, &billing.CloudTarget{Hosting: []string{"amazon"}, Region: "us-east-1"}); got != invalidSecret("aws") {
 			t.Fatalf("invalid AWS secret: %+v", got)
 		}
 	}
 
 	target := &billing.CloudTarget{Hosting: []string{"google"}}
-	if got := checker.check(ctx, "google-cloud", googleSecret(t, ""), target); got != (byokFailure{}) {
+	if got := checker.check(ctx, testOrganizationID, "google-cloud", googleSecret(t, ""), target); got != (byokFailure{}) {
 		t.Fatalf("Google: %+v", got)
 	}
 	if len(signIns) != 1 || signIns[0].ClientEmail != "runner@stogas-test.iam.gserviceaccount.com" || signIns[0].PrivateKeyID != testGoogleKeyID {
@@ -288,7 +333,7 @@ func TestByokCheckHoldsCloudSecretsToTheirTarget(t *testing.T) {
 		googleauth.ErrUnavailable: unverified(byokUnavailable("google-cloud")),
 	} {
 		checker.google = googleSignInFunc(func(context.Context, googleauth.Credential) error { return err })
-		if got := checker.check(ctx, "google-cloud", googleSecret(t, ""), target); got != want {
+		if got := checker.check(ctx, testOrganizationID, "google-cloud", googleSecret(t, ""), target); got != want {
 			t.Fatalf("%v: %+v", err, got)
 		}
 	}

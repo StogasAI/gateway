@@ -252,13 +252,18 @@ func TestParseAzureByokCredential(t *testing.T) {
 		t.Fatalf("valid Azure credential = %#v, err=%v", parsed, err)
 	}
 
+	// An application without a secret signs in with the organization's federation token.
+	federated := `{"clientId":"00000000-0000-4000-8000-000000000002","schema":"` + azureByokSchema + `","tenantId":"00000000-0000-4000-8000-000000000001"}`
+	if parsed, err := parseAzureByokCredential(federated); err != nil || parsed.ClientSecret != "" {
+		t.Fatalf("federated Azure credential = %#v, err=%v", parsed, err)
+	}
+
 	tests := map[string]string{
-		"empty client secret": strings.Replace(valid, "azure-client-secret", "", 1),
-		"secret with space":   strings.Replace(valid, "azure-client-secret", "azure secret", 1),
-		"unknown schema":      strings.Replace(valid, azureByokSchema, "unknown", 1),
-		"unknown field":       strings.Replace(valid, `"schema"`, `"extra":true,"schema"`, 1),
-		"invalid client ID":   strings.Replace(valid, "00000000-0000-4000-8000-000000000002", "client", 1),
-		"trailing JSON":       valid + `{}`,
+		"secret with space": strings.Replace(valid, "azure-client-secret", "azure secret", 1),
+		"unknown schema":    strings.Replace(valid, azureByokSchema, "unknown", 1),
+		"unknown field":     strings.Replace(valid, `"schema"`, `"extra":true,"schema"`, 1),
+		"invalid client ID": strings.Replace(valid, "00000000-0000-4000-8000-000000000002", "client", 1),
+		"trailing JSON":     valid + `{}`,
 	}
 	for name, raw := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -466,13 +471,15 @@ func TestApplyUpstreamCredentialsInstallsAzureBoundKey(t *testing.T) {
 			Resolution: azureTestResolution(),
 		},
 	}
+	state.Authorization.OrganizationID = testOrganizationID
 	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	// The sign-in names the organization, whose token a federated application accepts.
 	if err := applyUpstreamCredentials(ctx, state, azureTokenFunc(func(_ context.Context, credential azureauth.Credential) (string, error) {
-		if credential.Scope != azureDataScope || credential.Secret != "azure-client-secret" {
+		if credential.Scope != azureDataScope || credential.Secret != "azure-client-secret" || credential.OrganizationID != testOrganizationID {
 			t.Fatal("incorrect Azure token credential")
 		}
 		return "test-access-token", nil
-	}), nil, nil); err != nil {
+	}), cloudSignIns{}, nil); err != nil {
 		t.Fatal(err)
 	}
 	directKey, ok := ctx.Value(schemas.BifrostContextKeyDirectKey).(schemas.Key)

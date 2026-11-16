@@ -46,18 +46,21 @@ type Config struct {
 	DatabaseURL                 string
 	DiagnosticsClientSPKISHA256 string
 	DrainClientSPKISHA256       string
-	Host                        string
-	InferenceTokenPublicKey     string
-	LogLevel                    string
-	LogOutputStyle              string
-	MaxRequestBodyMiB           int
-	OnionRelayAddress           netip.Addr
-	AnthropicBaseURL            string
-	ChutesAPIKey                string
-	ChutesBaseURL               string
-	OpenAIBaseURL               string
-	Port                        string
-	PrivateReadinessPort        string
+	// FederationSigningKey signs the identity tokens of provider credentials that hold no secret.
+	// A gateway without one answers such a credential as unavailable.
+	FederationSigningKey    string
+	Host                    string
+	InferenceTokenPublicKey string
+	LogLevel                string
+	LogOutputStyle          string
+	MaxRequestBodyMiB       int
+	OnionRelayAddress       netip.Addr
+	AnthropicBaseURL        string
+	ChutesAPIKey            string
+	ChutesBaseURL           string
+	OpenAIBaseURL           string
+	Port                    string
+	PrivateReadinessPort    string
 }
 
 type ConfidentialConfig struct {
@@ -89,6 +92,7 @@ func LoadFromEnv() (Config, error) {
 		Confidential:                loadConfidentialConfigFromEnv(),
 		DatabaseSchema:              strings.TrimSpace(os.Getenv("DATABASE_SCHEMA")),
 		DatabaseURL:                 strings.TrimSpace(os.Getenv("DATABASE_URL")),
+		FederationSigningKey:        strings.TrimSpace(os.Getenv("FEDERATION_SIGNING_KEY")),
 		Host:                        defaultHost,
 		InferenceTokenPublicKey:     strings.TrimSpace(os.Getenv("INFERENCE_TOKEN_PUBLIC_KEY")),
 		LogLevel:                    string(schemas.LogLevelInfo),
@@ -185,6 +189,7 @@ func rejectUnsupportedConfidentialHostOverrides() error {
 		"INFERENCE_TOKEN_PUBLIC_KEY",
 		"DATABASE_SCHEMA",
 		"DATABASE_URL",
+		"FEDERATION_SIGNING_KEY",
 		"OPENAI_API_KEY",
 	} {
 		if strings.TrimSpace(os.Getenv(name)) != "" {
@@ -345,6 +350,9 @@ func ApplyConfidentialRuntimeSecrets(config *Config, secrets ConfidentialSecretL
 		}
 		config.OnionRelayAddress = address.Unmap()
 	}
+	if secret, ok := secrets.Get("FEDERATION_SIGNING_KEY"); ok {
+		config.FederationSigningKey = strings.TrimSpace(string(secret.Value))
+	}
 
 	applyRuntimeSecretsFromEnv(config)
 	return validateProviderRuntimeSecretsReady(*config)
@@ -358,6 +366,18 @@ func validateProviderRuntimeSecretsReady(config Config) error {
 		return fmt.Errorf("CHUTES_API_KEY is required before provider runtime starts")
 	}
 	return nil
+}
+
+// federationOrigin is the dashboard's origin in the gateway's environment, where Control serves
+// each organization's issuer.
+func federationOrigin(config Config) string {
+	switch config.Confidential.Environment {
+	case "production":
+		return "https://app.stogas.ai"
+	case "staging":
+		return "https://app-staging.stogas.ai"
+	}
+	return "https://app.stogas.localhost"
 }
 
 func applyRuntimeSecretsFromEnv(config *Config) {

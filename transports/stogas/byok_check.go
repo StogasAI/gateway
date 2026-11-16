@@ -17,6 +17,7 @@ import (
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/accesstoken"
+	"github.com/maximhq/bifrost/transports/stogas/awsauth"
 	"github.com/maximhq/bifrost/transports/stogas/azureauth"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
@@ -59,6 +60,10 @@ type azureSignIn interface {
 	SignIn(context.Context, azureauth.Credential) (string, error)
 }
 
+type awsRoleSignIn interface {
+	SignIn(context.Context, awsauth.Credential) error
+}
+
 type byokChecker struct {
 	openAIBaseURL    string
 	anthropicBaseURL string
@@ -71,6 +76,7 @@ type byokChecker struct {
 	arm    *http.Client
 	google googleSignIn
 	azure  azureSignIn
+	roles  awsRoleSignIn
 	now    func() time.Time
 	slots  chan struct{}
 }
@@ -161,7 +167,7 @@ func checkByok(ctx context.Context, store byokCheckStore, checker *byokChecker, 
 	if err != nil {
 		return nil, err
 	}
-	found, failure, err := checker.run(ctx, target.Provider, secret, target.Target, target.AzureAccountID, target.StartedAt)
+	found, failure, err := checker.run(ctx, grant.OrganizationID, target.Provider, secret, target.Target, target.AzureAccountID, target.StartedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -180,10 +186,10 @@ func checkByok(ctx context.Context, store byokCheckStore, checker *byokChecker, 
 	return result, nil
 }
 
-// run checks a credential while it holds one of the checker's slots. For an Azure credential, it
-// discovers the targets of the account accountID from startedAt, the database's time, and returns
-// what the discovery found when it read the account.
-func (c *byokChecker) run(ctx context.Context, provider, secret string, registered *billing.CloudTarget, accountID string, startedAt time.Time) (*azureDiscovery, byokFailure, error) {
+// run checks an organization's credential while it holds one of the checker's slots. For an Azure
+// credential, it discovers the targets of the account accountID from startedAt, the database's
+// time, and returns what the discovery found when it read the account.
+func (c *byokChecker) run(ctx context.Context, organizationID, provider, secret string, registered *billing.CloudTarget, accountID string, startedAt time.Time) (*azureDiscovery, byokFailure, error) {
 	select {
 	case c.slots <- struct{}{}:
 	case <-ctx.Done():
@@ -191,14 +197,14 @@ func (c *byokChecker) run(ctx context.Context, provider, secret string, register
 	}
 	defer func() { <-c.slots }()
 	if provider == "azure" {
-		found, failure := c.discover(ctx, secret, accountID, startedAt)
+		found, failure := c.discover(ctx, organizationID, secret, accountID, startedAt)
 		return found, failure, nil
 	}
-	return nil, c.check(ctx, provider, secret, registered), nil
+	return nil, c.check(ctx, organizationID, provider, secret, registered), nil
 }
 
 // check returns why the provider did not accept secret, the zero value when it did.
-func (c *byokChecker) check(ctx context.Context, provider, secret string, registered *billing.CloudTarget) byokFailure {
+func (c *byokChecker) check(ctx context.Context, organizationID, provider, secret string, registered *billing.CloudTarget) byokFailure {
 	ctx, cancel := context.WithTimeout(ctx, byokCheckTimeout)
 	defer cancel()
 	switch provider {
@@ -231,9 +237,9 @@ func (c *byokChecker) check(ctx context.Context, provider, secret string, regist
 		}
 		return c.read(provider, c.client, request)
 	case "aws":
-		return c.checkAWS(ctx, secret, registered)
+		return c.checkAWS(ctx, organizationID, secret, registered)
 	case "google-cloud":
-		return c.checkGoogle(ctx, secret, registered)
+		return c.checkGoogle(ctx, organizationID, secret, registered)
 	}
 	return unverified(byokUnavailable(provider))
 }
@@ -241,7 +247,7 @@ func (c *byokChecker) check(ctx context.Context, provider, secret string, regist
 // discover signs in to Entra anew with the application in secret, bypassing the token cache, so
 // an application whose secret expired or was deleted fails now. It then discovers the targets of
 // the account from startedAt, the database's time.
-func (c *byokChecker) discover(ctx context.Context, secret, accountID string, startedAt time.Time) (*azureDiscovery, byokFailure) {
+func (c *byokChecker) discover(ctx context.Context, organizationID, secret, accountID string, startedAt time.Time) (*azureDiscovery, byokFailure) {
 	app, err := parseAzureByokCredential(secret)
 	if err != nil {
 		return nil, invalidSecret("azure")
@@ -249,7 +255,7 @@ func (c *byokChecker) discover(ctx context.Context, secret, accountID string, st
 	// The sign-in and the discovery share the discovery's bound, so the wait has one.
 	ctx, cancel := context.WithTimeout(ctx, azureDiscoveryTimeout)
 	defer cancel()
-	token, failure := c.signIn(ctx, app)
+	token, failure := c.signIn(ctx, organizationID, app)
 	if failure.message != "" {
 		return nil, failure
 	}
@@ -260,12 +266,12 @@ func (c *byokChecker) discover(ctx context.Context, secret, accountID string, st
 	return found, byokFailure{}
 }
 
-// signIn returns an Azure Resource Manager token for app, signed in anew.
-func (c *byokChecker) signIn(ctx context.Context, app azureByokCredential) (string, byokFailure) {
+// signIn returns an Azure Resource Manager token for an organization's app, signed in anew.
+func (c *byokChecker) signIn(ctx context.Context, organizationID string, app azureByokCredential) (string, byokFailure) {
 	if c.azure == nil {
 		return "", unverified(azureAppUnavailable)
 	}
-	token, err := c.azure.SignIn(ctx, azureauth.Credential{TenantID: app.TenantID, ClientID: app.ClientID, Secret: app.ClientSecret, Scope: armScope})
+	token, err := c.azure.SignIn(ctx, azureauth.Credential{TenantID: app.TenantID, ClientID: app.ClientID, Secret: app.ClientSecret, Scope: armScope, OrganizationID: organizationID})
 	switch {
 	case err == nil:
 		return token, byokFailure{}
@@ -300,10 +306,11 @@ func azureDiscoveryOutcome(found *azureDiscovery, err error) (string, *billing.A
 	return found.CheckError, &billing.AzureDiscoveryResult{Bindings: encoded, Deployments: found.Deployments}
 }
 
-// checkAWS makes the cheapest request that each AWS credential can: an access key asks STS who it
-// is, which needs no permission; a Bedrock API key lists Anthropic models, and a Claude Platform on
-// AWS API key lists its workspace's models.
-func (c *byokChecker) checkAWS(ctx context.Context, secret string, registered *billing.CloudTarget) byokFailure {
+// checkAWS makes the cheapest request that each AWS credential can: a role is assumed anew with
+// the organization's token; an access key asks STS who it is, which needs no permission; a Bedrock
+// API key lists Anthropic models, and a Claude Platform on AWS API key lists its workspace's
+// models.
+func (c *byokChecker) checkAWS(ctx context.Context, organizationID, secret string, registered *billing.CloudTarget) byokFailure {
 	credential, err := parseAWSByokCredential(secret)
 	if err != nil {
 		return invalidSecret("aws")
@@ -313,6 +320,19 @@ func (c *byokChecker) checkAWS(ctx context.Context, secret string, registered *b
 	}
 	var request *http.Request
 	switch {
+	case credential.RoleARN != "":
+		if c.roles == nil {
+			return unverified(byokUnavailable("aws"))
+		}
+		err := c.roles.SignIn(ctx, awsauth.Credential{OrganizationID: organizationID, Region: credential.Region, RoleARN: credential.RoleARN})
+		switch {
+		case err == nil:
+			return byokFailure{}
+		case errors.Is(err, awsauth.ErrCredential):
+			return refusal(byokRejected("aws"))
+		default:
+			return unverified(byokUnavailable("aws"))
+		}
 	case credential.AccessKeyID != "":
 		request, err = http.NewRequestWithContext(ctx, http.MethodPost, "https://sts."+credential.Region+".amazonaws.com/", strings.NewReader(stsRequestBody))
 		if err != nil {
@@ -342,9 +362,9 @@ func (c *byokChecker) checkAWS(ctx context.Context, secret string, registered *b
 	return c.read("aws", c.aws, request)
 }
 
-// checkGoogle exchanges a newly signed assertion at Google's token endpoint, bypassing the token
-// cache, so a key that Google disabled since its last token fails now.
-func (c *byokChecker) checkGoogle(ctx context.Context, secret string, registered *billing.CloudTarget) byokFailure {
+// checkGoogle signs in to Google anew, bypassing the token cache, so a key that Google disabled
+// since its last token, or a pool that no longer trusts the organization, fails now.
+func (c *byokChecker) checkGoogle(ctx context.Context, organizationID, secret string, registered *billing.CloudTarget) byokFailure {
 	credential, err := parseGoogleCloudByokCredential(secret)
 	if err != nil {
 		return invalidSecret("google-cloud")
@@ -355,7 +375,7 @@ func (c *byokChecker) checkGoogle(ctx context.Context, secret string, registered
 	if c.google == nil {
 		return unverified(byokUnavailable("google-cloud"))
 	}
-	err = c.google.SignIn(ctx, googleauth.Credential{ClientEmail: credential.ClientEmail, PrivateKeyID: credential.PrivateKeyID, PrivateKey: credential.PrivateKey})
+	err = c.google.SignIn(ctx, credential.signIn(organizationID))
 	switch {
 	case err == nil:
 		return byokFailure{}
