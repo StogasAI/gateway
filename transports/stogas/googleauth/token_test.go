@@ -195,9 +195,11 @@ func TestFederateTellsARefusalFromAnOutage(t *testing.T) {
 		exchange, actAs int
 		want            error
 	}{
-		{"the pool does not accept the token", http.StatusBadRequest, 0, ErrCredential},
-		{"the identity may not act as the account", http.StatusOK, http.StatusForbidden, ErrCredential},
-		{"the account does not exist", http.StatusOK, http.StatusNotFound, ErrCredential},
+		{"the pool does not accept the token", http.StatusBadRequest, 0, ErrProvider},
+		{"the identity may not act as the account", http.StatusOK, http.StatusForbidden, ErrServiceAccount},
+		{"the account does not exist", http.StatusOK, http.StatusNotFound, ErrServiceAccount},
+		{"each names a refusal", http.StatusBadRequest, 0, ErrCredential},
+		{"each names a refusal", http.StatusOK, http.StatusForbidden, ErrCredential},
 		{"the exchange fails", http.StatusServiceUnavailable, 0, ErrUnavailable},
 		{"the account service fails", http.StatusOK, http.StatusInternalServerError, ErrUnavailable},
 	} {

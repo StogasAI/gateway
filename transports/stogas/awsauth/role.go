@@ -9,6 +9,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"encoding/xml"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -25,6 +26,12 @@ const sessionSeconds = "3600"
 var (
 	ErrCredential  = accesstoken.ErrCredential
 	ErrUnavailable = accesstoken.ErrUnavailable
+	// ErrIssuer means that AWS could not verify the token against an identity
+	// provider of the account, and ErrRole that the role does not let the
+	// organization assume it. Both are ErrCredential, and name the part of the
+	// trust to correct.
+	ErrIssuer = fmt.Errorf("%w: issuer", ErrCredential)
+	ErrRole   = fmt.Errorf("%w: role", ErrCredential)
 )
 
 // Credential names the role that an organization's tokens assume. The caller
@@ -169,11 +176,16 @@ func refusal(status int, body []byte) error {
 	if xml.Unmarshal(body, &failure) != nil {
 		return ErrUnavailable
 	}
+	if status != http.StatusBadRequest && status != http.StatusForbidden {
+		return ErrUnavailable
+	}
 	switch failure.Code {
-	case "AccessDenied", "InvalidIdentityToken", "IDPRejectedClaim", "ExpiredTokenException", "RegionDisabledException", "ValidationError", "MalformedPolicyDocument", "PackedPolicyTooLarge":
-		if status == http.StatusBadRequest || status == http.StatusForbidden {
-			return ErrCredential
-		}
+	case "InvalidIdentityToken":
+		return ErrIssuer
+	case "AccessDenied":
+		return ErrRole
+	case "IDPRejectedClaim", "ExpiredTokenException", "RegionDisabledException", "ValidationError", "MalformedPolicyDocument", "PackedPolicyTooLarge":
+		return ErrCredential
 	}
 	return ErrUnavailable
 }

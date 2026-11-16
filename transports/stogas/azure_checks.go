@@ -232,7 +232,7 @@ func (c *AzureChecks) discoverTargets(ctx context.Context, target azureCheckTarg
 	token, err := c.tokens.Token(ctx, credential)
 	if err != nil {
 		if errors.Is(err, azureauth.ErrCredential) {
-			return azureAppRejected, nil, "sign_in_rejected"
+			return azureSignInRejected(credential.Secret), nil, "sign_in_rejected"
 		}
 		return azureAppUnavailable, nil, "sign_in_unavailable"
 	}

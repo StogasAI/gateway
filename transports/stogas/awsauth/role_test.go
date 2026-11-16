@@ -93,8 +93,10 @@ func TestAssumeTellsARefusalFromAnOutage(t *testing.T) {
 		body   string
 		want   error
 	}{
-		{"the role does not trust the token", http.StatusForbidden, failure("AccessDenied"), ErrCredential},
-		{"AWS cannot verify the token", http.StatusBadRequest, failure("InvalidIdentityToken"), ErrCredential},
+		{"the role does not trust the token", http.StatusForbidden, failure("AccessDenied"), ErrRole},
+		{"AWS cannot verify the token", http.StatusBadRequest, failure("InvalidIdentityToken"), ErrIssuer},
+		{"each names a refusal", http.StatusForbidden, failure("AccessDenied"), ErrCredential},
+		{"each names a refusal", http.StatusBadRequest, failure("InvalidIdentityToken"), ErrCredential},
 		{"the role rejects a claim", http.StatusForbidden, failure("IDPRejectedClaim"), ErrCredential},
 		{"the account disabled the Region", http.StatusForbidden, failure("RegionDisabledException"), ErrCredential},
 		{"AWS cannot read the issuer's keys", http.StatusBadRequest, failure("IDPCommunicationError"), ErrUnavailable},

@@ -276,7 +276,7 @@ func (c *byokChecker) signIn(ctx context.Context, organizationID string, app azu
 	case err == nil:
 		return token, byokFailure{}
 	case errors.Is(err, azureauth.ErrCredential):
-		return "", refusal(azureAppRejected)
+		return "", refusal(azureSignInRejected(app.ClientSecret))
 	default:
 		return "", unverified(azureAppUnavailable)
 	}
@@ -328,6 +328,10 @@ func (c *byokChecker) checkAWS(ctx context.Context, organizationID, secret strin
 		switch {
 		case err == nil:
 			return byokFailure{}
+		case errors.Is(err, awsauth.ErrIssuer):
+			return refusal(awsIssuerRejected)
+		case errors.Is(err, awsauth.ErrRole):
+			return refusal(awsRoleRejected)
 		case errors.Is(err, awsauth.ErrCredential):
 			return refusal(byokRejected("aws"))
 		default:
@@ -379,6 +383,10 @@ func (c *byokChecker) checkGoogle(ctx context.Context, organizationID, secret st
 	switch {
 	case err == nil:
 		return byokFailure{}
+	case errors.Is(err, googleauth.ErrProvider):
+		return refusal(googleProviderRejected)
+	case errors.Is(err, googleauth.ErrServiceAccount):
+		return refusal(googleServiceAccountRejected)
 	case errors.Is(err, googleauth.ErrCredential):
 		return refusal(byokRejected("google-cloud"))
 	default:
@@ -432,6 +440,24 @@ func byokCredentialName(provider string) string {
 		return "application"
 	}
 	return "API key"
+}
+
+// A credential without a secret needs a trust in the customer's cloud, which has several parts.
+// Each message names the part that the cloud refused.
+const (
+	awsIssuerRejected            = "AWS could not verify this organization's token. Add the issuer URL to IAM as an identity provider with the audience sts.amazonaws.com."
+	awsRoleRejected              = "AWS did not let this organization assume the role. Check the role ARN and the subject in the role's trust policy."
+	googleProviderRejected       = "Google Cloud did not accept this organization's token. Check the provider's path and its issuer URL."
+	googleServiceAccountRejected = "Google Cloud did not let this organization act as the service account. Grant the subject roles/iam.workloadIdentityUser on it."
+)
+
+// azureSignInRejected says what Entra refused: an application's client secret, or the
+// organization's token when the application has none.
+func azureSignInRejected(clientSecret string) string {
+	if clientSecret == "" {
+		return azureFederationRejected
+	}
+	return azureAppRejected
 }
 
 func byokRejected(provider string) string {

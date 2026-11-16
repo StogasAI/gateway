@@ -38,10 +38,12 @@ const (
 	azureDiscoveryUnavailable = "Could not inspect Azure resources. Try again."
 	azureAccountDenied        = "This application cannot read the account. Check the account ID and give the application the Foundry User role on the account."
 	// The targets stay, because a new role takes minutes to appear and roles from groups are unverified.
-	azureRoleMissing    = "The application has no data role on this account, so requests to its deployments fail. Give it the Foundry User role on the account."
-	azureAppRejected    = "Azure did not accept this tenant, client ID, and client secret"
-	azureAppUnavailable = "Could not authenticate with Azure. Try again."
-	azureTooManyTargets = "Azure discovery returned too many deployments"
+	azureRoleMissing = "The application has no data role on this account, so requests to its deployments fail. Give it the Foundry User role on the account."
+	azureAppRejected = "Azure did not accept this tenant, client ID, and client secret"
+	// An application without a client secret signs in with the organization's token.
+	azureFederationRejected = "Azure did not accept this organization's token for this tenant and client ID. Add a federated credential with the issuer, subject and audience to the application."
+	azureAppUnavailable     = "Could not authenticate with Azure. Try again."
+	azureTooManyTargets     = "Azure discovery returned too many deployments"
 )
 
 var (

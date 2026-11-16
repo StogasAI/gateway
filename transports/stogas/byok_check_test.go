@@ -270,6 +270,9 @@ func TestByokCheckAssumesARoleAsTheOrganization(t *testing.T) {
 	}{
 		{nil, byokFailure{}},
 		{awsauth.ErrCredential, refusal(byokRejected("aws"))},
+		// A refusal names the part of the trust to correct.
+		{awsauth.ErrIssuer, refusal(awsIssuerRejected)},
+		{awsauth.ErrRole, refusal(awsRoleRejected)},
 		{awsauth.ErrUnavailable, unverified(byokUnavailable("aws"))},
 	} {
 		answer = test.answer
@@ -329,8 +332,11 @@ func TestByokCheckHoldsCloudSecretsToTheirTarget(t *testing.T) {
 		t.Fatalf("sign-ins = %+v", signIns)
 	}
 	for err, want := range map[error]byokFailure{
-		googleauth.ErrCredential:  refusal(byokRejected("google-cloud")),
-		googleauth.ErrUnavailable: unverified(byokUnavailable("google-cloud")),
+		googleauth.ErrCredential: refusal(byokRejected("google-cloud")),
+		// A refusal names the part of the trust to correct.
+		googleauth.ErrProvider:       refusal(googleProviderRejected),
+		googleauth.ErrServiceAccount: refusal(googleServiceAccountRejected),
+		googleauth.ErrUnavailable:    unverified(byokUnavailable("google-cloud")),
 	} {
 		checker.google = googleSignInFunc(func(context.Context, googleauth.Credential) error { return err })
 		if got := checker.check(ctx, testOrganizationID, "google-cloud", googleSecret(t, ""), target); got != want {
@@ -470,6 +476,7 @@ func TestCheckByokDiscoversAnAzureAccount(t *testing.T) {
 	}
 	organizationID := "0196f0f4-0000-7000-8000-000000000001"
 	app := `{"clientId":"00000000-0000-4000-8000-000000000002","clientSecret":"azure-client-secret","schema":"stogas.azure-byok.v6","tenantId":"00000000-0000-4000-8000-000000000001"}`
+	federatedApp := `{"clientId":"00000000-0000-4000-8000-000000000002","schema":"stogas.azure-byok.v6","tenantId":"00000000-0000-4000-8000-000000000001"}`
 	startedAt := time.Date(2026, time.November, 3, 12, 0, 0, 0, time.UTC)
 	target := func(accountID, plaintext string) *billing.ByokCheckTarget {
 		return &billing.ByokCheckTarget{
@@ -534,6 +541,8 @@ func TestCheckByokDiscoversAnAzureAccount(t *testing.T) {
 	}{
 		{"account-denied", app, &fakeAzureSignIn{}, azureAccountDenied},
 		{"named-deployments", app, &fakeAzureSignIn{err: azureauth.ErrCredential}, azureAppRejected},
+		// An application without a client secret signs in with the organization's token.
+		{"named-deployments", federatedApp, &fakeAzureSignIn{err: azureauth.ErrCredential}, azureFederationRejected},
 		{"named-deployments", app, &fakeAzureSignIn{err: azureauth.ErrUnavailable}, azureAppUnavailable},
 		{"named-deployments", app, nil, azureAppUnavailable},
 		{"named-deployments", `{"clientId":"x"}`, &fakeAzureSignIn{}, "The decrypted secret is not a valid Azure application. Encrypt it again with stogas encrypt --purpose byok/azure."},

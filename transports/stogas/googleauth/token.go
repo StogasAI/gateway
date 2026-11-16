@@ -14,6 +14,8 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -38,6 +40,12 @@ const (
 var (
 	ErrCredential  = accesstoken.ErrCredential
 	ErrUnavailable = accesstoken.ErrUnavailable
+	// ErrProvider means that the pool provider did not accept the organization's
+	// token, and ErrServiceAccount that the organization may not act as the
+	// service account. Both are ErrCredential, and name the part of the trust to
+	// correct.
+	ErrProvider       = fmt.Errorf("%w: provider", ErrCredential)
+	ErrServiceAccount = fmt.Errorf("%w: service account", ErrCredential)
 )
 
 // Credential is a service-account key, or a workload identity pool provider
@@ -200,7 +208,7 @@ func federate(ctx context.Context, client *http.Client, issuer *federation.Issue
 		ExpiresIn   int64  `json:"expires_in"`
 	}
 	if err := post(client, request, &federated); err != nil {
-		return accesstoken.Token{}, err
+		return accesstoken.Token{}, refused(err, ErrProvider)
 	}
 	if federated.AccessToken == "" || federated.ExpiresIn <= 0 || federated.ExpiresIn > int64(12*time.Hour/time.Second) {
 		return accesstoken.Token{}, ErrUnavailable
@@ -223,12 +231,20 @@ func federate(ctx context.Context, client *http.Client, issuer *federation.Issue
 		ExpireTime  time.Time `json:"expireTime"`
 	}
 	if err := post(client, request, &account); err != nil {
-		return accesstoken.Token{}, err
+		return accesstoken.Token{}, refused(err, ErrServiceAccount)
 	}
 	if account.AccessToken == "" {
 		return accesstoken.Token{}, ErrUnavailable
 	}
 	return accesstoken.Token{Value: account.AccessToken, ExpiresAt: account.ExpireTime}, nil
+}
+
+// refused names the step that Google refused, and leaves an outage as it is.
+func refused(err, step error) error {
+	if errors.Is(err, ErrCredential) {
+		return step
+	}
+	return err
 }
 
 // post sends a federation request and reads its JSON answer. Google answers a
