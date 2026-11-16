@@ -50,7 +50,9 @@ const (
 )
 
 var (
-	errAzureCheck           = errors.New("azure deployments unavailable")
+	errAzureCheck = errors.New("azure deployments unavailable")
+	// Azure refused the application: its sign-in, or Resource Manager the account.
+	errAzureRefused         = errors.New("azure refused the application")
 	azureDeploymentNamePart = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,255}$`)
 	// Control's account ID schema, so a hold can name only an account that discovery accepted.
 	azureAccountIDPattern = regexp.MustCompile(`^/subscriptions/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/resourcegroups/[-\w.()\p{L}\p{N}]{0,89}[-\w()\p{L}\p{N}]/providers/microsoft\.cognitiveservices/accounts/[a-z0-9][a-z0-9-]{1,63}$`)
@@ -59,6 +61,7 @@ var (
 type azureCheckStore interface {
 	ClaimAzureCheck(ctx context.Context, byokID string, staleAfter time.Duration) (billing.AzureClaim, error)
 	RecordAzureCheck(ctx context.Context, byokID string, startedAt time.Time, deployments []billing.AzureDeployment) error
+	RefuseAzureCheck(ctx context.Context, byokID string, startedAt time.Time) error
 	ClaimAzureDiscovery(ctx context.Context, byokID string) (bool, time.Time, error)
 	RecordAzureDiscovery(ctx context.Context, byokID string, startedAt time.Time, envelope string, failure string, discovery *billing.AzureDiscoveryResult) (changed bool, err error)
 }
@@ -292,6 +295,14 @@ func (c *AzureChecks) fail(key string) {
 	c.mark(key, azureCheckMark{until: c.now().Add(azureCheckRetry), failed: true})
 }
 
+// refuse marks a check that Azure refused as failed and waits as long as after a success before
+// the next one; a discovery or a fixed credential confirms the targets sooner.
+func (c *AzureChecks) refuse(key string, wait time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.mark(key, azureCheckMark{until: c.now().Add(wait), failed: true})
+}
+
 // mark records a credential's mark; the caller holds mu. The map holds only credentials checked
 // recently: when it grows to pruneAt, marks that passed leave, and the next pruning waits until
 // the map doubles, so pruning costs constant time per mark. A credential whose failure leaves
@@ -321,14 +332,24 @@ func (c *AzureChecks) check(ctx context.Context, target azureCheckTarget, key st
 		return
 	}
 	deployments, reason, err := c.deployments(ctx, target)
-	if err == nil {
+	switch {
+	case err == nil:
 		if err = c.store.RecordAzureCheck(ctx, target.ByokID, startedAt, deployments); err == nil {
 			c.pause(key, fresh)
 			return
 		}
 		reason = "record_failed"
+		c.fail(key)
+	case errors.Is(err, errAzureRefused):
+		// Azure refused the application, which trying again soon does not fix. The credential's
+		// discovery becomes due, and it records why on the credential, where its owner sees it.
+		if c.store.RefuseAzureCheck(ctx, target.ByokID, startedAt) != nil {
+			reason = "record_failed"
+		}
+		c.refuse(key, fresh)
+	default:
+		c.fail(key)
 	}
-	c.fail(key)
 	writeOperationalLog(operationalLogEvent{
 		Event:      "azure_target_check_failed",
 		ReasonCode: reason,
@@ -344,7 +365,7 @@ func (c *AzureChecks) deployments(ctx context.Context, target azureCheckTarget) 
 	token, err := c.tokens.Token(ctx, credential)
 	if err != nil {
 		if errors.Is(err, azureauth.ErrCredential) {
-			return nil, "sign_in_rejected", err
+			return nil, "sign_in_rejected", errAzureRefused
 		}
 		return nil, "sign_in_unavailable", err
 	}
@@ -411,6 +432,9 @@ func (c *AzureChecks) armPage(ctx context.Context, pageURL string, token string)
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, armMaxResponseBytes))
+		if armRefused(response.StatusCode) {
+			return nil, fmt.Sprintf("status_%d", response.StatusCode), errAzureRefused
+		}
 		return nil, fmt.Sprintf("status_%d", response.StatusCode), errAzureCheck
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, armMaxResponseBytes+1))
@@ -421,6 +445,12 @@ func (c *AzureChecks) armPage(ctx context.Context, pageURL string, token string)
 		return nil, "response_too_large", errAzureCheck
 	}
 	return body, "", nil
+}
+
+// armRefused reports a Resource Manager status that refuses the application the account, which
+// trying again does not fix.
+func armRefused(status int) bool {
+	return status == http.StatusUnauthorized || status == http.StatusForbidden || status == http.StatusNotFound
 }
 
 // armNextLink accepts a continuation only on Azure Resource Manager over HTTPS.

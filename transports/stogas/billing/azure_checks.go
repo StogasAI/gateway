@@ -78,6 +78,25 @@ func (s *Service) RecordAzureCheck(ctx context.Context, byokID string, startedAt
 	return nil
 }
 
+// RefuseAzureCheck records that Azure refused a check that started at startedAt. Unless a
+// discovery already found the credential failing, its discovery becomes due at once and records
+// why on the credential.
+func (s *Service) RefuseAzureCheck(ctx context.Context, byokID string, startedAt time.Time) error {
+	if s == nil || s.db == nil {
+		return ErrGatewayUnavailable
+	}
+	queryCtx, cancel := context.WithTimeout(ctx, azureCheckQueryTimeout)
+	defer cancel()
+	var outcome string
+	if err := s.db.pool.QueryRow(queryCtx, s.recordAzureCheckQuery, byokID, startedAt, nil).Scan(&outcome); err != nil {
+		return fmt.Errorf("%w: record Azure refusal: %v", ErrGatewayUnavailable, err)
+	}
+	if outcome != "ok" && outcome != "superseded" {
+		return fmt.Errorf("%w: record Azure refusal: %s", ErrGatewayUnavailable, outcome)
+	}
+	return nil
+}
+
 // AzureDiscoveryResult is what a gateway's discovery of an Azure credential's targets found, as
 // azure_save_discovery reads it: the targets, already encoded, and every deployment that the
 // account lists.

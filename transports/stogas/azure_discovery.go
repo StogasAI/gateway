@@ -161,8 +161,7 @@ func (r *armReads) data(ctx context.Context, resource string, denied string) (js
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode > 299 {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, armMaxResponseBytes))
-		switch response.StatusCode {
-		case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
+		if armRefused(response.StatusCode) {
 			return nil, azureDiscoveryRejected(denied)
 		}
 		return nil, azureDiscoveryFailed(azureDiscoveryUnavailable)

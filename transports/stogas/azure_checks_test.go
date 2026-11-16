@@ -26,6 +26,8 @@ type fakeAzureCheckStore struct {
 	claimed  int
 	recorded [][]billing.AzureDeployment
 	started  []time.Time
+	// refused lists when each check that Azure refused started.
+	refused  []time.Time
 	claimErr error
 	// staleAfter lists how old each claim let the last confirmation be.
 	staleAfter []time.Duration
@@ -72,6 +74,19 @@ func (s *fakeAzureCheckStore) RecordAzureCheck(_ context.Context, _ string, star
 	s.recorded = append(s.recorded, deployments)
 	s.started = append(s.started, startedAt)
 	return nil
+}
+
+func (s *fakeAzureCheckStore) RefuseAzureCheck(_ context.Context, _ string, startedAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.refused = append(s.refused, startedAt)
+	return nil
+}
+
+func (s *fakeAzureCheckStore) refusals() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.refused)
 }
 
 func (s *fakeAzureCheckStore) ClaimAzureDiscovery(_ context.Context, byokID string) (bool, time.Time, error) {
@@ -387,8 +402,8 @@ func TestAzureChecksServeThroughFailuresOnlyWithinGrace(t *testing.T) {
 			}
 			waitFor(func() bool { return checks.failing("byok-1") })
 			settle(checks, "byok-1")
-			if _, recorded := store.counts(); recorded != 0 {
-				t.Fatal("a failed check recorded deployments")
+			if _, recorded := store.counts(); recorded != 0 || store.refusals() != 0 {
+				t.Fatal("a check that Azure could not answer recorded deployments or a refusal")
 			}
 			// A failed check waits before the gateway tries Azure again.
 			if err := checks.Confirm(context.Background(), target); !errors.Is(err, test.want) {
@@ -411,6 +426,50 @@ func TestAzureChecksServeThroughFailuresOnlyWithinGrace(t *testing.T) {
 			waitFor(func() bool { return !checks.failing("byok-1") })
 			if err := checks.Confirm(context.Background(), target); err != nil {
 				t.Fatalf("Confirm() after a check succeeded = %v", err)
+			}
+		})
+	}
+}
+
+func TestAzureChecksRecordRefusalsAndWaitBeforeTheNext(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		status int
+		signIn error
+	}{
+		{name: "sign-in rejected", signIn: azureauth.ErrCredential},
+		{name: "account forbidden", status: http.StatusForbidden},
+		{name: "account gone", status: http.StatusNotFound},
+		{name: "token refused", status: http.StatusUnauthorized},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := &fakeAzureCheckStore{claims: []billing.AzureClaim{{Claimed: true, StartedAt: time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)}}}
+			checks, requests, clock := newTestAzureChecks(t, store, map[string]any{"status": test.status})
+			if test.signIn != nil {
+				checks.tokens = azureTokenFunc(func(context.Context, azureauth.Credential) (string, error) {
+					return "", test.signIn
+				})
+			}
+			target := testCheckTarget(clock.Ago(azureCheckFresh))
+			if err := checks.Confirm(context.Background(), target); err != nil {
+				t.Fatalf("Confirm() = %v", err)
+			}
+			waitFor(func() bool { return store.refusals() == 1 && checks.failing("byok-1") })
+			settle(checks, "byok-1")
+			if _, recorded := store.counts(); recorded != 0 {
+				t.Fatal("a refused check recorded deployments")
+			}
+			// Trying again soon does not fix a refusal, so the next check waits as after a success.
+			clock.Advance(azureCheckFresh - time.Second)
+			_ = checks.Confirm(context.Background(), target)
+			if claimed, _ := store.counts(); claimed != 1 {
+				t.Fatalf("a refused credential was checked again early: claims=%d", claimed)
+			}
+			clock.Advance(time.Second)
+			_ = checks.Confirm(context.Background(), target)
+			waitFor(func() bool { return store.refusals() == 2 })
+			if test.signIn == nil && requests.Load() != 2 {
+				t.Fatalf("ARM reads = %d, want 2", requests.Load())
 			}
 		})
 	}
