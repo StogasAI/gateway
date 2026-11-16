@@ -67,10 +67,7 @@ test('opaque plugins survive the memory bridge in their original order', () => {
 				['export', { encrypted: envelope(4, 1000) }],
 				['redaction', { encrypted: envelope(2) }],
 				['redaction', { encrypted: envelope(1) }],
-				[
-					'export',
-					{ destinations: [{ url: { encrypted: envelope(5, 1000) }, content: false }] }
-				]
+				['export', { destinations: [{ url: { encrypted: envelope(5, 1000) }, content: false }] }]
 			]
 		);
 		assert.deepEqual(result.effective.plugins.textExtraction, { text: 'always' });
