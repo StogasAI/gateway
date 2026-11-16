@@ -807,7 +807,7 @@ func validateChatAssistantInput(state *State, message map[string]json.RawMessage
 		hasPayload = hasPayload || reasoningSet
 	}
 	// Reasoning history passes these checks on every deployment, and each deployment gets only the
-	// history that it takes back (catalog.ResolvedRequest.KeepReadableReasoning).
+	// history that it takes back (catalog.ResolvedRequest.KeepReadableHistory).
 	// An empty array holds nothing, as a client's stream accumulator leaves it for a reply
 	// without reasoning, and as OpenAI's replies carry their annotations.
 	if details, ok := message["reasoning_details"]; ok && !rawJSONEmptyArray(details) {

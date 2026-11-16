@@ -144,6 +144,7 @@ var routeSpecs = map[Route]routeSpec{
 			"reasoning",
 			"reasoning_effort",
 			"reasoning_max_tokens",
+			"request_country",
 			"response_format",
 			"safety_identifier",
 			"service_tier",

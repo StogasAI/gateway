@@ -1129,6 +1129,11 @@ func providerResponsesToolIdentity(item *schemas.ResponsesMessage) (string, stri
 	case schemas.ResponsesMessageTypeWebSearchCall:
 		if tool.Action != nil && tool.Action.ResponsesWebSearchToolCallAction != nil {
 			action := tool.Action.ResponsesWebSearchToolCallAction
+			// Claude can stream a search's query after the search starts, so an action that names
+			// only its type does not announce the search yet.
+			if action.Query == nil && len(action.Queries) == 0 && action.URL == nil && action.Pattern == nil {
+				break
+			}
 			identity := struct {
 				Type    string   `json:"type"`
 				Query   *string  `json:"query"`
@@ -1383,6 +1388,50 @@ func validProviderWebFetchResult(state *State, result *schemas.ResponsesWebFetch
 	}
 	return source.Type == "text" && *source.MediaType == "text/plain" &&
 		validProviderText(*source.Data, maxProviderResponseBodySize, false)
+}
+
+// Calls of hosted tools come back in the shape that replies return them: a web search with its
+// action and, from Claude, its results, or Claude's web fetch with the page that it got.
+var (
+	webSearchCallShape = inputShape{"type": inputText, "id": inputText, "status": inputText, "call_id": inputText,
+		"tool_caller": inputShape{"type": inputText}, "action": inputShape{"type": inputText, "query": inputText,
+			"queries": inputTexts, "url": inputText, "pattern": inputText, "sources": inputObjects{"type": inputText,
+				"url": inputText, "title": inputText, "encrypted_content": inputText, "page_age": inputText}}}
+	webFetchCallShape = inputShape{"type": inputText, "id": inputText, "status": inputText, "call_id": inputText,
+		"tool_caller": inputShape{"type": inputText}, "action": inputShape{"type": inputText, "url": inputText},
+		"web_fetch_result_type": inputText, "web_fetch_result_url": inputText, "web_fetch_retrieved_at": inputText,
+		"web_fetch_error_code": inputText, "web_fetch_document": inputShape{"type": inputText, "title": inputText,
+			"source": inputShape{"type": inputText, "media_type": inputText, "data": inputText}}}
+)
+
+// validateResponsesHostedCallInput checks a call of a hosted tool that a reply returned. The checks
+// are the same on every deployment, and each deployment gets only the calls that it reads
+// (catalog.ResolvedRequest.KeepReadableHistory).
+func validateResponsesHostedCallInput(item map[string]json.RawMessage, path, itemType string) error {
+	shape := webSearchCallShape
+	if itemType == "web_fetch_call" {
+		shape = webFetchCallShape
+	}
+	if err := checkInputShape(item, path, shape); err != nil {
+		return err
+	}
+	if err := requiredInputStrings(item, path, "id", "status"); err != nil {
+		return err
+	}
+	// OpenAI's statuses of a web search call. A reply returns completed or failed.
+	if !stringInSet(rawString(item["status"]), "in_progress", "searching", "completed", "failed", "incomplete") {
+		return invalidRequest(path + ".status is not supported")
+	}
+	if action, ok := rawObject(item["action"]); ok {
+		if _, err := requiredInputString(action, "type", path+".action", false); err != nil {
+			return err
+		}
+	}
+	// A reply returns only the calls that the model made itself.
+	if caller, ok := rawObject(item["tool_caller"]); ok && rawString(caller["type"]) != "direct" {
+		return invalidRequest(path + ".tool_caller.type must be direct")
+	}
+	return nil
 }
 
 func providerResponsesURLAllowed(state *State, wanted schemas.ResponsesToolType, value string) bool {

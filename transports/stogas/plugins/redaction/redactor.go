@@ -97,6 +97,9 @@ type Redactor struct {
 	// sealedDetails counts the signed or encrypted reasoning details that the walk has passed, so
 	// that a message knows whether it holds one.
 	sealedDetails int
+	// searchResults are the encrypted search results that the walk has passed in the current
+	// Responses input item.
+	searchResults []jsonSpan
 }
 
 // NewWithPolicy creates request-local state for an immutable compiled policy.

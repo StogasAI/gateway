@@ -76,6 +76,7 @@ func TestInputTextBytesCountsTransformedUTF8WithoutProtocolOrOpaqueData(t *testi
 		{"protocol identifiers", SurfaceChat, `{"messages":[{"role":"assistant","tool_calls":[{"id":"call_123","type":"function","function":{"name":"search","arguments":"{}"}}]}]}`, 2},
 		{"protected responses", SurfaceResponses, `{"input":[{"summary":[{"type":"summary_text","text":"hidden"}],"encrypted_content":"opaque","type":"reasoning"},{"type":"message","role":"user","content":"é🙂"}]}`, 6},
 		{"protected chat", SurfaceChat, `{"messages":[{"role":"assistant","reasoning":"hidden","reasoning_details":[{"type":"reasoning.text","text":"hidden","signature":"opaque"}],"content":"é🙂"}]}`, 6},
+		{"protected search results", SurfaceResponses, `{"input":[{"action":{"sources":[{"encrypted_content":"opaque"}]},"type":"web_search_call"},{"type":"message","role":"user","content":"é🙂"}]}`, 6},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var raw map[string]json.RawMessage
@@ -270,6 +271,36 @@ func TestProtectedReasoningDoesNotDependOnKeyOrder(t *testing.T) {
 		}
 		if redactor.Summary().ItemsRedacted != 1 {
 			t.Fatalf("items_redacted = %d, want 1", redactor.Summary().ItemsRedacted)
+		}
+	}
+}
+
+// Claude refuses a web search whose encrypted results changed, so they stay as the reply returned
+// them, and only there: the same key in any other position is ordinary text.
+func TestEncryptedSearchResultsStayOnlyInSearchCalls(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		item string
+		kept int
+	}{
+		{`{"type":"web_search_call","id":"srvtoolu_01","status":"completed","action":{"type":"search","query":"q","sources":[{"type":"url","url":"https://example.com","title":"bob@corp.io","encrypted_content":"cipher@corp.io"}]}}`, 1},
+		{`{"action":{"sources":[{"title":"bob@corp.io","encrypted_content":"cipher@corp.io"}],"type":"search"},"status":"completed","ty\u0070e":"web_search_call"}`, 1},
+		{`{"type":"web_search_call","action":{"sources":[{"title":"bob@corp.io","encrypted\u005fcontent":"cipher@corp.io"}]}}`, 1},
+		{`{"type":"function_call","action":{"sources":[{"title":"bob@corp.io","encrypted_content":"cipher@corp.io"}]}}`, 0},
+		{`{"type":"web_search_call","type":"message","action":{"sources":[{"title":"bob@corp.io","encrypted_content":"cipher@corp.io"}]}}`, 0},
+		{`{"type":"web_search_call","action":{"title":"bob@corp.io","encrypted_content":"cipher@corp.io"}}`, 0},
+		{`{"type":"web_search_call","action":{"filters":{"sources":[{"title":"bob@corp.io","encrypted_content":"cipher@corp.io"}]}}}`, 0},
+		{`{"type":"web_search_call","action":{"sources":[{"title":"bob@corp.io","encrypted_content":{"text":"cipher@corp.io"}}]}}`, 0},
+		{`{"type":"web_search_call","action":{"sources":[{"title":"bob@corp.io","encrypted_content":"cipher@corp.io"}]},"content":[{"type":"input_text","text":"x","encrypted_content":"cipher@corp.io"}]}`, 1},
+	} {
+		raw := map[string]json.RawMessage{"input": json.RawMessage(`[` + tc.item + `]`)}
+		redactor := newTestRedactor()
+		if err := redactor.RedactRequestFields(raw, SurfaceResponses, nil); err != nil {
+			t.Fatal(err)
+		}
+		input := string(raw["input"])
+		if strings.Contains(input, "bob@corp.io") || strings.Count(input, "cipher@corp.io") != tc.kept {
+			t.Fatalf("redaction of %s = %s, want %d encrypted results kept", tc.item, input, tc.kept)
 		}
 	}
 }

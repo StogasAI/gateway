@@ -64,7 +64,7 @@ func (DefaultAdapter) ValidateRequest(state *State) error {
 	if err := validateCommonResponsesPolicy(state); err != nil {
 		return err
 	}
-	state.Resolution.KeepReadableReasoning()
+	state.Resolution.KeepReadableHistory()
 	return translate(state)
 }
 

@@ -905,6 +905,11 @@ func planRoutes(input RequestInput, route Route, rawData map[string]json.RawMess
 	if err := dropClientMetadata(rawData); err != nil {
 		return nil, err
 	}
+	if route == RouteResponses {
+		if err := hoistAdditionalTools(rawData); err != nil {
+			return nil, err
+		}
+	}
 	tokenFields := []string{"max_output_tokens"}
 	if route == RouteChat {
 		if _, err := normalizeChatStopString(rawData); err != nil {
@@ -1490,20 +1495,32 @@ func rejectUnknownTopLevelFields(rawData map[string]json.RawMessage, route Route
 	return nil
 }
 
-// dropClientMetadata accepts the string map that Codex sends on every
-// Responses request. OpenAI accepts it without documenting it, and it changes
-// no output, price or data handling, so it never reaches a provider.
+// dropClientMetadata accepts what Codex sends about itself on Responses
+// requests: client_metadata, a string map that it sends on every request, and
+// request_country, the two-letter country that a trusted host chose, or null
+// when that host does not know it. OpenAI's API reference lists neither. They
+// change no output, price or data handling, and the gateway cannot trust a
+// country that a client states, so neither reaches a provider.
 func dropClientMetadata(rawData map[string]json.RawMessage) error {
-	raw, ok := rawData["client_metadata"]
-	if !ok {
-		return nil
+	if raw, ok := rawData["client_metadata"]; ok {
+		delete(rawData, "client_metadata")
+		var metadata map[string]*string
+		if !bytes.HasPrefix(bytes.TrimSpace(raw), []byte("{")) || json.Unmarshal(raw, &metadata) != nil {
+			return APIError{StatusCode: http.StatusBadRequest, Code: "invalid_request", Type: ErrorTypeInvalidRequest, Message: "client_metadata must be an object of strings", Param: "client_metadata"}
+		}
 	}
-	delete(rawData, "client_metadata")
-	var metadata map[string]*string
-	if bytes.HasPrefix(bytes.TrimSpace(raw), []byte("{")) && json.Unmarshal(raw, &metadata) == nil {
-		return nil
+	if raw, ok := rawData["request_country"]; ok {
+		delete(rawData, "request_country")
+		var country *string
+		if json.Unmarshal(raw, &country) != nil || country != nil && !twoLetterCode(*country) {
+			return APIError{StatusCode: http.StatusBadRequest, Code: "invalid_request", Type: ErrorTypeInvalidRequest, Message: "request_country must be two letters or null", Param: "request_country"}
+		}
 	}
-	return APIError{StatusCode: http.StatusBadRequest, Code: "invalid_request", Type: ErrorTypeInvalidRequest, Message: "client_metadata must be an object of strings", Param: "client_metadata"}
+	return nil
+}
+
+func twoLetterCode(value string) bool {
+	return len(value) == 2 && strings.IndexFunc(value, func(r rune) bool { return (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') }) < 0
 }
 
 // dropNoOpCompatibilityFields accepts common SDK defaults without letting

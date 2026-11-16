@@ -323,7 +323,7 @@ func validateResponsesMCPInput(item map[string]json.RawMessage, path string, ite
 		if err := rejectUnsupportedInputKeys(item, path, "type", "id", "server_label", "tools", "error"); err != nil {
 			return err
 		}
-		if err := requireMCPInputStrings(item, path, "id", "server_label"); err != nil {
+		if err := requiredInputStrings(item, path, "id", "server_label"); err != nil {
 			return err
 		}
 		var tools []map[string]json.RawMessage
@@ -335,12 +335,12 @@ func validateResponsesMCPInput(item map[string]json.RawMessage, path string, ite
 				return invalidRequest(path + ".tools must name each tool")
 			}
 		}
-		return optionalMCPInputStrings(item, path, "error")
+		return optionalInputStrings(item, path, "error")
 	case "mcp_call":
 		if err := rejectUnsupportedInputKeys(item, path, "type", "id", "server_label", "name", "arguments", "output", "error", "status", "approval_request_id"); err != nil {
 			return err
 		}
-		if err := requireMCPInputStrings(item, path, "id", "server_label", "name"); err != nil {
+		if err := requiredInputStrings(item, path, "id", "server_label", "name"); err != nil {
 			return err
 		}
 		if _, err := requiredInputString(item, "arguments", path, true); err != nil {
@@ -352,12 +352,12 @@ func validateResponsesMCPInput(item map[string]json.RawMessage, path string, ite
 				return invalidRequest(path + ".status is not supported")
 			}
 		}
-		return optionalMCPInputStrings(item, path, "output", "approval_request_id")
+		return optionalInputStrings(item, path, "output", "approval_request_id")
 	case "mcp_approval_request":
 		if err := rejectUnsupportedInputKeys(item, path, "type", "id", "server_label", "name", "arguments"); err != nil {
 			return err
 		}
-		if err := requireMCPInputStrings(item, path, "id", "server_label", "name"); err != nil {
+		if err := requiredInputStrings(item, path, "id", "server_label", "name"); err != nil {
 			return err
 		}
 		_, err := requiredInputString(item, "arguments", path, true)
@@ -366,37 +366,17 @@ func validateResponsesMCPInput(item map[string]json.RawMessage, path string, ite
 		if err := rejectUnsupportedInputKeys(item, path, "type", "id", "approval_request_id", "approve", "reason"); err != nil {
 			return err
 		}
-		if err := requireMCPInputStrings(item, path, "approval_request_id"); err != nil {
+		if err := requiredInputStrings(item, path, "approval_request_id"); err != nil {
 			return err
 		}
 		var approve bool
 		if err := sonic.Unmarshal(item["approve"], &approve); err != nil {
 			return invalidRequest(path + ".approve must be a boolean")
 		}
-		return optionalMCPInputStrings(item, path, "id", "reason")
+		return optionalInputStrings(item, path, "id", "reason")
 	default:
 		return invalidRequest(path + ".type is not supported")
 	}
-}
-
-func requireMCPInputStrings(item map[string]json.RawMessage, path string, keys ...string) error {
-	for _, key := range keys {
-		if _, err := requiredInputString(item, key, path, false); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func optionalMCPInputStrings(item map[string]json.RawMessage, path string, keys ...string) error {
-	for _, key := range keys {
-		if raw := item[key]; rawJSONValueSet(raw) {
-			if _, ok := rawStringValue(raw); !ok {
-				return invalidRequest(path + "." + key + " must be a string")
-			}
-		}
-	}
-	return nil
 }
 
 // validateProviderResponsesMCPItem checks an MCP output item: a listing, a call or an

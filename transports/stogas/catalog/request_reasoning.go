@@ -287,6 +287,7 @@ var (
 		"mode":       true,
 	}
 	responsesRawReasoningFields = map[string]bool{
+		"context":          true,
 		"effort":           true,
 		"generate_summary": true,
 		"max_tokens":       true,
@@ -439,6 +440,9 @@ func validateRawReasoningParameters(rawData map[string]json.RawMessage, allowedF
 			return err
 		}
 		if err := validateRawReasoningSummary(reasoning["generate_summary"], "reasoning.generate_summary"); err != nil {
+			return err
+		}
+		if _, _, err := rawReasoningString(reasoning["context"], "reasoning.context"); err != nil {
 			return err
 		}
 	}

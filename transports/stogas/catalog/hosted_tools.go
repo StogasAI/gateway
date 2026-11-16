@@ -258,6 +258,57 @@ func hostedToolForType(kind string) (HostedTool, bool) {
 	return "", false
 }
 
+// readsHostedCall reports whether the deployment takes back an earlier call of a hosted tool. Only
+// a route that runs the tool takes its calls, and only in the form that its provider reads: OpenAI
+// takes web searches with their IDs (openAIWebSearchCallID), and Claude takes web searches with the
+// encrypted content of every result and web fetches with what they got. Codex keeps only a
+// search's query, so Claude does not read a search that Codex sends back. The calls that the
+// deployment does not read go, as reasoning that it does not read goes.
+func (r *ResolvedRequest) readsHostedCall(item *schemas.ResponsesMessage) bool {
+	tool := HostedToolWebSearch
+	if *item.Type == schemas.ResponsesMessageTypeWebFetchCall {
+		tool = HostedToolWebFetch
+	}
+	call := item.ResponsesToolMessage
+	if _, runs := r.Deployment.HostedTools[tool]; !runs || call == nil {
+		return false
+	}
+	switch {
+	case UsesClaudeWire(r.Provider, r.Deployment.ModelID):
+		if tool == HostedToolWebFetch {
+			return call.ResponsesWebFetchCall != nil && call.ResponsesWebFetchCall.ResultType != ""
+		}
+		return call.Action != nil && claudeSearchResults(call.Action.ResponsesWebSearchToolCallAction)
+	case r.runsOpenAIModel() && r.WireRoute() == RouteResponses:
+		return tool == HostedToolWebSearch && item.ID != nil && openAIWebSearchCallID(*item.ID)
+	}
+	return false
+}
+
+// claudeSearchResults reports whether a web search holds Claude's results, each with its encrypted
+// content, which is what Claude reads of them.
+func claudeSearchResults(search *schemas.ResponsesWebSearchToolCallAction) bool {
+	if search == nil || len(search.Sources) == 0 {
+		return false
+	}
+	for _, source := range search.Sources {
+		if source.EncryptedContent == nil || *source.EncryptedContent == "" {
+			return false
+		}
+	}
+	return true
+}
+
+// openAIWebSearchCallID reports whether core sends a web search call to OpenAI with its ID: ws_ and
+// more than digits. OpenAI takes any ID that begins with ws, even one that it never issued, and
+// refuses another, such as Claude's (testdata/provider/openai/web-search-call-replay.json). Core
+// sends any other call without its ID and status, because Gemini's calls take ws_ and a number
+// (isNativeWebSearchCall), and no recording shows OpenAI taking that form.
+func openAIWebSearchCallID(id string) bool {
+	suffix, ok := strings.CutPrefix(id, "ws_")
+	return ok && strings.Trim(suffix, "0123456789") != ""
+}
+
 // Anthropic's bash and text editor tools are functions whose schema Claude already knows. A
 // request declares one by its dated type and fixed name, Claude calls it by that name with JSON
 // arguments, and the client runs it and returns the result as for any function. These versions

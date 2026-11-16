@@ -53,22 +53,23 @@ func anthropicWireSupportsMidConversationSystem(state *State) bool {
 		anthropicprovider.DefaultSupportsMidConversationSystem(schemas.Anthropic, state.Resolution.Deployment.Upstream.Model)
 }
 
-// The side of the conversation that an input item belongs to on Anthropic wire.
+// The side of the conversation that an input item belongs to on Anthropic wire. A server tool
+// result, such as a web search with its results, belongs to the assistant's turn.
 const (
 	claudeSystemItem = iota
 	claudeUserItem
 	claudeAssistantItem
+	claudeServerResultItem
 )
 
 // claudeSystemPlacement checks where a system or developer message stands after the conversation
-// starts on Anthropic wire, which keeps it in place as Claude requires: right after a user message
-// or tool results, and last or right before the assistant's turn. Consecutive system messages count
-// as one. Anywhere else it gets 400, because moving it or turning it into user text would change
-// what it means. Claude also takes one after an assistant turn that ends in a server tool result,
-// which no input holds: the gateway accepts no server tool results in Anthropic-format input.
+// starts on Anthropic wire, which keeps it in place as Claude requires: right after a user message,
+// tool results or an assistant turn that ends in a server tool result, and last or right before
+// the assistant's turn. Consecutive system messages count as one. Anywhere else it gets 400,
+// because moving it or turning it into user text would change what it means.
 type claudeSystemPlacement struct {
 	started   bool   // a user or assistant item has come
-	afterUser bool   // the last such item was on the user side
+	afterUser bool   // the last such item was on the user side or a server tool result
 	pending   string // the path of a system message that waits for the assistant's turn
 }
 
@@ -86,10 +87,10 @@ func (p *claudeSystemPlacement) next(state *State, side int, path string) error 
 		p.pending = path
 		return nil
 	}
-	if p.pending != "" && side != claudeAssistantItem {
+	if p.pending != "" && side != claudeAssistantItem && side != claudeServerResultItem {
 		return invalidRequest(p.pending + ".role must be last or immediately precede an assistant turn on this Anthropic-format deployment")
 	}
-	p.started, p.afterUser, p.pending = true, side == claudeUserItem, ""
+	p.started, p.afterUser, p.pending = true, side == claudeUserItem || side == claudeServerResultItem, ""
 	return nil
 }
 
@@ -419,6 +420,11 @@ func validateAnthropicResponsesPolicy(state *State) error {
 		}
 		if value, exists := rawStringValue(reasoning["generate_summary"]); exists && value != "auto" && value != "none" {
 			return invalidRequest("reasoning.generate_summary must be auto or none for Anthropic-format deployments")
+		}
+		// Claude has no such setting: context_management's clear_thinking edit chooses which
+		// earlier thinking it reads.
+		if value, exists := rawStringValue(reasoning["context"]); exists && value != "auto" {
+			return invalidRequest("reasoning.context must be auto for Anthropic-format deployments")
 		}
 	}
 	if rawJSONValueSet(raw["prompt_cache_retention"]) {

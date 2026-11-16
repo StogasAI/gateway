@@ -74,13 +74,13 @@ func (r *ResolvedRequest) RebindAccount(tag string) bool {
 	if r.wire != nil {
 		r.wire.accountTag = tag
 	}
-	r.KeepReadableReasoning()
+	r.KeepReadableHistory()
 	return true
 }
 
 // BindEncryptedReasoning returns encrypted reasoning that the deployment returned, bound to the
 // account that produced it, so that a later request sends it only to that account
-// (KeepReadableReasoning). Without an account, it returns the content as it is, which no
+// (KeepReadableHistory). Without an account, it returns the content as it is, which no
 // deployment takes back.
 func (r *ResolvedRequest) BindEncryptedReasoning(content string) string {
 	if r == nil || r.accountTag == "" || content == "" || strings.HasPrefix(content, encryptedReasoningPrefix) || !r.ReadsReasoning(EncryptedReasoning) {
@@ -184,10 +184,11 @@ func chatEncryptedReasoningHistory(raw json.RawMessage) bool {
 	return false
 }
 
-// KeepReadableReasoning leaves out the reasoning history that the deployment does not take back
-// (ReadsReasoning), and an assistant message that held nothing else. The request's checks have
-// refused history that no deployment takes back. Translate reads what remains.
-func (r *ResolvedRequest) KeepReadableReasoning() {
+// KeepReadableHistory leaves out the history that the deployment does not take back: reasoning
+// (ReadsReasoning), an assistant message that held nothing else, and the calls of hosted tools that
+// it does not read (readsHostedCall). The request's checks have refused history that no
+// deployment takes back. Translate reads what remains.
+func (r *ResolvedRequest) KeepReadableHistory() {
 	switch {
 	case r == nil:
 	case r.chat != nil:
@@ -197,8 +198,9 @@ func (r *ResolvedRequest) KeepReadableReasoning() {
 	}
 }
 
-// readableResponsesInput is the input with only the reasoning items that the deployment takes
-// back. Other requests of the same input share its items, so it never changes them.
+// readableResponsesInput is the input with only the reasoning and hosted tool items that the
+// deployment takes back. Other requests of the same input share its items, so it never changes
+// them.
 func (r *ResolvedRequest) readableResponsesInput(input []schemas.ResponsesMessage) []schemas.ResponsesMessage {
 	var kept []schemas.ResponsesMessage
 	for index := range input {
@@ -223,6 +225,10 @@ func (r *ResolvedRequest) readableResponsesInput(input []schemas.ResponsesMessag
 // reasoning with the provider's own content, whether the deployment gets it at all, and whether
 // either differs from the item.
 func (r *ResolvedRequest) readableResponsesItem(item schemas.ResponsesMessage) (schemas.ResponsesMessage, bool, bool) {
+	if item.Type != nil && (*item.Type == schemas.ResponsesMessageTypeWebSearchCall || *item.Type == schemas.ResponsesMessageTypeWebFetchCall) {
+		keep := r.readsHostedCall(&item)
+		return item, keep, !keep
+	}
 	if item.Type == nil || *item.Type != schemas.ResponsesMessageTypeReasoning {
 		return item, true, false
 	}

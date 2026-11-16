@@ -1381,6 +1381,27 @@ func (chunk *AnthropicStreamEvent) ToBifrostResponsesStream(ctx context.Context,
 				return nil, nil, false
 			}
 
+			// A server tool's result block completes the item of the call that it
+			// answers, so it takes that item's output index instead of reserving one,
+			// and later items keep their positions in response.completed output.
+			switch chunk.ContentBlock.Type {
+			case AnthropicContentBlockTypeWebSearchToolResult,
+				AnthropicContentBlockTypeWebFetchToolResult,
+				AnthropicContentBlockTypeAdvisorToolResult,
+				AnthropicContentBlockTypeToolSearchToolResult,
+				AnthropicContentBlockTypeCodeExecutionToolResult,
+				AnthropicContentBlockTypeBashCodeExecutionToolResult,
+				AnthropicContentBlockTypeTextEditorCodeExecutionToolResult:
+				if chunk.ContentBlock.ToolUseID != nil {
+					for index, id := range state.ItemIDs {
+						if id == *chunk.ContentBlock.ToolUseID {
+							state.ContentIndexToOutputIndex[*chunk.Index] = index
+							break
+						}
+					}
+				}
+			}
+
 			outputIndex := state.getOrCreateOutputIndex(chunk.Index)
 
 			if chunk.ContentBlock.Type == AnthropicContentBlockTypeToolUse &&

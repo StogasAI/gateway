@@ -117,7 +117,7 @@ func TestOpaqueReasoningUsesBytesWithoutTokenizingCiphertext(t *testing.T) {
 				t.Fatal(err)
 			}
 			stats := requestInputHoldStats(raw, tc.route)
-			if stats.OpaqueReasoningBytes != len(opaque) || strings.Contains(strings.Join(stats.TextFields, ""), opaque) {
+			if stats.OpaqueBytes != len(opaque) || strings.Contains(strings.Join(stats.TextFields, ""), opaque) {
 				t.Fatal("reasoning ciphertext was omitted or sent to the text tokenizer")
 			}
 			if strings.Contains(strings.Join(stats.TextFields, ""), "summary") {
@@ -128,7 +128,7 @@ func TestOpaqueReasoningUsesBytesWithoutTokenizingCiphertext(t *testing.T) {
 				t.Fatal(err)
 			}
 			visible := stats
-			visible.OpaqueReasoningBytes = 0
+			visible.OpaqueBytes = 0
 			textEstimate, err := estimateInputContent(visible, 100_000)
 			if err != nil {
 				t.Fatal(err)
@@ -141,6 +141,22 @@ func TestOpaqueReasoningUsesBytesWithoutTokenizingCiphertext(t *testing.T) {
 				t.Fatalf("context cap: %d, %v", capped, err)
 			}
 		})
+	}
+}
+
+// Claude's encrypted search results count one token per byte, like encrypted reasoning, and the
+// rest of the search counts as text.
+func TestEncryptedSearchResultsCountAsOpaqueBytes(t *testing.T) {
+	opaque := strings.Repeat("opaqueCiphertext_", 128)
+	raw, err := DecodeRequestBody([]byte(fmt.Sprintf(`{"input":[{"type":"web_search_call","id":"srvtoolu_01","status":"completed",`+
+		`"action":{"type":"search","query":"gateway news","sources":[{"type":"url","url":"https://example.com","title":"Example title","encrypted_content":%q}]}}]}`, opaque)), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stats := requestInputHoldStats(raw, RouteResponses)
+	text := strings.Join(stats.TextFields, "")
+	if stats.OpaqueBytes != len(opaque) || strings.Contains(text, opaque) || !strings.Contains(text, "gateway news") || !strings.Contains(text, "Example title") {
+		t.Fatalf("search hold: %d opaque bytes, text %q", stats.OpaqueBytes, text)
 	}
 }
 
@@ -170,7 +186,7 @@ func TestSignedReasoningSummaryDoesNotMultiplyTheEstimate(t *testing.T) {
 		t.Fatal(err)
 	}
 	stats := requestInputHoldStats(raw, RouteChat)
-	if stats.OpaqueReasoningBytes != 0 || !strings.Contains(strings.Join(stats.TextFields, ""), "actual plaintext thinking") {
+	if stats.OpaqueBytes != 0 || !strings.Contains(strings.Join(stats.TextFields, ""), "actual plaintext thinking") {
 		t.Fatal("unsigned thinking was dropped")
 	}
 }
@@ -181,7 +197,7 @@ func TestReasoningPropertiesInToolInputRemainText(t *testing.T) {
 		t.Fatal(err)
 	}
 	stats := requestInputHoldStats(raw, RouteChat)
-	if stats.OpaqueReasoningBytes != 0 || !strings.Contains(strings.Join(stats.TextFields, ""), "ordinary user text") {
+	if stats.OpaqueBytes != 0 || !strings.Contains(strings.Join(stats.TextFields, ""), "ordinary user text") {
 		t.Fatal("user text was mistaken for a provider reasoning envelope")
 	}
 }

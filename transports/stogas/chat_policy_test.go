@@ -1194,7 +1194,7 @@ func TestNoOpCompatibilityFieldsDoNotReachProvider(t *testing.T) {
 			deployment: "anthropic-claude-opus-4-8",
 			outputCap:  "max_tokens",
 			path:       "/v1/responses",
-			body:       `{"model":"anthropic-claude-opus-4-8","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi","image_url":null,"sdk_extension":null}],"sdk_extension":null}],"max_output_tokens":16,"sdk_trace":null,"user":"caller","safety_identifier":"caller","background":false,"conversation":null,"previous_response_id":"","fallbacks":[],"container":null,"store":null,"stream_options":null,"truncation":"disabled","text":{"format":{"type":"text"}},"tools":[],"tool_choice":"auto","parallel_tool_calls":true,"client_metadata":{"x-codex-turn":"1","trace":null}}`,
+			body:       `{"model":"anthropic-claude-opus-4-8","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi","image_url":null,"sdk_extension":null}],"sdk_extension":null}],"max_output_tokens":16,"sdk_trace":null,"user":"caller","safety_identifier":"caller","background":false,"conversation":null,"previous_response_id":"","fallbacks":[],"container":null,"store":null,"stream_options":null,"truncation":"disabled","text":{"format":{"type":"text"}},"tools":[],"tool_choice":"auto","parallel_tool_calls":true,"client_metadata":{"x-codex-turn":"1","trace":null},"request_country":"US"}`,
 		},
 		{
 			name:       "openai chat SDK defaults",
@@ -1249,7 +1249,7 @@ func TestNoOpCompatibilityFieldsDoNotReachProvider(t *testing.T) {
 				t.Fatalf("client extras changed the output cap: %s", wire)
 			}
 			for _, field := range []string{
-				"sdk_trace", "client_metadata",
+				"sdk_trace", "client_metadata", "request_country",
 				"user", "safety_identifier", "audio", "function_call", "functions", "fallbacks", "container",
 				"background", "conversation", "previous_response_id", "tools",
 				"n", "modalities", "response_format", "text", "truncation", "tool_choice", "parallel_tool_calls",
@@ -1753,7 +1753,7 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 		{"null input item", `{"model":"provider:openai gpt-5.5","input":[null]}`, "input items must be objects"},
 		{"null message type", `{"model":"provider:openai gpt-5.5","input":[{"type":null,"role":"user","content":"hi"}]}`, "input[0].type must be a string"},
 		{"numeric message type", `{"model":"provider:openai gpt-5.5","input":[{"type":1,"role":"user","content":"hi"}]}`, "Invalid JSON body"},
-		{"top-level text block", `{"model":"provider:openai gpt-5.5","input":[{"type":"input_text","text":"silently dropped"}]}`, "Only text messages, client tool calls and outputs"},
+		{"top-level text block", `{"model":"provider:openai gpt-5.5","input":[{"type":"input_text","text":"silently dropped"}]}`, "Only text messages, tool calls, tool outputs and reasoning items"},
 		{"message unknown field", `{"model":"provider:openai gpt-5.5","input":[{"type":"message","role":"user","content":"hi","future":true}]}`, "input[0].future is not supported"},
 		{"content block unknown field", `{"model":"provider:openai gpt-5.5","input":[{"role":"user","content":[{"type":"input_text","text":"hi","future":true}]}]}`, "input[0].content[0].future is not supported"},
 		{"assistant input block", `{"model":"provider:openai gpt-5.5","input":[{"type":"message","role":"assistant","content":[{"type":"input_text","text":"answer"}]},{"role":"user","content":"continue"}]}`, "must be output_text or refusal"},

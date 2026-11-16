@@ -1,0 +1,367 @@
+{
+	"shows": "With store: false and no web_search tool, OpenAI takes back a web search call whose ID begins with ws, even one that it never issued, with or without its sources, and refuses an ID with another prefix.",
+	"recorded": "2026-11-16",
+	"exchanges": [
+		{
+			"name": "search as Codex sends it back",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 50,
+					"input": [
+						{
+							"role": "user",
+							"content": "Search the web for the latest Bifrost release."
+						},
+						{
+							"type": "web_search_call",
+							"status": "completed",
+							"id": "ws_0a1b2c3d4e5f60718293a4b5c6d7e8f9",
+							"action": {
+								"type": "search",
+								"query": "bifrost latest release"
+							}
+						},
+						{
+							"type": "message",
+							"role": "assistant",
+							"content": [
+								{
+									"type": "output_text",
+									"text": "Bifrost 1.4 is the latest release."
+								}
+							]
+						},
+						{
+							"role": "user",
+							"content": "Reply with OK."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_076ffb2968e9b50c016afa68cf5b7c87d1801e91aae6756655",
+					"object": "response",
+					"created_at": 1794795727,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1794795727,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 50,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "msg_076ffb2968e9b50c016afa68cfe26c87d1b0380c8bc86125ed",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "OK"
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 62,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 5,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 67
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "search with sources",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 50,
+					"input": [
+						{
+							"role": "user",
+							"content": "Search the web for the latest Bifrost release."
+						},
+						{
+							"type": "web_search_call",
+							"status": "completed",
+							"id": "ws_0a1b2c3d4e5f60718293a4b5c6d7e8f9",
+							"action": {
+								"type": "search",
+								"query": "bifrost latest release",
+								"sources": [
+									{
+										"type": "url",
+										"url": "https://github.com/maximhq/bifrost/releases"
+									}
+								]
+							}
+						},
+						{
+							"type": "message",
+							"role": "assistant",
+							"content": [
+								{
+									"type": "output_text",
+									"text": "Bifrost 1.4 is the latest release."
+								}
+							]
+						},
+						{
+							"role": "user",
+							"content": "Reply with OK."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_02bc350e67de0bb2016afa68d0227c87d1aa5a4d00f4c205fc",
+					"object": "response",
+					"created_at": 1794795728,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1794795729,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 50,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "msg_02bc350e67de0bb2016afa68d1059487d1ac508b5cc74b5443",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "OK"
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 62,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 5,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 67
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "search with Claude's ID",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 50,
+					"input": [
+						{
+							"role": "user",
+							"content": "Search the web for the latest Bifrost release."
+						},
+						{
+							"type": "web_search_call",
+							"status": "completed",
+							"id": "srvtoolu_01ws",
+							"action": {
+								"type": "search",
+								"query": "bifrost latest release"
+							}
+						},
+						{
+							"type": "message",
+							"role": "assistant",
+							"content": [
+								{
+									"type": "output_text",
+									"text": "Bifrost 1.4 is the latest release."
+								}
+							]
+						},
+						{
+							"role": "user",
+							"content": "Reply with OK."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Invalid 'input[1].id': 'srvtoolu_01ws'. Expected an ID that begins with 'ws'.",
+						"type": "invalid_request_error",
+						"param": "input[1].id",
+						"code": "invalid_value"
+					}
+				}
+			}
+		}
+	]
+}

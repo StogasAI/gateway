@@ -1280,9 +1280,10 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 			switch itemType {
 			case "function_call", "function_call_output", "custom_tool_call", "custom_tool_call_output",
 				"shell_call", "shell_call_output", "apply_patch_call", "apply_patch_call_output":
-			// Reasoning and MCP items are the provider's own steps, which a response can interleave with
-			// client calls, as Claude does with a progress update before each call.
-			case "reasoning", "mcp_list_tools", "mcp_call", "mcp_approval_request", "mcp_approval_response":
+			// Reasoning, MCP and hosted tool items are the provider's own steps, which a response can
+			// interleave with client calls, as Claude does with a progress update before each call.
+			case "reasoning", "mcp_list_tools", "mcp_call", "mcp_approval_request", "mcp_approval_response",
+				"web_search_call", "web_fetch_call":
 			default:
 				return invalidRequest(path + " must resolve the preceding client tool calls before adding another input item")
 			}
@@ -1363,19 +1364,26 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 			} else {
 				turn.call()
 			}
+		case "web_search_call", "web_fetch_call":
+			if err := validateResponsesHostedCallInput(item, path, itemType); err != nil {
+				return err
+			}
+			turn.call()
 		case "input_file":
 			return invalidRequest("file inputs are not supported")
 		default:
 			if err := validateTextOnlyMediaFields(item, "Only text input is supported"); err != nil {
 				return err
 			}
-			return invalidRequest("Only text messages, client tool calls and outputs, and reasoning items are supported")
+			return invalidRequest("Only text messages, tool calls, tool outputs and reasoning items are supported")
 		}
 		if responsesUsesAnthropicWire(state) {
 			side := claudeUserItem
 			switch {
 			case isSystemMessage:
 				side = claudeSystemItem
+			case itemType == "web_search_call", itemType == "web_fetch_call":
+				side = claudeServerResultItem
 			case itemType == "function_call", itemType == "reasoning", role == "assistant":
 				side = claudeAssistantItem
 			}
@@ -1908,7 +1916,7 @@ func validateResponsesToolCallOutputInput(item map[string]json.RawMessage, path 
 // plain reasoning text. An item with neither holds nothing to continue from, such as one whose
 // encrypted content a client dropped or a stored reply never had. The checks are the same on every
 // deployment, and each deployment gets only the items that it takes back
-// (catalog.ResolvedRequest.KeepReadableReasoning).
+// (catalog.ResolvedRequest.KeepReadableHistory).
 func validateResponsesReasoningInput(item map[string]json.RawMessage, path string) error {
 	if err := rejectUnsupportedInputKeys(item, path, "type", "id", "status", "summary", "content", "encrypted_content"); err != nil {
 		return err

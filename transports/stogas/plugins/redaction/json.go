@@ -58,6 +58,9 @@ const (
 	jsonContextResponsesTool
 	jsonContextReasoningDetails
 	jsonContextReasoningDetail
+	jsonContextSearchAction
+	jsonContextSearchResults
+	jsonContextSearchResult
 )
 
 // RedactRequestFields changes only provider-bound text containers. Routing,
@@ -206,6 +209,9 @@ func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, repla
 	// An MCP tool's connection settings reach the provider as the client sent them: its
 	// credentials and server address are not prompt text, and a redacted token would fail.
 	var mcpSettings []jsonSpan
+	// A web search that a reply returned holds Claude's encrypted results, which Claude refuses
+	// changed. Their spans wait for the item's type.
+	searchResults := len(r.searchResults)
 	position = skipJSONSpace(source, position+1)
 	if position < len(source) && source[position] == '}' {
 		return position + 1, nil
@@ -282,6 +288,12 @@ func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, repla
 		if context == jsonContextChatMessage && key == jsonKeyReasoningDetails {
 			valueContext = jsonContextReasoningDetails
 		}
+		if context == jsonContextResponsesInputItem && key == jsonKeyAction {
+			valueContext = jsonContextSearchAction
+		}
+		if context == jsonContextSearchAction && key == jsonKeySources {
+			valueContext = jsonContextSearchResults
+		}
 		if context == jsonContextReasoningDetail && (key == jsonKeySignature || key == jsonKeyData) && source[position] == '"' {
 			valueAllowed = false
 		}
@@ -305,6 +317,9 @@ func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, repla
 		if context == jsonContextChatMessage && key == jsonKeyReasoning {
 			reasoningTexts = append(reasoningTexts, jsonSpan{start: settingStart, end: position, textBytes: r.inputTextBytes - settingBytes})
 		}
+		if context == jsonContextSearchResult && key == jsonKeyEncryptedContent && source[settingStart] == '"' {
+			r.searchResults = append(r.searchResults, jsonSpan{start: settingStart, end: position, textBytes: r.inputTextBytes - settingBytes})
+		}
 		position = skipJSONSpace(source, position)
 		if position >= len(source) {
 			return position, errInvalidJSON
@@ -318,6 +333,15 @@ func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, repla
 					r.discardJSONReplacements(replacements, baseReplacements, text.start, text.end)
 					r.inputTextBytes -= text.textBytes
 				}
+			}
+			if context == jsonContextResponsesInputItem {
+				if itemType == "web_search_call" {
+					for _, result := range r.searchResults[searchResults:] {
+						r.discardJSONReplacements(replacements, baseReplacements, result.start, result.end)
+						r.inputTextBytes -= result.textBytes
+					}
+				}
+				r.searchResults = r.searchResults[:searchResults]
 			}
 			if context == jsonContextResponsesTool && itemType == "mcp" {
 				for _, setting := range mcpSettings {
@@ -360,6 +384,8 @@ func (r *Redactor) walkJSONArray(source []byte, position int, allow bool, replac
 			childContext = jsonContextContentBlock
 		case jsonContextReasoningDetails:
 			childContext = jsonContextReasoningDetail
+		case jsonContextSearchResults:
+			childContext = jsonContextSearchResult
 		}
 		position, err = r.walkJSONValue(source, position, allow, replacements, depth, childContext)
 		if err != nil {
@@ -599,6 +625,8 @@ const (
 	jsonKeyContent
 	jsonKeyFile
 	jsonKeyOpaqueMedia
+	jsonKeyAction
+	jsonKeySources
 )
 
 func classifyJSONKey(encoded []byte, escaped bool) (jsonKeyKind, error) {
@@ -621,6 +649,10 @@ func classifyJSONKey(encoded []byte, escaped bool) (jsonKeyKind, error) {
 		return jsonKeyOpaqueMedia, nil
 	case "encrypted_content":
 		return jsonKeyEncryptedContent, nil
+	case "action":
+		return jsonKeyAction, nil
+	case "sources":
+		return jsonKeySources, nil
 	case "type":
 		return jsonKeyType, nil
 	case "signature":

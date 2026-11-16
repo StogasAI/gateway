@@ -256,3 +256,14 @@ func FuzzValidateRequestJSONNeverPanics(f *testing.F) {
 		}
 	})
 }
+
+// Codex's request country reaches no provider, and only a country code or null passes.
+func TestRequestCountryIsCheckedAndDropped(t *testing.T) {
+	for raw, valid := range map[string]bool{`"US"`: true, `"de"`: true, `null`: true, `"USA"`: false, `"U1"`: false, `""`: false, `840`: false} {
+		fields := map[string]json.RawMessage{"request_country": json.RawMessage(raw)}
+		err := dropClientMetadata(fields)
+		if _, kept := fields["request_country"]; kept || (err == nil) != valid {
+			t.Fatalf("request_country %s: kept %t, error %v", raw, kept, err)
+		}
+	}
+}

@@ -40,8 +40,10 @@ const (
 )
 
 type inputHoldStats struct {
-	TextFields           []string
-	OpaqueReasoningBytes int
+	TextFields []string
+	// OpaqueBytes are the bytes of provider ciphertext that the provider reads as text: encrypted
+	// reasoning and Claude's encrypted search results.
+	OpaqueBytes int
 
 	Messages        int
 	ContentBlocks   int
@@ -55,10 +57,10 @@ type inputHoldStats struct {
 // model, and adds opaque reasoning separately. The limit only clips the hold;
 // it never rejects, truncates or modifies the submitted content.
 func estimateInputContent(stats inputHoldStats, limit int) (int, error) {
-	// Provider reasoning envelopes are not text for the model tokenizer.
-	// One token per encoded byte remains an empirical allowance, not a bound
-	// guaranteed by the provider's undocumented encrypted representation.
-	estimate := stats.OpaqueReasoningBytes
+	// Provider ciphertext is not text for the model tokenizer. One token per
+	// encoded byte remains an empirical allowance, not a bound guaranteed by
+	// the provider's undocumented encrypted representation.
+	estimate := stats.OpaqueBytes
 	if limit > 0 && estimate >= limit {
 		return limit, nil
 	}
@@ -221,9 +223,11 @@ func collectMessageObject(raw json.RawMessage, stats *inputHoldStats) {
 	if rawStringValue(object["role"]) == "tool" {
 		stats.ToolEvents++
 	}
-	switch rawStringValue(object["type"]) {
+	itemType := rawStringValue(object["type"])
+	switch itemType {
 	case "function_call", "function_call_output", "tool_call", "tool_result",
-		"shell_call", "shell_call_output", "apply_patch_call", "apply_patch_call_output":
+		"shell_call", "shell_call_output", "apply_patch_call", "apply_patch_call_output",
+		"web_search_call", "web_fetch_call":
 		stats.ToolEvents++
 	}
 	if rawToolCalls, ok := object["tool_calls"]; ok {
@@ -245,8 +249,45 @@ func collectMessageObject(raw json.RawMessage, stats *inputHoldStats) {
 			}
 		case "reasoning_details":
 			collectReasoningDetails(value, stats)
+		case "action":
+			if itemType == "web_search_call" {
+				collectSearchAction(value, stats)
+			} else {
+				collectTextLike(value, stats)
+			}
 		default:
 			collectTextLike(value, stats)
+		}
+	}
+}
+
+// collectSearchAction counts the action of a web search that a reply returned. Claude reads each
+// result's encrypted content as the page text that it holds.
+func collectSearchAction(raw json.RawMessage, stats *inputHoldStats) {
+	action, err := rawjson.Object(raw)
+	if err != nil {
+		collectTextLike(raw, stats)
+		return
+	}
+	for key, value := range action {
+		sources, err := rawjson.Array(value)
+		if key != "sources" || err != nil {
+			collectTextLike(value, stats)
+			continue
+		}
+		for _, sourceRaw := range sources {
+			source, err := rawjson.Object(sourceRaw)
+			if err != nil {
+				collectTextLike(sourceRaw, stats)
+				continue
+			}
+			for field, value := range source {
+				if opaque := rawStringValue(value); field == "encrypted_content" && opaque != "" {
+					stats.OpaqueBytes += len(opaque)
+					continue
+				}
+				collectTextLike(value, stats)
+			}
 		}
 	}
 }
@@ -302,7 +343,7 @@ func collectReasoningDetails(raw json.RawMessage, stats *inputHoldStats) {
 // a tool argument or schema remains ordinary input text.
 func collectReasoningObject(object map[string]json.RawMessage, opaqueField string, stats *inputHoldStats) {
 	if opaque := rawStringValue(object[opaqueField]); opaque != "" {
-		stats.OpaqueReasoningBytes += len(opaque)
+		stats.OpaqueBytes += len(opaque)
 		return
 	}
 	for field, value := range object {
