@@ -5,6 +5,7 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/money"
 	"math/big"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/maximhq/bifrost/core/schemas"
@@ -37,7 +38,7 @@ func baseHoldEstimate(state *State) (HoldEstimate, error) {
 		)
 	}
 	meters = appendOutputTokenHoldCost(meters, pricing, outputTokenLimit)
-	meters, estimatedUpstreamCostUSD, err := canonicalizeMeters(meters, pricing)
+	meters, estimatedUpstreamCostUSD, err := canonicalizeHoldMeters(meters, pricing)
 	if err != nil {
 		return HoldEstimate{}, err
 	}
@@ -374,6 +375,33 @@ func ExecutionDeployment(state *State) catalog.Deployment {
 		return standard
 	}
 	return selected
+}
+
+// canonicalizeHoldMeters prices a hold's tokens at the tier that its own input
+// reaches, as settlement prices usage at the tier of the reported prompt. Hold
+// meters choose between alternatives at the highest tier before this.
+func canonicalizeHoldMeters(meters []catalog.MeterEstimate, pricing catalog.Pricing) ([]catalog.MeterEstimate, string, error) {
+	quantities := make([]int, len(meters))
+	prompt := 0
+	for i, meter := range meters {
+		quantity, err := strconv.Atoi(meter.Quantity)
+		if err != nil {
+			return nil, "", fmt.Errorf("meter %s has an invalid quantity", meter.MeterKey)
+		}
+		quantities[i] = quantity
+		if isInputTokenMeter(meter.MeterKey) {
+			prompt = saturatingTokenTotal(prompt, quantity)
+		}
+	}
+	tiered := make([]catalog.MeterEstimate, 0, len(meters))
+	for i, meter := range meters {
+		if !isInputTokenMeter(meter.MeterKey) && !isOutputTokenMeter(meter.MeterKey) {
+			tiered = append(tiered, meter)
+			continue
+		}
+		tiered = billing.AppendTokenMeterCost(tiered, pricing, meter.MeterKey, quantities[i], meter.HoldRequired, billing.TokenRateForPrompt(prompt))
+	}
+	return canonicalizeMeters(tiered, pricing)
 }
 
 func canonicalizeMeters(meters []catalog.MeterEstimate, pricing catalog.Pricing) ([]catalog.MeterEstimate, string, error) {

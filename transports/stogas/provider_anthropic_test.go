@@ -26,13 +26,19 @@ func TestAnthropicCumulativeInputAndRequestWideOutput(t *testing.T) {
 		change        func(*anthropicAdapterContext)
 		input, output int
 	}{
-		{"bounded fetch includes generated history on later iterations", func(*anthropicAdapterContext) {}, 28390, 100},
-		{"search can fill each later input window", func(r *anthropicAdapterContext) { r.ToolTypes = []string{"web_search"} }, 46489, 100},
+		// 1,489 + 2,189 + 2,889: each pass reads the input and every fetch before it.
+		{"each pass reads the fetches before it", func(*anthropicAdapterContext) {}, 6567, 100},
+		// 1,489 + 5,000 + 5,000: one search's typical content fills the input limit.
+		{"search content stays within the input limit", func(r *anthropicAdapterContext) { r.ToolTypes = []string{"web_search"} }, 11489, 100},
 		{"disabled tools have no repeated input", func(r *anthropicAdapterContext) { r.ToolChoiceAllowsCalls = false }, 1489, 100},
-		{"input overhead stays within the input ceiling", func(r *anthropicAdapterContext) { r.InputTokenLimit = 4999 }, 50000, 100},
-		{"compaction has separate summary capacity", func(r *anthropicAdapterContext) {
+		{"input overhead stays within the input ceiling", func(r *anthropicAdapterContext) { r.InputTokenLimit = 4999 }, 15000, 100},
+		// Ten passes without a cap: six grow by 700 from 1,489 and four read the limit.
+		{"compaction out of the trigger's reach adds nothing", func(r *anthropicAdapterContext) {
 			r.RawBody = mustObject(t, `{"context_management":{"edits":[{"type":"compact_20260112"}]}}`)
-		}, 100000, 20100},
+		}, 39434, 100},
+		{"compaction reads the last pass again and writes a summary", func(r *anthropicAdapterContext) {
+			r.RawBody = mustObject(t, `{"context_management":{"edits":[{"type":"compact_20260112","trigger":{"type":"input_tokens","value":1000}}]}}`)
+		}, 44434, 2100},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := base
@@ -199,34 +205,22 @@ func TestAnthropicWebFetchContentHoldTokens(t *testing.T) {
 		want int
 	}{
 		{
-			name: "explicit max uses and content tokens",
+			name: "max_content_tokens bounds one fetch",
 			body: `{}`,
 			tool: `{"type":"web_fetch_20250910","max_uses":3,"max_content_tokens":700}`,
-			want: 2100,
+			want: 700,
 		},
 		{
-			name: "unversioned fetch uses same token hold",
+			name: "unversioned fetch reads the same limit",
 			body: `{"max_tool_calls":2}`,
-			tool: `{"type":"web_fetch","max_content_tokens":700}`,
-			want: 1400,
+			tool: `{"type":"web_fetch","max_content_tokens":600}`,
+			want: 600,
 		},
 		{
-			name: "top level cap supplies max uses",
-			body: `{"max_tool_calls":4}`,
-			tool: `{"type":"web_fetch_20250910","max_content_tokens":600}`,
-			want: 2400,
-		},
-		{
-			name: "omitted cap defaults then caps to remaining context",
-			body: `{}`,
-			tool: `{"type":"web_fetch_20250910","max_content_tokens":1000}`,
-			want: 3511,
-		},
-		{
-			name: "omitted content limit reserves remaining context",
+			name: "a fetch without a limit adds typical content",
 			body: `{"max_tool_calls":2}`,
 			tool: `{"type":"web_fetch_20250910"}`,
-			want: 3511,
+			want: hostedCallContentTokens,
 		},
 	}
 
@@ -265,12 +259,13 @@ func TestAnthropicHostedContentHoldMetersIncludeCacheWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Passes of 1,489, 2,189 and 2,889 tokens: the last is written once and the rest is read.
 	meters := anthropicHoldMeters(req, input)
-	if findMeter(meters, billing.MeterCacheWrite1hInputTokens, "2989") == nil ||
-		findMeter(meters, billing.MeterCachedInputTokens, "25401") == nil {
+	if findMeter(meters, billing.MeterCacheWrite1hInputTokens, "2889") == nil ||
+		findMeter(meters, billing.MeterCachedInputTokens, "3678") == nil {
 		t.Fatalf("expected distinct fetched material once and repeated material at the cache-read rate, got %#v", meters)
 	}
-	if findMeter(meters, billing.MeterInputTokens, "28390") != nil {
+	if findMeterEstimate(meters, billing.MeterInputTokens) != nil {
 		t.Fatalf("fetched content must use one worst-case input category, got %#v", meters)
 	}
 
@@ -280,12 +275,13 @@ func TestAnthropicHostedContentHoldMetersIncludeCacheWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Passes of 1,489, 5,000 and 5,000 tokens.
 	meters = anthropicHoldMeters(req, input)
 	if findMeter(meters, billing.MeterCacheWrite1hInputTokens, "5000") == nil ||
-		findMeter(meters, billing.MeterCachedInputTokens, "41489") == nil {
+		findMeter(meters, billing.MeterCachedInputTokens, "6489") == nil {
 		t.Fatalf("expected one full write allowance and repeated cached search context, got %#v", meters)
 	}
-	if findMeter(meters, billing.MeterInputTokens, "46489") != nil {
+	if findMeterEstimate(meters, billing.MeterInputTokens) != nil {
 		t.Fatalf("search content must use one worst-case input category, got %#v", meters)
 	}
 }
@@ -296,10 +292,10 @@ func TestAnthropicInternalLoopCacheReuseRequiresEnabledUneditedContext(t *testin
 		omitReadRate bool
 		write, read  string
 	}{
-		{"enabled with a caller tool cap", `{"cache_control":{"type":"ephemeral"},"max_tool_calls":1}`, false, "5000", "45000"},
-		{"cache pricing alone does not enable reuse", `{"max_tool_calls":1}`, false, "50000", ""},
+		{"enabled with a caller tool cap", `{"cache_control":{"type":"ephemeral"},"max_tool_calls":1}`, false, "5000", "5000"},
+		{"cache pricing alone does not enable reuse", `{"max_tool_calls":1}`, false, "10000", ""},
 		{"missing cache price retains the full hold", `{"cache_control":{"type":"ephemeral"}}`, true, "50000", ""},
-		{"compaction does not preserve the growing prefix", `{"cache_control":{"type":"ephemeral"},"context_management":{"edits":[{"type":"compact_20260112"}]}}`, false, "100000", ""},
+		{"context editing does not preserve the growing prefix", `{"cache_control":{"type":"ephemeral"},"context_management":{"edits":[{"type":"compact_20260112"}]}}`, false, "50000", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			pricing := testPricing()
@@ -351,8 +347,8 @@ func TestAnthropicHostedContentHoldDoesNotDoubleCountSearchAndFetch(t *testing.T
 			mustObject(t, `{"type":"web_fetch_20250910","max_content_tokens":700}`),
 		},
 	}
-	if got := anthropicHostedContentHoldTokens(req); got != 3511 {
-		t.Fatalf("anthropicHostedContentHoldTokens() = %d, want remaining context once", got)
+	if got := anthropicHostedContentHoldTokens(req); got != hostedCallContentTokens {
+		t.Fatalf("anthropicHostedContentHoldTokens() = %d, want the larger call's content", got)
 	}
 }
 

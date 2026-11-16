@@ -688,7 +688,7 @@ func estimateAnthropicWireHold(state *State) error {
 	pricing := effectivePricingForState(state)
 	state.Hold.Meters = appendOutputTokenHoldCost(tokenFreeMeters, pricing, outputTokens)
 	state.Hold.Meters = append(state.Hold.Meters, anthropicHoldMeters(req, inputTokens)...)
-	meters, total, err := canonicalizeMeters(state.Hold.Meters, pricing)
+	meters, total, err := canonicalizeHoldMeters(state.Hold.Meters, pricing)
 	if err != nil {
 		return err
 	}
@@ -857,47 +857,43 @@ func anthropicAdapterContextForDeployment(state *State, deployment catalog.Deplo
 	}
 }
 
-// A synchronous server-tool request has at most ten normal sampling
-// iterations. A tool-use cap bounds successful calls, not failed attempts or
-// iterations: max_uses_exceeded is itself a tool result.
+// A synchronous server-tool request runs at most ten sampling passes, and the
+// hold covers one after each hosted call that it covers. Attempts after
+// max_uses, which return errors, and longer loops settle above the hold.
 func anthropicSamplingIterationLimit(req anthropicAdapterContext) int {
 	if req.Route == anthropicAdapterRouteResponses && req.ToolChoiceAllowsCalls &&
 		(usesToolType(req.ToolTypes, "web_search") || usesToolType(req.ToolTypes, "web_fetch")) {
-		return 10
+		return 1 + min(9, anthropicHostedCallsHeld(req, anthropicResponsesHostedToolType))
 	}
 	return 1
 }
 
 func anthropicTokenHoldQuantities(req anthropicAdapterContext) (int, int, error) {
-	limit := req.Deployment.MaxInputTokens
-	if limit <= 0 || req.InputTokenLimit < 0 || req.OutputTokenLimit < 0 {
+	if req.Deployment.MaxInputTokens <= 0 || req.InputTokenLimit < 0 || req.OutputTokenLimit < 0 {
 		return 0, 0, catalog.ErrParameterTooLarge
 	}
-	first, repeated := anthropicInputPassHold(req)
-	iterations := anthropicSamplingIterationLimit(req)
-	input := first
-	if iterations > 1 {
-		extra, ok := multiplyAnthropicTokenLimit(repeated, iterations-1)
-		if !ok || input > math.MaxInt-extra {
+	passes := anthropicPassInputs(req)
+	input := 0
+	for _, read := range passes {
+		if read > math.MaxInt-input {
 			return 0, 0, catalog.ErrParameterTooLarge
 		}
-		input += extra
+		input += read
 	}
 	output := req.OutputTokenLimit
-	if anthropicContextManagementUsesCompaction(req.RawBody["context_management"]) {
-		// Summaries are separately billed and excluded from top-level output usage.
-		// Reserve one extra input pass and a model-sized summary per possible
-		// iteration; the caller's ordinary output cap is not a summary-size bound.
-		var ok bool
-		input, ok = multiplyAnthropicTokenLimit(limit, 2*iterations)
-		if !ok || req.Deployment.MaxOutputTokens <= 0 {
-			return 0, 0, catalog.ErrParameterTooLarge
+	// Compaction starts when a pass reads its trigger, and the last pass reads the
+	// most. Compaction reads that pass's input once more and writes a summary,
+	// which usage reports apart from the output and which only the model's output
+	// limit bounds.
+	if trigger, ok := anthropicCompactionTrigger(req.RawBody["context_management"]); ok {
+		if context := passes[len(passes)-1]; context >= trigger {
+			if req.Deployment.MaxOutputTokens <= 0 || context > math.MaxInt-input ||
+				req.Deployment.MaxOutputTokens > math.MaxInt-output {
+				return 0, 0, catalog.ErrParameterTooLarge
+			}
+			input += context
+			output += req.Deployment.MaxOutputTokens
 		}
-		summaries, ok := multiplyAnthropicTokenLimit(req.Deployment.MaxOutputTokens, iterations)
-		if !ok || output > math.MaxInt-summaries {
-			return 0, 0, catalog.ErrParameterTooLarge
-		}
-		output += summaries
 	}
 	if input > math.MaxInt-output {
 		return 0, 0, catalog.ErrParameterTooLarge
@@ -905,14 +901,23 @@ func anthropicTokenHoldQuantities(req anthropicAdapterContext) (int, int, error)
 	return input, output, nil
 }
 
-func anthropicInputPassHold(req anthropicAdapterContext) (first, repeated int) {
+// anthropicPassInputs returns the input that each sampling pass reads: the first
+// pass's input and the content of every hosted call before it, within the input
+// limit. Anthropic bills each pass's input, so later passes read earlier results
+// again. Text that the model writes between calls is short and settles.
+func anthropicPassInputs(req anthropicAdapterContext) []int {
 	limit := req.Deployment.MaxInputTokens
-	first = min(limit, req.InputTokenLimit)
+	first := min(limit, req.InputTokenLimit)
 	first += min(limit-first, anthropicToolSystemPromptHoldTokens(req.Deployment.Model, req.ToolTypes))
-	repeated = first
-	repeated += min(limit-repeated, req.OutputTokenLimit)
-	repeated += min(limit-repeated, anthropicHostedContentHoldTokens(req))
-	return first, repeated
+	content := anthropicHostedContentHoldTokens(req)
+	passes := make([]int, anthropicSamplingIterationLimit(req))
+	for calls := range passes {
+		passes[calls] = limit
+		if content == 0 || calls <= (limit-first)/content {
+			passes[calls] = first + calls*content
+		}
+	}
+	return passes
 }
 
 func anthropicHoldMeters(req anthropicAdapterContext, inputTokens int) []billing.MeterEstimate {
@@ -926,13 +931,12 @@ func anthropicHoldMeters(req anthropicAdapterContext, inputTokens int) []billing
 	}
 	if cacheWriteMeter != "" && anthropicSamplingIterationLimit(req) > 1 && hasCacheReadRate &&
 		!rawJSONValueSet(req.RawBody["context_management"]) {
-		// Enabled server-tool caching writes the growing prefix before each
-		// iteration. Reserve all distinct material once at the write/input rate
-		// and repeated material at the read rate. This deliberately estimates
-		// cache reuse; expiry or a miss can exceed the monetary hold. Context
-		// editing cannot use this append-only assumption.
-		_, repeated := anthropicInputPassHold(req)
-		cacheReads = max(0, inputTokens-repeated)
+		// With caching, each pass reads the previous pass's input from the cache
+		// and writes what is new, so the last pass's input is written once and the
+		// rest is read. Expiry or a miss can settle above the hold. Context editing
+		// changes the prefix, so it keeps the whole input at the write rate.
+		passes := anthropicPassInputs(req)
+		cacheReads = max(0, inputTokens-passes[len(passes)-1])
 	}
 	meters := billing.AppendTokenMeterCost(nil, req.Deployment.Pricing, inputMeter, inputTokens-cacheReads, true, billing.TokenRateHighest)
 	meters = billing.AppendTokenMeterCost(meters, req.Deployment.Pricing, billing.MeterCachedInputTokens, cacheReads, true, billing.TokenRateHighest)
@@ -943,79 +947,60 @@ func anthropicHoldMeters(req anthropicAdapterContext, inputTokens int) []billing
 }
 
 func anthropicContextManagementUsesCompaction(raw json.RawMessage) bool {
+	_, ok := anthropicCompactionTrigger(raw)
+	return ok
+}
+
+// anthropicCompactionTrigger returns the input at which the request's compaction
+// starts: its trigger, or Anthropic's default of 150,000 tokens.
+func anthropicCompactionTrigger(raw json.RawMessage) (int, bool) {
 	contextManagement, ok := rawObject(raw)
 	if !ok {
-		return false
+		return 0, false
 	}
 	var edits []map[string]json.RawMessage
 	if err := sonic.Unmarshal(contextManagement["edits"], &edits); err != nil {
-		return false
-	}
-	for _, edit := range edits {
-		if rawString(edit["type"]) == string(anthropicprovider.ContextManagementEditTypeCompact) {
-			return true
-		}
-	}
-	return false
-}
-
-func multiplyAnthropicTokenLimit(quantity int, multiplier int) (int, bool) {
-	if quantity < 0 || multiplier < 1 || quantity > math.MaxInt/multiplier {
 		return 0, false
 	}
-	return quantity * multiplier, true
+	for _, edit := range edits {
+		if rawString(edit["type"]) != string(anthropicprovider.ContextManagementEditTypeCompact) {
+			continue
+		}
+		if trigger, ok := rawObject(edit["trigger"]); ok {
+			if value, ok := rawIntegerValue(trigger["value"]); ok {
+				return value, true
+			}
+		}
+		return 150000, true
+	}
+	return 0, false
 }
 
+// anthropicHostedContentHoldTokens is the content that one hosted call adds: a
+// fetch limited by max_content_tokens adds at most that, and any other call the
+// typical amount.
 func anthropicHostedContentHoldTokens(req anthropicAdapterContext) int {
 	if req.Route != anthropicAdapterRouteResponses || !req.ToolChoiceAllowsCalls {
 		return 0
 	}
-	headroom := req.Deployment.MaxInputTokens - min(req.Deployment.MaxInputTokens, req.InputTokenLimit)
-	headroom -= min(headroom, anthropicToolSystemPromptHoldTokens(req.Deployment.Model, req.ToolTypes))
-	if headroom <= 0 {
-		return 0
-	}
+	content := 0
 	if usesToolType(req.ToolTypes, "web_search") {
-		return headroom
+		content = hostedCallContentTokens
 	}
 	if !usesToolType(req.ToolTypes, "web_fetch") {
-		return 0
+		return content
 	}
-	return anthropicWebFetchContentHoldTokens(req, headroom)
-}
-
-func anthropicWebFetchContentHoldTokens(req anthropicAdapterContext, headroom int) int {
-	topLevelQuantity := anthropicResponsesTopLevelMaxToolCallsOrDefaultRaw(req.RawBody)
-	total := 0
 	for _, tool := range req.RawTools {
-		rawType := strings.TrimSpace(rawString(tool["type"]))
-		if !anthropicResponsesWebFetchToolType(rawType) {
+		if !anthropicResponsesWebFetchToolType(strings.TrimSpace(rawString(tool["type"]))) {
 			continue
 		}
 		perUse, ok := rawIntegerValue(tool["max_content_tokens"])
 		if !ok || perUse < 1 {
-			perUse = headroom
+			perUse = hostedCallContentTokens
 		}
-		uses, ok := rawIntegerValue(tool["max_uses"])
-		if !ok || uses < 1 {
-			uses = topLevelQuantity
-		}
-		if perUse > headroom {
-			perUse = headroom
-		}
-		if uses > 0 && perUse > headroom/uses {
-			total = headroom
-		} else {
-			total += perUse * uses
-		}
-		if total >= headroom {
-			return headroom
-		}
+		content = max(content, perUse)
 	}
-	if total == 0 {
-		return headroom
-	}
-	return total
+	return content
 }
 
 func anthropicCacheWriteHoldMeter(req anthropicAdapterContext) string {
@@ -1177,25 +1162,32 @@ func anthropicResponsesWebFetchToolType(rawType string) bool {
 }
 
 func anthropicHostedToolHoldQuantity(req anthropicAdapterContext) int {
+	return anthropicHostedCallsHeld(req, func(rawType string) bool { return strings.HasPrefix(rawType, "web_search") })
+}
+
+// anthropicHostedCallsHeld is the number of calls that the hold covers for the
+// hosted tools that match: the largest cap among them, or ten for one without.
+func anthropicHostedCallsHeld(req anthropicAdapterContext, hosted func(rawType string) bool) int {
 	topLevelQuantity := anthropicResponsesTopLevelMaxToolCallsOrDefaultRaw(req.RawBody)
 	quantity := 0
 	for _, tool := range req.RawTools {
-		rawType := strings.TrimSpace(rawString(tool["type"]))
-		if !strings.HasPrefix(rawType, "web_search") {
+		if !hosted(strings.TrimSpace(rawString(tool["type"]))) {
 			continue
 		}
 		value, ok := rawIntegerValue(tool["max_uses"])
 		if !ok || value < 1 {
 			value = topLevelQuantity
 		}
-		if value > quantity {
-			quantity = value
-		}
+		quantity = max(quantity, value)
 	}
 	if quantity < 1 {
 		return topLevelQuantity
 	}
 	return quantity
+}
+
+func anthropicResponsesHostedToolType(rawType string) bool {
+	return strings.HasPrefix(rawType, "web_search") || anthropicResponsesWebFetchToolType(rawType)
 }
 
 func anthropicToolSystemPromptHoldTokens(model string, toolTypes []string) int {

@@ -3190,9 +3190,9 @@ func TestOpenAIResponsesEncryptedReasoningSharesInputEstimate(t *testing.T) {
 			}
 			wantHoldInput := wantInput
 			if tc.wantSearchCap {
-				// Retrieved content is cumulative across the three budgeted
-				// calls and separate from the submitted reasoning envelope.
-				wantHoldInput += 3 * 128000
+				// Each of the three calls adds one call's content, apart from the
+				// submitted reasoning envelope.
+				wantHoldInput += 3 * hostedCallContentTokens
 			}
 			if findMeterEstimateQuantity(state.Hold.Meters, billing.MeterInputTokens, strconv.Itoa(wantHoldInput)) == nil {
 				t.Fatalf("expected input hold quantity %d, got %#v", wantHoldInput, state.Hold.Meters)
@@ -4019,19 +4019,20 @@ func TestAnthropicResponsesWebFetchOmittedCapSendsNoCap(t *testing.T) {
 		t.Fatalf("web_fetch must not reserve Anthropic web-search call meters, got %#v", state.Hold.Meters)
 	}
 	req := anthropicAdapterContextForState(state)
-	expectedFetchInputTokens := 1000 * defaultResponsesHostedToolCalls
-	if got := anthropicHostedContentHoldTokens(req); got != expectedFetchInputTokens {
-		t.Fatalf("expected web_fetch content headroom %d, got %d", expectedFetchInputTokens, got)
+	if got := anthropicHostedContentHoldTokens(req); got != 1000 {
+		t.Fatalf("expected one fetch's max_content_tokens, got %d", got)
 	}
-	iterations := anthropicSamplingIterationLimit(req)
-	firstInput := req.InputTokenLimit + anthropicToolSystemPromptHoldTokens(req.Deployment.Model, req.ToolTypes)
-	newInput := firstInput + expectedFetchInputTokens + req.OutputTokenLimit
-	expectedInputTokens := firstInput + (iterations-1)*newInput
+	if iterations := anthropicSamplingIterationLimit(req); iterations != 10 {
+		t.Fatalf("sampling passes = %d, want 10", iterations)
+	}
+	// The tenth pass reads the input and nine fetches, which the cache writes once. The nine
+	// passes before it read their own input from the cache: nine inputs and 36 fetches.
+	first := req.InputTokenLimit + anthropicToolSystemPromptHoldTokens(req.Deployment.Model, req.ToolTypes)
 	cacheWriteMeter := findMeterEstimate(state.Hold.Meters, billing.MeterCacheWrite1hInputTokens)
-	if cacheWriteMeter == nil || cacheWriteMeter.Quantity != strconv.Itoa(newInput) {
+	if cacheWriteMeter == nil || cacheWriteMeter.Quantity != strconv.Itoa(first+9*1000) {
 		t.Fatalf("expected distinct web_fetch material once at the write rate, got %#v", state.Hold.Meters)
 	}
-	assertMeterQuantity(t, state.Hold.Meters, billing.MeterCachedInputTokens, strconv.Itoa(expectedInputTokens-newInput))
+	assertMeterQuantity(t, state.Hold.Meters, billing.MeterCachedInputTokens, strconv.Itoa(9*first+36*1000))
 	if findMeterEstimate(state.Hold.Meters, billing.MeterInputTokens) != nil {
 		t.Fatalf("ordinary input must not duplicate the higher cache-write hold, got %#v", state.Hold.Meters)
 	}
@@ -4738,14 +4739,18 @@ func TestAnthropicResponsesWebSearchPricingUsesObservedCalls(t *testing.T) {
 		t.Fatalf("expected Anthropic web search hold meter in %#v", state.Hold.Meters)
 	}
 	req := anthropicAdapterContextForState(state)
-	searchContentHeadroom := anthropicHostedContentHoldTokens(req)
-	iterations := anthropicSamplingIterationLimit(req)
-	expectedInputTokens := req.InputTokenLimit + anthropicToolSystemPromptHoldTokens(req.Deployment.Model, req.ToolTypes) + (iterations-1)*req.Deployment.MaxInputTokens
-	cacheWriteMeter := findMeterEstimate(state.Hold.Meters, billing.MeterCacheWrite1hInputTokens)
-	if searchContentHeadroom > 0 && (cacheWriteMeter == nil || cacheWriteMeter.Quantity != strconv.Itoa(req.Deployment.MaxInputTokens)) {
-		t.Fatalf("expected one input allowance at the write rate, got %#v", state.Hold.Meters)
+	// Three searches add three passes. The last reads the input and three searches' content,
+	// which the cache writes once, and the three passes before it read their own input from
+	// the cache: three inputs and three searches' content.
+	first := req.InputTokenLimit + anthropicToolSystemPromptHoldTokens(req.Deployment.Model, req.ToolTypes)
+	if iterations := anthropicSamplingIterationLimit(req); iterations != 4 {
+		t.Fatalf("sampling passes = %d, want 4", iterations)
 	}
-	assertMeterQuantity(t, state.Hold.Meters, billing.MeterCachedInputTokens, strconv.Itoa(expectedInputTokens-req.Deployment.MaxInputTokens))
+	cacheWriteMeter := findMeterEstimate(state.Hold.Meters, billing.MeterCacheWrite1hInputTokens)
+	if cacheWriteMeter == nil || cacheWriteMeter.Quantity != strconv.Itoa(first+3*hostedCallContentTokens) {
+		t.Fatalf("expected the distinct input once at the write rate, got %#v", state.Hold.Meters)
+	}
+	assertMeterQuantity(t, state.Hold.Meters, billing.MeterCachedInputTokens, strconv.Itoa(3*first+3*hostedCallContentTokens))
 	if findMeterEstimate(state.Hold.Meters, billing.MeterInputTokens) != nil {
 		t.Fatalf("ordinary input must not duplicate the higher cache-write hold, got %#v", state.Hold.Meters)
 	}
@@ -4799,6 +4804,7 @@ func TestAnthropicResponsesWebFetchIsCappedAndTokenPriced(t *testing.T) {
 	}
 	if err := state.Adapter.SanitizeRequest(state); err != nil {
 		t.Fatalf("SanitizeRequest returned error: %v", err)
+		wantCompaction  bool
 	}
 	if err := state.Adapter.EstimateHold(state); err != nil {
 		t.Fatalf("EstimateHold returned error: %v", err)
@@ -4817,6 +4823,13 @@ func TestAnthropicResponsesWebFetchIsCappedAndTokenPriced(t *testing.T) {
 		bifrostReq.ResponsesRequest,
 		anthropicprovider.AnthropicRequestBuildConfig{Provider: schemas.Anthropic},
 	)
+		{
+			name:            "ten searches can reach the lowest trigger",
+			body:            `{"model":"anthropic-claude-sonnet-4-6","input":"hi","max_output_tokens":64,"context_management":{"edits":[{"type":"compact_20260112","trigger":{"type":"input_tokens","value":50000}}]},"tools":[{"type":"web_search_20250305","name":"web_search"}]}`,
+			wantIterations:  10,
+			wantCompaction:  true,
+			wantHostedCalls: "10",
+		},
 	if bifrostErr != nil {
 		t.Fatalf("BuildAnthropicResponsesRequestBody returned error: %v", bifrostErr)
 	}
@@ -4852,7 +4865,9 @@ func TestAnthropicResponsesWebFetchIsCappedAndTokenPriced(t *testing.T) {
 	}
 }
 
-func TestAnthropicCompactionHoldCoversEveryBoundedSamplingIteration(t *testing.T) {
+// Compaction starts when a pass reads its trigger. A hold adds it only when the input and the
+// content of the calls it covers can reach the trigger.
+func TestAnthropicCompactionHoldOnlyWhenTheTriggerIsReachable(t *testing.T) {
 	tests := []struct {
 		name            string
 		body            string
@@ -4865,14 +4880,14 @@ func TestAnthropicCompactionHoldCoversEveryBoundedSamplingIteration(t *testing.T
 			wantIterations: 1,
 		},
 		{
-			name:           "compaction adds separate input and output allowance",
+			name:           "a short input stays below the default trigger",
 			body:           `{"model":"anthropic-claude-sonnet-4-6","input":"hi","max_output_tokens":64,"context_management":{"edits":[{"type":"compact_20260112"}]}}`,
 			wantIterations: 1,
 		},
 		{
-			name:            "compaction can run before every hosted-tool sampling step",
-			body:            `{"model":"anthropic-claude-sonnet-4-6","input":"hi","max_output_tokens":64,"context_management":{"edits":[{"type":"compact_20260112"}]},"tools":[{"type":"web_search_20250305","name":"web_search"}],"max_tool_calls":2}`,
-			wantIterations:  10,
+			name:            "two searches stay below the lowest trigger",
+			body:            `{"model":"anthropic-claude-sonnet-4-6","input":"hi","max_output_tokens":64,"context_management":{"edits":[{"type":"compact_20260112","trigger":{"type":"input_tokens","value":50000}}]},"tools":[{"type":"web_search_20250305","name":"web_search"}],"max_tool_calls":2}`,
+			wantIterations:  3,
 			wantHostedCalls: "2",
 		},
 	}
@@ -4897,11 +4912,22 @@ func TestAnthropicCompactionHoldCoversEveryBoundedSamplingIteration(t *testing.T
 			if got := anthropicSamplingIterationLimit(req); got != tc.wantIterations {
 				t.Fatalf("sampling iteration limit = %d, want %d", got, tc.wantIterations)
 			}
-			input := req.InputTokenLimit + anthropicToolSystemPromptHoldTokens(req.Deployment.Model, req.ToolTypes)
+			// Each pass reads the input and the content of every search before it.
+			first := req.InputTokenLimit + anthropicToolSystemPromptHoldTokens(req.Deployment.Model, req.ToolTypes)
+			content := 0
+			if tc.wantHostedCalls != "" {
+				content = hostedCallContentTokens
+			}
+			input, last := 0, 0
+			for searches := range tc.wantIterations {
+				last = first + searches*content
+				input += last
+			}
 			output := req.OutputTokenLimit
-			if tc.name != "clear-only context editing does not add sampling" {
-				input = 2 * tc.wantIterations * req.Deployment.MaxInputTokens
-				output += tc.wantIterations * req.Deployment.MaxOutputTokens
+			if tc.wantCompaction {
+				// Compaction reads the last pass's input once more and writes one summary.
+				input += last
+				output += req.Deployment.MaxOutputTokens
 			}
 			assertMeterQuantity(t, state.Hold.Meters, billing.MeterInputTokens, strconv.Itoa(input))
 			assertMeterQuantity(t, state.Hold.Meters, billing.MeterOutputTokens, strconv.Itoa(output))

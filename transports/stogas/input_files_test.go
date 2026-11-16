@@ -276,12 +276,15 @@ func TestAnthropicAttachmentLoopHoldAndProviderToolCaps(t *testing.T) {
 					if err := state.Adapter.EstimateHold(state); err != nil {
 						t.Fatal(err)
 					}
+					// An opaque image fills each pass's input limit, and a pass follows each call
+					// that the hold covers.
 					full := resolved.Deployment.MaxInputTokens
+					passes := 1 + min(9, tc.want)
 					if tc.cache != "" {
-						if findMeter(state.Hold.Meters, billing.MeterCacheWrite5mInputTokens, strconv.Itoa(full)) == nil || findMeter(state.Hold.Meters, billing.MeterCachedInputTokens, strconv.Itoa(full*9)) == nil {
+						if findMeter(state.Hold.Meters, billing.MeterCacheWrite5mInputTokens, strconv.Itoa(full)) == nil || findMeter(state.Hold.Meters, billing.MeterCachedInputTokens, strconv.Itoa(full*(passes-1))) == nil {
 							t.Fatalf("enabled cache loop hold: %+v", state.Hold)
 						}
-					} else if findMeter(state.Hold.Meters, billing.MeterInputTokens, strconv.Itoa(full*10)) == nil {
+					} else if findMeter(state.Hold.Meters, billing.MeterInputTokens, strconv.Itoa(full*passes)) == nil {
 						t.Fatalf("uncached loop hold: %+v", state.Hold)
 					}
 					if strings.HasPrefix(tool, "web_search") && findMeter(state.Hold.Meters, meterAnthropicWebSearchCalls, strconv.Itoa(tc.want)) == nil {

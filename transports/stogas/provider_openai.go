@@ -21,9 +21,7 @@ const (
 	openAIAdapterRouteChat      openAIAdapterRoute = "chat-completions"
 	openAIAdapterRouteResponses openAIAdapterRoute = "responses"
 
-	webSearchFixedContentInputTokens = 8000
-	webSearchContextWindowTokens     = 128000
-	searchCallQuantity               = 1
+	searchCallQuantity = 1
 
 	MeterOpenAIChatCompletionSearchModelCalls             = "openai_chat_completion_search_model_calls"
 	MeterOpenAIChatCompletionSearchPreviewModelCalls      = "openai_chat_completion_search_preview_model_calls"
@@ -409,7 +407,7 @@ func (a OpenAIAdapter) EstimateHold(state *State) error {
 		return catalog.ErrUnsupportedRequest
 	}
 	state.Hold.Meters = append(state.Hold.Meters, openAIHoldMeters(openAIAdapterContextForHold(state))...)
-	meters, total, err := canonicalizeMeters(state.Hold.Meters, holdPricingForState(state))
+	meters, total, err := canonicalizeHoldMeters(state.Hold.Meters, holdPricingForState(state))
 	if err != nil {
 		return err
 	}
@@ -935,13 +933,8 @@ func responsesSearchHoldKind(ctx openAIAdapterContext) string {
 }
 
 func webSearchContentHoldTokensForKind(ctx openAIAdapterContext, kind string) int {
-	if fixed := webSearchFixedContentTokensForKind(ctx.Deployment.Model, kind); fixed > 0 {
-		return fixed
-	}
-	if webSearchContentTokensBilledAtModelRatesForKind(ctx, kind) {
-		// Each budgeted call gets one search window of retrieved content. This
-		// financial allowance does not bound internal passes or total billed usage.
-		return min(webSearchContextWindowTokens, ctx.Deployment.MaxInputTokens)
+	if webSearchFixedContentTokensForKind(ctx.Deployment.Model, kind) > 0 || webSearchContentTokensBilledAtModelRatesForKind(ctx, kind) {
+		return hostedCallContentTokens
 	}
 	return 0
 }
@@ -958,6 +951,8 @@ func webSearchContentTokensBilledAtModelRatesForKind(ctx openAIAdapterContext, k
 
 func webSearchFixedContentTokensForKind(model string, kind string) int {
 	if kind != "web_search" {
+// Later passes read earlier results again mostly from OpenAI's automatic cache,
+// so a hold covers each call's content once.
 		return 0
 	}
 	normalized := strings.ToLower(strings.TrimSpace(model))
@@ -965,7 +960,7 @@ func webSearchFixedContentTokensForKind(model string, kind string) int {
 		return 0
 	}
 	if strings.HasPrefix(normalized, "gpt-4.1-mini") || strings.HasPrefix(normalized, "gpt-4o-mini") {
-		return webSearchFixedContentInputTokens
+		return hostedCallContentTokens
 	}
 	return 0
 }

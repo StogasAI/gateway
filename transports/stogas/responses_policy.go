@@ -19,7 +19,12 @@ const (
 	// The hosted tool calls that a hold covers when the client sets no cap. The provider receives
 	// no cap either, so the model decides how many it makes and settlement charges those.
 	defaultResponsesHostedToolCalls = 10
-	maxResponsesToolCalls           = 128
+	// The content that a hold covers for each hosted call whose results the provider bills as
+	// input. OpenAI bills a search on GPT-4o mini and GPT-4.1 mini as this fixed block, and one
+	// search read 8,549 input tokens on GPT-5.5 and 9,590 on Claude Sonnet 4.6, prompt included
+	// (live, July 28, 2026). Larger results settle above the hold.
+	hostedCallContentTokens = 8000
+	maxResponsesToolCalls   = 128
 )
 
 func validateCommonResponsesPolicy(state *State) error {

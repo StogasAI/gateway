@@ -1224,7 +1224,7 @@ func TestOpenAIFastHoldCoversActualPriorityServiceTier(t *testing.T) {
 	}
 }
 
-func TestOpenAIDefaultAndAutoUseExplicitStandardTierAndConservativeHoldRate(t *testing.T) {
+func TestOpenAIDefaultAndAutoUseExplicitStandardTier(t *testing.T) {
 	for _, item := range []struct {
 		name string
 		path string
@@ -1298,8 +1298,51 @@ func TestOpenAIDefaultAndAutoUseExplicitStandardTierAndConservativeHoldRate(t *t
 				t.Fatalf("expected default deployment hold product key, got %#v", state.Hold)
 			}
 			defaultInput := findMeterEstimate(state.Hold.Meters, billing.MeterInputTokens)
-			if defaultInput == nil || defaultInput.RateKey != "per_mill_context_gt_272k" || defaultInput.RateUSD != "10" {
-				t.Fatalf("default hold must reserve the deployment's highest possible input rate: %#v", state.Hold.Meters)
+			if defaultInput == nil || defaultInput.RateKey != billing.RatePerMillionTokens || defaultInput.RateUSD != "5" {
+				t.Fatalf("a short request's hold must use the standard input rate: %#v", state.Hold.Meters)
+			}
+		})
+	}
+}
+
+// Settlement prices tokens at the tier that the reported prompt reaches, so a hold prices
+// them at the tier that its own input reaches.
+func TestOpenAIHoldPricesTokensAtTheTierOfItsInput(t *testing.T) {
+	for _, item := range []struct {
+		name, body, input, output string
+	}{
+		{
+			name:   "short input",
+			body:   `{"model":"provider:openai gpt-5.5","input":"hi","max_output_tokens":16}`,
+			input:  "5",
+			output: "30",
+		},
+		{
+			name:   "forty calls' content passes 272,000 tokens",
+			body:   `{"model":"provider:openai gpt-5.5","input":"hi","max_output_tokens":16,"max_tool_calls":40,"tools":[{"type":"web_search"}]}`,
+			input:  "10",
+			output: "45",
+		},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/responses", Body: []byte(item.body)})
+			if err != nil {
+				t.Fatalf("ResolveRequest returned error: %v", err)
+			}
+			state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
+			if err := state.Adapter.ValidateRequest(state); err != nil {
+				t.Fatalf("ValidateRequest returned error: %v", err)
+			}
+			if err := state.Adapter.SanitizeRequest(state); err != nil {
+				t.Fatalf("SanitizeRequest returned error: %v", err)
+			}
+			if err := state.Adapter.EstimateHold(state); err != nil {
+				t.Fatalf("EstimateHold returned error: %v", err)
+			}
+			for meterKey, rate := range map[string]string{billing.MeterInputTokens: item.input, billing.MeterOutputTokens: item.output} {
+				if meter := findMeterEstimate(state.Hold.Meters, meterKey); meter == nil || meter.RateUSD != rate {
+					t.Fatalf("%s rate must be %s: %#v", meterKey, rate, state.Hold.Meters)
+				}
 			}
 		})
 	}

@@ -442,8 +442,8 @@ func TestResponsesPreviewSearchHoldReservesContentPerCall(t *testing.T) {
 	}
 
 	meters := openAIResponsesHostedToolHoldMeters(req)
-	if len(meters) != 2 || meters[0].MeterKey != billing.MeterInputTokens || meters[0].Quantity != "400" {
-		t.Fatalf("expected four input windows of retrieved content, got %#v", meters)
+	if len(meters) != 2 || meters[0].MeterKey != billing.MeterInputTokens || meters[0].Quantity != "32000" {
+		t.Fatalf("expected one call's typical content for each of four calls, got %#v", meters)
 	}
 	if meters[1].MeterKey != MeterOpenAIResponsesWebSearchPreviewCalls || meters[1].Quantity != "4" || !meters[1].HoldRequired {
 		t.Fatalf("expected preview call hold meter quantity 4, got %#v", meters[1])
@@ -497,21 +497,19 @@ func TestResponsesSearchHoldIncludesVariableContentWhenChoosingTool(t *testing.T
 		},
 		ToolTypes: []string{"web_search", "web_search_preview"},
 	}
+	// Ten searches cost $0.10 and $0.16 of content, above ten preview searches' $0.25.
 	for _, test := range []struct {
 		name, body, tokens, calls string
-		inputLimit                int
 	}{
-		{"default allowance", `{}`, "1280000", "10", 1000000},
-		{"explicit lower cap", `{"max_tool_calls":2}`, "256000", "2", 1000000},
-		{"narrow input limit", `{"max_tool_calls":2}`, "100000", "2", 50000},
+		{"default allowance", `{}`, "80000", "10"},
+		{"explicit lower cap", `{"max_tool_calls":2}`, "16000", "2"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			req.RawBody = rawJSON(t, test.body)
-			req.Deployment.MaxInputTokens = test.inputLimit
 			meters := openAIResponsesHostedToolHoldMeters(req)
 			if len(meters) != 2 || meters[0].MeterKey != billing.MeterInputTokens || meters[0].Quantity != test.tokens ||
 				meters[1].MeterKey != MeterOpenAIResponsesWebSearchCalls || meters[1].Quantity != test.calls {
-				t.Fatalf("expected costlier total hold with cumulative retrieved content, got %#v", meters)
+				t.Fatalf("expected the costlier tool's calls with their content, got %#v", meters)
 			}
 			// A reservation estimate must not change the existing ambiguous-call
 			// settlement rule or turn estimated search content into a final charge.
