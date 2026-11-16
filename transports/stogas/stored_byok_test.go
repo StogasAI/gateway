@@ -484,19 +484,28 @@ func TestListStoredAzureAccountsFailures(t *testing.T) {
 }
 
 // A listing keeps at most eight reads of Azure Resource Manager in flight across subscriptions.
+// Reads wait until eight are in flight, so a slow machine cannot make the listing look narrower.
 func TestListStoredAzureAccountsBoundsItsReads(t *testing.T) {
 	var mu sync.Mutex
-	active, most := 0, 0
+	var full sync.Once
+	active, most, allIn := 0, 0, make(chan struct{})
 	client := serveAzureAccounts(t, func(w http.ResponseWriter, _ *http.Request, subscriptionID string) {
 		mu.Lock()
 		active++
 		most = max(most, active)
+		if active == azureDiscoveryConcurrency {
+			full.Do(func() { close(allIn) })
+		}
 		mu.Unlock()
 		defer func() {
 			mu.Lock()
 			active--
 			mu.Unlock()
 		}()
+		select {
+		case <-allIn:
+		case <-time.After(10 * time.Second):
+		}
 		time.Sleep(20 * time.Millisecond)
 		value := make([]any, 4)
 		for index := range value {
@@ -511,7 +520,7 @@ func TestListStoredAzureAccountsBoundsItsReads(t *testing.T) {
 	}
 	got := listStoredTestAccounts(t, client, &fakeAzureSignIn{}, storedTestApp, subscriptions...)
 	if got.Outcome != storedByokAccepted || len(got.Accounts) != 48 || most != azureDiscoveryConcurrency {
-		t.Fatalf("%d accounts with at most %d reads at once: %s", len(got.Accounts), most, *got.Message)
+		t.Fatalf("%s: %d accounts with at most %d reads at once", got.Outcome, len(got.Accounts), most)
 	}
 	for _, account := range got.Accounts {
 		if account.Problem != nil {
