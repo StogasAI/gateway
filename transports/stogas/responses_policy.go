@@ -2053,15 +2053,29 @@ func validateResponsesToolCallOutputInput(item map[string]json.RawMessage, path 
 // validateResponsesReasoningInput checks a reasoning item that a reply returned. Its encrypted
 // content holds OpenAI's encrypted reasoning or a Claude block, and without it, its content holds
 // plain reasoning text. An item with neither holds nothing to continue from, such as one whose
-// encrypted content a client dropped or a stored reply never had. The checks are the same on every
-// deployment, and each deployment gets only the items that it takes back
-// (catalog.ResolvedRequest.KeepReadableHistory).
+// encrypted content a client dropped or a stored reply never had. It also takes the format and
+// signature of OpenRouter's items, so that a conversation can move from OpenRouter: a signature
+// makes the text of the item's one content block Claude's thinking, and no provider reads a
+// format back. The checks are the same on every deployment, and each deployment gets only the
+// items that it takes back (catalog.ResolvedRequest.KeepReadableHistory).
 func validateResponsesReasoningInput(item map[string]json.RawMessage, path string) error {
-	if err := rejectUnsupportedInputKeys(item, path, "type", "id", "status", "summary", "content", "encrypted_content"); err != nil {
+	if err := rejectUnsupportedInputKeys(item, path, "type", "id", "status", "summary", "content", "encrypted_content", "format", "signature"); err != nil {
 		return err
 	}
 	if err := validateResponsesInputItemIdentity(item, path); err != nil {
 		return err
+	}
+	if err := optionalInputStrings(item, path, "format"); err != nil {
+		return err
+	}
+	if _, signed := item["signature"]; signed {
+		if _, err := requiredInputString(item, "signature", path, false); err != nil {
+			return err
+		}
+		var content []json.RawMessage
+		if raw, ok := item["content"]; ok && sonic.Unmarshal(raw, &content) == nil && len(content) > 1 {
+			return invalidRequest(path + ".content must hold at most one block when signature is set")
+		}
 	}
 	if raw, ok := item["summary"]; ok {
 		if err := validateResponsesReasoningTextBlocks(raw, path+".summary", "summary_text"); err != nil {

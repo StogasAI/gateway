@@ -194,10 +194,11 @@ func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, repla
 	baseReplacements := len(*replacements)
 	baseItems, baseTextBytes := r.items, r.inputTextBytes
 	hasEncryptedContent := false
-	// A reasoning detail with a signature or encrypted data is the provider's own: a provider
-	// refuses a changed one, so it stays as the client sent it, and so does the reasoning text of
-	// its message, which the request's checks compare with it. Other reasoning history is text
-	// like any other.
+	// A reasoning detail with a signature or encrypted data, and a reasoning item with encrypted
+	// content or a signature, is the provider's own: a provider refuses a changed one, so it stays
+	// as the client sent it, and so does the reasoning text of a detail's message, which the
+	// request's checks compare with it. Only the provider that checks it gets such reasoning.
+	// Other reasoning history is text like any other.
 	hasSignature, hasData := false, false
 	sealedDetails := r.sealedDetails
 	var reasoningTexts []jsonSpan
@@ -337,7 +338,7 @@ func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, repla
 			if sealed {
 				r.sealedDetails++
 			}
-			if sealed || context == jsonContextResponsesInputItem && itemType == "reasoning" && hasEncryptedContent {
+			if sealed || context == jsonContextResponsesInputItem && itemType == "reasoning" && (hasEncryptedContent || hasSignature) {
 				*replacements = (*replacements)[:baseReplacements]
 				r.items = baseItems
 				r.inputTextBytes = baseTextBytes

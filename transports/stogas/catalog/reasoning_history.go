@@ -39,12 +39,14 @@ func (r *ResolvedRequest) ReadsReasoning(format ReasoningFormat) bool {
 		return UsesClaudeWire(r.Provider, r.Deployment.ModelID)
 	case EncryptedReasoning:
 		// Only OpenAI's own models return it, and they take it back only on Responses.
-		return r.runsOpenAIModel() && r.Deployment.ReasoningSupported && r.WireRoute() == RouteResponses
+		return r.RunsOpenAIModel() && r.Deployment.ReasoningSupported && r.WireRoute() == RouteResponses
 	case PlainReasoning:
-		// The other models return reasoning as text. Models that think between tool calls, such as
-		// DeepSeek's, read it back beside the calls, and the others ignore it
+		// The other models return reasoning as text, and Azure's and Chutes' take it back after an
+		// answer and beside a tool call (testdata/provider/azure/open-model-reasoning-history.json,
+		// testdata/provider/chutes/reasoning-history.json). Models that think between tool calls,
+		// such as DeepSeek's, read it, and the others ignore it
 		// (testdata/provider/azure/open-model-reasoning-tool-loop.json).
-		return !UsesClaudeWire(r.Provider, r.Deployment.ModelID) && !r.runsOpenAIModel()
+		return !UsesClaudeWire(r.Provider, r.Deployment.ModelID) && !r.RunsOpenAIModel()
 	}
 	return false
 }
@@ -159,6 +161,42 @@ func responsesReasoningFormat(item *schemas.ResponsesMessage) ReasoningFormat {
 	return PlainReasoning
 }
 
+// claudeThinkingFromSignatures gives each reasoning item that holds Claude's thinking as OpenRouter
+// returns it, the text of one content block with the block's signature beside it, the form that
+// the gateway's own replies give a Claude block: the whole block in encrypted content, so that only
+// Claude deployments take it back. An item with encrypted content keeps it. The request's checks
+// allowed at most one content block beside a signature.
+func claudeThinkingFromSignatures(raw json.RawMessage, input []schemas.ResponsesMessage) {
+	items, err := rawjson.Array(raw)
+	if err != nil || len(items) != len(input) {
+		return
+	}
+	for index := range input {
+		item := &input[index]
+		if item.Type == nil || *item.Type != schemas.ResponsesMessageTypeReasoning ||
+			item.ResponsesReasoning != nil && item.ResponsesReasoning.EncryptedContent != nil && *item.ResponsesReasoning.EncryptedContent != "" {
+			continue
+		}
+		fields, err := rawjson.Object(items[index])
+		var signature string
+		if err != nil || sonic.Unmarshal(fields["signature"], &signature) != nil || signature == "" {
+			continue
+		}
+		thinking := ""
+		if item.Content != nil && len(item.Content.ContentBlocks) > 0 && item.Content.ContentBlocks[0].Text != nil {
+			thinking = *item.Content.ContentBlocks[0].Text
+		}
+		block, ok := anthropicprovider.EncodeThinkingBlock(anthropicprovider.AnthropicContentBlock{
+			Type: anthropicprovider.AnthropicContentBlockTypeThinking, Thinking: &thinking, Signature: &signature,
+		})
+		if !ok {
+			continue
+		}
+		item.Content = nil
+		item.ResponsesReasoning = &schemas.ResponsesReasoning{Summary: []schemas.ResponsesReasoningSummary{}, EncryptedContent: &block}
+	}
+}
+
 // chatEncryptedReasoningHistory reports whether a message of a Chat Completions request carries
 // OpenAI's encrypted reasoning, which only Responses take back.
 func chatEncryptedReasoningHistory(raw json.RawMessage) bool {
@@ -223,7 +261,12 @@ func (r *ResolvedRequest) readableResponsesInput(input []schemas.ResponsesMessag
 
 // readableResponsesItem returns an input item as the deployment gets it, OpenAI's encrypted
 // reasoning with the provider's own content, whether the deployment gets it at all, and whether
-// either differs from the item.
+// either differs from the item. A reasoning item goes without its summary, which no provider reads
+// back: OpenAI and Azure bill encrypted reasoning the same with its summary as returned, empty or
+// changed (testdata/provider/openai/encrypted-reasoning-summary.json), Claude's block comes back
+// whole from encrypted content, and Chat Completions history has no place for one. Redaction keeps
+// the summary of an item with encrypted content as the client sent it, so it must not reach a
+// provider.
 func (r *ResolvedRequest) readableResponsesItem(item schemas.ResponsesMessage) (schemas.ResponsesMessage, bool, bool) {
 	if item.Type != nil && (*item.Type == schemas.ResponsesMessageTypeWebSearchCall || *item.Type == schemas.ResponsesMessageTypeWebFetchCall) {
 		keep := r.readsHostedCall(&item)
@@ -233,25 +276,22 @@ func (r *ResolvedRequest) readableResponsesItem(item schemas.ResponsesMessage) (
 		return item, true, false
 	}
 	format := responsesReasoningFormat(&item)
-	if format != EncryptedReasoning {
-		if !r.ReadsReasoning(format) {
-			return item, false, true
-		}
-		// Plain reasoning goes without a summary, which Chat Completions history has no place for.
-		if format != PlainReasoning || item.ResponsesReasoning == nil || len(item.ResponsesReasoning.Summary) == 0 {
-			return item, true, false
-		}
-		reasoning := *item.ResponsesReasoning
-		reasoning.Summary = []schemas.ResponsesReasoningSummary{}
-		item.ResponsesReasoning = &reasoning
-		return item, true, true
-	}
-	content, ok := r.ownEncryptedReasoning(item.ResponsesReasoning.EncryptedContent)
-	if !ok {
+	switch {
+	case format == EncryptedReasoning:
+	case !r.ReadsReasoning(format):
 		return item, false, true
+	case item.ResponsesReasoning == nil || len(item.ResponsesReasoning.Summary) == 0:
+		return item, true, false
 	}
 	reasoning := *item.ResponsesReasoning
-	reasoning.EncryptedContent = &content
+	reasoning.Summary = []schemas.ResponsesReasoningSummary{}
+	if format == EncryptedReasoning {
+		content, ok := r.ownEncryptedReasoning(reasoning.EncryptedContent)
+		if !ok {
+			return item, false, true
+		}
+		reasoning.EncryptedContent = &content
+	}
 	item.ResponsesReasoning = &reasoning
 	return item, true, true
 }

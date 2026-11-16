@@ -30,10 +30,10 @@ type thinkingBlockState struct {
 	Data      *string                   `json:"data,omitempty"`
 }
 
-// encodeThinkingBlock returns the encrypted_content that holds block, and false for a
+// EncodeThinkingBlock returns the encrypted_content that holds block, and false for a
 // block that Anthropic would not take back: thinking without a signature, or
 // redacted_thinking without data.
-func encodeThinkingBlock(block AnthropicContentBlock) (string, bool) {
+func EncodeThinkingBlock(block AnthropicContentBlock) (string, bool) {
 	state := thinkingBlockState{Type: block.Type}
 	switch block.Type {
 	case AnthropicContentBlockTypeThinking:
@@ -128,7 +128,7 @@ func openAIReasoningOf(block AnthropicContentBlock) *schemas.ResponsesReasoning 
 			Text: *block.Thinking,
 		})
 	}
-	if encoded, ok := encodeThinkingBlock(block); ok {
+	if encoded, ok := EncodeThinkingBlock(block); ok {
 		reasoning.EncryptedContent = &encoded
 	}
 	return reasoning

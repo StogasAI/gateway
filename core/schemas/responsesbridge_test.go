@@ -41,7 +41,7 @@ func TestResponsesGapNamesWhatResponsesCannotCarry(t *testing.T) {
 		{"request cache control", params(ChatParameters{CacheControl: &CacheControl{Type: CacheControlTypeEphemeral}}), "cache_control", "request cache control"},
 		{"audio modality", params(ChatParameters{Modalities: []string{"text", "audio"}}), "modalities[1]", "audio output"},
 		{"reasoning switch", params(ChatParameters{Reasoning: &ChatReasoning{Enabled: Ptr(true)}}), "reasoning.enabled", "a reasoning on/off switch"},
-		{"reasoning display", params(ChatParameters{Reasoning: &ChatReasoning{Display: Ptr("omitted")}}), "reasoning.display", "the reasoning display setting"},
+		{"reasoning display", params(ChatParameters{Reasoning: &ChatReasoning{Display: Ptr("updates")}}), "reasoning.display", "the updates reasoning display"},
 		{"untyped response format", params(ChatParameters{ResponseFormat: format(map[string]any{"json_schema": map[string]any{}})}),
 			"response_format", "a response format without a type"},
 		{"unknown response format", params(ChatParameters{ResponseFormat: format(map[string]any{"type": "grammar"})}),
@@ -98,7 +98,7 @@ func TestResponsesGapAcceptsWhatResponsesCarries(t *testing.T) {
 		Params: &ChatParameters{
 			N: Ptr(1), LogitBias: &map[string]float64{}, Modalities: []string{"text"}, Stop: []string{},
 			LogProbs: Ptr(true), TopLogProbs: Ptr(2), PresencePenalty: Ptr(0.1), FrequencyPenalty: Ptr(0.2),
-			Reasoning:      &ChatReasoning{Effort: Ptr("high"), Summary: Ptr("auto"), Mode: Ptr("pro")},
+			Reasoning:      &ChatReasoning{Effort: Ptr("high"), Display: Ptr("summarized"), Mode: Ptr("pro")},
 			ResponseFormat: &schema,
 			Tools:          []ChatTool{{Type: ChatToolTypeFunction, Function: &ChatToolFunction{Name: "lookup"}}},
 			ToolChoice: &ChatToolChoice{ChatToolChoiceStruct: &ChatToolChoiceStruct{Type: ChatToolChoiceTypeAllowedTools,
@@ -307,6 +307,22 @@ func TestToResponsesRequestCarriesParameters(t *testing.T) {
 		"tool_choice": {"type": "function", "name": "lookup"}
 	}`)
 
+	// Responses show reasoning only as summaries: summarized asks for them, and omitted leaves them
+	// out as Responses do by default.
+	for _, test := range []struct {
+		effort, display, summary *string
+	}{
+		{Ptr("low"), Ptr("summarized"), Ptr("auto")},
+		{nil, Ptr("summarized"), Ptr("auto")},
+		{Ptr("low"), Ptr("omitted"), nil},
+	} {
+		request.Params = &ChatParameters{Reasoning: &ChatReasoning{Effort: test.effort, Display: test.display}}
+		reasoning := request.ToResponsesRequest().Params.Reasoning
+		if reasoning == nil || !reflect.DeepEqual(reasoning.Effort, test.effort) || !reflect.DeepEqual(reasoning.Summary, test.summary) {
+			t.Fatalf("display %s: reasoning = %+v", *test.display, reasoning)
+		}
+	}
+
 	// The client's store wins, and a request without parameters asks only not to store.
 	request.Params = &ChatParameters{Store: Ptr(true)}
 	if store := request.ToResponsesRequest().Params.Store; store == nil || !*store {
@@ -344,8 +360,8 @@ func TestToResponsesRequestConvertsToolChoices(t *testing.T) {
 	}
 }
 
-// openAIReply is a Responses reply as OpenAI gives it: reasoning with a summary and encrypted
-// content, a message whose two text parts each cite a source, and two function calls.
+// openAIReply is a Responses reply as OpenAI gives it: reasoning with a summary of two parts and
+// encrypted content, a message whose two text parts each cite a source, and two function calls.
 func openAIReply() *BifrostResponsesResponse {
 	citation := func(url string) ResponsesOutputMessageContentTextAnnotation {
 		return ResponsesOutputMessageContentTextAnnotation{Type: "url_citation", StartIndex: Ptr(0), EndIndex: Ptr(5), Title: Ptr("T"), URL: Ptr(url)}
@@ -365,7 +381,10 @@ func openAIReply() *BifrostResponsesResponse {
 			OutputTokensDetails: &ResponsesResponseOutputTokens{ReasoningTokens: 5}},
 		Output: []ResponsesMessage{
 			{Type: Ptr(ResponsesMessageTypeReasoning), ID: Ptr("rs_1"), ResponsesReasoning: &ResponsesReasoning{
-				Summary: []ResponsesReasoningSummary{{Type: ResponsesReasoningContentBlockTypeSummaryText, Text: "Plan the call."}}, EncryptedContent: Ptr("ENC"),
+				Summary: []ResponsesReasoningSummary{
+					{Type: ResponsesReasoningContentBlockTypeSummaryText, Text: "Plan the call."},
+					{Type: ResponsesReasoningContentBlockTypeSummaryText, Text: "Check the city."},
+				}, EncryptedContent: Ptr("ENC"),
 			}},
 			{Type: Ptr(ResponsesMessageTypeMessage), ID: Ptr("msg_1"), Role: Ptr(ResponsesInputMessageRoleAssistant), Status: Ptr(ResponsesResponseStatusCompleted),
 				Content: &ResponsesMessageContent{ContentBlocks: []ResponsesMessageContentBlock{
@@ -399,13 +418,17 @@ func TestToBifrostChatResponseJoinsTheReply(t *testing.T) {
 		t.Fatalf("finish reason %s, log probabilities %+v", *choice.FinishReason, choice.LogProbs)
 	}
 	// The second part's citation counts from the start of the whole text: "Héllo " is six runes.
+	// The reasoning text shows each summary part, a blank line between two.
 	jsonEqual(t, choice.Message, `{
 		"role": "assistant",
 		"content": "Héllo world",
 		"refusal": null,
+		"reasoning": "Plan the call.\n\nCheck the city.",
+		"reasoning_content": "Plan the call.\n\nCheck the city.",
 		"reasoning_details": [
 			{"id": "rs_1", "index": 0, "type": "reasoning.summary", "summary": "Plan the call."},
-			{"id": "rs_1", "index": 1, "type": "reasoning.encrypted", "data": "ENC"}
+			{"id": "rs_1", "index": 1, "type": "reasoning.summary", "summary": "Check the city."},
+			{"id": "rs_1", "index": 2, "type": "reasoning.encrypted", "data": "ENC"}
 		],
 		"annotations": [
 			{"type": "url_citation", "url_citation": {"start_index": 0, "end_index": 5, "title": "T", "url": "https://a.example"}},
@@ -501,13 +524,16 @@ func openAIStream() []*BifrostResponsesStreamResponse {
 	add(BifrostResponsesStreamResponse{Type: ResponsesStreamResponseTypeOutputItemAdded, OutputIndex: at(0), Item: &ResponsesMessage{
 		Type: reasoning.Type, ID: reasoning.ID, ResponsesReasoning: &ResponsesReasoning{Summary: []ResponsesReasoningSummary{}},
 	}})
-	add(BifrostResponsesStreamResponse{Type: ResponsesStreamResponseTypeReasoningSummaryPartAdded, OutputIndex: at(0), ItemID: reasoning.ID, SummaryIndex: at(0),
-		Part: &ResponsesMessageContentBlock{Type: ResponsesOutputMessageContentTypeSummaryText, Text: Ptr("")}})
-	add(BifrostResponsesStreamResponse{Type: ResponsesStreamResponseTypeReasoningSummaryTextDelta, OutputIndex: at(0), ItemID: reasoning.ID, SummaryIndex: at(0), Delta: Ptr("Plan ")})
-	add(BifrostResponsesStreamResponse{Type: ResponsesStreamResponseTypeReasoningSummaryTextDelta, OutputIndex: at(0), ItemID: reasoning.ID, SummaryIndex: at(0), Delta: Ptr("the call.")})
-	add(BifrostResponsesStreamResponse{Type: ResponsesStreamResponseTypeReasoningSummaryTextDone, OutputIndex: at(0), ItemID: reasoning.ID, SummaryIndex: at(0), Text: Ptr("Plan the call.")})
-	add(BifrostResponsesStreamResponse{Type: ResponsesStreamResponseTypeReasoningSummaryPartDone, OutputIndex: at(0), ItemID: reasoning.ID, SummaryIndex: at(0),
-		Part: &ResponsesMessageContentBlock{Type: ResponsesOutputMessageContentTypeSummaryText, Text: Ptr("Plan the call.")}})
+	for index, summary := range reasoning.ResponsesReasoning.Summary {
+		add(BifrostResponsesStreamResponse{Type: ResponsesStreamResponseTypeReasoningSummaryPartAdded, OutputIndex: at(0), ItemID: reasoning.ID, SummaryIndex: at(index),
+			Part: &ResponsesMessageContentBlock{Type: ResponsesOutputMessageContentTypeSummaryText, Text: Ptr("")}})
+		cut := len(summary.Text) / 2
+		add(BifrostResponsesStreamResponse{Type: ResponsesStreamResponseTypeReasoningSummaryTextDelta, OutputIndex: at(0), ItemID: reasoning.ID, SummaryIndex: at(index), Delta: Ptr(summary.Text[:cut])})
+		add(BifrostResponsesStreamResponse{Type: ResponsesStreamResponseTypeReasoningSummaryTextDelta, OutputIndex: at(0), ItemID: reasoning.ID, SummaryIndex: at(index), Delta: Ptr(summary.Text[cut:])})
+		add(BifrostResponsesStreamResponse{Type: ResponsesStreamResponseTypeReasoningSummaryTextDone, OutputIndex: at(0), ItemID: reasoning.ID, SummaryIndex: at(index), Text: Ptr(summary.Text)})
+		add(BifrostResponsesStreamResponse{Type: ResponsesStreamResponseTypeReasoningSummaryPartDone, OutputIndex: at(0), ItemID: reasoning.ID, SummaryIndex: at(index),
+			Part: &ResponsesMessageContentBlock{Type: ResponsesOutputMessageContentTypeSummaryText, Text: Ptr(summary.Text)}})
+	}
 	add(BifrostResponsesStreamResponse{Type: ResponsesStreamResponseTypeOutputItemDone, OutputIndex: at(0), Item: &reasoning})
 
 	message := reply.Output[1]

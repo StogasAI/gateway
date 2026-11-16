@@ -1,0 +1,705 @@
+{
+	"shows": "Azure's DeepSeek V4 Flash, DeepSeek V4 Pro and gpt-oss-120b take the reasoning_content of an earlier answer and of an earlier tool call back in later turns.",
+	"recorded": "2026-11-16",
+	"exchanges": [
+		{
+			"name": "deepseek-v4-flash answer",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "deepseek-v4-flash",
+					"reasoning_effort": "high",
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "adb6efe86978480988f1844550e3921b",
+					"model": "deepseek-v4-flash",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "1591",
+								"reasoning_content": "We need to calculate 37 * 43.\n\n37 * 43 = 37 * (40 + 3) = 37*40 + 37*3 = 1480 + 111 = 1591.\n\nAlternatively, (40-3)*(40+3) = 40^2 - 3^2 = 1600 - 9 = 1591.\n\nSo the answer is 1591."
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 281,
+						"completion_tokens": 91,
+						"total_tokens": 372,
+						"reasoning_tokens": 88,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 256
+						}
+					},
+					"created": 1794859264,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "deepseek-v4-flash tool call after an answer sent back with its reasoning",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "deepseek-v4-flash",
+					"reasoning_effort": "high",
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						},
+						{
+							"role": "assistant",
+							"content": "1591",
+							"reasoning_content": "We need to calculate 37 * 43.\n\n37 * 43 = 37 * (40 + 3) = 37*40 + 37*3 = 1480 + 111 = 1591.\n\nAlternatively, (40-3)*(40+3) = 40^2 - 3^2 = 1600 - 9 = 1591.\n\nSo the answer is 1591."
+						},
+						{
+							"role": "user",
+							"content": "Call get_secret_number, then tell me the secret number plus that product."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "c92b3dd74c0b4baaac43dbe1b0316021",
+					"model": "deepseek-v4-flash",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "",
+								"reasoning_content": "The user wants me to:\n1. Call get_secret_number to get the secret number\n2. Add the secret number to the product (1591)\n3. Tell them the result\n\nLet me start by getting the secret number.",
+								"tool_calls": [
+									{
+										"id": "call_052aaaf1c18c423e986d0a89",
+										"index": 0,
+										"type": "function",
+										"function": {
+											"name": "get_secret_number",
+											"arguments": "{}"
+										}
+									}
+								]
+							},
+							"finish_reason": "tool_calls"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 391,
+						"completion_tokens": 79,
+						"total_tokens": 470,
+						"reasoning_tokens": 49,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 256
+						}
+					},
+					"created": 1794859277,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "deepseek-v4-flash answer after both turns sent back with their reasoning",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "deepseek-v4-flash",
+					"reasoning_effort": "high",
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						},
+						{
+							"role": "assistant",
+							"content": "1591",
+							"reasoning_content": "We need to calculate 37 * 43.\n\n37 * 43 = 37 * (40 + 3) = 37*40 + 37*3 = 1480 + 111 = 1591.\n\nAlternatively, (40-3)*(40+3) = 40^2 - 3^2 = 1600 - 9 = 1591.\n\nSo the answer is 1591."
+						},
+						{
+							"role": "user",
+							"content": "Call get_secret_number, then tell me the secret number plus that product."
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"reasoning_content": "The user wants me to:\n1. Call get_secret_number to get the secret number\n2. Add the secret number to the product (1591)\n3. Tell them the result\n\nLet me start by getting the secret number.",
+							"tool_calls": [
+								{
+									"id": "call_052aaaf1c18c423e986d0a89",
+									"index": 0,
+									"type": "function",
+									"function": {
+										"name": "get_secret_number",
+										"arguments": "{}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "call_052aaaf1c18c423e986d0a89",
+							"content": "41"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "e168a15ed39146a4b52d5d0087d0768d",
+					"model": "deepseek-v4-flash",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "The secret number is 41. Adding that to our product (1591) gives **1632**.",
+								"reasoning_content": "The secret number is 41. The product was 1591. So 1591 + 41 = 1632."
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 482,
+						"completion_tokens": 49,
+						"total_tokens": 531,
+						"reasoning_tokens": 27,
+						"audio_prompt_tokens": 0
+					},
+					"created": 1794859290,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "deepseek-v4-pro answer",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "deepseek-v4-pro",
+					"reasoning_effort": "high",
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "aa26cf3cb6814f3dbd87a27cb542178f",
+					"model": "deepseek-v4-pro",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "1591",
+								"reasoning_content": "The user is asking for 37*43. Let me calculate that.\n\n37 * 43 = 37 * (40 + 3) = 37*40 + 37*3 = 1480 + 111 = 1591\n\nLet me verify: 37 * 43\n37 * 40 = 1480\n37 * 3 = 111\n1480 + 111 = 1591\n\nThe answer is 1591."
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 281,
+						"completion_tokens": 99,
+						"total_tokens": 380,
+						"reasoning_tokens": 96,
+						"audio_prompt_tokens": 0
+					},
+					"created": 1794859303,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "deepseek-v4-pro tool call after an answer sent back with its reasoning",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "deepseek-v4-pro",
+					"reasoning_effort": "high",
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						},
+						{
+							"role": "assistant",
+							"content": "1591",
+							"reasoning_content": "The user is asking for 37*43. Let me calculate that.\n\n37 * 43 = 37 * (40 + 3) = 37*40 + 37*3 = 1480 + 111 = 1591\n\nLet me verify: 37 * 43\n37 * 40 = 1480\n37 * 3 = 111\n1480 + 111 = 1591\n\nThe answer is 1591."
+						},
+						{
+							"role": "user",
+							"content": "Call get_secret_number, then tell me the secret number plus that product."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "3b0a96399a3e45a4b754fad33f0bb2e5",
+					"model": "deepseek-v4-pro",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "",
+								"reasoning_content": "The user wants me to call get_secret_number, then add the secret number to the product (1591) and tell them the result.\n\nLet me call get_secret_number first.",
+								"tool_calls": [
+									{
+										"id": "call_0de17dea94f14e8da1d9c855",
+										"index": 0,
+										"type": "function",
+										"function": {
+											"name": "get_secret_number",
+											"arguments": "{}"
+										}
+									}
+								]
+							},
+							"finish_reason": "tool_calls"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 399,
+						"completion_tokens": 69,
+						"total_tokens": 468,
+						"reasoning_tokens": 39,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 256
+						}
+					},
+					"created": 1794859317,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "deepseek-v4-pro answer after both turns sent back with their reasoning",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "deepseek-v4-pro",
+					"reasoning_effort": "high",
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						},
+						{
+							"role": "assistant",
+							"content": "1591",
+							"reasoning_content": "The user is asking for 37*43. Let me calculate that.\n\n37 * 43 = 37 * (40 + 3) = 37*40 + 37*3 = 1480 + 111 = 1591\n\nLet me verify: 37 * 43\n37 * 40 = 1480\n37 * 3 = 111\n1480 + 111 = 1591\n\nThe answer is 1591."
+						},
+						{
+							"role": "user",
+							"content": "Call get_secret_number, then tell me the secret number plus that product."
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"reasoning_content": "The user wants me to call get_secret_number, then add the secret number to the product (1591) and tell them the result.\n\nLet me call get_secret_number first.",
+							"tool_calls": [
+								{
+									"id": "call_0de17dea94f14e8da1d9c855",
+									"index": 0,
+									"type": "function",
+									"function": {
+										"name": "get_secret_number",
+										"arguments": "{}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "call_0de17dea94f14e8da1d9c855",
+							"content": "41"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "c9971be0730045fdbfb38f6a6cca148c",
+					"model": "deepseek-v4-pro",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "1632",
+								"reasoning_content": "The secret number is 41. The product from earlier is 1591. So 1591 + 41 = 1632."
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 480,
+						"completion_tokens": 32,
+						"total_tokens": 512,
+						"reasoning_tokens": 29,
+						"audio_prompt_tokens": 0
+					},
+					"created": 1794859330,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "gpt-oss-120b answer",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "gpt-oss-120b",
+					"reasoning_effort": "medium",
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "363cb281f322465f9b6224eb7ee98cda",
+					"model": "gpt-oss-120b",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "1591",
+								"reasoning_content": "The user asks: \"What is 37*43? Answer with the number only.\"\n\nSimple multiplication: 37 * 43 = 37 * (40+3) = 37*40 + 37*3 = 1480 + 111 = 1591. So answer should be \"1591\"."
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 125,
+						"completion_tokens": 77,
+						"total_tokens": 202,
+						"reasoning_tokens": 69,
+						"audio_prompt_tokens": 0
+					},
+					"created": 1794859342,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "gpt-oss-120b tool call after an answer sent back with its reasoning",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "gpt-oss-120b",
+					"reasoning_effort": "medium",
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						},
+						{
+							"role": "assistant",
+							"content": "1591",
+							"reasoning_content": "The user asks: \"What is 37*43? Answer with the number only.\"\n\nSimple multiplication: 37 * 43 = 37 * (40+3) = 37*40 + 37*3 = 1480 + 111 = 1591. So answer should be \"1591\"."
+						},
+						{
+							"role": "user",
+							"content": "Call get_secret_number, then tell me the secret number plus that product."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "0b799f74f236449d90beb46408283fe8",
+					"model": "gpt-oss-120b",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "",
+								"reasoning_content": "We need to call the function get_secret_number, then add to product 37*43 = 1591, then output sum. Let's call function.",
+								"tool_calls": [
+									{
+										"id": "call_244c08bd75f341978da9462d",
+										"index": 0,
+										"type": "function",
+										"function": {
+											"name": "get_secret_number",
+											"arguments": "{}"
+										}
+									}
+								]
+							},
+							"finish_reason": "tool_calls"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 152,
+						"completion_tokens": 52,
+						"total_tokens": 204,
+						"reasoning_tokens": 35,
+						"audio_prompt_tokens": 0
+					},
+					"created": 1794859355,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "gpt-oss-120b answer after both turns sent back with their reasoning",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "gpt-oss-120b",
+					"reasoning_effort": "medium",
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						},
+						{
+							"role": "assistant",
+							"content": "1591",
+							"reasoning_content": "The user asks: \"What is 37*43? Answer with the number only.\"\n\nSimple multiplication: 37 * 43 = 37 * (40+3) = 37*40 + 37*3 = 1480 + 111 = 1591. So answer should be \"1591\"."
+						},
+						{
+							"role": "user",
+							"content": "Call get_secret_number, then tell me the secret number plus that product."
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"reasoning_content": "We need to call the function get_secret_number, then add to product 37*43 = 1591, then output sum. Let's call function.",
+							"tool_calls": [
+								{
+									"id": "call_244c08bd75f341978da9462d",
+									"index": 0,
+									"type": "function",
+									"function": {
+										"name": "get_secret_number",
+										"arguments": "{}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "call_244c08bd75f341978da9462d",
+							"content": "41"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "03c13a2e7d074e6a89a1f916bd1df803",
+					"model": "gpt-oss-120b",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "1632",
+								"reasoning_content": "We have product 37*43 = 1591 (previous). Secret number is \"41\" as a string maybe number. Convert to number 41. Sum = 1591 + 41 = 1632. Need to answer just the number? Probably just number."
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 183,
+						"completion_tokens": 68,
+						"total_tokens": 251,
+						"reasoning_tokens": 60,
+						"audio_prompt_tokens": 0
+					},
+					"created": 1794859367,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		}
+	]
+}

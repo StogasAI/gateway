@@ -1,0 +1,2029 @@
+{
+	"shows": "Every Standard deployment of Chutes takes the reasoning_content of an earlier answer and of an earlier tool call back in later turns.",
+	"recorded": "2026-11-16",
+	"exchanges": [
+		{
+			"name": "tencent/Hy4 answer",
+			"provider": "chutes",
+			"request": {
+				"path": "/v1/chat/completions",
+				"body": {
+					"model": "tencent/Hy4",
+					"chat_template_kwargs": {
+						"enable_thinking": true,
+						"thinking": true
+					},
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"content": "1591",
+								"reasoning_content": "The user asks: \"What is 37*43? Answer with the number only.\" Need compute 37*43. Let's calculate: 37*43 = 37*(40+3) = 1480 + 111 = 1591. Also 43*37 = 43*30 + 43*7 = 1290 + 301 = 1591. Need answer with number only: \"1591\". Ensure no extra text. Need maybe consider instruction about tools? There is a tool \"get_secret_number\" but irrelevant. Need not call. Final answer: 1591.",
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1794859252,
+					"id": "e1b7594a-8980-4ba2-98e0-02effad87673",
+					"model": "hy4",
+					"object": "chat.completion",
+					"usage": {
+						"prompt_tokens": 184,
+						"completion_tokens": 129,
+						"total_tokens": 313,
+						"prompt_tokens_details": {
+							"cached_tokens": 64
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 125
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "tencent/Hy4 tool call after an answer sent back with its reasoning",
+			"provider": "chutes",
+			"request": {
+				"path": "/v1/chat/completions",
+				"body": {
+					"model": "tencent/Hy4",
+					"chat_template_kwargs": {
+						"enable_thinking": true,
+						"thinking": true
+					},
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						},
+						{
+							"role": "assistant",
+							"content": "1591",
+							"reasoning_content": "The user asks: \"What is 37*43? Answer with the number only.\" Need compute 37*43. Let's calculate: 37*43 = 37*(40+3) = 1480 + 111 = 1591. Also 43*37 = 43*30 + 43*7 = 1290 + 301 = 1591. Need answer with number only: \"1591\". Ensure no extra text. Need maybe consider instruction about tools? There is a tool \"get_secret_number\" but irrelevant. Need not call. Final answer: 1591."
+						},
+						{
+							"role": "user",
+							"content": "Call get_secret_number, then tell me the secret number plus that product."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "tool_calls",
+							"index": 0,
+							"message": {
+								"content": "",
+								"reasoning_content": "We need to call get_secret_number, then compute secret number plus product (37*43 = 1591). Need answer? User says \"tell me the secret number plus that product.\" Need likely output the sum. Need call tool first. Let's do tool call.",
+								"role": "assistant",
+								"tool_calls": [
+									{
+										"function": {
+											"arguments": "{}",
+											"name": "get_secret_number"
+										},
+										"id": "chatcmpl-tool-9cc837ad99b563b1",
+										"index": 0,
+										"type": "function"
+									}
+								]
+							}
+						}
+					],
+					"created": 1794859254,
+					"id": "a9e1a679-e203-4ab6-910e-5bc109645243",
+					"model": "hy4",
+					"object": "chat.completion",
+					"usage": {
+						"prompt_tokens": 337,
+						"completion_tokens": 64,
+						"total_tokens": 401,
+						"prompt_tokens_details": {
+							"cached_tokens": 64
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 55
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "tencent/Hy4 answer after both turns sent back with their reasoning",
+			"provider": "chutes",
+			"request": {
+				"path": "/v1/chat/completions",
+				"body": {
+					"model": "tencent/Hy4",
+					"chat_template_kwargs": {
+						"enable_thinking": true,
+						"thinking": true
+					},
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						},
+						{
+							"role": "assistant",
+							"content": "1591",
+							"reasoning_content": "The user asks: \"What is 37*43? Answer with the number only.\" Need compute 37*43. Let's calculate: 37*43 = 37*(40+3) = 1480 + 111 = 1591. Also 43*37 = 43*30 + 43*7 = 1290 + 301 = 1591. Need answer with number only: \"1591\". Ensure no extra text. Need maybe consider instruction about tools? There is a tool \"get_secret_number\" but irrelevant. Need not call. Final answer: 1591."
+						},
+						{
+							"role": "user",
+							"content": "Call get_secret_number, then tell me the secret number plus that product."
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"reasoning_content": "We need to call get_secret_number, then compute secret number plus product (37*43 = 1591). Need answer? User says \"tell me the secret number plus that product.\" Need likely output the sum. Need call tool first. Let's do tool call.",
+							"tool_calls": [
+								{
+									"function": {
+										"arguments": "{}",
+										"name": "get_secret_number"
+									},
+									"id": "chatcmpl-tool-9cc837ad99b563b1",
+									"index": 0,
+									"type": "function"
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "chatcmpl-tool-9cc837ad99b563b1",
+							"content": "41"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"content": "1632",
+								"reasoning_content": "Secret number = 41. Product = 1591. Sum = 1632. Need tell me the secret number plus that product. Could answer \"1632\" or maybe \"41 + 1591 = 1632\"? User didn't specify number only this time. Earlier asked number only for product; new request says \"then tell me the secret number plus that product.\" Could give sum, maybe with a brief expression. Need be concise. Since instruction from previous \"Answer with the number only\" applied to that question, not necessarily this one. But to be safe maybe just give the number? Let's parse: \"Call get_secret_number, then tell me the secret number plus that product.\" It might be a test of tool use and arithmetic. Output could be \"1632\". But maybe they want to know the secret number too? \"tell me the secret number plus that product\" means tell me (secret number + product), i.e., the sum. Not ask to reveal secret separately. Since tool returned 41, sum = 41 + 1591 = 1632. If answer with expression, it's fine. But earlier style \"number only\" maybe carry over? The user explicitly changed instruction with new request, but no \"number only\". Could answer \"1632\". To be safe, maybe \"1632\" only. However, if they want to verify secret, maybe \"41 + 1591 = 1632\" includes secret number and product and sum. But \"tell me the secret number plus that product\" is ambiguous: could mean \"tell me [the secret number] plus [that product]\" i.e., say both? Actually grammatical: \"tell me X plus Y\" typically means tell me the result of X plus Y. E.g., \"tell me 2 plus 2\" -> \"4\". If they wanted both separately they'd say \"tell me the secret number and that product\" or \"tell me the secret number, plus that product\". But there is a comma: \"Call get_secret_number, then tell me the secret number plus that product.\" No comma between secret number and plus. So sum.\n\nNeed ensure no hidden trick: maybe secret number could be something else? Tool returned 41. Product = 1591. Sum = 1632. Check: 1591 + 41 = 1632. Yes.\n\nShould we mention tool call? No, just answer. Could answer \"1632\". Let's final with just number.",
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1794859257,
+					"id": "750b4a72-950e-4226-b1fd-886e5a04bac9",
+					"model": "hy4",
+					"object": "chat.completion",
+					"usage": {
+						"prompt_tokens": 413,
+						"completion_tokens": 512,
+						"total_tokens": 925,
+						"prompt_tokens_details": {
+							"cached_tokens": 64
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 508
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "deepseek-ai/DeepSeek-V4.1-Flash-1017 answer",
+			"provider": "chutes",
+			"request": {
+				"path": "/v1/chat/completions",
+				"body": {
+					"model": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+					"chat_template_kwargs": {
+						"enable_thinking": true,
+						"thinking": true
+					},
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "chatcmpl-45d4eb8a-b8e4-9923-bb72-ced4c1914c59",
+					"object": "chat.completion",
+					"created": 1794859263,
+					"model": "deepseek-v4.1-flash-1017",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"reasoning_content": "The user asks 37*43. But there's a tool get_secret_number. Probably a trick: the secret number may be the answer? Let me compute: 37*43 = 1591. I should just answer. But maybe tool provides secret number which might be the product? The instruction: answer with number only. I could call tool to check? It says returns secret number. Might be a prompt injection test. The task is arithmetic. But maybe the secret number is the product and expected. Let's call tool? The user didn't ask for secret. However typical benchmark: tool returns secret number, and question is unrelated. Should answer 1591. But need determine if tool is needed. The question math no tool needed. Use 1591.",
+								"content": "1591"
+							},
+							"finish_reason": "stop",
+							"logprobs": null
+						}
+					],
+					"usage": {
+						"prompt_tokens": 291,
+						"total_tokens": 452,
+						"completion_tokens": 161,
+						"prompt_tokens_details": {
+							"cached_tokens": 256,
+							"image_tokens": 0,
+							"text_tokens": 291
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 157,
+							"text_tokens": 3
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "deepseek-ai/DeepSeek-V4.1-Flash-1017 tool call after an answer sent back with its reasoning",
+			"provider": "chutes",
+			"request": {
+				"path": "/v1/chat/completions",
+				"body": {
+					"model": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+					"chat_template_kwargs": {
+						"enable_thinking": true,
+						"thinking": true
+					},
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						},
+						{
+							"role": "assistant",
+							"content": "1591",
+							"reasoning_content": "The user asks 37*43. But there's a tool get_secret_number. Probably a trick: the secret number may be the answer? Let me compute: 37*43 = 1591. I should just answer. But maybe tool provides secret number which might be the product? The instruction: answer with number only. I could call tool to check? It says returns secret number. Might be a prompt injection test. The task is arithmetic. But maybe the secret number is the product and expected. Let's call tool? The user didn't ask for secret. However typical benchmark: tool returns secret number, and question is unrelated. Should answer 1591. But need determine if tool is needed. The question math no tool needed. Use 1591."
+						},
+						{
+							"role": "user",
+							"content": "Call get_secret_number, then tell me the secret number plus that product."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "chatcmpl-91bfb741-51ee-97fd-b97b-eb91f4b803ee",
+					"object": "chat.completion",
+					"created": 1794859267,
+					"model": "deepseek-v4.1-flash-1017",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"reasoning_content": "We need call tool.",
+								"content": "",
+								"tool_calls": [
+									{
+										"id": "call_edb54f7c57e34345bdcdf534",
+										"type": "function",
+										"function": {
+											"name": "get_secret_number",
+											"arguments": "{}"
+										},
+										"index": 0
+									}
+								]
+							},
+							"finish_reason": "tool_calls",
+							"logprobs": null
+						}
+					],
+					"usage": {
+						"prompt_tokens": 471,
+						"total_tokens": 501,
+						"completion_tokens": 30,
+						"prompt_tokens_details": {
+							"cached_tokens": 256,
+							"image_tokens": 0,
+							"text_tokens": 471
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 5,
+							"text_tokens": 24
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "deepseek-ai/DeepSeek-V4.1-Flash-1017 answer after both turns sent back with their reasoning",
+			"provider": "chutes",
+			"request": {
+				"path": "/v1/chat/completions",
+				"body": {
+					"model": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+					"chat_template_kwargs": {
+						"enable_thinking": true,
+						"thinking": true
+					},
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						},
+						{
+							"role": "assistant",
+							"content": "1591",
+							"reasoning_content": "The user asks 37*43. But there's a tool get_secret_number. Probably a trick: the secret number may be the answer? Let me compute: 37*43 = 1591. I should just answer. But maybe tool provides secret number which might be the product? The instruction: answer with number only. I could call tool to check? It says returns secret number. Might be a prompt injection test. The task is arithmetic. But maybe the secret number is the product and expected. Let's call tool? The user didn't ask for secret. However typical benchmark: tool returns secret number, and question is unrelated. Should answer 1591. But need determine if tool is needed. The question math no tool needed. Use 1591."
+						},
+						{
+							"role": "user",
+							"content": "Call get_secret_number, then tell me the secret number plus that product."
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"reasoning_content": "We need call tool.",
+							"tool_calls": [
+								{
+									"id": "call_edb54f7c57e34345bdcdf534",
+									"type": "function",
+									"function": {
+										"name": "get_secret_number",
+										"arguments": "{}"
+									},
+									"index": 0
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "call_edb54f7c57e34345bdcdf534",
+							"content": "41"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "chatcmpl-a835609a-2597-9bb0-803b-c4c9ad60df63",
+					"object": "chat.completion",
+					"created": 1794859268,
+					"model": "deepseek-v4.1-flash-1017",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"reasoning_content": "Secret number 41 + 1591 = 1632. The user asked \"tell me the secret number plus that product\" — answer likely just number? They said previously answer with number only for product. Now new request, no format specified. Answer 1632.",
+								"content": "1632"
+							},
+							"finish_reason": "stop",
+							"logprobs": null
+						}
+					],
+					"usage": {
+						"prompt_tokens": 513,
+						"total_tokens": 572,
+						"completion_tokens": 59,
+						"prompt_tokens_details": {
+							"cached_tokens": 256,
+							"image_tokens": 0,
+							"text_tokens": 513
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 55,
+							"text_tokens": 3
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "deepseek-ai/DeepSeek-V4-Pro-0813 answer",
+			"provider": "chutes",
+			"request": {
+				"path": "/v1/chat/completions",
+				"body": {
+					"model": "deepseek-ai/DeepSeek-V4-Pro-0813",
+					"chat_template_kwargs": {
+						"enable_thinking": true,
+						"thinking": true
+					},
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"message": {
+								"content": "1591",
+								"reasoning_content": "We need answer number only. 37*43 = 1591? 37*40=1480, +111 =1591. Need perhaps use tool? No need. Answer number only.",
+								"role": "assistant"
+							},
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null
+						}
+					],
+					"object": "chat.completion",
+					"usage": {
+						"prompt_tokens": 354,
+						"completion_tokens": 44,
+						"total_tokens": 398,
+						"completion_tokens_details": {
+							"reasoning_tokens": 41
+						},
+						"prompt_tokens_details": {
+							"cached_tokens": 256
+						}
+					},
+					"created": 1794859272,
+					"system_fingerprint": null,
+					"model": "deepseek-v4-pro-0813",
+					"id": "chatcmpl-5841346b-771c-963e-a3ab-52d57ec1fb77"
+				}
+			}
+		},
+		{
+			"name": "deepseek-ai/DeepSeek-V4-Pro-0813 tool call after an answer sent back with its reasoning",
+			"provider": "chutes",
+			"request": {
+				"path": "/v1/chat/completions",
+				"body": {
+					"model": "deepseek-ai/DeepSeek-V4-Pro-0813",
+					"chat_template_kwargs": {
+						"enable_thinking": true,
+						"thinking": true
+					},
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						},
+						{
+							"role": "assistant",
+							"content": "1591",
+							"reasoning_content": "We need answer number only. 37*43 = 1591? 37*40=1480, +111 =1591. Need perhaps use tool? No need. Answer number only."
+						},
+						{
+							"role": "user",
+							"content": "Call get_secret_number, then tell me the secret number plus that product."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"message": {
+								"content": "",
+								"reasoning_content": "We need call get_secret_number. We already computed product 37*43 = 1591. Need call tool. Then return secret + 1591. We don't know secret. Let's call.",
+								"role": "assistant",
+								"tool_calls": [
+									{
+										"function": {
+											"arguments": "{}",
+											"name": "get_secret_number"
+										},
+										"id": "call_3f8314a11fed4fa882501cb9",
+										"index": 0,
+										"type": "function"
+									}
+								]
+							},
+							"finish_reason": "tool_calls",
+							"index": 0,
+							"logprobs": null
+						}
+					],
+					"object": "chat.completion",
+					"usage": {
+						"prompt_tokens": 418,
+						"completion_tokens": 73,
+						"total_tokens": 491,
+						"completion_tokens_details": {
+							"reasoning_tokens": 43
+						},
+						"prompt_tokens_details": {
+							"cached_tokens": 256
+						}
+					},
+					"created": 1794859275,
+					"system_fingerprint": null,
+					"model": "deepseek-v4-pro-0813",
+					"id": "chatcmpl-8a86acb8-83ce-97ee-9a34-ab11ed3ca7e2"
+				}
+			}
+		},
+		{
+			"name": "deepseek-ai/DeepSeek-V4-Pro-0813 answer after both turns sent back with their reasoning",
+			"provider": "chutes",
+			"request": {
+				"path": "/v1/chat/completions",
+				"body": {
+					"model": "deepseek-ai/DeepSeek-V4-Pro-0813",
+					"chat_template_kwargs": {
+						"enable_thinking": true,
+						"thinking": true
+					},
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						},
+						{
+							"role": "assistant",
+							"content": "1591",
+							"reasoning_content": "We need answer number only. 37*43 = 1591? 37*40=1480, +111 =1591. Need perhaps use tool? No need. Answer number only."
+						},
+						{
+							"role": "user",
+							"content": "Call get_secret_number, then tell me the secret number plus that product."
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"reasoning_content": "We need call get_secret_number. We already computed product 37*43 = 1591. Need call tool. Then return secret + 1591. We don't know secret. Let's call.",
+							"tool_calls": [
+								{
+									"function": {
+										"arguments": "{}",
+										"name": "get_secret_number"
+									},
+									"id": "call_3f8314a11fed4fa882501cb9",
+									"index": 0,
+									"type": "function"
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "call_3f8314a11fed4fa882501cb9",
+							"content": "41"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"message": {
+								"content": "1632",
+								"reasoning_content": "Secret number is 41. Product 1591. Sum = 1632. Answer should include number maybe. User asked \"then tell me the secret number plus that product.\" We should probably say 1632. Maybe include explanation? They said answer with number only in previous, but now no instruction number only. Could answer \"1632\". Let's be concise.",
+								"role": "assistant"
+							},
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null
+						}
+					],
+					"object": "chat.completion",
+					"usage": {
+						"prompt_tokens": 504,
+						"completion_tokens": 78,
+						"total_tokens": 582,
+						"completion_tokens_details": {
+							"reasoning_tokens": 75
+						},
+						"prompt_tokens_details": {
+							"cached_tokens": 256
+						}
+					},
+					"created": 1794859278,
+					"system_fingerprint": null,
+					"model": "deepseek-v4-pro-0813",
+					"id": "chatcmpl-509fcdeb-7d56-936c-bb55-096968062430"
+				}
+			}
+		},
+		{
+			"name": "zai-org/GLM-5.2-Fast answer",
+			"provider": "chutes",
+			"request": {
+				"path": "/v1/chat/completions",
+				"body": {
+					"model": "zai-org/GLM-5.2-Fast",
+					"chat_template_kwargs": {
+						"enable_thinking": true,
+						"thinking": true
+					},
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"content": "1591",
+								"reasoning_content": "The user asks what 37*43 is. That's 1591. Let me compute: 37*43 = 37*40 + 37*3 = 1480 + 111 = 1591.\n\nNo tool call needed; the secret number tool is irrelevant. Answer with the number only.",
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1794859278,
+					"id": "chatcmpl-e608e65f-5a14-9482-9e10-10fdb69b617c",
+					"model": "glm-5.2-fast-preview",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 68,
+						"completion_tokens_details": {
+							"reasoning_tokens": 64
+						},
+						"prompt_tokens": 157,
+						"prompt_tokens_details": {
+							"cached_tokens": 0
+						},
+						"total_tokens": 225
+					}
+				}
+			}
+		},
+		{
+			"name": "zai-org/GLM-5.2-Fast tool call after an answer sent back with its reasoning",
+			"provider": "chutes",
+			"request": {
+				"path": "/v1/chat/completions",
+				"body": {
+					"model": "zai-org/GLM-5.2-Fast",
+					"chat_template_kwargs": {
+						"enable_thinking": true,
+						"thinking": true
+					},
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						},
+						{
+							"role": "assistant",
+							"content": "1591",
+							"reasoning_content": "The user asks what 37*43 is. That's 1591. Let me compute: 37*43 = 37*40 + 37*3 = 1480 + 111 = 1591.\n\nNo tool call needed; the secret number tool is irrelevant. Answer with the number only."
+						},
+						{
+							"role": "user",
+							"content": "Call get_secret_number, then tell me the secret number plus that product."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "tool_calls",
+							"index": 0,
+							"message": {
+								"content": "",
+								"reasoning_content": "The user wants me to call get_secret_number, then tell them the secret number plus 1591. I need to call the function first, then use the result.",
+								"role": "assistant",
+								"tool_calls": [
+									{
+										"function": {
+											"arguments": "{}",
+											"name": "get_secret_number"
+										},
+										"id": "call_f9dcc6663c724ecf8de1edf4",
+										"index": 0,
+										"type": "function"
+									}
+								]
+							}
+						}
+					],
+					"created": 1794859282,
+					"id": "chatcmpl-83b4bf94-71c9-961a-a0b2-b481ebe09309",
+					"model": "glm-5.2-fast-preview",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 41,
+						"completion_tokens_details": {
+							"reasoning_tokens": 34
+						},
+						"prompt_tokens": 242,
+						"prompt_tokens_details": {
+							"cached_tokens": 0
+						},
+						"total_tokens": 283
+					}
+				}
+			}
+		},
+		{
+			"name": "zai-org/GLM-5.2-Fast answer after both turns sent back with their reasoning",
+			"provider": "chutes",
+			"request": {
+				"path": "/v1/chat/completions",
+				"body": {
+					"model": "zai-org/GLM-5.2-Fast",
+					"chat_template_kwargs": {
+						"enable_thinking": true,
+						"thinking": true
+					},
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						},
+						{
+							"role": "assistant",
+							"content": "1591",
+							"reasoning_content": "The user asks what 37*43 is. That's 1591. Let me compute: 37*43 = 37*40 + 37*3 = 1480 + 111 = 1591.\n\nNo tool call needed; the secret number tool is irrelevant. Answer with the number only."
+						},
+						{
+							"role": "user",
+							"content": "Call get_secret_number, then tell me the secret number plus that product."
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"reasoning_content": "The user wants me to call get_secret_number, then tell them the secret number plus 1591. I need to call the function first, then use the result.",
+							"tool_calls": [
+								{
+									"function": {
+										"arguments": "{}",
+										"name": "get_secret_number"
+									},
+									"id": "call_f9dcc6663c724ecf8de1edf4",
+									"index": 0,
+									"type": "function"
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "call_f9dcc6663c724ecf8de1edf4",
+							"content": "41"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"content": "1632",
+								"reasoning_content": "The secret number is 41. The product was 1591. 41 + 1591 = 1632.",
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1794859285,
+					"id": "chatcmpl-ba4742a4-f79a-9988-9dc9-3ef6ce6a37b1",
+					"model": "glm-5.2-fast-preview",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 29,
+						"completion_tokens_details": {
+							"reasoning_tokens": 25
+						},
+						"prompt_tokens": 288,
+						"prompt_tokens_details": {
+							"cached_tokens": 0
+						},
+						"total_tokens": 317
+					}
+				}
+			}
+		},
+		{
+			"name": "zai-org/GLM-5.3 answer",
+			"provider": "chutes",
+			"request": {
+				"path": "/v1/chat/completions",
+				"body": {
+					"model": "zai-org/GLM-5.3",
+					"chat_template_kwargs": {
+						"enable_thinking": true,
+						"thinking": true
+					},
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"content": "1591",
+								"reasoning_content": "The user asks 37*43. 37*43 = 1591. Let me verify: 37*43 = 37*40 + 37*3 = 1480 + 111 = 1591. The user wants the number only. No tool call needed—the secret number tool is irrelevant.",
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1794859289,
+					"id": "chatcmpl-e28d0e25-04ab-99ab-9f1b-1087d0b96023",
+					"model": "glm-5.3",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 68,
+						"completion_tokens_details": {
+							"reasoning_tokens": 65
+						},
+						"prompt_tokens": 157,
+						"prompt_tokens_details": {
+							"cached_tokens": 0
+						},
+						"total_tokens": 225
+					}
+				}
+			}
+		},
+		{
+			"name": "zai-org/GLM-5.3 tool call after an answer sent back with its reasoning",
+			"provider": "chutes",
+			"request": {
+				"path": "/v1/chat/completions",
+				"body": {
+					"model": "zai-org/GLM-5.3",
+					"chat_template_kwargs": {
+						"enable_thinking": true,
+						"thinking": true
+					},
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						},
+						{
+							"role": "assistant",
+							"content": "1591",
+							"reasoning_content": "The user asks 37*43. 37*43 = 1591. Let me verify: 37*43 = 37*40 + 37*3 = 1480 + 111 = 1591. The user wants the number only. No tool call needed—the secret number tool is irrelevant."
+						},
+						{
+							"role": "user",
+							"content": "Call get_secret_number, then tell me the secret number plus that product."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "tool_calls",
+							"index": 0,
+							"message": {
+								"content": "",
+								"reasoning_content": "The user wants me to call get_secret_number, then add the secret number to 1591 (the product of 37*43). I need to call the tool first, then compute the sum.",
+								"role": "assistant",
+								"tool_calls": [
+									{
+										"function": {
+											"arguments": "{}",
+											"name": "get_secret_number"
+										},
+										"id": "call_c599c7724c30455e9aa1ec5a",
+										"index": 0,
+										"type": "function"
+									}
+								]
+							}
+						}
+					],
+					"created": 1794859291,
+					"id": "chatcmpl-4a6bbaba-b375-99a5-9f7e-579bb156ec74",
+					"model": "glm-5.3",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 47,
+						"completion_tokens_details": {
+							"reasoning_tokens": 41
+						},
+						"prompt_tokens": 243,
+						"prompt_tokens_details": {
+							"cached_tokens": 0
+						},
+						"total_tokens": 290
+					}
+				}
+			}
+		},
+		{
+			"name": "zai-org/GLM-5.3 answer after both turns sent back with their reasoning",
+			"provider": "chutes",
+			"request": {
+				"path": "/v1/chat/completions",
+				"body": {
+					"model": "zai-org/GLM-5.3",
+					"chat_template_kwargs": {
+						"enable_thinking": true,
+						"thinking": true
+					},
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						},
+						{
+							"role": "assistant",
+							"content": "1591",
+							"reasoning_content": "The user asks 37*43. 37*43 = 1591. Let me verify: 37*43 = 37*40 + 37*3 = 1480 + 111 = 1591. The user wants the number only. No tool call needed—the secret number tool is irrelevant."
+						},
+						{
+							"role": "user",
+							"content": "Call get_secret_number, then tell me the secret number plus that product."
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"reasoning_content": "The user wants me to call get_secret_number, then add the secret number to 1591 (the product of 37*43). I need to call the tool first, then compute the sum.",
+							"tool_calls": [
+								{
+									"function": {
+										"arguments": "{}",
+										"name": "get_secret_number"
+									},
+									"id": "call_c599c7724c30455e9aa1ec5a",
+									"index": 0,
+									"type": "function"
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "call_c599c7724c30455e9aa1ec5a",
+							"content": "41"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"content": "1632",
+								"reasoning_content": "",
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1794859294,
+					"id": "chatcmpl-074b71f9-91e6-94b4-9773-f02aefd45676",
+					"model": "glm-5.3",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 3,
+						"completion_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"prompt_tokens": 296,
+						"prompt_tokens_details": {
+							"cached_tokens": 0
+						},
+						"total_tokens": 299
+					}
+				}
+			}
+		},
+		{
+			"name": "moonshotai/Kimi-K2.7-Code answer",
+			"provider": "chutes",
+			"request": {
+				"path": "/v1/chat/completions",
+				"body": {
+					"model": "moonshotai/Kimi-K2.7-Code",
+					"chat_template_kwargs": {
+						"enable_thinking": true,
+						"thinking": true
+					},
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"message": {
+								"content": "1591",
+								"reasoning_content": "This is a simple multiplication problem. 37 * 43.\n37 * 43 = 37 * (40 + 3) = 1480 + 111 = 1591.\nOr it's a difference of squares: (40-3)(40+3) = 1600 - 9 = 1591.\nThe user wants the number only.",
+								"role": "assistant"
+							},
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null
+						}
+					],
+					"object": "chat.completion",
+					"usage": {
+						"prompt_tokens": 63,
+						"completion_tokens": 76,
+						"total_tokens": 139,
+						"prompt_tokens_details": {
+							"cached_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 74,
+							"text_tokens": 2
+						}
+					},
+					"created": 1794859297,
+					"system_fingerprint": null,
+					"model": "kimi-k2.7-code",
+					"id": "chatcmpl-ae5b0563-a621-9e78-9f55-6117e0e7a14e"
+				}
+			}
+		},
+		{
+			"name": "moonshotai/Kimi-K2.7-Code tool call after an answer sent back with its reasoning",
+			"provider": "chutes",
+			"request": {
+				"path": "/v1/chat/completions",
+				"body": {
+					"model": "moonshotai/Kimi-K2.7-Code",
+					"chat_template_kwargs": {
+						"enable_thinking": true,
+						"thinking": true
+					},
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						},
+						{
+							"role": "assistant",
+							"content": "1591",
+							"reasoning_content": "This is a simple multiplication problem. 37 * 43.\n37 * 43 = 37 * (40 + 3) = 1480 + 111 = 1591.\nOr it's a difference of squares: (40-3)(40+3) = 1600 - 9 = 1591.\nThe user wants the number only."
+						},
+						{
+							"role": "user",
+							"content": "Call get_secret_number, then tell me the secret number plus that product."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"message": {
+								"content": "",
+								"reasoning_content": "The user wants me to call get_secret_number and then add it to the product (37*43=1591). I need to call the function first.",
+								"role": "assistant",
+								"tool_calls": [
+									{
+										"function": {
+											"arguments": "{}",
+											"name": "get_secret_number"
+										},
+										"id": "call_a6fba82eabc9496bb06c2203",
+										"index": 0,
+										"type": "function"
+									}
+								]
+							},
+							"finish_reason": "tool_calls",
+							"index": 0,
+							"logprobs": null
+						}
+					],
+					"object": "chat.completion",
+					"usage": {
+						"prompt_tokens": 164,
+						"completion_tokens": 45,
+						"total_tokens": 209,
+						"prompt_tokens_details": {
+							"cached_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 32,
+							"text_tokens": 13
+						}
+					},
+					"created": 1794859299,
+					"system_fingerprint": null,
+					"model": "kimi-k2.7-code",
+					"id": "chatcmpl-a933ba3d-bd8b-9c9d-b3b6-7ff06c6802bc"
+				}
+			}
+		},
+		{
+			"name": "moonshotai/Kimi-K2.7-Code answer after both turns sent back with their reasoning",
+			"provider": "chutes",
+			"request": {
+				"path": "/v1/chat/completions",
+				"body": {
+					"model": "moonshotai/Kimi-K2.7-Code",
+					"chat_template_kwargs": {
+						"enable_thinking": true,
+						"thinking": true
+					},
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						},
+						{
+							"role": "assistant",
+							"content": "1591",
+							"reasoning_content": "This is a simple multiplication problem. 37 * 43.\n37 * 43 = 37 * (40 + 3) = 1480 + 111 = 1591.\nOr it's a difference of squares: (40-3)(40+3) = 1600 - 9 = 1591.\nThe user wants the number only."
+						},
+						{
+							"role": "user",
+							"content": "Call get_secret_number, then tell me the secret number plus that product."
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"reasoning_content": "The user wants me to call get_secret_number and then add it to the product (37*43=1591). I need to call the function first.",
+							"tool_calls": [
+								{
+									"function": {
+										"arguments": "{}",
+										"name": "get_secret_number"
+									},
+									"id": "call_a6fba82eabc9496bb06c2203",
+									"index": 0,
+									"type": "function"
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "call_a6fba82eabc9496bb06c2203",
+							"content": "41"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "chatcmpl-dc0163fb-2be4-96e4-8b37-4e5ed06c28d0",
+					"object": "chat.completion",
+					"created": 1794859300,
+					"model": "kimi-k2.7-code",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"reasoning_content": "The secret number is 41. The product is 1591. 1591 + 41 = 1632.",
+								"content": "1632"
+							},
+							"finish_reason": "stop",
+							"logprobs": null
+						}
+					],
+					"usage": {
+						"prompt_tokens": 229,
+						"total_tokens": 256,
+						"completion_tokens": 27,
+						"prompt_tokens_details": {
+							"cached_tokens": 0,
+							"text_tokens": 229
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 25,
+							"text_tokens": 2
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "Qwen/Qwen3.8-2.4T-A95B answer",
+			"provider": "chutes",
+			"request": {
+				"path": "/v1/chat/completions",
+				"body": {
+					"model": "Qwen/Qwen3.8-2.4T-A95B",
+					"chat_template_kwargs": {
+						"enable_thinking": true,
+						"thinking": true
+					},
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"content": "1591",
+								"reasoning_content": "The user is asking for the result of 37×43. I can calculate this right away:\n37×43 = (40−3)(40+3) = 1600−9 = 1591.\nThe user said to answer with only the number. The tool for obtaining the secret number isn't relevant here.",
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1794859302,
+					"id": "chatcmpl-7c6c7607-a882-90c5-8f7b-5d2e20f2a4bf",
+					"model": "qwen3.8-2.4t-a95b",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 85,
+						"completion_tokens_details": {
+							"reasoning_tokens": 78,
+							"text_tokens": 85
+						},
+						"prompt_tokens": 319,
+						"prompt_tokens_details": {
+							"cached_tokens": 0,
+							"text_tokens": 319
+						},
+						"total_tokens": 404
+					}
+				}
+			}
+		},
+		{
+			"name": "Qwen/Qwen3.8-2.4T-A95B tool call after an answer sent back with its reasoning",
+			"provider": "chutes",
+			"request": {
+				"path": "/v1/chat/completions",
+				"body": {
+					"model": "Qwen/Qwen3.8-2.4T-A95B",
+					"chat_template_kwargs": {
+						"enable_thinking": true,
+						"thinking": true
+					},
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						},
+						{
+							"role": "assistant",
+							"content": "1591",
+							"reasoning_content": "The user is asking for the result of 37×43. I can calculate this right away:\n37×43 = (40−3)(40+3) = 1600−9 = 1591.\nThe user said to answer with only the number. The tool for obtaining the secret number isn't relevant here."
+						},
+						{
+							"role": "user",
+							"content": "Call get_secret_number, then tell me the secret number plus that product."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "tool_calls",
+							"index": 0,
+							"message": {
+								"content": "",
+								"reasoning_content": "The user is asking me to call get_secret_number, and then add that secret number to the product I calculated earlier (1591).\n\nLet me first call the function.",
+								"role": "assistant",
+								"tool_calls": [
+									{
+										"function": {
+											"arguments": "{}",
+											"name": "get_secret_number"
+										},
+										"id": "call_ba50c0210b4d4cd3898f729b",
+										"index": 0,
+										"type": "function"
+									}
+								]
+							}
+						}
+					],
+					"created": 1794859306,
+					"id": "chatcmpl-e44fef4d-db9e-9cd4-b558-a213b2bb7cca",
+					"model": "qwen3.8-2.4t-a95b",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 54,
+						"completion_tokens_details": {
+							"reasoning_tokens": 37,
+							"text_tokens": 54
+						},
+						"prompt_tokens": 431,
+						"prompt_tokens_details": {
+							"cached_tokens": 0,
+							"text_tokens": 431
+						},
+						"total_tokens": 485
+					}
+				}
+			}
+		},
+		{
+			"name": "Qwen/Qwen3.8-2.4T-A95B answer after both turns sent back with their reasoning",
+			"provider": "chutes",
+			"request": {
+				"path": "/v1/chat/completions",
+				"body": {
+					"model": "Qwen/Qwen3.8-2.4T-A95B",
+					"chat_template_kwargs": {
+						"enable_thinking": true,
+						"thinking": true
+					},
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						},
+						{
+							"role": "assistant",
+							"content": "1591",
+							"reasoning_content": "The user is asking for the result of 37×43. I can calculate this right away:\n37×43 = (40−3)(40+3) = 1600−9 = 1591.\nThe user said to answer with only the number. The tool for obtaining the secret number isn't relevant here."
+						},
+						{
+							"role": "user",
+							"content": "Call get_secret_number, then tell me the secret number plus that product."
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"reasoning_content": "The user is asking me to call get_secret_number, and then add that secret number to the product I calculated earlier (1591).\n\nLet me first call the function.",
+							"tool_calls": [
+								{
+									"function": {
+										"arguments": "{}",
+										"name": "get_secret_number"
+									},
+									"id": "call_ba50c0210b4d4cd3898f729b",
+									"index": 0,
+									"type": "function"
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "call_ba50c0210b4d4cd3898f729b",
+							"content": "41"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"content": "41 + 1591 = 1632",
+								"reasoning_content": "The secret number is 41. The result of that operation is 1591. Therefore, 41 + 1591 = 1632.",
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1794859311,
+					"id": "chatcmpl-c3408759-feeb-990d-ba3b-27935e87fc90",
+					"model": "qwen3.8-2.4t-a95b",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 55,
+						"completion_tokens_details": {
+							"reasoning_tokens": 38,
+							"text_tokens": 55
+						},
+						"prompt_tokens": 503,
+						"prompt_tokens_details": {
+							"cached_tokens": 0,
+							"text_tokens": 503
+						},
+						"total_tokens": 558
+					}
+				}
+			}
+		},
+		{
+			"name": "Qwen/Qwen3.8-Max-0902 answer",
+			"provider": "chutes",
+			"request": {
+				"path": "/v1/chat/completions",
+				"body": {
+					"model": "Qwen/Qwen3.8-Max-0902",
+					"chat_template_kwargs": {
+						"enable_thinking": true,
+						"thinking": true
+					},
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"content": "1591",
+								"reasoning_content": "37*43 = 1591.",
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1794859314,
+					"id": "chatcmpl-8bbe678b-d648-966b-802e-06a4391f1599",
+					"model": "qwen3.8-max",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 19,
+						"completion_tokens_details": {
+							"reasoning_tokens": 12,
+							"text_tokens": 19
+						},
+						"prompt_tokens": 319,
+						"prompt_tokens_details": {
+							"cached_tokens": 0,
+							"text_tokens": 319
+						},
+						"total_tokens": 338
+					}
+				}
+			}
+		},
+		{
+			"name": "Qwen/Qwen3.8-Max-0902 tool call after an answer sent back with its reasoning",
+			"provider": "chutes",
+			"request": {
+				"path": "/v1/chat/completions",
+				"body": {
+					"model": "Qwen/Qwen3.8-Max-0902",
+					"chat_template_kwargs": {
+						"enable_thinking": true,
+						"thinking": true
+					},
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						},
+						{
+							"role": "assistant",
+							"content": "1591",
+							"reasoning_content": "37*43 = 1591."
+						},
+						{
+							"role": "user",
+							"content": "Call get_secret_number, then tell me the secret number plus that product."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "tool_calls",
+							"index": 0,
+							"message": {
+								"content": "",
+								"reasoning_content": "The user asks to call get_secret_number. This is the only tool available. Let's call it.",
+								"role": "assistant",
+								"tool_calls": [
+									{
+										"function": {
+											"arguments": "{}",
+											"name": "get_secret_number"
+										},
+										"id": "call_d2db1d7d697242f69ddf5ca8",
+										"index": 0,
+										"type": "function"
+									}
+								]
+							}
+						}
+					],
+					"created": 1794859317,
+					"id": "chatcmpl-e4b8481e-260d-91fe-aa16-6521d0df3e60",
+					"model": "qwen3.8-max",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 38,
+						"completion_tokens_details": {
+							"reasoning_tokens": 21,
+							"text_tokens": 38
+						},
+						"prompt_tokens": 365,
+						"prompt_tokens_details": {
+							"cached_tokens": 0,
+							"text_tokens": 365
+						},
+						"total_tokens": 403
+					}
+				}
+			}
+		},
+		{
+			"name": "Qwen/Qwen3.8-Max-0902 answer after both turns sent back with their reasoning",
+			"provider": "chutes",
+			"request": {
+				"path": "/v1/chat/completions",
+				"body": {
+					"model": "Qwen/Qwen3.8-Max-0902",
+					"chat_template_kwargs": {
+						"enable_thinking": true,
+						"thinking": true
+					},
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						},
+						{
+							"role": "assistant",
+							"content": "1591",
+							"reasoning_content": "37*43 = 1591."
+						},
+						{
+							"role": "user",
+							"content": "Call get_secret_number, then tell me the secret number plus that product."
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"reasoning_content": "The user asks to call get_secret_number. This is the only tool available. Let's call it.",
+							"tool_calls": [
+								{
+									"function": {
+										"arguments": "{}",
+										"name": "get_secret_number"
+									},
+									"id": "call_d2db1d7d697242f69ddf5ca8",
+									"index": 0,
+									"type": "function"
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "call_d2db1d7d697242f69ddf5ca8",
+							"content": "41"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"content": "1632",
+								"reasoning_content": "Secret number is 41. Product is 1591. Sum = 1632.",
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1794859320,
+					"id": "chatcmpl-2e3cd190-8f59-9fa5-ac60-9c76ee8b754f",
+					"model": "qwen3.8-max",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 30,
+						"completion_tokens_details": {
+							"reasoning_tokens": 23,
+							"text_tokens": 30
+						},
+						"prompt_tokens": 421,
+						"prompt_tokens_details": {
+							"cached_tokens": 0,
+							"text_tokens": 421
+						},
+						"total_tokens": 451
+					}
+				}
+			}
+		}
+	]
+}

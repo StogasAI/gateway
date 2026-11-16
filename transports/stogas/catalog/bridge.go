@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"encoding/json"
+	"errors"
 	"maps"
 	"net/http"
 	"slices"
@@ -21,14 +22,14 @@ import (
 // reply on the interface that the client called. The request log keeps the client's interface, and
 // the deployment's route names the interface on which the gateway called the provider. A deployment
 // that takes the client's interface itself gets it, unless the model field names its route for the
-// other interface or the request is a Chat Completions request with tools or reasoning history
-// (chatThroughResponses).
+// other interface or the request is a Chat Completions request with tools, summarized reasoning or
+// reasoning history (chatThroughResponses).
 //
 // bridgedProviders names, for each interface, the providers whose deployments serve it through the
 // other. Chutes and Azure serve Responses through Chat Completions. OpenAI's only deployment without
 // Responses is its search model, whose searches only Chat Completions' web_search_options prices.
 // OpenAI and Azure serve Chat Completions through Responses, for the deployments that take only
-// Responses, such as Pro, and for requests with tools or reasoning history.
+// Responses, such as Pro, and for requests with tools, summarized reasoning or reasoning history.
 var bridgedProviders = map[Route]map[schemas.ModelProvider]bool{
 	RouteChat:      {schemas.OpenAI: true, schemas.Azure: true},
 	RouteResponses: {ProviderChutes: true, schemas.Azure: true},
@@ -365,6 +366,16 @@ func conversionGapError(gap *schemas.ConversionGap, wire string) error {
 	}
 }
 
+// ResponsesGap names the field of a Chat Completions request that Responses cannot carry, or
+// returns "" when they carry the request whole.
+func (r *ResolvedRequest) ResponsesGap() string {
+	var gap APIError
+	if errors.As(rawResponsesGap(r.RawBody()), &gap) {
+		return gap.Param
+	}
+	return ""
+}
+
 // rawConversionGap refuses a body that the other interface cannot carry whole, so that routing
 // leaves out bridged deployments for it. The checks of the client's interface refuse a malformed
 // body, and the fields that every deployment refuses, with their own messages.
@@ -564,21 +575,20 @@ func (s *snapshot) servedElsewhere(sel modelSelection, route Route, bridging boo
 }
 
 // chatThroughResponses reports whether the OpenAI and Azure deployments that take both interfaces
-// serve a Chat Completions request through Responses: one that declares tools while the model
-// reasons, or that carries OpenAI's encrypted reasoning, when Responses carry it whole. OpenAI's
-// Chat Completions refuse function tools while the newest models reason, and only Responses return
-// the encrypted reasoning that a tool turn needs back, and take it back. A request that turns
-// reasoning off has neither need, so Chat Completions serve its tools as the client sent them. A
-// request that Responses cannot carry whole keeps Chat Completions, and its provider decides.
+// serve a Chat Completions request through Responses: one that declares tools or asks for
+// summarized reasoning while the model reasons, or that carries OpenAI's encrypted reasoning, when
+// Responses carry it whole. OpenAI's Chat Completions refuse function tools while the newest models
+// reason, and only Responses return reasoning summaries and the encrypted reasoning that a tool turn
+// needs back, and take the latter back. A request that turns reasoning off has no reasoning to
+// summarize, and Chat Completions serve its tools as the client sent them. A request that Responses
+// cannot carry whole keeps Chat Completions, and its provider decides.
 func chatThroughResponses(raw map[string]json.RawMessage, gap func() error) bool {
-	tools := len(raw["tools"]) > 0 && !rawJSONNullOrEmptyArray(raw["tools"])
-	return (tools && !chatReasoningOff(raw) || chatEncryptedReasoningHistory(raw["messages"])) && gap() == nil
-}
-
-// chatReasoningOff reports whether a Chat Completions request turns reasoning off, with effort
-// none or enabled false.
-func chatReasoningOff(raw map[string]json.RawMessage) bool {
 	reasoning, err := chatRawReasoning(raw)
-	return err == nil && reasoning != nil &&
-		(reasoning.Effort != nil && *reasoning.Effort == "none" || reasoning.Enabled != nil && !*reasoning.Enabled)
+	if err != nil {
+		reasoning = nil
+	}
+	off := reasoning != nil && (reasoning.Effort != nil && *reasoning.Effort == "none" || reasoning.Enabled != nil && !*reasoning.Enabled)
+	summarized := reasoning != nil && reasoning.Display != nil && *reasoning.Display == "summarized"
+	tools := len(raw["tools"]) > 0 && !rawJSONNullOrEmptyArray(raw["tools"])
+	return (!off && (tools || summarized) || chatEncryptedReasoningHistory(raw["messages"])) && gap() == nil
 }

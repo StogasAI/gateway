@@ -706,7 +706,9 @@ func (v *requestVariants) prepareBody(selection routingSelection, value RequestP
 		err = variant.chat.UnmarshalJSON(body)
 	} else {
 		variant.responses = &openaiprovider.OpenAIResponsesRequest{}
-		err = sonic.Unmarshal(body, variant.responses)
+		if err = sonic.Unmarshal(body, variant.responses); err == nil {
+			claudeThinkingFromSignatures(fields["input"], variant.responses.Input.OpenAIResponsesRequestInputArray)
+		}
 	}
 	if err != nil {
 		return nil, ErrInvalidJSON

@@ -246,12 +246,12 @@ func TestClaudeReasoningRoundTripsThroughResponses(t *testing.T) {
 
 // One input with Claude's, OpenAI's and plain reasoning: each deployment gets only the reasoning
 // that it takes back. OpenAI-format deployments get only the encrypted reasoning of their own
-// account, with the provider's own content, and never another account's or content that the gateway
-// did not bind.
+// account, with the provider's own content and without its summary, and never another account's
+// or content that the gateway did not bind.
 func TestResponsesDeploymentsGetOnlyReasoningTheyTakeBack(t *testing.T) {
 	input := `"input":[{"role":"user","content":"hi"},` +
 		`{"type":"reasoning","id":"rs_claude","summary":[{"type":"summary_text","text":"Plan."}],"encrypted_content":"` + claudeThinkingContent(t, "Plan.") + `"},` +
-		`{"type":"reasoning","id":"rs_openai","summary":[],"encrypted_content":"` + boundReasoning("gAAAAopaque") + `"},` +
+		`{"type":"reasoning","id":"rs_openai","summary":[{"type":"summary_text","text":"Summed up."}],"encrypted_content":"` + boundReasoning("gAAAAopaque") + `"},` +
 		`{"type":"reasoning","id":"rs_other","summary":[],"encrypted_content":"openai:acct-other:gAAAAother"},` +
 		`{"type":"reasoning","id":"rs_unbound","summary":[],"encrypted_content":"gAAAAunbound"},` +
 		`{"type":"reasoning","id":"rs_plain","summary":[],"content":[{"type":"reasoning_text","text":"Thinking."}]},` +
@@ -273,7 +273,8 @@ func TestResponsesDeploymentsGetOnlyReasoningTheyTakeBack(t *testing.T) {
 				reasoning = append(reasoning, string(item["id"])+"="+string(item["encrypted_content"]))
 			}
 		}
-		if got := strings.Join(reasoning, ","); got != `"rs_openai"="gAAAAopaque"` || !strings.Contains(string(body["input"]), `"Hello."`) {
+		if got := strings.Join(reasoning, ","); got != `"rs_openai"="gAAAAopaque"` || !strings.Contains(string(body["input"]), `"Hello."`) ||
+			strings.Contains(string(body["input"]), "Summed up.") {
 			t.Fatalf("%s input = %s", model, body["input"])
 		}
 	}
@@ -341,6 +342,13 @@ func TestReasoningHistoryChecksAreTheSameOnEveryDeployment(t *testing.T) {
 			`{"role":"assistant","content":"Hello."},{"role":"user","content":"again"}]`, "input[1].encrypted_content must be sent back unchanged"},
 		{"altered account detail", "/v1/chat/completions", `"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"Hello.",` +
 			`"reasoning_details":[{"index":0,"type":"reasoning.encrypted","id":"rs_1","data":"openai::gAAAA"}]},{"role":"user","content":"again"}]`, "reasoning_details[0].data must be sent back unchanged"},
+		{"signed item with two blocks", "/v1/responses", `"input":[{"role":"user","content":"hi"},{"type":"reasoning","id":"rs_1","summary":[],"signature":"sig",` +
+			`"content":[{"type":"reasoning_text","text":"One."},{"type":"reasoning_text","text":"Two."}]},{"role":"assistant","content":"Hello."},{"role":"user","content":"again"}]`,
+			"input[1].content must hold at most one block when signature is set"},
+		{"empty item signature", "/v1/responses", `"input":[{"role":"user","content":"hi"},{"type":"reasoning","id":"rs_1","summary":[],"signature":"",` +
+			`"content":[{"type":"reasoning_text","text":"One."}]},{"role":"assistant","content":"Hello."},{"role":"user","content":"again"}]`, "input[1].signature must be non-empty"},
+		{"item format that is not a string", "/v1/responses", `"input":[{"role":"user","content":"hi"},{"type":"reasoning","id":"rs_1","summary":[],"format":1,` +
+			`"content":[{"type":"reasoning_text","text":"One."}]},{"role":"assistant","content":"Hello."},{"role":"user","content":"again"}]`, "input[1].format must be a string"},
 	} {
 		for _, model := range historyDeployments {
 			t.Run(test.name+"/"+model, func(t *testing.T) {
@@ -485,31 +493,126 @@ func TestOpenRouterReasoningDetailsAreAccepted(t *testing.T) {
 	}
 }
 
-// TestRecordedOpenModelReasoningGoesBackAsTheProviderTookIt replays tool loops recorded from
-// Azure's DeepSeek V4 Flash, which reads the reasoning that comes back beside its tool call, and
-// gpt-oss-120b, which ignores it. Each gets the assistant message with the reasoning_content that
-// the provider took in the recording.
+// A conversation can move from OpenRouter, whose Responses reasoning items carry a format and, for
+// Claude, the signature of the thinking in their content. Claude gets the signed item as its
+// thinking block, open models get plain reasoning, and no provider gets a format, a summary or
+// another account's encrypted reasoning.
+func TestOpenRouterReasoningItemsAreAccepted(t *testing.T) {
+	input := `"input":[{"role":"user","content":"hi"},` +
+		`{"type":"reasoning","id":"rs_claude","format":"anthropic-claude-v1","signature":"sig-openrouter",` +
+		`"summary":[{"type":"summary_text","text":"Summed up."}],"content":[{"type":"reasoning_text","text":"Thought it through."}]},` +
+		`{"type":"reasoning","id":"rs_openai","format":"openai-responses-v1","signature":null,` +
+		`"summary":[{"type":"summary_text","text":"Summed up."}],"encrypted_content":"gAAAAforeign"},` +
+		`{"type":"reasoning","id":"rs_plain","format":"unknown","summary":[],"content":[{"type":"reasoning_text","text":"Plain thought."}]},` +
+		`{"role":"assistant","content":[{"type":"output_text","text":"Hello."}]},{"role":"user","content":"again"}]`
+	for _, model := range historyDeployments {
+		body, _, _ := providerBody(t, "/v1/responses", `{"model":"`+model+`",`+input+`}`)
+		if model == "anthropic-claude-sonnet-4-6" {
+			if got := blockFields(assistantBlocks(t, body)[0], "type", "thinking", "signature", "text"); got != `type="thinking" thinking="Thought it through." signature="sig-openrouter"`+"\n"+`type="text" text="Hello."` {
+				t.Fatalf("Claude's assistant blocks =\n%s", got)
+			}
+		}
+		history := string(body["input"]) + string(body["messages"])
+		for _, gone := range []string{"Summed up.", "gAAAAforeign", "format", "anthropic-claude-v1"} {
+			if strings.Contains(history, gone) {
+				t.Fatalf("%s got %q: %s", model, gone, history)
+			}
+		}
+		if claude := strings.Contains(history, "sig-openrouter"); claude != (model == "anthropic-claude-sonnet-4-6") {
+			t.Fatalf("%s Claude's thinking sent = %v: %s", model, claude, history)
+		}
+		if plain := strings.Contains(history, "Plain thought."); plain != slices.Contains(openModels, model) {
+			t.Fatalf("%s plain reasoning sent = %v: %s", model, plain, history)
+		}
+	}
+}
+
+// TestEncryptedReasoningGoesBackWithoutItsSummary replays exchanges recorded from OpenAI and
+// Azure, which bill encrypted reasoning the same with its summary as returned, empty or changed. A
+// client's copy of the item goes back as the provider took it with an empty summary.
+func TestEncryptedReasoningGoesBackWithoutItsSummary(t *testing.T) {
+	exchanges := providerCapture(t, "openai/encrypted-reasoning-summary")
+	for provider, model := range map[string]string{"openai": "provider:openai gpt-6-luna", "azure": "azure-gpt-5.6-sol"} {
+		var billed []json.RawMessage
+		for _, name := range []string{"replay with its summary", "replay with an empty summary", "replay with another summary"} {
+			recorded := exchange(t, exchanges, provider+" "+name)
+			var usage struct {
+				Usage struct {
+					InputTokens json.RawMessage `json:"input_tokens"`
+				} `json:"usage"`
+			}
+			if err := json.Unmarshal(recorded.Response.Body, &usage); err != nil || recorded.Response.Status != 200 {
+				t.Fatalf("%s %s: the provider answered %d in the recording", provider, name, recorded.Response.Status)
+			}
+			billed = append(billed, usage.Usage.InputTokens)
+		}
+		if string(billed[0]) != string(billed[1]) || string(billed[0]) != string(billed[2]) {
+			t.Fatalf("%s billed %s input tokens in the recording", provider, billed)
+		}
+		returned := exchange(t, exchanges, provider+" replay with its summary")
+		client, encrypted := recordedReasoningItem(t, returned.Request.Body)
+		if summary := client.(map[string]any)["summary"].([]any); len(summary) == 0 {
+			t.Fatalf("%s: the recorded item has no summary", provider)
+		}
+		took, _ := recordedReasoningItem(t, exchange(t, exchanges, provider+" replay with an empty summary").Request.Body)
+		fields, _, _ := providerBody(t, "/v1/responses", forGateway(t, returned.Request.Body, model, encrypted))
+		sent, _ := recordedReasoningItem(t, json.RawMessage(`{"input":`+string(fields["input"])+`}`))
+		for _, field := range []string{"id", "summary", "encrypted_content"} {
+			if !reflect.DeepEqual(sent.(map[string]any)[field], took.(map[string]any)[field]) {
+				t.Fatalf("%s item sent = %v, the provider took %v", provider, sent, took)
+			}
+		}
+	}
+}
+
+// TestRecordedOpenModelReasoningGoesBackAsTheProviderTookIt replays conversations recorded from
+// the open models of Azure and Chutes, which took the reasoning_content of an earlier answer and of
+// an earlier tool call back. Each recorded model maps to a test deployment of its provider, and
+// the gateway sends every assistant message with the reasoning_content that the provider took.
 func TestRecordedOpenModelReasoningGoesBackAsTheProviderTookIt(t *testing.T) {
-	exchanges := providerCapture(t, "azure/open-model-reasoning-tool-loop")
-	for recorded, model := range map[string]string{"deepseek-v4-flash": "azure-deepseek-v4-flash-0423", "gpt-oss-120b": "azure-gpt-oss-120b"} {
-		sent := exchange(t, exchanges, recorded+" reasoning sent back")
+	const history = " answer after both turns sent back with their reasoning"
+	for _, replay := range []struct{ capture, exchange, model string }{
+		{"azure/open-model-reasoning-tool-loop", "deepseek-v4-flash reasoning sent back", "azure-deepseek-v4-flash-0423"},
+		{"azure/open-model-reasoning-tool-loop", "gpt-oss-120b reasoning sent back", "azure-gpt-oss-120b"},
+		{"azure/open-model-reasoning-history", "deepseek-v4-flash" + history, "azure-deepseek-v4-flash-0423"},
+		{"azure/open-model-reasoning-history", "deepseek-v4-pro" + history, "azure-deepseek-v4-pro"},
+		{"azure/open-model-reasoning-history", "gpt-oss-120b" + history, "azure-gpt-oss-120b"},
+		{"chutes/reasoning-history", "tencent/Hy4" + history, "chutes-glm-5.2"},
+		{"chutes/reasoning-history", "deepseek-ai/DeepSeek-V4.1-Flash-1017" + history, "chutes-deepseek-v4-flash-0731"},
+		{"chutes/reasoning-history", "deepseek-ai/DeepSeek-V4-Pro-0813" + history, "chutes-deepseek-v4-flash-0731"},
+		{"chutes/reasoning-history", "zai-org/GLM-5.2-Fast" + history, "chutes-glm-5.2"},
+		{"chutes/reasoning-history", "zai-org/GLM-5.3" + history, "chutes-glm-5.2"},
+		{"chutes/reasoning-history", "moonshotai/Kimi-K2.7-Code" + history, "chutes-kimi-k3"},
+		{"chutes/reasoning-history", "Qwen/Qwen3.8-2.4T-A95B" + history, "chutes-qwen3.8-27b"},
+		{"chutes/reasoning-history", "Qwen/Qwen3.8-Max-0902" + history, "chutes-qwen3.8-27b"},
+	} {
+		sent := exchange(t, providerCapture(t, replay.capture), replay.exchange)
 		if sent.Response.Status != 200 {
-			t.Fatalf("%s: the provider answered %d in the recording", recorded, sent.Response.Status)
+			t.Fatalf("%s: the provider answered %d in the recording", replay.exchange, sent.Response.Status)
 		}
 		var took struct {
+			Tools    json.RawMessage              `json:"tools"`
 			Messages []map[string]json.RawMessage `json:"messages"`
 		}
 		if err := json.Unmarshal(sent.Request.Body, &took); err != nil {
 			t.Fatal(err)
 		}
-		body, _, _ := providerBody(t, "/v1/chat/completions", forGateway(t, sent.Request.Body, model, ""))
+		request, err := json.Marshal(map[string]any{"model": replay.model, "tools": took.Tools, "messages": took.Messages})
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _, _ := providerBody(t, "/v1/chat/completions", string(request))
 		var wire []map[string]json.RawMessage
 		if err := json.Unmarshal(body["messages"], &wire); err != nil {
 			t.Fatal(err)
 		}
-		if len(wire) != len(took.Messages) || len(took.Messages[1]["reasoning_content"]) < 3 ||
-			string(wire[1]["reasoning_content"]) != string(took.Messages[1]["reasoning_content"]) {
-			t.Fatalf("%s: messages sent = %s, the provider took %s", model, body["messages"], sent.Request.Body)
+		if len(wire) != len(took.Messages) {
+			t.Fatalf("%s: messages sent = %s, the provider took %s", replay.exchange, body["messages"], sent.Request.Body)
+		}
+		for index, message := range took.Messages {
+			if string(wire[index]["reasoning_content"]) != string(message["reasoning_content"]) {
+				t.Fatalf("%s: message %d sent = %s, the provider took %s", replay.exchange, index, body["messages"], sent.Request.Body)
+			}
 		}
 	}
 }
@@ -660,5 +763,22 @@ func TestRedactionScansOnlyReasoningHistoryWithoutASignature(t *testing.T) {
 		`"reasoning_details":[{"index":0,"type":"reasoning.text","text":"Mail owner@corp.io."}]}`))
 	if messages := string(body["messages"]); strings.Contains(messages, "owner@corp.io") || !strings.Contains(messages, "Mail <EMAIL_ADDRESS>.") {
 		t.Fatalf("plain reasoning reached the provider as %s", messages)
+	}
+
+	// A Responses item with encrypted content or a signature stays as the client sent it: Claude
+	// checks its signed thinking, and no provider gets the summary of encrypted reasoning.
+	responses := func(model, item string) catalog.RequestInput {
+		return catalog.RequestInput{Method: "POST", Path: "/v1/responses", RedactionPolicy: policy, Body: []byte(`{"model":"` + model + `","input":[` +
+			`{"role":"user","content":"Who owns the repository?"},` + item + `,{"role":"assistant","content":"The owner."},{"role":"user","content":"Thanks."}]}`)}
+	}
+	body, _, _ = providerBodyOf(t, responses("anthropic-claude-sonnet-5", `{"type":"reasoning","id":"rs_1","signature":"sig","summary":[],`+
+		`"content":[{"type":"reasoning_text","text":"Mail owner@corp.io."}]}`))
+	if thinking := rawString(assistantBlocks(t, body)[0][0]["thinking"]); thinking != "Mail owner@corp.io." {
+		t.Fatalf("signed thinking = %q", thinking)
+	}
+	body, _, _ = providerBodyOf(t, responses("provider:openai gpt-5.5", `{"type":"reasoning","id":"rs_1",`+
+		`"summary":[{"type":"summary_text","text":"Mail owner@corp.io."}],"encrypted_content":"`+boundReasoning("gAAAAopaque")+`"}`))
+	if input := string(body["input"]); strings.Contains(input, "owner@corp.io") || !strings.Contains(input, "gAAAAopaque") {
+		t.Fatalf("encrypted reasoning reached the provider as %s", input)
 	}
 }

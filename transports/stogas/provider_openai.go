@@ -215,6 +215,9 @@ func validateOpenAIWireChatPolicy(state *State) error {
 	if err := validateOpenAIChatScalarPolicy(raw); err != nil {
 		return err
 	}
+	if err := validateOpenAIChatReasoningDisplay(state, raw); err != nil {
+		return err
+	}
 	for _, name := range []string{"cache_control", "context_management", "stop_sequences", "task_budget", "top_k"} {
 		if rawJSONValueSet(raw[name]) {
 			return invalidRequest(name + " is not supported for OpenAI-format deployments")
@@ -266,16 +269,37 @@ func validateOpenAIChatScalarPolicy(raw map[string]json.RawMessage) error {
 	if rawJSONValueSet(raw["repetition_penalty"]) {
 		return invalidRequest("repetition_penalty is not supported for OpenAI-format deployments")
 	}
-	if rawJSONValueSet(raw["reasoning_display"]) {
-		return invalidRequest("reasoning_display is not supported for OpenAI-format deployments")
-	}
-	if reasoning, ok := rawObject(raw["reasoning"]); ok && rawJSONValueSet(reasoning["display"]) {
-		return invalidRequest("reasoning.display is not supported for OpenAI-format deployments")
-	}
 	if err := validateJSONBool(raw, "logprobs"); err != nil {
 		return err
 	}
 	return validateChatPrediction(raw["prediction"])
+}
+
+// validateOpenAIChatReasoningDisplay accepts the reasoning displays of OpenAI's models: summarized,
+// which asks for the reasoning summaries that only Responses return, so a request that reasons goes
+// through Responses (catalog's chatThroughResponses), and omitted, the default. The other models of
+// the format show all of their reasoning or none, which no display changes.
+func validateOpenAIChatReasoningDisplay(state *State, raw map[string]json.RawMessage) error {
+	name, value := "reasoning_display", raw["reasoning_display"]
+	if reasoning, ok := rawObject(raw["reasoning"]); ok && rawJSONValueSet(reasoning["display"]) {
+		name, value = "reasoning.display", reasoning["display"]
+	}
+	if !rawJSONValueSet(value) {
+		return nil
+	}
+	display, _ := rawStringValue(value)
+	switch resolution := state.Resolution; {
+	case !resolution.RunsOpenAIModel():
+		return invalidRequest(name + " is not supported for the selected deployment")
+	case display != "summarized" && display != "omitted":
+		return invalidRequest(name + " must be summarized or omitted for OpenAI's models")
+	case display == "omitted" || resolution.WireRoute() == catalog.RouteResponses || resolution.ReasoningOff():
+		return nil
+	}
+	if gap := state.Resolution.ResponsesGap(); gap != "" {
+		return invalidRequest(name + " summarized is not supported with " + gap)
+	}
+	return invalidRequest(name + " summarized is not supported for the selected deployment")
 }
 
 // validateResponsesInclude accepts the include values whose extras the deployment's replies carry.

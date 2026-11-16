@@ -276,7 +276,7 @@ func (r *ResolvedRequest) readsHostedCall(item *schemas.ResponsesMessage) bool {
 			return call.ResponsesWebFetchCall != nil && call.ResponsesWebFetchCall.ResultType != ""
 		}
 		return call.Action != nil && claudeSearchResults(call.Action.ResponsesWebSearchToolCallAction)
-	case r.runsOpenAIModel() && r.WireRoute() == RouteResponses:
+	case r.RunsOpenAIModel() && r.WireRoute() == RouteResponses:
 		return tool == HostedToolWebSearch && item.ID != nil && openAIWebSearchCallID(*item.ID)
 	}
 	return false

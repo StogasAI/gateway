@@ -401,9 +401,9 @@ func (r *ResolvedRequest) takesPromptCacheKey() bool {
 	return r.Provider == schemas.OpenAI
 }
 
-// runsOpenAIModel reports whether the deployment runs one of OpenAI's own models: on OpenAI, or on
+// RunsOpenAIModel reports whether the deployment runs one of OpenAI's own models: on OpenAI, or on
 // Azure in the OpenAI model format.
-func (r *ResolvedRequest) runsOpenAIModel() bool {
+func (r *ResolvedRequest) RunsOpenAIModel() bool {
 	return r.Provider == schemas.OpenAI || r.Provider == schemas.Azure && r.Deployment.Upstream.ModelFormat == "OpenAI"
 }
 
@@ -1690,6 +1690,14 @@ func (r *ResolvedRequest) ReasoningEnabled() (bool, bool) {
 		return false, false
 	}
 	return *r.chat.ChatParameters.Reasoning.Enabled, true
+}
+
+// ReasoningOff reports whether the request turns reasoning off, with the effort none or enabled
+// false.
+func (r *ResolvedRequest) ReasoningOff() bool {
+	effort, _ := r.ReasoningEffort()
+	enabled, set := r.ReasoningEnabled()
+	return effort == "none" || set && !enabled
 }
 
 // SendReasoningOffAsEffort sends a binary reasoning-off control as the effort "none", for a wire

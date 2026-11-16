@@ -1,0 +1,1653 @@
+{
+	"shows": "OpenAI and Azure take encrypted reasoning back with its summary as returned, empty or changed, and bill the same input tokens for all three.",
+	"recorded": "2026-11-16",
+	"exchanges": [
+		{
+			"name": "openai mint",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"reasoning": {
+						"effort": "medium",
+						"summary": "detailed"
+					},
+					"max_output_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_secret_number",
+							"description": "Returns the secret number.",
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Work out 37*43 - 19*29 in your head first, then call get_secret_number, then tell me the secret number plus your result."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_0aee0d2e0bfa54e2016afb6451ab7c87d297c14219783ac8d0",
+					"object": "response",
+					"created_at": 1794860113,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1794860116,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "rs_0aee0d2e0bfa54e2016afb64527f4c87d29397d2df14422dbd",
+							"type": "reasoning",
+							"content": [],
+							"encrypted_content": "gAAAAABq-2RUvOR6PJ-QdWuPHLyKUXPhWRf3pwskXe--3e8h5-nTs7_xPcDYu8Floc_cjoB9_flFoKfJCo_MBmMUohi0PYYJTUjhsow8I1MHx03iYdn8PA1cy8EIy6yvCNEKKNRi0jc5vYoyoJ4dIMKBCRwLPFMQc4UCF7DzTvNKNEekos_A7weke9i3JXbOUh-ewrMFrKGU4-ZwHKFAHwQtfECSLRzvGRDz_Gc27MhqSBTxWemWi_QLi_u13xAFACleQN1i0X6aPm2bY25v3qC7DP7ja1bVIkMUw2r56QjXiFCVpl1LdkDsjamtXTCPtLjumi4iCfYLYggSGPrc6I2QM0kqPhLUVDww2je-dz7MRgs-3S8ki6g9NV5F-d6c9S0I86SWRBiby7L7oYmaBaiQ5j_Yn5K98gXGqEk6gVmknBvAL8jPOfHTAW7mnwSh5hrfr4cZeA3_0LLTq9n3_kI9NyTOK_BDNMicvVPfJAAAGvjeJ-Zyhk1Dy50-jkcJVCZBnx30XVjLXwXb6zTWvRHVVboc3Gytmk3dTUcZdK7H6tmdOnHLkRawUF5hS8leHL_uwFhxq62OsjjjN4D44xgEU5bO1HNfReMnM6C2sqOy3GemC1HlPtTgOIBHKdbWB8-j6Aee843LPFsT1400S0OgA7GQht8cQt5u6Fzsjrt2olnmKXSXWM9KM79i1ML2iVb7Q8Up4ionG3Br9RZ8Azna4jRjfLjxrge5IX2q1ZU1gKMWlI4Z7cDBO_320MhbBzHzeq6YjRxHUnn4QqA9QZ5-XNVtfuqRianYE-sJvA7k7RFa8Os8kpusG_x61ti8XKHZfNp8cdE-SztBcp-e44NSnJfqZntyrVqrhzaOHzbH53pjHoPQhl_CNVGTH7az6t9GSofVhflLydtQDKfWveR5qupmuN3Y4bM95FkbTuFSOb6JL2-eqmIX6ohymjJxtVqMpFDuaMRmaCfXH3mKYPOwze2pDuUraQRSG9uTZg3EyfxBzQc4Lzz8fNePdFTLlgfNiDW59JFHyLyggV7pM54IuTUSV_I8vk6_2_UPM1tUWBqW3anUANnmqN_D4ER6ZlRuoGoxn-OGJFiaUUA43Ttyn-budaqOxZStDfrEjEHRklFq0dNDT2dL7wQCQXZpRRcKS2zexYolCtikb3ubPA-KwHo5MWrrreiwGJpOJJgS70G6bUtZIqTPgPzCzjM_A6pcP4XEkI-7GZPl97Lb_plD5fnykVEpshhHlqzznKzIN0UpcYKOkIy6967SvypJFiuaD-LRAlDoWaf4roDY-w27vtXFPCzp_CWejGO3IyOQH3ZEW4a0PbJzg0pEyDht3M-ICeqlYUDm6ZrU1bSCWIVpaXI9tGOY8vMTCdZBBuCqB6XWcToPgCOdO0Y9puNq9Of062NJiBGO9100vPlHJ7pl36-APo0eBtssGVXj9SAYMOfL5dOAN4DHBDCgWt5Q8s5--XrgoyF5lhBuA2K99HHbNq0h0xdLck5s7mTLUrdiS3WQL6rqVHyhHdS-QgQvDHUUvAZBqXw-JdyAcN_Nqja-6hYemDE-XbHLpc5H7JYKB2XSlLBEbwCdBf619EOqFxOOCexqESgb3uLu8qRIiIgK_9hffzZV8BzH-juU7HLh4x5vCmsqBTOgtTd4MziikzZ-ugnwXs1ldaA7s3W20LQ34xMRUeuUoPkQ1KT1WdKM2OUaX6BNwAPrlS_UlBPy8vn2qWvYxFRzJkDU9_XlEUE54VWLE_Ynm3EZ0ZgR3xDByv_Ap1xvlSwR-1fvNR6b0shUgbSDzHVHePugHPLCNN2VpzZVUiO8KCMa-IU5h4doCSNpbf7X8hakW2NGiweu30y2appvt6Pwlhq7oLZqUyMDgg-YfQLBmzQf_2HC_MUuUCaGl-3eX3HBPClt-bs2i70fedSC4yPpLQiNXfASbwj6SmVduHitmGrd1KvwHSjzzNXa3GTnX2eUOPAuTlK_Qd1jy70SuNrJpkuo889S4SeNdzXFSTW7mrs20RNcLsP_erMWte-dgpwu9QC7Z3Cj8bExt4mGA7Jf8mAEJPCb_73HNh7ZA3RX_cC5DBpGuukRrCTprD6PRQCzMrJtLGBgRmRrc15e7IR4SyeMG2CBPQORN3nwDrQrfJUcOb9glnuHwp1T5pHuCTqYYlNaebiWYpfVk--4CpFR8IG9efC2xrwuzVvvU9rIWQ==",
+							"summary": [
+								{
+									"type": "summary_text",
+									"text": "**Calculating products**\n\nFirst, I need to compute mentally: for 37 times 43, I break it down to 37 times (40 plus 3), which gives me 1480 plus 111, totaling 1591. Then for 19 times 29, I do 19 times (30 minus 1), resulting in 570 minus 19, which equals 551. The difference between these two results is 1040. Now that I’ve worked it out, I’ll call the necessary tool."
+								}
+							]
+						},
+						{
+							"id": "fc_0aee0d2e0bfa54e2016afb64549fd087d29fcde03ae0eb5d63",
+							"type": "function_call",
+							"status": "completed",
+							"arguments": "{}",
+							"call_id": "call_xJcYGtYQ940zW6YHAiZYf1p4",
+							"name": "get_secret_number"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "medium",
+						"mode": "standard",
+						"summary": "detailed"
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "function",
+							"description": "Returns the secret number.",
+							"name": "get_secret_number",
+							"output_schema": null,
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 68,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 79,
+						"output_tokens_details": {
+							"reasoning_tokens": 62
+						},
+						"total_tokens": 147
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "openai replay with its summary",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"reasoning": {
+						"effort": "medium",
+						"summary": "detailed"
+					},
+					"max_output_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_secret_number",
+							"description": "Returns the secret number.",
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Work out 37*43 - 19*29 in your head first, then call get_secret_number, then tell me the secret number plus your result."
+						},
+						{
+							"id": "rs_0aee0d2e0bfa54e2016afb64527f4c87d29397d2df14422dbd",
+							"type": "reasoning",
+							"content": [],
+							"encrypted_content": "gAAAAABq-2RUvOR6PJ-QdWuPHLyKUXPhWRf3pwskXe--3e8h5-nTs7_xPcDYu8Floc_cjoB9_flFoKfJCo_MBmMUohi0PYYJTUjhsow8I1MHx03iYdn8PA1cy8EIy6yvCNEKKNRi0jc5vYoyoJ4dIMKBCRwLPFMQc4UCF7DzTvNKNEekos_A7weke9i3JXbOUh-ewrMFrKGU4-ZwHKFAHwQtfECSLRzvGRDz_Gc27MhqSBTxWemWi_QLi_u13xAFACleQN1i0X6aPm2bY25v3qC7DP7ja1bVIkMUw2r56QjXiFCVpl1LdkDsjamtXTCPtLjumi4iCfYLYggSGPrc6I2QM0kqPhLUVDww2je-dz7MRgs-3S8ki6g9NV5F-d6c9S0I86SWRBiby7L7oYmaBaiQ5j_Yn5K98gXGqEk6gVmknBvAL8jPOfHTAW7mnwSh5hrfr4cZeA3_0LLTq9n3_kI9NyTOK_BDNMicvVPfJAAAGvjeJ-Zyhk1Dy50-jkcJVCZBnx30XVjLXwXb6zTWvRHVVboc3Gytmk3dTUcZdK7H6tmdOnHLkRawUF5hS8leHL_uwFhxq62OsjjjN4D44xgEU5bO1HNfReMnM6C2sqOy3GemC1HlPtTgOIBHKdbWB8-j6Aee843LPFsT1400S0OgA7GQht8cQt5u6Fzsjrt2olnmKXSXWM9KM79i1ML2iVb7Q8Up4ionG3Br9RZ8Azna4jRjfLjxrge5IX2q1ZU1gKMWlI4Z7cDBO_320MhbBzHzeq6YjRxHUnn4QqA9QZ5-XNVtfuqRianYE-sJvA7k7RFa8Os8kpusG_x61ti8XKHZfNp8cdE-SztBcp-e44NSnJfqZntyrVqrhzaOHzbH53pjHoPQhl_CNVGTH7az6t9GSofVhflLydtQDKfWveR5qupmuN3Y4bM95FkbTuFSOb6JL2-eqmIX6ohymjJxtVqMpFDuaMRmaCfXH3mKYPOwze2pDuUraQRSG9uTZg3EyfxBzQc4Lzz8fNePdFTLlgfNiDW59JFHyLyggV7pM54IuTUSV_I8vk6_2_UPM1tUWBqW3anUANnmqN_D4ER6ZlRuoGoxn-OGJFiaUUA43Ttyn-budaqOxZStDfrEjEHRklFq0dNDT2dL7wQCQXZpRRcKS2zexYolCtikb3ubPA-KwHo5MWrrreiwGJpOJJgS70G6bUtZIqTPgPzCzjM_A6pcP4XEkI-7GZPl97Lb_plD5fnykVEpshhHlqzznKzIN0UpcYKOkIy6967SvypJFiuaD-LRAlDoWaf4roDY-w27vtXFPCzp_CWejGO3IyOQH3ZEW4a0PbJzg0pEyDht3M-ICeqlYUDm6ZrU1bSCWIVpaXI9tGOY8vMTCdZBBuCqB6XWcToPgCOdO0Y9puNq9Of062NJiBGO9100vPlHJ7pl36-APo0eBtssGVXj9SAYMOfL5dOAN4DHBDCgWt5Q8s5--XrgoyF5lhBuA2K99HHbNq0h0xdLck5s7mTLUrdiS3WQL6rqVHyhHdS-QgQvDHUUvAZBqXw-JdyAcN_Nqja-6hYemDE-XbHLpc5H7JYKB2XSlLBEbwCdBf619EOqFxOOCexqESgb3uLu8qRIiIgK_9hffzZV8BzH-juU7HLh4x5vCmsqBTOgtTd4MziikzZ-ugnwXs1ldaA7s3W20LQ34xMRUeuUoPkQ1KT1WdKM2OUaX6BNwAPrlS_UlBPy8vn2qWvYxFRzJkDU9_XlEUE54VWLE_Ynm3EZ0ZgR3xDByv_Ap1xvlSwR-1fvNR6b0shUgbSDzHVHePugHPLCNN2VpzZVUiO8KCMa-IU5h4doCSNpbf7X8hakW2NGiweu30y2appvt6Pwlhq7oLZqUyMDgg-YfQLBmzQf_2HC_MUuUCaGl-3eX3HBPClt-bs2i70fedSC4yPpLQiNXfASbwj6SmVduHitmGrd1KvwHSjzzNXa3GTnX2eUOPAuTlK_Qd1jy70SuNrJpkuo889S4SeNdzXFSTW7mrs20RNcLsP_erMWte-dgpwu9QC7Z3Cj8bExt4mGA7Jf8mAEJPCb_73HNh7ZA3RX_cC5DBpGuukRrCTprD6PRQCzMrJtLGBgRmRrc15e7IR4SyeMG2CBPQORN3nwDrQrfJUcOb9glnuHwp1T5pHuCTqYYlNaebiWYpfVk--4CpFR8IG9efC2xrwuzVvvU9rIWQ==",
+							"summary": [
+								{
+									"type": "summary_text",
+									"text": "**Calculating products**\n\nFirst, I need to compute mentally: for 37 times 43, I break it down to 37 times (40 plus 3), which gives me 1480 plus 111, totaling 1591. Then for 19 times 29, I do 19 times (30 minus 1), resulting in 570 minus 19, which equals 551. The difference between these two results is 1040. Now that I’ve worked it out, I’ll call the necessary tool."
+								}
+							]
+						},
+						{
+							"id": "fc_0aee0d2e0bfa54e2016afb64549fd087d29fcde03ae0eb5d63",
+							"type": "function_call",
+							"status": "completed",
+							"arguments": "{}",
+							"call_id": "call_xJcYGtYQ940zW6YHAiZYf1p4",
+							"name": "get_secret_number"
+						},
+						{
+							"type": "function_call_output",
+							"call_id": "call_xJcYGtYQ940zW6YHAiZYf1p4",
+							"output": "41"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_0aee0d2e0bfa54e2016afb6454dadc87d2a1c16fad0e8261c6",
+					"object": "response",
+					"created_at": 1794860116,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1794860120,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "rs_0aee0d2e0bfa54e2016afb6455a84487d2912f555a98fcc191",
+							"type": "reasoning",
+							"content": [],
+							"encrypted_content": "gAAAAABq-2RYVf8rQZprcUrnvdj5d8FL8lBnNkx7IwJ6gb_rTXuQUvsSckKIrFoVFxx56UyK7DPkUbLS4T76XddBWH384WWxxxNvyrt1J-w5s7iMnZ6UKRX9XRJ_tsWji6Gh0GP7_hgfhaiiDrS82EW_zTO7NkGHx7kMwrv-U-cN2EaUtfmZvDRjqn83fwPCpvNPJJO83jMOCPgX2LyIvTND06xg6G6n6-O4R8WABI3p7g18vOUUJ2EmHfWBelg8RkYc1jszFGcX4WaiFxXUAREPsibkHTWZ5t0buunl3JzagUVNsJ7v9zjElptbmDLnjTPD_pq-hm57WlQfAeagolP4rgQtM_V-yRcCPedhuUaUTNzVUTMfJbucDMX4EPgFNT6Dwti3M7AlyjwgcZnKxJ7mSYvCLYJD7GtZwTpTJ6L8FP-lj1A_AEyjqW959n68kLYd7TQM6e_3u4YMR0-By628ttiThTluIUX6AKTemSKtybnbDLXQLe7zR_SrbZYUYzCH6w2PI7CZakZkgKZ6VghFnjXJ0bx5baQYFqNM8zaYQXEvz3F-cj2DLSnqbfOkYIUZ4f_HtTWzr0_-Cmz9glZbCxq5eBwqnsPL28uY1kAXtKPI9fZzCqc4gTGrOFEyiRbb7mE8A8PPBbZw_xeA87_zV8oaCfXX5vy_OVQreAOH2byDqHUnPkrX4fCagGtLDSn66w1EwU63k187cFUaQ9xTjUylRX7wmWaBBKWi6xih2kVtEZfmd0p1_Z6gc3TuLq3a8Vxt5jWqVul-BUqcvlm3NlkUP51KZPxDbllzttnu6gF2GV3odWLCWR7zd8OpQGEuiE5JIYTgyYHI9dgww5sSVEJEcVBWva2Mtow70NH06fCoFxjUqFDCzIMunOpuyl-Nco71EFdJY6foKzV930GbS3fQtM3uCqgakyTb-UOjjH9-mx-8hT7JS6Un5s_tTv8KzgKFOiwqAIcZqS87pzQE_XU9PNBn65Nh7sMYV_rHngx4bvS_uaGhzA5XpVijW7yg4wmiT6f-n75ip8gbWw6W1mjQnb3f7MWx_KJc2zb5fvUVtlBfSLznEtHSI432pabtvEVS8Kb9wNZkI__w2OZ6c7ZK-qHGwaJeXLwlQtqSlCqfEnT3DVFGYiBxo_qiLZyPkMd7A3IL0mLGOH1AY0mYWGQvJoG6xyGqXCOq0ItEZZsENg-GU-spTvIn9SW0udLVkKDP-9n1BobaMnbNoOWoFrh87XfwJR7OnOxQv8a7m68Ad6gyQPGUXQESmjlpwsyFeXCv_yYV-ZVuchA45CyVoB_qpExg4GY1PHDoDfE-PinXo2cX8T96-MZyjQLLoADNFP1JT1rMfYKFdpu_1igGc5PnVOxyi0MeIkhd8n3tYV-4JffmDbdWWPgoxHAs2FkRTTcmUMVC0x7SUqsRcWoiS-pOnlyToByV7gPrC9a5ub0Fva4S6L6-usV80rjgg-qYLNu2b-bBADhrGm7cOikacMPr1-LVfbr3wmKIhgsFqQtBJ2HX4O7UcPn2CLS-XBKE8eveNZ2Q2QrM_vwfSoQWaZDS9qKxp6Qzr14PJ7Xmx1_ci1q_GyriEvdjG66so1e8jhxVlKVuvdPmuWNMuP6bQtPhtHmc_OhcmXYBRUb4Ws6tH3lOdc7LPToF-svUAqH1zscYL0CgTSBg88y8EbhD_3yuRm-fRzwo-DfbTwmnA70s93ydxFsrfnbNjbPPqtdapzefFAShdC1nYusLgqCl77-oIl0kZNBYRyHKY_RC9ZZuBjlyJp0bDdfXz9Q7duNPOfV4uxCJdO-bL-MzuwEzY8DR_WIddPlrFpRedFzLyujQGuARm7EhfFeaq0C5Y148ooSLWcSQiES-IxxDNbtN6SMalPXwzbwpf1m2f3C26uzveqQ-_B_wYEHQjtq0Ej6lomG6_MYD3WN2snEZcSBEG2L786yDN35Xc6H_WFC7mIWUV4ZGJ-KPYCLJ3ark-gNwn8qt0epzglYGngs09qZ1sb1HaJ_JKkjAbgCaNmyHsU9vwl9bXtM=",
+							"summary": []
+						},
+						{
+							"id": "msg_0aee0d2e0bfa54e2016afb6457e7f487d2a7bb4670f854f792",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "37 × 43 − 19 × 29 = 1,040. The secret number is 41, so their sum is **1,081**."
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "medium",
+						"mode": "standard",
+						"summary": "detailed"
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "function",
+							"description": "Returns the secret number.",
+							"name": "get_secret_number",
+							"output_schema": null,
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 160,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 72,
+						"output_tokens_details": {
+							"reasoning_tokens": 33
+						},
+						"total_tokens": 232
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "openai replay with an empty summary",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"reasoning": {
+						"effort": "medium",
+						"summary": "detailed"
+					},
+					"max_output_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_secret_number",
+							"description": "Returns the secret number.",
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Work out 37*43 - 19*29 in your head first, then call get_secret_number, then tell me the secret number plus your result."
+						},
+						{
+							"id": "rs_0aee0d2e0bfa54e2016afb64527f4c87d29397d2df14422dbd",
+							"type": "reasoning",
+							"content": [],
+							"encrypted_content": "gAAAAABq-2RUvOR6PJ-QdWuPHLyKUXPhWRf3pwskXe--3e8h5-nTs7_xPcDYu8Floc_cjoB9_flFoKfJCo_MBmMUohi0PYYJTUjhsow8I1MHx03iYdn8PA1cy8EIy6yvCNEKKNRi0jc5vYoyoJ4dIMKBCRwLPFMQc4UCF7DzTvNKNEekos_A7weke9i3JXbOUh-ewrMFrKGU4-ZwHKFAHwQtfECSLRzvGRDz_Gc27MhqSBTxWemWi_QLi_u13xAFACleQN1i0X6aPm2bY25v3qC7DP7ja1bVIkMUw2r56QjXiFCVpl1LdkDsjamtXTCPtLjumi4iCfYLYggSGPrc6I2QM0kqPhLUVDww2je-dz7MRgs-3S8ki6g9NV5F-d6c9S0I86SWRBiby7L7oYmaBaiQ5j_Yn5K98gXGqEk6gVmknBvAL8jPOfHTAW7mnwSh5hrfr4cZeA3_0LLTq9n3_kI9NyTOK_BDNMicvVPfJAAAGvjeJ-Zyhk1Dy50-jkcJVCZBnx30XVjLXwXb6zTWvRHVVboc3Gytmk3dTUcZdK7H6tmdOnHLkRawUF5hS8leHL_uwFhxq62OsjjjN4D44xgEU5bO1HNfReMnM6C2sqOy3GemC1HlPtTgOIBHKdbWB8-j6Aee843LPFsT1400S0OgA7GQht8cQt5u6Fzsjrt2olnmKXSXWM9KM79i1ML2iVb7Q8Up4ionG3Br9RZ8Azna4jRjfLjxrge5IX2q1ZU1gKMWlI4Z7cDBO_320MhbBzHzeq6YjRxHUnn4QqA9QZ5-XNVtfuqRianYE-sJvA7k7RFa8Os8kpusG_x61ti8XKHZfNp8cdE-SztBcp-e44NSnJfqZntyrVqrhzaOHzbH53pjHoPQhl_CNVGTH7az6t9GSofVhflLydtQDKfWveR5qupmuN3Y4bM95FkbTuFSOb6JL2-eqmIX6ohymjJxtVqMpFDuaMRmaCfXH3mKYPOwze2pDuUraQRSG9uTZg3EyfxBzQc4Lzz8fNePdFTLlgfNiDW59JFHyLyggV7pM54IuTUSV_I8vk6_2_UPM1tUWBqW3anUANnmqN_D4ER6ZlRuoGoxn-OGJFiaUUA43Ttyn-budaqOxZStDfrEjEHRklFq0dNDT2dL7wQCQXZpRRcKS2zexYolCtikb3ubPA-KwHo5MWrrreiwGJpOJJgS70G6bUtZIqTPgPzCzjM_A6pcP4XEkI-7GZPl97Lb_plD5fnykVEpshhHlqzznKzIN0UpcYKOkIy6967SvypJFiuaD-LRAlDoWaf4roDY-w27vtXFPCzp_CWejGO3IyOQH3ZEW4a0PbJzg0pEyDht3M-ICeqlYUDm6ZrU1bSCWIVpaXI9tGOY8vMTCdZBBuCqB6XWcToPgCOdO0Y9puNq9Of062NJiBGO9100vPlHJ7pl36-APo0eBtssGVXj9SAYMOfL5dOAN4DHBDCgWt5Q8s5--XrgoyF5lhBuA2K99HHbNq0h0xdLck5s7mTLUrdiS3WQL6rqVHyhHdS-QgQvDHUUvAZBqXw-JdyAcN_Nqja-6hYemDE-XbHLpc5H7JYKB2XSlLBEbwCdBf619EOqFxOOCexqESgb3uLu8qRIiIgK_9hffzZV8BzH-juU7HLh4x5vCmsqBTOgtTd4MziikzZ-ugnwXs1ldaA7s3W20LQ34xMRUeuUoPkQ1KT1WdKM2OUaX6BNwAPrlS_UlBPy8vn2qWvYxFRzJkDU9_XlEUE54VWLE_Ynm3EZ0ZgR3xDByv_Ap1xvlSwR-1fvNR6b0shUgbSDzHVHePugHPLCNN2VpzZVUiO8KCMa-IU5h4doCSNpbf7X8hakW2NGiweu30y2appvt6Pwlhq7oLZqUyMDgg-YfQLBmzQf_2HC_MUuUCaGl-3eX3HBPClt-bs2i70fedSC4yPpLQiNXfASbwj6SmVduHitmGrd1KvwHSjzzNXa3GTnX2eUOPAuTlK_Qd1jy70SuNrJpkuo889S4SeNdzXFSTW7mrs20RNcLsP_erMWte-dgpwu9QC7Z3Cj8bExt4mGA7Jf8mAEJPCb_73HNh7ZA3RX_cC5DBpGuukRrCTprD6PRQCzMrJtLGBgRmRrc15e7IR4SyeMG2CBPQORN3nwDrQrfJUcOb9glnuHwp1T5pHuCTqYYlNaebiWYpfVk--4CpFR8IG9efC2xrwuzVvvU9rIWQ==",
+							"summary": []
+						},
+						{
+							"id": "fc_0aee0d2e0bfa54e2016afb64549fd087d29fcde03ae0eb5d63",
+							"type": "function_call",
+							"status": "completed",
+							"arguments": "{}",
+							"call_id": "call_xJcYGtYQ940zW6YHAiZYf1p4",
+							"name": "get_secret_number"
+						},
+						{
+							"type": "function_call_output",
+							"call_id": "call_xJcYGtYQ940zW6YHAiZYf1p4",
+							"output": "41"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_0aee0d2e0bfa54e2016afb6458248c87d2b50020309ca74522",
+					"object": "response",
+					"created_at": 1794860120,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1794860121,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "rs_0aee0d2e0bfa54e2016afb6458aac487d290ea35084703df4e",
+							"type": "reasoning",
+							"content": [],
+							"encrypted_content": "gAAAAABq-2RZlUW9AaPvMfLRK9aVq0zXlHg_p-lH_yVqw1psN0NeBBXTbt0pv3iJZqszp4fKRCCVxNDVDkXuV5vc1-_lpXg4e48zNW7PlJu5hUfUKA_yTmNLorIPlKm_x-b88iOOzgvLKdjm8PyObOAczIs5ozvhB3A6ZO3ZJxhpAP9rkDA9e5OwUqDRkbrU2LSXTerbqqhCtyb4GcxWBvUnLdMo5P6uxKnjJy7hN1qZTQsndS5I-WP9Gh6RZGazWU-vXlv85HdOoLyr5sHzyEaGwN85qEqbSQW2UQARoSJc0yKxSAPfdec5DkWGCu4pgO6AZjYLy8RRBBN19DxoBL9t9EDQ-3yaG3oQlmViSza-KTVcq4msV1ahaeobWgz8cxRMz2bFQDZnwi6fGFUarBJzCTYFCdVc4dchSlsYbssMW3hR7V65jYOY39CVCKuQvTLmN27M5Qf_Gf-dfPjbD6rmCNXTzQIVXKs_0taixpURUmbzEjpdFz-VnE_UjSNtY33LxzfQKCiDH3BTitmCxRK1S2Oy7En-CtmUBh4B5QsWwXJSCIgU5AhnuPoJDTWTBdV_crEC9i1INoHA9a0hQdfCzHeS1RhwUIwjyE2nNBlLXSgPzUCFLKylB8AVtlB3G2pGoDShiMzls1IcfnLdrt648GiHQle7G2fDzhSVjUpHhSFyVvMqQTuDDuCRM66217jSIytd1wlwt0lTsYQtcm2TlREbp_IAXj2PO_en-AaZbR3eJjRkrWqTVzGAQzyTaw8LF2x3PHqT4LYGhKdPT8jl87tRtWZ1mDNdMXqR-DSPO3vzhouelcJH4PJVxBrNDCHnVCAzkFvHtOc0iHIghexd8Vcgtl-7uZ_Pl3Y2_LfZDV4PzpQEcEpC37yy6HUuzTi0G0jhyr5P9TlLu9xSj4DUN5gF6gRgaGojoc1S421TEsHJBi6dnuL3lOjA05uH8uSeGXXknikyNe5S7KhlRG_qQ5IQL3iiJ8DQ-6NM5R9Q_Ltgcw-blpyuA2c9vew5QexkFdz3p7toKilVOXimDoFGLm_DsnTTMw2NNbpTInamO8fIKVWWK-UtFNdo74peS5gd1XxQVbRiWJ7_DJROG8Gb3OsqXsQRXH2qTAwQjY4exsfe2pp-O-HOmnuCQzcY9H32vy7laR7jA3ShViUrOY4pQpOkaJIQnKQDMBL4FGackXW943fk9WcQMLtnK-lBsKOsHjUnue8PY5OsIGyaNpLp_te1lhA3m31dVQLtinqMMEZHU56c2knuPCvdbOJvPzWuOwhhXt0A1E8MW79YkibRFmEUrSBzyghi6P5ijaczoqLHyKKCf13Vkb0ofd96VsNo9_Y_8GjwtXnz_g9vj7zSCbkAO1FDfaY0PGPGxRRbT0EmawdlTGHAdsfv6GEOG277Saqrfh-NIgMMucp8xymzlMvjxiyZZBmOAShMEIS6nkFfatc95_y_E00oNs-iUOsuQnLMrRQ2g1StEOrpcshcHjnJYysGejKCFjM66KXULivk_PpPls-DSZJ7wjDQeDt4F1mLwuVtHtHCZO40e2mNqL4LBUaSb6gB-ADfjWqyDga8gPWnVDE_mujE_6MnCeZyW2j9UZKEPYn8lXd-6GiHGSIOhviUqJlxg_X3MGwF4ugthhIs90Mn-zHCOrTChBeld4-JT4GnAqI6yT1KRj_WNgP2lFG1rmt5IYySMe8N8a6JQR2sTYRvHYpKtY55iOJjZrf0FOMKbjW0nfp1Uw-2GLTDz0Q242DY4W_D9Fys5TOk3SI9zkqrFFxhvJQ0GIyPGAlzIy2dI_k5axH_2LhsHSJtlWwstA==",
+							"summary": []
+						},
+						{
+							"id": "msg_0aee0d2e0bfa54e2016afb64590a3887d2b39d1826a9f05312",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "37 × 43 − 19 × 29 = 1,040. The secret number is 41, so their sum is **1,081**."
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "medium",
+						"mode": "standard",
+						"summary": "detailed"
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "function",
+							"description": "Returns the secret number.",
+							"name": "get_secret_number",
+							"output_schema": null,
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 160,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 57,
+						"output_tokens_details": {
+							"reasoning_tokens": 18
+						},
+						"total_tokens": 217
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "openai replay with another summary",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"reasoning": {
+						"effort": "medium",
+						"summary": "detailed"
+					},
+					"max_output_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_secret_number",
+							"description": "Returns the secret number.",
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Work out 37*43 - 19*29 in your head first, then call get_secret_number, then tell me the secret number plus your result."
+						},
+						{
+							"id": "rs_0aee0d2e0bfa54e2016afb64527f4c87d29397d2df14422dbd",
+							"type": "reasoning",
+							"content": [],
+							"encrypted_content": "gAAAAABq-2RUvOR6PJ-QdWuPHLyKUXPhWRf3pwskXe--3e8h5-nTs7_xPcDYu8Floc_cjoB9_flFoKfJCo_MBmMUohi0PYYJTUjhsow8I1MHx03iYdn8PA1cy8EIy6yvCNEKKNRi0jc5vYoyoJ4dIMKBCRwLPFMQc4UCF7DzTvNKNEekos_A7weke9i3JXbOUh-ewrMFrKGU4-ZwHKFAHwQtfECSLRzvGRDz_Gc27MhqSBTxWemWi_QLi_u13xAFACleQN1i0X6aPm2bY25v3qC7DP7ja1bVIkMUw2r56QjXiFCVpl1LdkDsjamtXTCPtLjumi4iCfYLYggSGPrc6I2QM0kqPhLUVDww2je-dz7MRgs-3S8ki6g9NV5F-d6c9S0I86SWRBiby7L7oYmaBaiQ5j_Yn5K98gXGqEk6gVmknBvAL8jPOfHTAW7mnwSh5hrfr4cZeA3_0LLTq9n3_kI9NyTOK_BDNMicvVPfJAAAGvjeJ-Zyhk1Dy50-jkcJVCZBnx30XVjLXwXb6zTWvRHVVboc3Gytmk3dTUcZdK7H6tmdOnHLkRawUF5hS8leHL_uwFhxq62OsjjjN4D44xgEU5bO1HNfReMnM6C2sqOy3GemC1HlPtTgOIBHKdbWB8-j6Aee843LPFsT1400S0OgA7GQht8cQt5u6Fzsjrt2olnmKXSXWM9KM79i1ML2iVb7Q8Up4ionG3Br9RZ8Azna4jRjfLjxrge5IX2q1ZU1gKMWlI4Z7cDBO_320MhbBzHzeq6YjRxHUnn4QqA9QZ5-XNVtfuqRianYE-sJvA7k7RFa8Os8kpusG_x61ti8XKHZfNp8cdE-SztBcp-e44NSnJfqZntyrVqrhzaOHzbH53pjHoPQhl_CNVGTH7az6t9GSofVhflLydtQDKfWveR5qupmuN3Y4bM95FkbTuFSOb6JL2-eqmIX6ohymjJxtVqMpFDuaMRmaCfXH3mKYPOwze2pDuUraQRSG9uTZg3EyfxBzQc4Lzz8fNePdFTLlgfNiDW59JFHyLyggV7pM54IuTUSV_I8vk6_2_UPM1tUWBqW3anUANnmqN_D4ER6ZlRuoGoxn-OGJFiaUUA43Ttyn-budaqOxZStDfrEjEHRklFq0dNDT2dL7wQCQXZpRRcKS2zexYolCtikb3ubPA-KwHo5MWrrreiwGJpOJJgS70G6bUtZIqTPgPzCzjM_A6pcP4XEkI-7GZPl97Lb_plD5fnykVEpshhHlqzznKzIN0UpcYKOkIy6967SvypJFiuaD-LRAlDoWaf4roDY-w27vtXFPCzp_CWejGO3IyOQH3ZEW4a0PbJzg0pEyDht3M-ICeqlYUDm6ZrU1bSCWIVpaXI9tGOY8vMTCdZBBuCqB6XWcToPgCOdO0Y9puNq9Of062NJiBGO9100vPlHJ7pl36-APo0eBtssGVXj9SAYMOfL5dOAN4DHBDCgWt5Q8s5--XrgoyF5lhBuA2K99HHbNq0h0xdLck5s7mTLUrdiS3WQL6rqVHyhHdS-QgQvDHUUvAZBqXw-JdyAcN_Nqja-6hYemDE-XbHLpc5H7JYKB2XSlLBEbwCdBf619EOqFxOOCexqESgb3uLu8qRIiIgK_9hffzZV8BzH-juU7HLh4x5vCmsqBTOgtTd4MziikzZ-ugnwXs1ldaA7s3W20LQ34xMRUeuUoPkQ1KT1WdKM2OUaX6BNwAPrlS_UlBPy8vn2qWvYxFRzJkDU9_XlEUE54VWLE_Ynm3EZ0ZgR3xDByv_Ap1xvlSwR-1fvNR6b0shUgbSDzHVHePugHPLCNN2VpzZVUiO8KCMa-IU5h4doCSNpbf7X8hakW2NGiweu30y2appvt6Pwlhq7oLZqUyMDgg-YfQLBmzQf_2HC_MUuUCaGl-3eX3HBPClt-bs2i70fedSC4yPpLQiNXfASbwj6SmVduHitmGrd1KvwHSjzzNXa3GTnX2eUOPAuTlK_Qd1jy70SuNrJpkuo889S4SeNdzXFSTW7mrs20RNcLsP_erMWte-dgpwu9QC7Z3Cj8bExt4mGA7Jf8mAEJPCb_73HNh7ZA3RX_cC5DBpGuukRrCTprD6PRQCzMrJtLGBgRmRrc15e7IR4SyeMG2CBPQORN3nwDrQrfJUcOb9glnuHwp1T5pHuCTqYYlNaebiWYpfVk--4CpFR8IG9efC2xrwuzVvvU9rIWQ==",
+							"summary": [
+								{
+									"type": "summary_text",
+									"text": "A summary that the model never wrote."
+								}
+							]
+						},
+						{
+							"id": "fc_0aee0d2e0bfa54e2016afb64549fd087d29fcde03ae0eb5d63",
+							"type": "function_call",
+							"status": "completed",
+							"arguments": "{}",
+							"call_id": "call_xJcYGtYQ940zW6YHAiZYf1p4",
+							"name": "get_secret_number"
+						},
+						{
+							"type": "function_call_output",
+							"call_id": "call_xJcYGtYQ940zW6YHAiZYf1p4",
+							"output": "41"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_0aee0d2e0bfa54e2016afb64597b7087d29f24bb01f27cd9e5",
+					"object": "response",
+					"created_at": 1794860121,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1794860122,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "rs_0aee0d2e0bfa54e2016afb6459fd3c87d28e36a9d9e43af06a",
+							"type": "reasoning",
+							"content": [],
+							"encrypted_content": "gAAAAABq-2RaLvLD9oyyJnW0JhGtn1Ax7ULYafBlypGURMnorIk_BNJIOiCV_QZgdDbLOakrEBTFO1gy0-nM4cwBAQ0pSSCx0zNRQrt0aqtYDFZaa1QcO3phSWM0d4dcq3TwoDXOtHed1XrM3nC-BXEnUfJCzP-32Dub9ut2NokgSQ5aXc2ao6Mtnpos9MXppC0_ISDxwcGu3K2jWvUVs0WYV5C-DjA9Vg8US6mXvSrZX_qX_G0I6GUKfNSbNR62f4dJV_ALl4lJu0cxs7ASlSwlIC6deS-jYoUEoLX9dtcrTBvEz74EtG12rimQcAXwrDGhbvFOh_dBELMc3GPuoNgAvAWEcVFZcfiVNTXsqVcngSNiqzz-nU7j3CGIobtWGYwju2GJsrj2roPY1yaMiQBOnaVuoAk0hRyVElG-sSrq7HP3yMZKxLEI0nq1q64mIb9XsRORa2Ex1-GEMcbad98hkDdYZJRHfOE_hJmWRO-iqtWO601bWPYulHCU6xiIyEitOKAXtd5DRcJoKv97JJjD6lKBt4BN8bCdl4C16ZscxdMLh0wl69Y1tKaBT7V7iiREijWs1u3yajfGJ_4l857cNFD7OfswbLwws9t6Cd5yfsft2oYsq9Gc3HRjb97JapWu5uFqmHdsxr3Pe4okvpSr5Q53JTzWmWtHYmBPBYHC9aN9fWNCRG3AkiFjQxm4QHMZmkbX9WqaCNt8bE_JQqumoNG4XY50SybtJhTjD2OyNyqW4mFpiKlmiLOL89kMygafzkroLIojMNLCZGlim-l9619x7WRXH3Iepv33hl04RdfjEHuslGYYXHZHIsqXWN3Xvk1CyxFcy5r82pv26rmsWD9gPFgJILyeJPtvJ8Ddh1_tg_6_wTXMtac0K_2dGLy420ghvsz32No2SoqHSccKTJmp674ALwfT50uzRvVzm4h_aU0ixnHwKjgXrm2GUNrUHDt014YGePkYiZ7Z_E_ec5hFd9oonTkTzWydrrbJTmxWcr2f3pMjU4_KyjLFXexXyvlwLQ7uUUGZuaTwlyho_MpJq4EtAU4j9LwtGsJWilZrZj3VWiWynsT2dA_jB85HE-WQbLJWlzEkymi5773cqXIfblQLHSE6hbK3nemaDo5e0QM88gvFTQniXm5umit1eNUO6BZtDG5pFwIBgyBETh9HgrXKGc00WHpOE0EoOhLf7DYzASxvWb0Fi7cS7x_Pinau_W1WUwYLrodKzNyI61egBWhsgpOzv7AmazbK-pLAWHwjSwejgPZGi4yWgv2ccntYonSNat0lBQQvBN7Xu8wE8pN0d4ASbko9yOcGkrubo-nYAYa7HasFLd2o0DS4ueyNh1nd2OX3q9gC0pC-tSQkRMmHMbpr-lV65WpSitNtn1LZl75f56Pg-e7ppTF0XADKQHyILbXrdTX-to3Ce8tIXRAu3aA6Otl4fgbB_XtYpIjLtWFaYZfhf-EZ-4Xcfa9GXRvGEHTXNQOlgDg6sArED6xIPsfo4itAm4fmu7wQ_BvgQPyRWBe-YbuWydJGIFtlTu-F5CI4cXCiqji1nMCjgQXxmY3W0Jg_tTecrl5RM2KYAKyc1n0oxmrgH3Tbs4UwdyaRylkkoTdI4tTr0t9ksCOR9aYXtSdI8hWLxv4cX99eSt1SI3gyXNYsZWMW0MU5emuORF-3UrdxelzSJLMFRHBDvSMi_xnFyy8Kp5bx375fpPBhAYf7tUY__5Uyr5qA4z02K-miTPC1bigPJOzc0hcsfDs2H10HRUtvsiwpaGc9FcI=",
+							"summary": []
+						},
+						{
+							"id": "msg_0aee0d2e0bfa54e2016afb645a6afc87d288d7704c49c39936",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "37×43 − 19×29 = 1,040. The secret number is 41, so the sum is **1,081**."
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "medium",
+						"mode": "standard",
+						"summary": "detailed"
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "function",
+							"description": "Returns the secret number.",
+							"name": "get_secret_number",
+							"output_schema": null,
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 160,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 53,
+						"output_tokens_details": {
+							"reasoning_tokens": 16
+						},
+						"total_tokens": 213
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "azure mint",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/responses",
+				"body": {
+					"model": "gpt-5.6-sol",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"reasoning": {
+						"effort": "medium",
+						"summary": "detailed"
+					},
+					"max_output_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_secret_number",
+							"description": "Returns the secret number.",
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Work out 37*43 - 19*29 in your head first, then call get_secret_number, then tell me the secret number plus your result."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_062d5ab68a03276b016afb645bcea88195baf986a2127862d2",
+					"object": "response",
+					"created_at": 1794860123,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"completed_at": 1794860125,
+					"content_filters": [
+						{
+							"blocked": false,
+							"source_type": "prompt",
+							"content_filter_raw": [],
+							"content_filter_results": {
+								"hate": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"sexual": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"violence": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"self_harm": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"jailbreak": {
+									"detected": false,
+									"filtered": false
+								}
+							},
+							"content_filter_offsets": {
+								"start_offset": 0,
+								"end_offset": 153,
+								"check_offset": 0
+							}
+						},
+						{
+							"blocked": false,
+							"source_type": "completion",
+							"content_filter_raw": [],
+							"content_filter_results": {
+								"protected_material_text": {
+									"detected": false,
+									"filtered": false
+								},
+								"protected_material_code": {
+									"detected": false,
+									"filtered": false
+								},
+								"hate": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"sexual": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"violence": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"self_harm": {
+									"filtered": false,
+									"severity": "safe"
+								}
+							},
+							"content_filter_offsets": {
+								"start_offset": 0,
+								"end_offset": 49,
+								"check_offset": 0
+							}
+						}
+					],
+					"error": null,
+					"frequency_penalty": 0,
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"max_tool_calls": null,
+					"model": "gpt-5.6-sol",
+					"moderation": null,
+					"output": [
+						{
+							"id": "rs_062d5ab68a03276b016afb645c7c948195936953fd16fc6f64",
+							"type": "reasoning",
+							"content": [],
+							"encrypted_content": "gAAAAABq-2Rdl-Ao-IHb3QjBZSWP8ffKn7l1WLxsHd29TS5_u279Kdst2rPrUV6vLjWo6UNsWq2BM6CLdNV25wEkhFoQtqEyrcl_l24AnaYUlSXMBIBWKEKekvkfk15krCKr9sECDRWidkqYCbmFDnj7vGa_iae87G9xSrE55kQKsKxkvZ0nFIPHR54MYHWXQZnXtexL3kGjScUyR84z90_7kB0qFZmP4VnR_O77gtb875WCQXnpEZg829JJ9Fieltns3tnZUvALM_RvbcPapc8VDRBReECBrzNyBDbYIHxoDnA54kk86bgQ2nu7t9bcWy69oW8W9--SaAHN3ByEodaIK_dS3NkL3mYATyaO_ehOmlJ_XIZ8Ea3G3myLExItl_0M6T6G2vWpUGDZ4NhL6wu2neDehqbRkPI1XZmfAprSPLhQLcevMwsa_Bc8dwVfeGp81yTs3PmauQ7pA7E14-j2AtP5mgs9Ps75Pl1LYMFuEmAqLYzfki48DPV0CYYijcS7qMj39T6m7qFbhENymRu_mtT8jPfir70fNIu0FHVH_xuZsPf7jaSrQh46wpQU5-aLWB7jnC9IKgz7wtDubJXaMN42d2lbQ9dmwjdazD52gNZ8jDD9klo7AC1-GetWZzwnImanBRQlvCrDzhFiVcKIkCxEVMckT0Vo5gzA0sfCP6S8llYUQN0ICix7GI-uuMHoZUcbjoQNxdjhRXzEUpYk8zGsGwQSwnwNeE6d7DI37HSaIq_zs1gtWXN0PZqTWiCb28GarwcKr2KIQmX8N-mm871ikrUA0UJNsd2oAZVGa2NiKZ1xIYBo5GQvyaRcJ3sTi1Dz2lQrFvYuCJuqs82aXbwN8fIfvZaV_qicAYaosKDMNHX7Ng9Up1AB1jhebuRZL4Nydv12fwOuPG6OD81tYYO9liKicq1IlEZ-EiyAoMZGpJy1IcTjj88KAtTqIc1fU8PKgbA5K8hiBkox4kCtcb6T5uaJp8-_DZYAKMAmPv41kMJ8q472sjaGKg-wnzof5HIbDzT_JCRmZ6EOyfnhCwU5G5GQuEOHQ5gFhz82D1YxSaI8VkN3cBNpQ_-RUINy6xkuSWPTxAGRPHJN4b5QTM4yu7_U2GD7H9uAEMlDldWj8gfVp54Ez855b7CTt92lai7Rp3Fuf5EUkRBC5VxoQp3du4RhkGyzZpR3ZzjaB7YKIKJtkvKHNR6xtZsOniRO0OcgtHKqxfKaC3fS4OCYk1217JP8Asy6J7oOEnA39Rm-IuEwlQ1fCu16kdjMU90xSADEDl4qHEyODxU_tutj13voTDYUyh4OzRtKpEzvN2FPUH22Q4tVY90ClRkGahmM6puzU74TxXpYrQLXNexAYcPIx5D_l4vs2P1vesrwbaPzauIpNj4AsvCqU0VvIIUSBre3yU-tlZarfKi7omqTLIOR2MOo4NELELb-XyfIUnnhNrql-ZBrwd_r48b3CzG_qbn-KPXQaLA9L9wWyd9lfvGNps3ZtjjV-kCETe4kkY3rGqkLKcMExsEr3NTNQgoYNIfR0jp512x3qOStPE8oxbnpgaKclfLM2VDf2x6FuR5ruuhTTd4=",
+							"summary": [
+								{
+									"type": "summary_text",
+									"text": "**Calculating subtraction**\n\nAlright, I need to calculate 1591 minus 551. So, 1591 - 551 equals 1040. That's a straightforward math problem! I'll just make sure to double-check my work, as it's easy to make a simple mistake. But it looks right this time: 1040 it is! Now that I’ve got the answer, I can think about how to incorporate it into whatever I'm working on next."
+								}
+							]
+						},
+						{
+							"id": "fc_062d5ab68a03276b016afb645d4ea88195a333c21a9f0b7912",
+							"type": "function_call",
+							"status": "completed",
+							"arguments": "{}",
+							"call_id": "call_k5LIOBkDITj0ypTFTlPWkF4o",
+							"name": "get_secret_number"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "medium",
+						"mode": "standard",
+						"summary": "detailed"
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "function",
+							"description": "Returns the secret number.",
+							"name": "get_secret_number",
+							"output_schema": null,
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 68,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"output_tokens": 38,
+						"output_tokens_details": {
+							"reasoning_tokens": 21
+						},
+						"total_tokens": 106
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "azure replay with its summary",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/responses",
+				"body": {
+					"model": "gpt-5.6-sol",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"reasoning": {
+						"effort": "medium",
+						"summary": "detailed"
+					},
+					"max_output_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_secret_number",
+							"description": "Returns the secret number.",
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Work out 37*43 - 19*29 in your head first, then call get_secret_number, then tell me the secret number plus your result."
+						},
+						{
+							"id": "rs_062d5ab68a03276b016afb645c7c948195936953fd16fc6f64",
+							"type": "reasoning",
+							"content": [],
+							"encrypted_content": "gAAAAABq-2Rdl-Ao-IHb3QjBZSWP8ffKn7l1WLxsHd29TS5_u279Kdst2rPrUV6vLjWo6UNsWq2BM6CLdNV25wEkhFoQtqEyrcl_l24AnaYUlSXMBIBWKEKekvkfk15krCKr9sECDRWidkqYCbmFDnj7vGa_iae87G9xSrE55kQKsKxkvZ0nFIPHR54MYHWXQZnXtexL3kGjScUyR84z90_7kB0qFZmP4VnR_O77gtb875WCQXnpEZg829JJ9Fieltns3tnZUvALM_RvbcPapc8VDRBReECBrzNyBDbYIHxoDnA54kk86bgQ2nu7t9bcWy69oW8W9--SaAHN3ByEodaIK_dS3NkL3mYATyaO_ehOmlJ_XIZ8Ea3G3myLExItl_0M6T6G2vWpUGDZ4NhL6wu2neDehqbRkPI1XZmfAprSPLhQLcevMwsa_Bc8dwVfeGp81yTs3PmauQ7pA7E14-j2AtP5mgs9Ps75Pl1LYMFuEmAqLYzfki48DPV0CYYijcS7qMj39T6m7qFbhENymRu_mtT8jPfir70fNIu0FHVH_xuZsPf7jaSrQh46wpQU5-aLWB7jnC9IKgz7wtDubJXaMN42d2lbQ9dmwjdazD52gNZ8jDD9klo7AC1-GetWZzwnImanBRQlvCrDzhFiVcKIkCxEVMckT0Vo5gzA0sfCP6S8llYUQN0ICix7GI-uuMHoZUcbjoQNxdjhRXzEUpYk8zGsGwQSwnwNeE6d7DI37HSaIq_zs1gtWXN0PZqTWiCb28GarwcKr2KIQmX8N-mm871ikrUA0UJNsd2oAZVGa2NiKZ1xIYBo5GQvyaRcJ3sTi1Dz2lQrFvYuCJuqs82aXbwN8fIfvZaV_qicAYaosKDMNHX7Ng9Up1AB1jhebuRZL4Nydv12fwOuPG6OD81tYYO9liKicq1IlEZ-EiyAoMZGpJy1IcTjj88KAtTqIc1fU8PKgbA5K8hiBkox4kCtcb6T5uaJp8-_DZYAKMAmPv41kMJ8q472sjaGKg-wnzof5HIbDzT_JCRmZ6EOyfnhCwU5G5GQuEOHQ5gFhz82D1YxSaI8VkN3cBNpQ_-RUINy6xkuSWPTxAGRPHJN4b5QTM4yu7_U2GD7H9uAEMlDldWj8gfVp54Ez855b7CTt92lai7Rp3Fuf5EUkRBC5VxoQp3du4RhkGyzZpR3ZzjaB7YKIKJtkvKHNR6xtZsOniRO0OcgtHKqxfKaC3fS4OCYk1217JP8Asy6J7oOEnA39Rm-IuEwlQ1fCu16kdjMU90xSADEDl4qHEyODxU_tutj13voTDYUyh4OzRtKpEzvN2FPUH22Q4tVY90ClRkGahmM6puzU74TxXpYrQLXNexAYcPIx5D_l4vs2P1vesrwbaPzauIpNj4AsvCqU0VvIIUSBre3yU-tlZarfKi7omqTLIOR2MOo4NELELb-XyfIUnnhNrql-ZBrwd_r48b3CzG_qbn-KPXQaLA9L9wWyd9lfvGNps3ZtjjV-kCETe4kkY3rGqkLKcMExsEr3NTNQgoYNIfR0jp512x3qOStPE8oxbnpgaKclfLM2VDf2x6FuR5ruuhTTd4=",
+							"summary": [
+								{
+									"type": "summary_text",
+									"text": "**Calculating subtraction**\n\nAlright, I need to calculate 1591 minus 551. So, 1591 - 551 equals 1040. That's a straightforward math problem! I'll just make sure to double-check my work, as it's easy to make a simple mistake. But it looks right this time: 1040 it is! Now that I’ve got the answer, I can think about how to incorporate it into whatever I'm working on next."
+								}
+							]
+						},
+						{
+							"id": "fc_062d5ab68a03276b016afb645d4ea88195a333c21a9f0b7912",
+							"type": "function_call",
+							"status": "completed",
+							"arguments": "{}",
+							"call_id": "call_k5LIOBkDITj0ypTFTlPWkF4o",
+							"name": "get_secret_number"
+						},
+						{
+							"type": "function_call_output",
+							"call_id": "call_k5LIOBkDITj0ypTFTlPWkF4o",
+							"output": "41"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_062d5ab68a03276b016afb645db3c881959d9036cb8950c282",
+					"object": "response",
+					"created_at": 1794860125,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"completed_at": 1794860126,
+					"content_filters": [
+						{
+							"blocked": false,
+							"source_type": "prompt",
+							"content_filter_raw": [],
+							"content_filter_results": {
+								"hate": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"sexual": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"violence": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"self_harm": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"jailbreak": {
+									"detected": false,
+									"filtered": false
+								}
+							},
+							"content_filter_offsets": {
+								"start_offset": 0,
+								"end_offset": 273,
+								"check_offset": 0
+							}
+						},
+						{
+							"blocked": false,
+							"source_type": "completion",
+							"content_filter_raw": [],
+							"content_filter_results": {
+								"protected_material_text": {
+									"detected": false,
+									"filtered": false
+								},
+								"protected_material_code": {
+									"detected": false,
+									"filtered": false
+								}
+							},
+							"content_filter_offsets": {
+								"start_offset": 0,
+								"end_offset": 4,
+								"check_offset": 0
+							}
+						}
+					],
+					"error": null,
+					"frequency_penalty": 0,
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"max_tool_calls": null,
+					"model": "gpt-5.6-sol",
+					"moderation": null,
+					"output": [
+						{
+							"id": "msg_062d5ab68a03276b016afb645e39c48195942ecca621dedcb3",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "1081"
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "medium",
+						"mode": "standard",
+						"summary": "detailed"
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "function",
+							"description": "Returns the secret number.",
+							"name": "get_secret_number",
+							"output_schema": null,
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 119,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"output_tokens": 6,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 125
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "azure replay with an empty summary",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/responses",
+				"body": {
+					"model": "gpt-5.6-sol",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"reasoning": {
+						"effort": "medium",
+						"summary": "detailed"
+					},
+					"max_output_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_secret_number",
+							"description": "Returns the secret number.",
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Work out 37*43 - 19*29 in your head first, then call get_secret_number, then tell me the secret number plus your result."
+						},
+						{
+							"id": "rs_062d5ab68a03276b016afb645c7c948195936953fd16fc6f64",
+							"type": "reasoning",
+							"content": [],
+							"encrypted_content": "gAAAAABq-2Rdl-Ao-IHb3QjBZSWP8ffKn7l1WLxsHd29TS5_u279Kdst2rPrUV6vLjWo6UNsWq2BM6CLdNV25wEkhFoQtqEyrcl_l24AnaYUlSXMBIBWKEKekvkfk15krCKr9sECDRWidkqYCbmFDnj7vGa_iae87G9xSrE55kQKsKxkvZ0nFIPHR54MYHWXQZnXtexL3kGjScUyR84z90_7kB0qFZmP4VnR_O77gtb875WCQXnpEZg829JJ9Fieltns3tnZUvALM_RvbcPapc8VDRBReECBrzNyBDbYIHxoDnA54kk86bgQ2nu7t9bcWy69oW8W9--SaAHN3ByEodaIK_dS3NkL3mYATyaO_ehOmlJ_XIZ8Ea3G3myLExItl_0M6T6G2vWpUGDZ4NhL6wu2neDehqbRkPI1XZmfAprSPLhQLcevMwsa_Bc8dwVfeGp81yTs3PmauQ7pA7E14-j2AtP5mgs9Ps75Pl1LYMFuEmAqLYzfki48DPV0CYYijcS7qMj39T6m7qFbhENymRu_mtT8jPfir70fNIu0FHVH_xuZsPf7jaSrQh46wpQU5-aLWB7jnC9IKgz7wtDubJXaMN42d2lbQ9dmwjdazD52gNZ8jDD9klo7AC1-GetWZzwnImanBRQlvCrDzhFiVcKIkCxEVMckT0Vo5gzA0sfCP6S8llYUQN0ICix7GI-uuMHoZUcbjoQNxdjhRXzEUpYk8zGsGwQSwnwNeE6d7DI37HSaIq_zs1gtWXN0PZqTWiCb28GarwcKr2KIQmX8N-mm871ikrUA0UJNsd2oAZVGa2NiKZ1xIYBo5GQvyaRcJ3sTi1Dz2lQrFvYuCJuqs82aXbwN8fIfvZaV_qicAYaosKDMNHX7Ng9Up1AB1jhebuRZL4Nydv12fwOuPG6OD81tYYO9liKicq1IlEZ-EiyAoMZGpJy1IcTjj88KAtTqIc1fU8PKgbA5K8hiBkox4kCtcb6T5uaJp8-_DZYAKMAmPv41kMJ8q472sjaGKg-wnzof5HIbDzT_JCRmZ6EOyfnhCwU5G5GQuEOHQ5gFhz82D1YxSaI8VkN3cBNpQ_-RUINy6xkuSWPTxAGRPHJN4b5QTM4yu7_U2GD7H9uAEMlDldWj8gfVp54Ez855b7CTt92lai7Rp3Fuf5EUkRBC5VxoQp3du4RhkGyzZpR3ZzjaB7YKIKJtkvKHNR6xtZsOniRO0OcgtHKqxfKaC3fS4OCYk1217JP8Asy6J7oOEnA39Rm-IuEwlQ1fCu16kdjMU90xSADEDl4qHEyODxU_tutj13voTDYUyh4OzRtKpEzvN2FPUH22Q4tVY90ClRkGahmM6puzU74TxXpYrQLXNexAYcPIx5D_l4vs2P1vesrwbaPzauIpNj4AsvCqU0VvIIUSBre3yU-tlZarfKi7omqTLIOR2MOo4NELELb-XyfIUnnhNrql-ZBrwd_r48b3CzG_qbn-KPXQaLA9L9wWyd9lfvGNps3ZtjjV-kCETe4kkY3rGqkLKcMExsEr3NTNQgoYNIfR0jp512x3qOStPE8oxbnpgaKclfLM2VDf2x6FuR5ruuhTTd4=",
+							"summary": []
+						},
+						{
+							"id": "fc_062d5ab68a03276b016afb645d4ea88195a333c21a9f0b7912",
+							"type": "function_call",
+							"status": "completed",
+							"arguments": "{}",
+							"call_id": "call_k5LIOBkDITj0ypTFTlPWkF4o",
+							"name": "get_secret_number"
+						},
+						{
+							"type": "function_call_output",
+							"call_id": "call_k5LIOBkDITj0ypTFTlPWkF4o",
+							"output": "41"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_062d5ab68a03276b016afb645ef5248195a620631318f7046e",
+					"object": "response",
+					"created_at": 1794860127,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"completed_at": 1794860127,
+					"content_filters": [
+						{
+							"blocked": false,
+							"source_type": "prompt",
+							"content_filter_raw": [],
+							"content_filter_results": {
+								"hate": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"sexual": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"violence": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"self_harm": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"jailbreak": {
+									"detected": false,
+									"filtered": false
+								}
+							},
+							"content_filter_offsets": {
+								"start_offset": 0,
+								"end_offset": 273,
+								"check_offset": 0
+							}
+						},
+						{
+							"blocked": false,
+							"source_type": "completion",
+							"content_filter_raw": [],
+							"content_filter_results": {
+								"protected_material_text": {
+									"detected": false,
+									"filtered": false
+								},
+								"protected_material_code": {
+									"detected": false,
+									"filtered": false
+								},
+								"hate": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"sexual": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"violence": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"self_harm": {
+									"filtered": false,
+									"severity": "safe"
+								}
+							},
+							"content_filter_offsets": {
+								"start_offset": 0,
+								"end_offset": 4,
+								"check_offset": 0
+							}
+						}
+					],
+					"error": null,
+					"frequency_penalty": 0,
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"max_tool_calls": null,
+					"model": "gpt-5.6-sol",
+					"moderation": null,
+					"output": [
+						{
+							"id": "msg_062d5ab68a03276b016afb645fa0a88195bb64d756d11eaa66",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "1081"
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "medium",
+						"mode": "standard",
+						"summary": "detailed"
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "function",
+							"description": "Returns the secret number.",
+							"name": "get_secret_number",
+							"output_schema": null,
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 119,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"output_tokens": 6,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 125
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "azure replay with another summary",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/responses",
+				"body": {
+					"model": "gpt-5.6-sol",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"reasoning": {
+						"effort": "medium",
+						"summary": "detailed"
+					},
+					"max_output_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_secret_number",
+							"description": "Returns the secret number.",
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Work out 37*43 - 19*29 in your head first, then call get_secret_number, then tell me the secret number plus your result."
+						},
+						{
+							"id": "rs_062d5ab68a03276b016afb645c7c948195936953fd16fc6f64",
+							"type": "reasoning",
+							"content": [],
+							"encrypted_content": "gAAAAABq-2Rdl-Ao-IHb3QjBZSWP8ffKn7l1WLxsHd29TS5_u279Kdst2rPrUV6vLjWo6UNsWq2BM6CLdNV25wEkhFoQtqEyrcl_l24AnaYUlSXMBIBWKEKekvkfk15krCKr9sECDRWidkqYCbmFDnj7vGa_iae87G9xSrE55kQKsKxkvZ0nFIPHR54MYHWXQZnXtexL3kGjScUyR84z90_7kB0qFZmP4VnR_O77gtb875WCQXnpEZg829JJ9Fieltns3tnZUvALM_RvbcPapc8VDRBReECBrzNyBDbYIHxoDnA54kk86bgQ2nu7t9bcWy69oW8W9--SaAHN3ByEodaIK_dS3NkL3mYATyaO_ehOmlJ_XIZ8Ea3G3myLExItl_0M6T6G2vWpUGDZ4NhL6wu2neDehqbRkPI1XZmfAprSPLhQLcevMwsa_Bc8dwVfeGp81yTs3PmauQ7pA7E14-j2AtP5mgs9Ps75Pl1LYMFuEmAqLYzfki48DPV0CYYijcS7qMj39T6m7qFbhENymRu_mtT8jPfir70fNIu0FHVH_xuZsPf7jaSrQh46wpQU5-aLWB7jnC9IKgz7wtDubJXaMN42d2lbQ9dmwjdazD52gNZ8jDD9klo7AC1-GetWZzwnImanBRQlvCrDzhFiVcKIkCxEVMckT0Vo5gzA0sfCP6S8llYUQN0ICix7GI-uuMHoZUcbjoQNxdjhRXzEUpYk8zGsGwQSwnwNeE6d7DI37HSaIq_zs1gtWXN0PZqTWiCb28GarwcKr2KIQmX8N-mm871ikrUA0UJNsd2oAZVGa2NiKZ1xIYBo5GQvyaRcJ3sTi1Dz2lQrFvYuCJuqs82aXbwN8fIfvZaV_qicAYaosKDMNHX7Ng9Up1AB1jhebuRZL4Nydv12fwOuPG6OD81tYYO9liKicq1IlEZ-EiyAoMZGpJy1IcTjj88KAtTqIc1fU8PKgbA5K8hiBkox4kCtcb6T5uaJp8-_DZYAKMAmPv41kMJ8q472sjaGKg-wnzof5HIbDzT_JCRmZ6EOyfnhCwU5G5GQuEOHQ5gFhz82D1YxSaI8VkN3cBNpQ_-RUINy6xkuSWPTxAGRPHJN4b5QTM4yu7_U2GD7H9uAEMlDldWj8gfVp54Ez855b7CTt92lai7Rp3Fuf5EUkRBC5VxoQp3du4RhkGyzZpR3ZzjaB7YKIKJtkvKHNR6xtZsOniRO0OcgtHKqxfKaC3fS4OCYk1217JP8Asy6J7oOEnA39Rm-IuEwlQ1fCu16kdjMU90xSADEDl4qHEyODxU_tutj13voTDYUyh4OzRtKpEzvN2FPUH22Q4tVY90ClRkGahmM6puzU74TxXpYrQLXNexAYcPIx5D_l4vs2P1vesrwbaPzauIpNj4AsvCqU0VvIIUSBre3yU-tlZarfKi7omqTLIOR2MOo4NELELb-XyfIUnnhNrql-ZBrwd_r48b3CzG_qbn-KPXQaLA9L9wWyd9lfvGNps3ZtjjV-kCETe4kkY3rGqkLKcMExsEr3NTNQgoYNIfR0jp512x3qOStPE8oxbnpgaKclfLM2VDf2x6FuR5ruuhTTd4=",
+							"summary": [
+								{
+									"type": "summary_text",
+									"text": "A summary that the model never wrote."
+								}
+							]
+						},
+						{
+							"id": "fc_062d5ab68a03276b016afb645d4ea88195a333c21a9f0b7912",
+							"type": "function_call",
+							"status": "completed",
+							"arguments": "{}",
+							"call_id": "call_k5LIOBkDITj0ypTFTlPWkF4o",
+							"name": "get_secret_number"
+						},
+						{
+							"type": "function_call_output",
+							"call_id": "call_k5LIOBkDITj0ypTFTlPWkF4o",
+							"output": "41"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_062d5ab68a03276b016afb64601b988195b41285a602619263",
+					"object": "response",
+					"created_at": 1794860128,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"completed_at": 1794860128,
+					"content_filters": [
+						{
+							"blocked": false,
+							"source_type": "prompt",
+							"content_filter_raw": [],
+							"content_filter_results": {
+								"hate": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"sexual": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"violence": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"self_harm": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"jailbreak": {
+									"detected": false,
+									"filtered": false
+								}
+							},
+							"content_filter_offsets": {
+								"start_offset": 0,
+								"end_offset": 1106,
+								"check_offset": 0
+							}
+						},
+						{
+							"blocked": false,
+							"source_type": "completion",
+							"content_filter_raw": [],
+							"content_filter_results": {
+								"protected_material_text": {
+									"detected": false,
+									"filtered": false
+								},
+								"protected_material_code": {
+									"detected": false,
+									"filtered": false
+								},
+								"hate": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"sexual": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"violence": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"self_harm": {
+									"filtered": false,
+									"severity": "safe"
+								}
+							},
+							"content_filter_offsets": {
+								"start_offset": 0,
+								"end_offset": 4,
+								"check_offset": 0
+							}
+						}
+					],
+					"error": null,
+					"frequency_penalty": 0,
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"max_tool_calls": null,
+					"model": "gpt-5.6-sol",
+					"moderation": null,
+					"output": [
+						{
+							"id": "msg_062d5ab68a03276b016afb6460846c819585f3dc2cf54ade6b",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "1081"
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "medium",
+						"mode": "standard",
+						"summary": "detailed"
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "function",
+							"description": "Returns the secret number.",
+							"name": "get_secret_number",
+							"output_schema": null,
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 119,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"output_tokens": 6,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 125
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		}
+	]
+}

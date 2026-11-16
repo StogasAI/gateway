@@ -73,8 +73,9 @@ func chatParamsResponsesGap(p *ChatParameters) *ConversionGap {
 		if r.Enabled != nil {
 			return &ConversionGap{"reasoning.enabled", "a reasoning on/off switch"}
 		}
-		if r.Display != nil {
-			return &ConversionGap{"reasoning.display", "the reasoning display setting"}
+		// Responses show reasoning only as summaries, which summarized asks for and omitted leaves out.
+		if r.Display != nil && *r.Display != "summarized" && *r.Display != "omitted" {
+			return &ConversionGap{"reasoning.display", "the " + *r.Display + " reasoning display"}
 		}
 	}
 	if p.ResponseFormat != nil && *p.ResponseFormat != nil {
@@ -247,8 +248,14 @@ func (p *ChatParameters) toResponsesParameters() *ResponsesParameters {
 	if p.StreamOptions != nil && p.StreamOptions.IncludeObfuscation != nil {
 		params.StreamOptions = &ResponsesStreamOptions{IncludeObfuscation: p.StreamOptions.IncludeObfuscation}
 	}
-	if r := p.Reasoning; r != nil && (r.Effort != nil || r.MaxTokens != nil || r.Summary != nil || r.Mode != nil || r.Type != nil) {
-		params.Reasoning = &ResponsesParametersReasoning{Effort: r.Effort, MaxTokens: r.MaxTokens, Summary: r.Summary, Mode: r.Mode, Type: r.Type}
+	if r := p.Reasoning; r != nil {
+		summary := r.Summary
+		if summary == nil && r.Display != nil && *r.Display == "summarized" {
+			summary = Ptr("auto")
+		}
+		if r.Effort != nil || r.MaxTokens != nil || summary != nil || r.Mode != nil || r.Type != nil {
+			params.Reasoning = &ResponsesParametersReasoning{Effort: r.Effort, MaxTokens: r.MaxTokens, Summary: summary, Mode: r.Mode, Type: r.Type}
+		}
 	}
 	if format := ResponsesTextConfigFormatFromChatResponseFormat(p.ResponseFormat); format != nil || p.Verbosity != nil {
 		params.Text = &ResponsesTextConfig{Format: format, Verbosity: p.Verbosity}
@@ -714,6 +721,11 @@ func (c *chatReplyParts) add(item *ResponsesMessage) {
 		}
 	case ResponsesMessageTypeReasoning:
 		c.details, _ = appendChatReasoning(&c.reasoning, c.details, item)
+		if item.ResponsesReasoning != nil {
+			for _, summary := range item.ResponsesReasoning.Summary {
+				c.addSummary(summary.Text)
+			}
+		}
 	case ResponsesMessageTypeFunctionCall:
 		if call := item.ResponsesToolMessage; call != nil {
 			arguments := ""
@@ -727,6 +739,22 @@ func (c *chatReplyParts) add(item *ResponsesMessage) {
 			})
 		}
 	}
+}
+
+// summarySeparator comes before each summary part in a reply's reasoning text, after the reasoning
+// before it. A summary is the reasoning that a reply shows, and Chat Completions clients show the
+// reasoning text, so the text holds each part, which stays whole in its reasoning detail.
+const summarySeparator = "\n\n"
+
+// addSummary adds a summary part to the reasoning text.
+func (c *chatReplyParts) addSummary(text string) {
+	if text == "" {
+		return
+	}
+	if c.reasoning.Len() > 0 {
+		c.reasoning.WriteString(summarySeparator)
+	}
+	c.reasoning.WriteString(text)
 }
 
 // addText adds a text part with its citations, which only URL citations are in Chat Completions,
@@ -819,9 +847,10 @@ type ResponsesToChatStreamState struct {
 	// calls are the tool call indexes of the function calls, by output index.
 	calls map[int]uint16
 	// details counts the reasoning details that the stream has numbered, and encrypted marks the
-	// reasoning items whose encrypted content it sent.
+	// reasoning items whose encrypted content it sent. reasoned reports reasoning text sent.
 	details   int
 	encrypted map[int]bool
+	reasoned  bool
 	// textRunes counts the runes of the text sent, from which citations count their indexes.
 	textRunes int
 }
@@ -1012,16 +1041,17 @@ func (s *ResponsesToChatStreamState) record(key streamPartKey) *streamPart {
 	return part
 }
 
-// send adds text to a part and to the delta: a text to the content, a refusal to the refusal, a
-// reasoning text to the reasoning and to its reasoning detail, and a summary to its reasoning
-// detail. id names the reasoning item.
+// send adds text to a part and to the delta: a text to the content, a refusal to the refusal, and
+// a reasoning text and a summary to the reasoning, as ToBifrostChatResponse joins them, and to its
+// reasoning detail. id names the reasoning item.
 func (s *ResponsesToChatStreamState) send(key streamPartKey, text string, id *string, delta *ChatStreamResponseChoiceDelta) {
 	if text == "" {
 		return
 	}
 	part := s.record(key)
+	opens := part.value.Len() == 0
 	part.value.WriteString(text)
-	join := func(field **string) {
+	join := func(field **string, text string) {
 		if *field == nil {
 			*field = Ptr(text)
 			return
@@ -1030,16 +1060,22 @@ func (s *ResponsesToChatStreamState) send(key streamPartKey, text string, id *st
 	}
 	switch key.kind {
 	case streamText:
-		join(&delta.Content)
+		join(&delta.Content, text)
 		s.textRunes += utf8.RuneCountInString(text)
 	case streamRefusal:
-		join(&delta.Refusal)
+		join(&delta.Refusal, text)
 	case streamReasoning:
-		join(&delta.Reasoning)
+		join(&delta.Reasoning, text)
+		s.reasoned = true
 		delta.ReasoningDetails = append(delta.ReasoningDetails, ChatReasoningDetails{
 			ID: id, Index: part.detail, Type: BifrostReasoningDetailsTypeText, Text: Ptr(text),
 		})
 	case streamSummary:
+		if opens && s.reasoned {
+			join(&delta.Reasoning, summarySeparator)
+		}
+		join(&delta.Reasoning, text)
+		s.reasoned = true
 		delta.ReasoningDetails = append(delta.ReasoningDetails, ChatReasoningDetails{
 			ID: id, Index: part.detail, Type: BifrostReasoningDetailsTypeSummary, Summary: Ptr(text),
 		})

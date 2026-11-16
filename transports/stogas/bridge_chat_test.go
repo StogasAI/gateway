@@ -151,7 +151,7 @@ func TestChatBridgeRefusesWhatResponsesLackOrTheFormatRefuses(t *testing.T) {
 		{"message name", `"messages":[{"role":"user","name":"ann","content":"hi"}]`, "messages[0].name: Responses deployments do not support message names"},
 		// OpenAI's format refuses these on Chat Completions, so the translation must not drop them.
 		{"repetition penalty", `"repetition_penalty":1.1`, "repetition_penalty is not supported for OpenAI-format deployments"},
-		{"reasoning display", `"reasoning":{"display":"summarized"}`, "reasoning.display"},
+		{"reasoning display", `"reasoning":{"display":"updates"}`, "reasoning.display"},
 		{"top_k", `"top_k":5`, "top_k"},
 		{"prompt cache breakpoint member", `"messages":[{"role":"user","content":[{"type":"text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit","ttl":"1h"}}]}]`, "prompt_cache_breakpoint.ttl must be 30m"},
 		{"prompt cache option", `"prompt_cache_options":{"mode":"implicit","scope":"org"}`, "prompt_cache_options supports only mode and ttl"},
@@ -171,6 +171,141 @@ func TestChatBridgeRefusesWhatResponsesLackOrTheFormatRefuses(t *testing.T) {
 				t.Fatalf("error = %v, want %q", err, test.want)
 			}
 		})
+	}
+}
+
+// A Chat Completions client of OpenAI's models asks for reasoning summaries with the display
+// summarized. Only Responses return them, so a request that reasons goes through Responses, which
+// get the summary auto. A request that Responses cannot carry, or a model that shows no summaries,
+// is refused rather than answered without them.
+func TestChatSummarizedReasoningGoesThroughResponses(t *testing.T) {
+	const user = `"messages":[{"role":"user","content":"Find a1."}]`
+	for name, test := range map[string]struct{ body, route, err string }{
+		"summarized":                   {`"model":"provider:openai gpt-6-luna",` + user + `,"reasoning":{"display":"summarized"}`, "openai-responses", ""},
+		"summarized on Azure":          {`"model":"azure-gpt-5.6-sol",` + user + `,"reasoning_display":"summarized"`, "azure-responses", ""},
+		"summarized, with tools":       {`"model":"provider:openai gpt-6-luna",` + user + `,"reasoning_display":"summarized",` + chatBridgeTools, "openai-responses", ""},
+		"summarized, reasoning off":    {`"model":"provider:openai gpt-6-luna",` + user + `,"reasoning":{"display":"summarized","effort":"none"}`, "openai-chat-completions", ""},
+		"summarized, enabled false":    {`"model":"provider:openai gpt-6-luna",` + user + `,"reasoning":{"display":"summarized","enabled":false}`, "openai-chat-completions", ""},
+		"omitted":                      {`"model":"provider:openai gpt-6-luna",` + user + `,"reasoning_display":"omitted"`, "openai-chat-completions", ""},
+		"summarized with a seed":       {`"model":"provider:openai gpt-6-luna",` + user + `,"reasoning_display":"summarized","seed":1`, "openai-chat-completions", "reasoning_display summarized is not supported with seed"},
+		"updates":                      {`"model":"provider:openai gpt-6-luna",` + user + `,"reasoning":{"display":"updates"}`, "openai-chat-completions", "reasoning.display must be summarized or omitted for OpenAI's models"},
+		"an open model on Azure":       {`"model":"azure-deepseek-v4-flash-0423",` + user + `,"reasoning":{"display":"omitted"}`, "", "reasoning.display is not supported for the selected deployment"},
+		"summarized on the Chat route": {`"model":"route:openai-chat-completions gpt-6-luna",` + user + `,"reasoning_display":"summarized"`, "openai-chat-completions", "reasoning_display summarized is not supported for the selected deployment"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := "{" + test.body + "}"
+			resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/chat/completions", Body: []byte(body)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.route != "" && resolution.Deployment.RouteID != test.route {
+				t.Fatalf("route = %s, want %s", resolution.Deployment.RouteID, test.route)
+			}
+			if err := validateResolvedChat(t, body); test.err == "" && err != nil || test.err != "" && (err == nil || !strings.Contains(err.Error(), test.err)) {
+				t.Fatalf("error = %v, want %q", err, test.err)
+			}
+		})
+	}
+	for body, want := range map[string]string{
+		`{"model":"provider:openai gpt-6-luna",` + user + `,"reasoning":{"effort":"low","display":"summarized"}}`:   `{"effort":"low","summary":"auto"}`,
+		`{"model":"openai-gpt-5.6-sol-pro",` + user + `,"reasoning_effort":"low","reasoning_display":"summarized"}`: `{"effort":"low","mode":"pro","summary":"auto"}`,
+		// OpenAI and Azure take a null effort (testdata/provider/openai/reasoning-null-effort.json).
+		`{"model":"azure-gpt-5.6-sol",` + user + `,"reasoning":{"display":"summarized"}}`: `{"effort":null,"summary":"auto"}`,
+	} {
+		if reasoning := string(chatBridgeProviderBody(t, chatBridgeState(t, body))["reasoning"]); reasoning != want {
+			t.Fatalf("%s: reasoning sent = %s", body, reasoning)
+		}
+	}
+}
+
+// summaryRequest asks OpenAI's model of a recorded reply for its reasoning summaries, with the tool
+// that the recorded reply calls.
+const summaryRequest = `{"model":"provider:openai gpt-6-luna","messages":[{"role":"user","content":"Work it out."}],"reasoning":{"display":"summarized"},` +
+	`"tools":[{"type":"function","function":{"name":"get_secret_number","description":"Returns the secret number.","parameters":{"type":"object","properties":{},"additionalProperties":false},"strict":true}}]`
+
+// A recorded reply with a reasoning summary reaches a Chat Completions client with the summary as
+// its reasoning text and in a summary detail, which goes back to no provider.
+func TestChatSummarizedReasoningReplyHoldsTheSummary(t *testing.T) {
+	mint := exchange(t, providerCapture(t, "openai/encrypted-reasoning-summary"), "openai mint")
+	recorded := mint.responsesReply(t)
+	var summary string
+	for _, item := range recorded.Output {
+		if item.ResponsesReasoning != nil && len(item.ResponsesReasoning.Summary) > 0 {
+			summary = item.ResponsesReasoning.Summary[0].Text
+		}
+	}
+	state := chatBridgeState(t, summaryRequest+`}`)
+	response := &schemas.BifrostResponse{ResponsesResponse: recorded}
+	if err := state.Adapter.IngestResponse(state, response, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateCompletedExecution(state); err != nil {
+		t.Fatal(err)
+	}
+	converted, err := BridgedResponse(state, response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	message := converted.ChatResponse.Choices[0].ChatNonStreamResponseChoice.Message
+	assistant := message.ChatAssistantMessage
+	if summary == "" || assistant.Reasoning == nil || *assistant.Reasoning != summary || len(assistant.ReasoningDetails) != 2 ||
+		assistant.ReasoningDetails[0].Summary == nil || *assistant.ReasoningDetails[0].Summary != summary ||
+		assistant.ReasoningDetails[1].Type != schemas.BifrostReasoningDetailsTypeEncrypted {
+		t.Fatalf("message = %+v", assistant)
+	}
+
+	// The client sends the reply back, and OpenAI gets its encrypted reasoning without the summary.
+	sent, err := json.Marshal(message)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := chatBridgeState(t, strings.Replace(summaryRequest, `"content":"Work it out."}]`, `"content":"Work it out."},`+string(sent)+
+		`,{"role":"tool","tool_call_id":"`+*assistant.ToolCalls[0].ID+`","content":"41"}]`, 1)+`}`)
+	input := string(chatBridgeProviderBody(t, next)["input"])
+	if strings.Contains(input, "Calculating") || !strings.Contains(input, `"type":"reasoning","summary":[],"encrypted_content":"gAAAA`) {
+		t.Fatalf("input = %s", input)
+	}
+}
+
+// A recorded stream with a reasoning summary reaches a Chat Completions client as reasoning deltas,
+// each with its summary detail.
+func TestChatSummarizedReasoningStreamHoldsTheSummary(t *testing.T) {
+	for _, provider := range []string{"openai", "azure"} {
+		recorded := exchange(t, providerCapture(t, "openai/reasoning-summary-stream"), provider+" stream")
+		model := map[string]string{"openai": "provider:openai gpt-6-luna", "azure": "azure-gpt-5.6-sol"}[provider]
+		state := chatBridgeState(t, strings.Replace(summaryRequest, `"provider:openai gpt-6-luna"`, `"`+model+`"`, 1)+`,"stream":true}`)
+		stream := NewBridgedStream(state)
+		var parts []string
+		var reasoning, details strings.Builder
+		for _, event := range recorded.responsesStream(t) {
+			if event.Type == schemas.ResponsesStreamResponseTypeReasoningSummaryTextDone {
+				parts = append(parts, *event.Text)
+			}
+			chunk := &schemas.BifrostStreamChunk{BifrostResponsesStreamResponse: event}
+			if err := state.Adapter.IngestChunk(state, chunk); err != nil {
+				t.Fatalf("%s: recorded %s event refused: %v", provider, event.Type, err)
+			}
+			converted, err := stream.Convert(chunk)
+			if err != nil {
+				t.Fatalf("%s: %s: %v", provider, event.Type, err)
+			}
+			for _, chunk := range converted {
+				for _, choice := range chunk.BifrostChatResponse.Choices {
+					delta := choice.ChatStreamResponseChoice.Delta
+					if delta.Reasoning != nil {
+						reasoning.WriteString(*delta.Reasoning)
+					}
+					for _, detail := range delta.ReasoningDetails {
+						if detail.Summary != nil {
+							details.WriteString(*detail.Summary)
+						}
+					}
+				}
+			}
+		}
+		if len(parts) == 0 || reasoning.String() != strings.Join(parts, "\n\n") || details.String() != strings.Join(parts, "") {
+			t.Fatalf("%s: reasoning = %q, details = %q, summary parts = %q", provider, reasoning.String(), details.String(), parts)
+		}
 	}
 }
 

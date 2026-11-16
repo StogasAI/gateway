@@ -1,0 +1,2387 @@
+{
+	"shows": "A stream sends each reasoning summary part as response.reasoning_summary_part.added, its text deltas, response.reasoning_summary_text.done and response.reasoning_summary_part.done, and the reasoning item's response.output_item.done holds the same text.",
+	"recorded": "2026-11-16",
+	"exchanges": [
+		{
+			"name": "openai stream",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"reasoning": {
+						"effort": "medium",
+						"summary": "auto"
+					},
+					"max_output_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_secret_number",
+							"description": "Returns the secret number.",
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Work out 37*43 - 19*29 in your head first, then call get_secret_number, then tell me the secret number plus your result."
+						}
+					],
+					"stream": true
+				}
+			},
+			"response": {
+				"status": 200,
+				"events": [
+					{
+						"type": "response.created",
+						"response": {
+							"id": "resp_08652af4ba4b2b85016afb69b5b76c87d298383b9eac12a347",
+							"object": "response",
+							"created_at": 1794861493,
+							"status": "in_progress",
+							"access_programs": null,
+							"background": false,
+							"completed_at": null,
+							"error": null,
+							"frequency_penalty": 0,
+							"image": {
+								"context_compression": "disabled"
+							},
+							"incomplete_details": null,
+							"input_transformations": [],
+							"instructions": null,
+							"max_output_tokens": 2000,
+							"max_tool_calls": null,
+							"model": "gpt-6-luna",
+							"moderation": null,
+							"output": [],
+							"parallel_tool_calls": true,
+							"presence_penalty": 0,
+							"previous_response_id": null,
+							"prompt_cache_key": null,
+							"prompt_cache_retention": "24h",
+							"reasoning": {
+								"context": "all_turns",
+								"effort": "medium",
+								"mode": "standard",
+								"summary": "detailed"
+							},
+							"safety_identifier": null,
+							"service_tier": "auto",
+							"store": false,
+							"temperature": 1,
+							"text": {
+								"format": {
+									"type": "text"
+								},
+								"verbosity": "medium"
+							},
+							"tool_choice": "auto",
+							"tool_usage": {
+								"image_gen": {
+									"input_tokens": 0,
+									"input_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"output_tokens": 0,
+									"output_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"total_tokens": 0
+								},
+								"web_search": {
+									"num_requests": 0
+								}
+							},
+							"tools": [
+								{
+									"type": "function",
+									"description": "Returns the secret number.",
+									"name": "get_secret_number",
+									"output_schema": null,
+									"parameters": {
+										"type": "object",
+										"properties": {},
+										"additionalProperties": false
+									},
+									"strict": true
+								}
+							],
+							"top_logprobs": 0,
+							"top_p": 0.98,
+							"truncation": "disabled",
+							"usage": null,
+							"user": null,
+							"metadata": {}
+						},
+						"sequence_number": 0
+					},
+					{
+						"type": "response.in_progress",
+						"response": {
+							"id": "resp_08652af4ba4b2b85016afb69b5b76c87d298383b9eac12a347",
+							"object": "response",
+							"created_at": 1794861493,
+							"status": "in_progress",
+							"access_programs": null,
+							"background": false,
+							"completed_at": null,
+							"error": null,
+							"frequency_penalty": 0,
+							"image": {
+								"context_compression": "disabled"
+							},
+							"incomplete_details": null,
+							"input_transformations": [],
+							"instructions": null,
+							"max_output_tokens": 2000,
+							"max_tool_calls": null,
+							"model": "gpt-6-luna",
+							"moderation": null,
+							"output": [],
+							"parallel_tool_calls": true,
+							"presence_penalty": 0,
+							"previous_response_id": null,
+							"prompt_cache_key": null,
+							"prompt_cache_retention": "24h",
+							"reasoning": {
+								"context": "all_turns",
+								"effort": "medium",
+								"mode": "standard",
+								"summary": "detailed"
+							},
+							"safety_identifier": null,
+							"service_tier": "auto",
+							"store": false,
+							"temperature": 1,
+							"text": {
+								"format": {
+									"type": "text"
+								},
+								"verbosity": "medium"
+							},
+							"tool_choice": "auto",
+							"tool_usage": {
+								"image_gen": {
+									"input_tokens": 0,
+									"input_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"output_tokens": 0,
+									"output_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"total_tokens": 0
+								},
+								"web_search": {
+									"num_requests": 0
+								}
+							},
+							"tools": [
+								{
+									"type": "function",
+									"description": "Returns the secret number.",
+									"name": "get_secret_number",
+									"output_schema": null,
+									"parameters": {
+										"type": "object",
+										"properties": {},
+										"additionalProperties": false
+									},
+									"strict": true
+								}
+							],
+							"top_logprobs": 0,
+							"top_p": 0.98,
+							"truncation": "disabled",
+							"usage": null,
+							"user": null,
+							"metadata": {}
+						},
+						"sequence_number": 1
+					},
+					{
+						"type": "response.output_item.added",
+						"item": {
+							"id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+							"type": "reasoning",
+							"content": [],
+							"encrypted_content": "gAAAAABq-2m2j42Rn1UcMwuSoQzJWu1IJneOBxYuWh1ibcCpXA41ve5eFCqEoHonCC1Dee8tNC_rtK5fdzzJk149uIfKa7PL4dmhYA7vDr8dhgQuKlnVhL2tJd0Jn68cf0pnE_0gT8um2LDAV9WGj8UWlAQDZjRqRqH36VEH5gQ81OwhZ_3oDIl_wdwLZhVC8FsDzV3j9U_X17ZZEldE2EXk8cCCe4EKSNM-acUVpGAuI4C4YC-3wQiqXabhu63MkjDhIFwT0lVrO_dNLuEA3dAVV9s4GVK8rK7bxo9IproKNpA-DHSEKosOpm_5V1nlBTSIlXgbYqKRc2ZF-aDJIXzA3TZGGterTH4NEYTI9RG0c3aaHBKEWEqa_SOrhUZ6Ng1hHqwRor5bus3P2d6yrzUPzDQhZcKlDleee3d3aTL6toTlsKJP-1yO-c4beJYggklHwALyNCz1D7yA2AFyCN68xhMY_YIkCuW15yRqC_hZGQFdrw-Ay9uZRcdF1i9-BzJVkoZ-6CvoX4yiX6V7b0rlxqsgUvGs9XJX_9nIqEJerNAKgjwkXmpfibyTikNIC1sI6ay7ZXxY_ofZEiCnMsKuQOTiRj4nZKIysuM9OQE8EUBoXPZuBQad0D-7INS2LHZTbSl1vbvQpBfuCz3fKi9nJ_2OFTzqubtCqyKqK3ihDMuKMc9GL5u7YSNH8Sm82hBrQFHjBa6QMR2OgK_H7xBIxXW4UF6I-Pr57xF6ZtPdGQw20WTQZvQiMlx-_B6YV4xW1TunBo00GGWgOK1tqxrh4IUOylDSfAGAw6EeFBIO3cCjN6GemkvyFTtlQ-h_ZY5NB7ibhSUlrSnHveYw9VtfSyFE8IeedECJpi8YZjXEYe12U_93I3fYyR4mhzrcnzILR21HLxsi6e7fPvYU5-PBM8Vw0MEsNwaL6iALdFocFx9DtO-fwgLz8nPLzEse1tu5qR165lhnQGshzA379Deje_8jwsdBAgQMIhIBO1MYKbNAp6wyWE7h4o8wLLnTsmHTGWd8e-I4NXjayOkuD01i74UkgVunDA6TpRvSODsAs4O6fhd6rmGrEdaUCo5HkQtyAVOPWhyF4QMIg-kQM6r1CR5DhDjsOPJg6-QttxDkwN5kEheu9-hd1fPlV9FKYsorPXqYAanWBzK0uF4BcA5XBfrYABJdWv7DXY3SPLqI9f6MXa6YEPZLsf9w0eyc4J186r0qhc9h-cXGAnXwB9bIPGbdeaB0A1H6fz-KizoccZsAMMlF5MtKn0UCASfk6d_IGM57xd-sDPjdrYeNqTUDE0QGe8kT7AdoGx1FyOBUPKAqxApx8rVFrlEoMtWNxbXts2-vb-GayEHDiRSptEChKwcrCXKJtPNl4F7tFeCoyxUyqHblUMQ=",
+							"summary": []
+						},
+						"output_index": 0,
+						"sequence_number": 2
+					},
+					{
+						"type": "response.reasoning_summary_part.added",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"output_index": 0,
+						"part": {
+							"type": "summary_text",
+							"text": ""
+						},
+						"sequence_number": 3,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": "**Calculating differences**\n\nI",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "mj",
+						"output_index": 0,
+						"sequence_number": 4,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " need",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "09arJKLTjOm",
+						"output_index": 0,
+						"sequence_number": 5,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " to",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "tT7tb1oDCJhz2",
+						"output_index": 0,
+						"sequence_number": 6,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " mentally",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "tTe3DLV",
+						"output_index": 0,
+						"sequence_number": 7,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " calculate",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "KBbTJA",
+						"output_index": 0,
+						"sequence_number": 8,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " some",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "2U2BYSoB6OX",
+						"output_index": 0,
+						"sequence_number": 9,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " products",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "iC9utQG",
+						"output_index": 0,
+						"sequence_number": 10,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " before",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "zFF6oJwWC",
+						"output_index": 0,
+						"sequence_number": 11,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " calling",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "zxMMw4wQ",
+						"output_index": 0,
+						"sequence_number": 12,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " the",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "HXpYCLEErCPL",
+						"output_index": 0,
+						"sequence_number": 13,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " tool",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "IaaT4zqQkD9",
+						"output_index": 0,
+						"sequence_number": 14,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": ".",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "UATzwQ9md0Zlbcp",
+						"output_index": 0,
+						"sequence_number": 15,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " For",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "4w66HCl1sE6w",
+						"output_index": 0,
+						"sequence_number": 16,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " instance",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "l5YHypk",
+						"output_index": 0,
+						"sequence_number": 17,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": ",",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "GUO9vraTa6F4HqD",
+						"output_index": 0,
+						"sequence_number": 18,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " I",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "OGL4AglSp5bIbZ",
+						"output_index": 0,
+						"sequence_number": 19,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": "’ve",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "iw9r2vOkcjNYP",
+						"output_index": 0,
+						"sequence_number": 20,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " found",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "8mbTpJQQf3",
+						"output_index": 0,
+						"sequence_number": 21,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " that",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "rk4LHOUsVPN",
+						"output_index": 0,
+						"sequence_number": 22,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " 37",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "9BSAYpuq8p2gB",
+						"output_index": 0,
+						"sequence_number": 23,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " times",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "rkCjuDsjP2",
+						"output_index": 0,
+						"sequence_number": 24,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " 43",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "VuqZ7SoGaFHaM",
+						"output_index": 0,
+						"sequence_number": 25,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " equals",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "9JFPx7Yo9",
+						"output_index": 0,
+						"sequence_number": 26,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " 159",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "c95S7Zdx2Vdk",
+						"output_index": 0,
+						"sequence_number": 27,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": "1",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "Nfk1lGan8vaJHal",
+						"output_index": 0,
+						"sequence_number": 28,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": ",",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "yUoHL6BnJdtNjKs",
+						"output_index": 0,
+						"sequence_number": 29,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " and",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "w3IgkOzjVBEh",
+						"output_index": 0,
+						"sequence_number": 30,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " 19",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "hs6s7Y8kklSFM",
+						"output_index": 0,
+						"sequence_number": 31,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " times",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "ACdCoEXJ4w",
+						"output_index": 0,
+						"sequence_number": 32,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " 29",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "8EoiyMoqQDTd9",
+						"output_index": 0,
+						"sequence_number": 33,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " equals",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "icw0sYRQb",
+						"output_index": 0,
+						"sequence_number": 34,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " 551",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "VWevbBqBxBUO",
+						"output_index": 0,
+						"sequence_number": 35,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": ".",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "o7LNZZtPdLTBqOZ",
+						"output_index": 0,
+						"sequence_number": 36,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " Then",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "OlejnFEEEXP",
+						"output_index": 0,
+						"sequence_number": 37,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": ",",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "pQfMkfjy6ni9Njy",
+						"output_index": 0,
+						"sequence_number": 38,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " I",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "Sa2gA6uOZ5l5mx",
+						"output_index": 0,
+						"sequence_number": 39,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " can",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "psIupB6SHsYk",
+						"output_index": 0,
+						"sequence_number": 40,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " find",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "ar3f6BMz67G",
+						"output_index": 0,
+						"sequence_number": 41,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " the",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "DUBJU8bD8QL4",
+						"output_index": 0,
+						"sequence_number": 42,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " difference",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "FVEjY",
+						"output_index": 0,
+						"sequence_number": 43,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " between",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "kYHPICrS",
+						"output_index": 0,
+						"sequence_number": 44,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " these",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "EQ5z553BeV",
+						"output_index": 0,
+						"sequence_number": 45,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " two",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "c2ZKNkM19dD6",
+						"output_index": 0,
+						"sequence_number": 46,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " results",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "odXPtW71",
+						"output_index": 0,
+						"sequence_number": 47,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": ",",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "iomCtzXdd8rRTER",
+						"output_index": 0,
+						"sequence_number": 48,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " which",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "QXvb9Vf7RE",
+						"output_index": 0,
+						"sequence_number": 49,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " is",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "bls5kh5Yz25he",
+						"output_index": 0,
+						"sequence_number": 50,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " 104",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "h0HO6nSPJRlj",
+						"output_index": 0,
+						"sequence_number": 51,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": "0",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "XywPmJ0NGK0CGkt",
+						"output_index": 0,
+						"sequence_number": 52,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": ".",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "e0Sh8XQgaiotv1q",
+						"output_index": 0,
+						"sequence_number": 53,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " Now",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "jYNfmRJCI45o",
+						"output_index": 0,
+						"sequence_number": 54,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " that",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "dcWNx2WZuge",
+						"output_index": 0,
+						"sequence_number": 55,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " I",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "zsyUYeriEfF35L",
+						"output_index": 0,
+						"sequence_number": 56,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " have",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "R65DD9ed2on",
+						"output_index": 0,
+						"sequence_number": 57,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " the",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "5GIYCYJoMose",
+						"output_index": 0,
+						"sequence_number": 58,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " numbers",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "A9fOBQs9",
+						"output_index": 0,
+						"sequence_number": 59,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " worked",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "Vruj3xw5T",
+						"output_index": 0,
+						"sequence_number": 60,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " out",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "hR41zzMWpigc",
+						"output_index": 0,
+						"sequence_number": 61,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": ",",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "cOotHVZILKXF2kc",
+						"output_index": 0,
+						"sequence_number": 62,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " I",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "zkeNyotRBk6LYu",
+						"output_index": 0,
+						"sequence_number": 63,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": "’ll",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "S6SSSMauyC4Rp",
+						"output_index": 0,
+						"sequence_number": 64,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " go",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "bJecC1696Z7Ce",
+						"output_index": 0,
+						"sequence_number": 65,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " ahead",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "d7djaOUVML",
+						"output_index": 0,
+						"sequence_number": 66,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " and",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "TpPOq6SP3ZDd",
+						"output_index": 0,
+						"sequence_number": 67,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " call",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "IV5sLOgw38O",
+						"output_index": 0,
+						"sequence_number": 68,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " the",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "4j10xrQuMTmb",
+						"output_index": 0,
+						"sequence_number": 69,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " tool",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "1iDW7wFo1Ko",
+						"output_index": 0,
+						"sequence_number": 70,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " to",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "68BAovhOZnvah",
+						"output_index": 0,
+						"sequence_number": 71,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " move",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "QyT7c3LT1tF",
+						"output_index": 0,
+						"sequence_number": 72,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " on",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "FCVbxLZsg9xsJ",
+						"output_index": 0,
+						"sequence_number": 73,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " with",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "MSYtIgd0l4J",
+						"output_index": 0,
+						"sequence_number": 74,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " the",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "hBMD81WElpi2",
+						"output_index": 0,
+						"sequence_number": 75,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " task",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "o6mpOaxcBiz",
+						"output_index": 0,
+						"sequence_number": 76,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": ".",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "6BSIloncYigKGyo",
+						"output_index": 0,
+						"sequence_number": 77,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " It",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "IuJ0G4HktwC8G",
+						"output_index": 0,
+						"sequence_number": 78,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " feels",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "7PTDgmJb6m",
+						"output_index": 0,
+						"sequence_number": 79,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " good",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "c4Aapa4cztP",
+						"output_index": 0,
+						"sequence_number": 80,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " to",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "pmq1sIVLOeAdU",
+						"output_index": 0,
+						"sequence_number": 81,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " have",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "D2IjRSlU95b",
+						"output_index": 0,
+						"sequence_number": 82,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " those",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "n2zGnhLvsn",
+						"output_index": 0,
+						"sequence_number": 83,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " figures",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "IpUiGcD1",
+						"output_index": 0,
+						"sequence_number": 84,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " figured",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "hZOZZmFV",
+						"output_index": 0,
+						"sequence_number": 85,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " out",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "JbNyKuxJDZyw",
+						"output_index": 0,
+						"sequence_number": 86,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": "!",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"obfuscation": "D9x3VyTR7q3O38K",
+						"output_index": 0,
+						"sequence_number": 87,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.done",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"output_index": 0,
+						"sequence_number": 88,
+						"summary_index": 0,
+						"text": "**Calculating differences**\n\nI need to mentally calculate some products before calling the tool. For instance, I’ve found that 37 times 43 equals 1591, and 19 times 29 equals 551. Then, I can find the difference between these two results, which is 1040. Now that I have the numbers worked out, I’ll go ahead and call the tool to move on with the task. It feels good to have those figures figured out!"
+					},
+					{
+						"type": "response.reasoning_summary_part.done",
+						"item_id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+						"output_index": 0,
+						"part": {
+							"type": "summary_text",
+							"text": "**Calculating differences**\n\nI need to mentally calculate some products before calling the tool. For instance, I’ve found that 37 times 43 equals 1591, and 19 times 29 equals 551. Then, I can find the difference between these two results, which is 1040. Now that I have the numbers worked out, I’ll go ahead and call the tool to move on with the task. It feels good to have those figures figured out!"
+						},
+						"sequence_number": 89,
+						"summary_index": 0
+					},
+					{
+						"type": "response.output_item.done",
+						"item": {
+							"id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+							"type": "reasoning",
+							"content": [],
+							"encrypted_content": "gAAAAABq-2m4nYwPceIpmd9xg5GRKrixSkjYPhTYdc1FyXOOMc6UoiDR3HhE_6p4NcUelAEDnhLbCcsP1fQowX_YFVwyx5zBtrFdk08yZO0_DHXGzTpCZaccYmISZ-EPrjXchm4tbHWp8-vJQ5cWvKOngv6yrcEwDbUkl48v-8_hrukw5ZInzDQbQwK9XF5Vf2Qxh5ROjcdbtXrDB9z7L39ybSs3sHJpNrWD0H-COcvnTOnsxXJ66hpc23XkNMujkAZWhG8rt86RVjreIyFJaLKAEahnQzsW5E2wsJCpk9NazdlamiEQ1HToWPHmv-8pkw9CsuFPh9WADzHVstfQIJQWFLSAhD_cN1E6C_15hxzVQeTDxS8oQfpRmhnZX05ZvJwPgn_YxolVa_smVsR5qWE_XqSj2uiCVACyQA2kLPsr-Za53zK9tL5qT7KgevgauIIvMoqmk8LShUNQP0udcHzdTrfPMzcihxrBRQ-t7wsYIGibbU6NYlIr87G8bMzBuG9R2jYCno2p6qHuwpfwlDWn1AKWmm7wCIDZkzYycObi7qFtYltKT8M5vO9WhGvgxnzIgTPe5yZ57RV6gHn6dBckxykorWBziJdIbvzqLNJPVlspEUZbYM2Q3j2JSN977cMk18gq80pGm5X6XivRzKHwDpdJyYPUczio6jlzMKGqqqk5IDfMZFcmSMENA93dT1laNMsxmIER2gsCBzI_T2nYVOii7RNXJ_eLYywSfXq1oSuBU1Kudsj9rxf6vSr4hhTxC641VP9jaIRu08GBsw8nj1lXfWJIhs8M-cPwX3kymtVfrfscVDNgJ-49S_QSE95Ce2hq67vCPIs4caPK4x7F8mbiF4dX03EZgnncbC1OxDQ60EczsBUci9x-vqhxQwc8Tb0mwngPcY5IUdcyi9vh8OsKxMBvJX8Un11ncPLLcNMw3JonR0y5moUPxbKtpGz4vZMV-Oham5fp2-V-z0z7zUaZoOUwUt0_A7cOi02BZzbVGEKmvg7O7LZr-VX3qYRq8GYXjhQfkQMHQkR-SQEEFmkZ_R1xqD4XkPV4FkP4fJoTlCKil_zUJciGoGNiY3d7uaGip7vaOTGc-0B0_-8wvqn-Z5DLj178djo3nKcdAEt-W7ontUxoowgEKto4gYEwDBW8Gcj_W7LwlgVm92QLFsNIm0g6_bObUUCNmgiouGooSwdKfqpgCHMRl_lWdmMYD20pEDVXRRhGIQgcEKt0baVAu5iE_hA5h2CnJB9KK4BTHnvbHuMZHzrvNqb-ClZumgDf-bBW9rV3kJm3ZIueCGCMpW1p8---ea6q6MDdfSDk8QWLyoHzbvCvWwsGRy0rzuPOtjgeD4dl647ClnQZLV1EY77T7gNp1DXMUzSH0RkaitnREGJiixxx_Vm8LdqrEPx1XPbh7v-BykAp7hqI_OuXIacsN1_xaKkCrbDw2gUQe1AdSUtyBFMFZl7MGxvCmunV1_tdxa4vw65dqLKy8RKUjOx30O1qNxFvbDrB5Z1XPuxKTE0SYIZZpj1JJ0SB_3KYivFamdYZZXC4pSEPQ6IAnWTBrNzt7IsJ9WBld36987FtO6vpGMUwIHumKAlhFy3fhQKUvJkQS7LFkhFTzuYI_l4JCrI76ciB2ILamvwbNZorbKF5zc1P1xMrJ-jabuxy1pDU2S7qKn-XWILYYhbpuwRkJtdbKtqhmEUPTFqLOJ4AZ1Xo3-lT3sS80ehEvjb-c4IpGy9YB0BDoyF9Ar1gsFEQMLbD-k4GqphsgthtO-0TYYeEFiQ0uWqqjvukIMpf3DyprugEJHWF0dTXQtMnwzhzYfbA1Nox9KrWGnJJtsryz3pb_Wy7VZ0EhZRtZFOj8WPELF9POU459Adoa0Znd4Rl-HuGA0WyweJIqgNMRuaovmpqqpjCUQGBNZSEDgiEUEfS6rZ0xNiVgg_iNGOb373e3fEFvOzSsFX-t1ZuqpIzQkc=",
+							"summary": [
+								{
+									"type": "summary_text",
+									"text": "**Calculating differences**\n\nI need to mentally calculate some products before calling the tool. For instance, I’ve found that 37 times 43 equals 1591, and 19 times 29 equals 551. Then, I can find the difference between these two results, which is 1040. Now that I have the numbers worked out, I’ll go ahead and call the tool to move on with the task. It feels good to have those figures figured out!"
+								}
+							]
+						},
+						"output_index": 0,
+						"sequence_number": 90
+					},
+					{
+						"type": "response.output_item.added",
+						"item": {
+							"id": "fc_08652af4ba4b2b85016afb69b8a6f087d2823712be5811baed",
+							"type": "function_call",
+							"status": "in_progress",
+							"arguments": "",
+							"call_id": "call_Ru4EHvFJ05YqFj7g5PcOw8RT",
+							"name": "get_secret_number"
+						},
+						"output_index": 1,
+						"sequence_number": 91
+					},
+					{
+						"type": "response.function_call_arguments.delta",
+						"delta": "{}",
+						"item_id": "fc_08652af4ba4b2b85016afb69b8a6f087d2823712be5811baed",
+						"obfuscation": "bh7rhaYcQxN6Kk",
+						"output_index": 1,
+						"sequence_number": 92
+					},
+					{
+						"type": "response.function_call_arguments.done",
+						"arguments": "{}",
+						"item_id": "fc_08652af4ba4b2b85016afb69b8a6f087d2823712be5811baed",
+						"output_index": 1,
+						"sequence_number": 93
+					},
+					{
+						"type": "response.output_item.done",
+						"item": {
+							"id": "fc_08652af4ba4b2b85016afb69b8a6f087d2823712be5811baed",
+							"type": "function_call",
+							"status": "completed",
+							"arguments": "{}",
+							"call_id": "call_Ru4EHvFJ05YqFj7g5PcOw8RT",
+							"name": "get_secret_number"
+						},
+						"output_index": 1,
+						"sequence_number": 94
+					},
+					{
+						"type": "response.completed",
+						"response": {
+							"id": "resp_08652af4ba4b2b85016afb69b5b76c87d298383b9eac12a347",
+							"object": "response",
+							"created_at": 1794861493,
+							"status": "completed",
+							"access_programs": null,
+							"background": false,
+							"completed_at": 1794861496,
+							"error": null,
+							"frequency_penalty": 0,
+							"image": {
+								"context_compression": "disabled"
+							},
+							"incomplete_details": null,
+							"input_transformations": [],
+							"instructions": null,
+							"max_output_tokens": 2000,
+							"max_tool_calls": null,
+							"model": "gpt-6-luna",
+							"moderation": null,
+							"output": [
+								{
+									"id": "rs_08652af4ba4b2b85016afb69b6a93087d2a1ba572be8b7c294",
+									"type": "reasoning",
+									"content": [],
+									"encrypted_content": "gAAAAABq-2m4r6g835JHr4jQUTS9o9caJ78k066fm2WxL5OLYcR-lY6R-t7oqWYeSFzjnP8ax4r-KpiAAw0SiWrzEB5Odn8FYR4JxQa0j9sWMetKP9z9wgy7uxqBjjsA6VU8oP0MJt5pHdy81vW75n6QujDMFztTF2VJbtC-4v968TCxhqS0aejWCV5c29F1UJA0xeByR0FgApFYIK4ft0MNbzGaPONCHKw8mCAzO5Q9OZQeZ4he_HF6RH9HXpoh2wRGOBU1uO37KpqC65DlsOz0p2MgnH-eyFjnAcOcyMsGXEDdUUXiVkntYE1Whn_vgN0E3clwIqrq6lmj01u1xqNHvXinuyK_GesFNQCYP4gm_XirZf_3vAMWWNFnS6LUsk7KN-I4mEINP8PZvGiAvsQy8iUKyq1gnWS6OVfsKxhH-C2iPreztRA6rfioE7qe4TrZvcLwfkB4gq8Zb6OfX8H7ntcTniGG2Am5ddRfVuXgC7Okq5S8usW8qt2LurJNWz-HK5iyu-H2jZ3xZTGFo0F_DFPv-8x1K15J_W07rR-3SvQ1Nu9J3AxInyj5-8uvujz8rkS0oifOBtNoWVjrWqwXXgfAt-2g2FiVt2OMUzzMQZcaizvXlXVFCVmfFbZG65U2cc8dUkPB_C7Lwxj34ipPiW6VU3Msam2QwFtgq6r78xHMI55CSiDssk1tcGFZkXPodzPm-8HZi21e0FhHym9nxNEE7Ly6InGESRAuOfGIfDLSf5e_tQzV0UrcjR1O_xkFgdNnQejOvA4DOH4Yx3g6Jwbs9rK8bE8orP7bLHqYrmQhAW4_9QMKhBpZcdnArm-o3qEjW2HAKIVngFIWX60zbqOubIeRIB9eM0MNQ8nuKzYthH4uADtWjKnnHrAvnik1ufBahGuPsrUGfr8fDwpbrgsMWHeYEZz1yVVdy-fTvhxO7BeSDwy0ru6R9njA84GX0i_9sftC9-KCTukgI5yrFiBD7rrWoY5MsJe-ieMXANmOoTNHJV1B6agctzYjoYg7NvceAwbvXGW9C7oVX--hYpGpU_TvcB1-ScZy-Z0jkUvQDatI_2vmqJUxXbDrNub89knR9C5sKi0mLomg5k6dmnvPP-2lyifXdYFlv3S6N0jnwN6Qx0VMFs5pmo6SHO4rV4JrEYpokHcogPYam9SRnj6yBOtit1YydKSjOqDiPy1pRriN135sx1AToU-tuyzWiPo50ZjeQLRUbGgfuuC71x1qqzGTvZbsKjgQMznULWCQ77wM4u5xYNdbHZiAaehj-9vTijJ_mU2XtnueJF8GS6FjvL_2zvF0EpgsvDOR9hIjO_0vTOb-M6K4jjoMD6ViPMMyVh5zvQStClhT6NyXaACCkP_YmbB3wJ7WO9TD-QdjtJsFZ4kK01PMBadxiyjlbLMVfXu83QDx23QuboPCgFOBmTP3JahmxJdQuloqAFWzB9TSdcAz7WKv_l91aHjFt8aNf9WarxIqi-vs8g9ASjXhnaam2MqrPSPJdaZlb4jgdg2NxsQlrfXEwyOHzGs62HpZSUZ7KJqEGLb1TJSQVnbTlV2rxLn8mKFyQY7SKrGh71UNR5CS9R3W7WH6cLFHhXVrfJJNUDM-ywmKPfRKvvL6UpB_B9kWFaWTJjnQlkfVx7sITd03GBPR1GmVb9cNzvKfwpCNkE8vkGLOw2Ne9bWoG5JVYDOne-XP5Xn8BmyZngQ6GvrFpCtTN4LA_bkmy7h0n_coAoLK_IgdPF6aE-BEI4cm7G_IUZ-zF4BzmkccgyJCq31BtNrwM6atCQzAFvhuv2IufhZVK_S0gw54UxHU7UA3sZm49k_5H4sxCqA19Qp-uyiu-dclTumRZKCFopberZJk2wr8sN4SvHIm9MmBZmFeaic0SGprpsIZcPsp0eGbL5w3DJ1bGxNPIPGQ7O8zBy1HLIlfsOKXjJmn0eo9EjspMuxn6ZhspKdJhBV8r-Jx6sw=",
+									"summary": [
+										{
+											"type": "summary_text",
+											"text": "**Calculating differences**\n\nI need to mentally calculate some products before calling the tool. For instance, I’ve found that 37 times 43 equals 1591, and 19 times 29 equals 551. Then, I can find the difference between these two results, which is 1040. Now that I have the numbers worked out, I’ll go ahead and call the tool to move on with the task. It feels good to have those figures figured out!"
+										}
+									]
+								},
+								{
+									"id": "fc_08652af4ba4b2b85016afb69b8a6f087d2823712be5811baed",
+									"type": "function_call",
+									"status": "completed",
+									"arguments": "{}",
+									"call_id": "call_Ru4EHvFJ05YqFj7g5PcOw8RT",
+									"name": "get_secret_number"
+								}
+							],
+							"parallel_tool_calls": true,
+							"presence_penalty": 0,
+							"previous_response_id": null,
+							"prompt_cache_key": null,
+							"prompt_cache_retention": "24h",
+							"reasoning": {
+								"context": "all_turns",
+								"effort": "medium",
+								"mode": "standard",
+								"summary": "detailed"
+							},
+							"safety_identifier": null,
+							"service_tier": "default",
+							"store": false,
+							"temperature": 1,
+							"text": {
+								"format": {
+									"type": "text"
+								},
+								"verbosity": "medium"
+							},
+							"tool_choice": "auto",
+							"tool_usage": {
+								"image_gen": {
+									"input_tokens": 0,
+									"input_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"output_tokens": 0,
+									"output_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"total_tokens": 0
+								},
+								"web_search": {
+									"num_requests": 0
+								}
+							},
+							"tools": [
+								{
+									"type": "function",
+									"description": "Returns the secret number.",
+									"name": "get_secret_number",
+									"output_schema": null,
+									"parameters": {
+										"type": "object",
+										"properties": {},
+										"additionalProperties": false
+									},
+									"strict": true
+								}
+							],
+							"top_logprobs": 0,
+							"top_p": 0.98,
+							"truncation": "disabled",
+							"usage": {
+								"input_tokens": 68,
+								"input_tokens_details": {
+									"cache_write_tokens": 0,
+									"cache_write_tokens_details": {
+										"ttl_12h_tokens": 0,
+										"ttl_30m_tokens": 0
+									},
+									"cached_tokens": 0
+								},
+								"output_tokens": 51,
+								"output_tokens_details": {
+									"reasoning_tokens": 34
+								},
+								"total_tokens": 119
+							},
+							"user": null,
+							"metadata": {}
+						},
+						"sequence_number": 95
+					}
+				]
+			}
+		},
+		{
+			"name": "azure stream",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/responses",
+				"body": {
+					"model": "gpt-5.6-sol",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"reasoning": {
+						"effort": "medium",
+						"summary": "auto"
+					},
+					"max_output_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_secret_number",
+							"description": "Returns the secret number.",
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Work out 37*43 - 19*29 in your head first, then call get_secret_number, then tell me the secret number plus your result."
+						}
+					],
+					"stream": true
+				}
+			},
+			"response": {
+				"status": 200,
+				"events": [
+					{
+						"type": "response.created",
+						"response": {
+							"id": "resp_008ff3f1962b8604016afb69b954f48196b8c34bddfc0e0158",
+							"object": "response",
+							"created_at": 1794861497,
+							"status": "in_progress",
+							"access_programs": null,
+							"background": false,
+							"completed_at": null,
+							"content_filters": null,
+							"error": null,
+							"frequency_penalty": 0,
+							"incomplete_details": null,
+							"instructions": null,
+							"max_output_tokens": 2000,
+							"max_tool_calls": null,
+							"model": "gpt-5.6-sol",
+							"moderation": null,
+							"output": [],
+							"parallel_tool_calls": true,
+							"presence_penalty": 0,
+							"previous_response_id": null,
+							"prompt_cache_key": null,
+							"prompt_cache_retention": "24h",
+							"reasoning": {
+								"context": "all_turns",
+								"effort": "medium",
+								"mode": "standard",
+								"summary": "detailed"
+							},
+							"safety_identifier": null,
+							"service_tier": "auto",
+							"store": false,
+							"temperature": 1,
+							"text": {
+								"format": {
+									"type": "text"
+								},
+								"verbosity": "medium"
+							},
+							"tool_choice": "auto",
+							"tool_usage": {
+								"image_gen": {
+									"input_tokens": 0,
+									"input_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"output_tokens": 0,
+									"output_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"total_tokens": 0
+								},
+								"web_search": {
+									"num_requests": 0
+								}
+							},
+							"tools": [
+								{
+									"type": "function",
+									"description": "Returns the secret number.",
+									"name": "get_secret_number",
+									"output_schema": null,
+									"parameters": {
+										"type": "object",
+										"properties": {},
+										"additionalProperties": false
+									},
+									"strict": true
+								}
+							],
+							"top_logprobs": 0,
+							"top_p": 0.98,
+							"truncation": "disabled",
+							"usage": null,
+							"user": null,
+							"metadata": {}
+						},
+						"sequence_number": 0
+					},
+					{
+						"type": "response.in_progress",
+						"response": {
+							"id": "resp_008ff3f1962b8604016afb69b954f48196b8c34bddfc0e0158",
+							"object": "response",
+							"created_at": 1794861497,
+							"status": "in_progress",
+							"access_programs": null,
+							"background": false,
+							"completed_at": null,
+							"content_filters": null,
+							"error": null,
+							"frequency_penalty": 0,
+							"incomplete_details": null,
+							"instructions": null,
+							"max_output_tokens": 2000,
+							"max_tool_calls": null,
+							"model": "gpt-5.6-sol",
+							"moderation": null,
+							"output": [],
+							"parallel_tool_calls": true,
+							"presence_penalty": 0,
+							"previous_response_id": null,
+							"prompt_cache_key": null,
+							"prompt_cache_retention": "24h",
+							"reasoning": {
+								"context": "all_turns",
+								"effort": "medium",
+								"mode": "standard",
+								"summary": "detailed"
+							},
+							"safety_identifier": null,
+							"service_tier": "auto",
+							"store": false,
+							"temperature": 1,
+							"text": {
+								"format": {
+									"type": "text"
+								},
+								"verbosity": "medium"
+							},
+							"tool_choice": "auto",
+							"tool_usage": {
+								"image_gen": {
+									"input_tokens": 0,
+									"input_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"output_tokens": 0,
+									"output_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"total_tokens": 0
+								},
+								"web_search": {
+									"num_requests": 0
+								}
+							},
+							"tools": [
+								{
+									"type": "function",
+									"description": "Returns the secret number.",
+									"name": "get_secret_number",
+									"output_schema": null,
+									"parameters": {
+										"type": "object",
+										"properties": {},
+										"additionalProperties": false
+									},
+									"strict": true
+								}
+							],
+							"top_logprobs": 0,
+							"top_p": 0.98,
+							"truncation": "disabled",
+							"usage": null,
+							"user": null,
+							"metadata": {}
+						},
+						"sequence_number": 1
+					},
+					{
+						"type": "response.output_item.added",
+						"item": {
+							"id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+							"type": "reasoning",
+							"content": [],
+							"encrypted_content": "gAAAAABq-2m51I3E1wc3de65XJzu3z0OaENYUH8INs49mGKf-8aIjP-2lEoZ7g7kiEFar-4mJD8aSTIRniSvnVdZCWGr3wHJX8EoPRCFNj-ia7Uv6_ywc-sZTfZZIyny7OoBMeNrTSjp0jqLK15QjijEUNT6FaKKtdU_akoFpOIm-IpFC-OU6lK8wpS2S74BdTDvM61Sv2d5aK2va6Fm-cTRvZe45GxRhPYxr6_uteVkHi4cCKOOuNkfAe7CXJ142eRFOx-L6eu7mk73LBaDvWao4f2l_RhCm4Y9LTHuj6cKr2Q9ecbZ2iwiFS4OeCWyFPZsD3HxjW1fCdZk_eTdTIkdiv8cyeaCoTM0cckXPHBtW77QEjx6VkmQa6Nlucy-ObsYdFAApeWEgsAeRHPcesvJzFSm3LFsR7qVs9BDfRcL4y0r7Rpz04Bq2P3DTVK-mZ0qjmMyyMQ60LHzQT2fHgbsmgSW8E2B5Uu8Q_2bHWsROsP-GMlyH9bYD0ln3Ry5528DoXJU78H9ZgKYbRSjm3GbDKBCpwEPKoC3kWV2UzgsvdQezLxytigJ79BV6FpHLxy39x-aniSUYh9UDZRdC4PliXoq1EsBAGoJbvBdmjIhksywHj4eL7nMeUKz2e0dDV8AM_XvgAM6FIeyQuAM3v24-z1hyZ81WSz1g_kes6QSwGBpTLiWeHAfI5Y0xxx3c5a0zlO-uJOYjQtl7wpIo0YYZ_gkh_2dVTFBiHFTMUccKHNqfWHS_GW0WcI2Wx1VV6HeDwuzHBuIuH8qaqI2lGqNDnL2niCWAu_6luviFRnf3N985HFe-1ftoDQvNMFEt6NG4kyR-DxO--iS8aj-ChPMoouTYvFt94iBOH2JsI7c5R3r-TR2_fXiuyvW_8NWQ1H6WNOgm9CsWdDC_aZrG9blBrcN2-m7VBqOlmGL6I2obH_Bk6i_iKw2bSm_qLTAmyg25MmoQivj3bdF9JXs6aBDOTnUpHT2VuzzIva2THtEVkpYmL6m29RUyRgnP9Df8bqOW4AyDaECWS1a05746wPthq69KpLA5IBEgExpin-0j5On77ruU9SXUTWrwxDK-tIdeymeVr4NgmpaJw0R331Eiujg37Z_E6FvDXTTggX_KPQp2LNc9K_ps1zCwVUf2-y17YpWLX4DJ_K_UkG1YLZhYGOPwT_vtQ==",
+							"summary": []
+						},
+						"output_index": 0,
+						"sequence_number": 2
+					},
+					{
+						"type": "response.reasoning_summary_part.added",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"output_index": 0,
+						"part": {
+							"type": "summary_text",
+							"text": ""
+						},
+						"sequence_number": 3,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": "**Calculating subtraction**\n\nI",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "7e",
+						"output_index": 0,
+						"sequence_number": 4,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " need",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "hiHTxWEi1GE",
+						"output_index": 0,
+						"sequence_number": 5,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " to",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "mv3426p1YGhsX",
+						"output_index": 0,
+						"sequence_number": 6,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " calculate",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "maVmx5",
+						"output_index": 0,
+						"sequence_number": 7,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " 159",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "yPH7LjtJGwIw",
+						"output_index": 0,
+						"sequence_number": 8,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": "1",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "AYqFy6xSeFIBCtV",
+						"output_index": 0,
+						"sequence_number": 9,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " minus",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "BbJS4o2Kdc",
+						"output_index": 0,
+						"sequence_number": 10,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " 551",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "DLJxcn2U1dZa",
+						"output_index": 0,
+						"sequence_number": 11,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": ",",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "VVrlyd4Hz9bB5jC",
+						"output_index": 0,
+						"sequence_number": 12,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " which",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "5ytWQKsVJo",
+						"output_index": 0,
+						"sequence_number": 13,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " should",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "VOWqkumgL",
+						"output_index": 0,
+						"sequence_number": 14,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " equal",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "nHCJVLvLMM",
+						"output_index": 0,
+						"sequence_number": 15,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " 104",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "GEJznX1aSFck",
+						"output_index": 0,
+						"sequence_number": 16,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": "0",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "2tbW8RvPTwQBbXE",
+						"output_index": 0,
+						"sequence_number": 17,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": ".",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "XGZuKXU5U9Zy7DZ",
+						"output_index": 0,
+						"sequence_number": 18,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " It",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "Lp3sCgPydD6oo",
+						"output_index": 0,
+						"sequence_number": 19,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " seems",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "aW5h3nH3Vb",
+						"output_index": 0,
+						"sequence_number": 20,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " straightforward",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "",
+						"output_index": 0,
+						"sequence_number": 21,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": ",",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "7z9IlqT78qONEGy",
+						"output_index": 0,
+						"sequence_number": 22,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " but",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "y7rasbm8VCrg",
+						"output_index": 0,
+						"sequence_number": 23,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " let",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "vRVKeVVPofsl",
+						"output_index": 0,
+						"sequence_number": 24,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " me",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "0EHivdShgbIQo",
+						"output_index": 0,
+						"sequence_number": 25,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " double",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "snGYzaqsW",
+						"output_index": 0,
+						"sequence_number": 26,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": "-check",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "G53944Hu0O",
+						"output_index": 0,
+						"sequence_number": 27,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " the",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "Iow4Xt1OsCOm",
+						"output_index": 0,
+						"sequence_number": 28,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " math",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "UsjeprqUGzF",
+						"output_index": 0,
+						"sequence_number": 29,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": ".",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "ehIN6SA7l2VUSrh",
+						"output_index": 0,
+						"sequence_number": 30,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " I",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "nsju8C1BCr8UGg",
+						"output_index": 0,
+						"sequence_number": 31,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": "’ll",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "lDL2CDpDN4KnN",
+						"output_index": 0,
+						"sequence_number": 32,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " call",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "Y0prunKwmIf",
+						"output_index": 0,
+						"sequence_number": 33,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " the",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "S18N9Y1vYcVS",
+						"output_index": 0,
+						"sequence_number": 34,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " tool",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "uxXtoZeKMgj",
+						"output_index": 0,
+						"sequence_number": 35,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " to",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "eRDdhRpZju4nX",
+						"output_index": 0,
+						"sequence_number": 36,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " confirm",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "HXeE381w",
+						"output_index": 0,
+						"sequence_number": 37,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " this",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "5YTHoaoCjxy",
+						"output_index": 0,
+						"sequence_number": 38,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " subtraction",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "lyzc",
+						"output_index": 0,
+						"sequence_number": 39,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": ".",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "ScRYWIoHhvWuLex",
+						"output_index": 0,
+						"sequence_number": 40,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " Once",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "Tiii6sF3rZi",
+						"output_index": 0,
+						"sequence_number": 41,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " I",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "OuK4IGnVm8vZDq",
+						"output_index": 0,
+						"sequence_number": 42,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " get",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "ZS1fEL0iKCoI",
+						"output_index": 0,
+						"sequence_number": 43,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " the",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "c4ZPwzJGEHoL",
+						"output_index": 0,
+						"sequence_number": 44,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " result",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "XbU0MZJyx",
+						"output_index": 0,
+						"sequence_number": 45,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": ",",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "x9bzcdjE3ujxo2S",
+						"output_index": 0,
+						"sequence_number": 46,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " I",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "ZeCo2qMvcS2tuO",
+						"output_index": 0,
+						"sequence_number": 47,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " can",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "tKdTZw7WPSQL",
+						"output_index": 0,
+						"sequence_number": 48,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " proceed",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "ZePGXabh",
+						"output_index": 0,
+						"sequence_number": 49,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " by",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "5uGS747H7VgG8",
+						"output_index": 0,
+						"sequence_number": 50,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " adding",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "A9AHxODzw",
+						"output_index": 0,
+						"sequence_number": 51,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " it",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "ybivLXLjqywG8",
+						"output_index": 0,
+						"sequence_number": 52,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " to",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "efQsWySGA0stt",
+						"output_index": 0,
+						"sequence_number": 53,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " whatever",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "XfTfylx",
+						"output_index": 0,
+						"sequence_number": 54,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " else",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "PevoagoNknl",
+						"output_index": 0,
+						"sequence_number": 55,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " is",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "sTq0pEgFU95nL",
+						"output_index": 0,
+						"sequence_number": 56,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " necessary",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "6PNjc1",
+						"output_index": 0,
+						"sequence_number": 57,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " afterward",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "7lRF91",
+						"output_index": 0,
+						"sequence_number": 58,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": ".",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "ycdjzyFXQ0ojoC5",
+						"output_index": 0,
+						"sequence_number": 59,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " It's",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "iev2nonIiNH",
+						"output_index": 0,
+						"sequence_number": 60,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " just",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "C67vNGQWsnD",
+						"output_index": 0,
+						"sequence_number": 61,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " a",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "HbgcBufbea0XjK",
+						"output_index": 0,
+						"sequence_number": 62,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " simple",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "43oXXzAuc",
+						"output_index": 0,
+						"sequence_number": 63,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " calculation",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "WPEZ",
+						"output_index": 0,
+						"sequence_number": 64,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": ",",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "YrCmXHDE8nyuO2S",
+						"output_index": 0,
+						"sequence_number": 65,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " but",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "m7rbI8Sj09Ie",
+						"output_index": 0,
+						"sequence_number": 66,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " it's",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "MDeUww7h9lf",
+						"output_index": 0,
+						"sequence_number": 67,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " always",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "LyWGyjnfO",
+						"output_index": 0,
+						"sequence_number": 68,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " good",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "XA7rURCLFed",
+						"output_index": 0,
+						"sequence_number": 69,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " to",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "3RUo9K4sJPUXa",
+						"output_index": 0,
+						"sequence_number": 70,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " be",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "hdZadiYHroymv",
+						"output_index": 0,
+						"sequence_number": 71,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " accurate",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "aTU2Ro1",
+						"output_index": 0,
+						"sequence_number": 72,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": "!",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "xqcZi1cisbnG49h",
+						"output_index": 0,
+						"sequence_number": 73,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " I'll",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "WPjsb5QbeVH",
+						"output_index": 0,
+						"sequence_number": 74,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " work",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "gCMvEiK8SIU",
+						"output_index": 0,
+						"sequence_number": 75,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " on",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "wZhP79H9lb0uc",
+						"output_index": 0,
+						"sequence_number": 76,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " getting",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "haHPYKVa",
+						"output_index": 0,
+						"sequence_number": 77,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " that",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "6kgyYZdDWDR",
+						"output_index": 0,
+						"sequence_number": 78,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": " result",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "xIrH0ZeVW",
+						"output_index": 0,
+						"sequence_number": 79,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.delta",
+						"delta": ".",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"obfuscation": "4wUAGTDo0er9GlR",
+						"output_index": 0,
+						"sequence_number": 80,
+						"summary_index": 0
+					},
+					{
+						"type": "response.reasoning_summary_text.done",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"output_index": 0,
+						"sequence_number": 81,
+						"summary_index": 0,
+						"text": "**Calculating subtraction**\n\nI need to calculate 1591 minus 551, which should equal 1040. It seems straightforward, but let me double-check the math. I’ll call the tool to confirm this subtraction. Once I get the result, I can proceed by adding it to whatever else is necessary afterward. It's just a simple calculation, but it's always good to be accurate! I'll work on getting that result."
+					},
+					{
+						"type": "response.reasoning_summary_part.done",
+						"item_id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+						"output_index": 0,
+						"part": {
+							"type": "summary_text",
+							"text": "**Calculating subtraction**\n\nI need to calculate 1591 minus 551, which should equal 1040. It seems straightforward, but let me double-check the math. I’ll call the tool to confirm this subtraction. Once I get the result, I can proceed by adding it to whatever else is necessary afterward. It's just a simple calculation, but it's always good to be accurate! I'll work on getting that result."
+						},
+						"sequence_number": 82,
+						"summary_index": 0
+					},
+					{
+						"type": "response.output_item.done",
+						"item": {
+							"id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+							"type": "reasoning",
+							"content": [],
+							"encrypted_content": "gAAAAABq-2m6StFrpT_9cIx-ilYEY4YiNF6AptcgU_ifLpDriYizBdqVtMSNtoGJ2O8gCIL9qJoQZmjvFfC9kKhDQgokpj1cPlL8idHgP8Ox_bxDS_UBz57uQ348hqZaUBzn-hWkACj0VXOHcTGOEqZdqTOv4U6dG6TuVeGSXPwwu7V5w-yIM0f5yfwGfrZJEP11HR_1DqOikJoe3BXjhTDpVq9EN2TW3vmoCES-Ui5T-VhOelyjUGr4kvJYSmmF96-Q7c7YSDts4KrEUeimhAt1MP66lpSW3uAKU8Pf_G04PZvZHfmsd9P1r7zlhMR4pqf2BtoiqZl0EJCZHF7tn9AuFKGwJvgDLUW_07h-P_-ud2Yu7NFwmHYHSl5dde8k0LnEDfx0mj8z6VsYMq4ttNfU2nY7dZ7lnSof7jItIes9N9tiud0lJ1C7CwcPJALKUYg7ZeSWdNzD3mvkoMtuFkxAHLWtbKPOxGUCm_y7fK84lrzrqz9BnJMpA-oAnQeyyfLQpPBeM_sS4zmuH2mGWUFAhXngSlH8GbcbbYNjBIQbAEu09D6WAanGo0maq-RxmdVffGb6sc6JKgno5uIOqOhLRDBns7BPeyUCZXlnL4GTk1tPJz1n--XAGdFXSh9yyv_3aW5vknmexLB4-iTYWefHuNQEyHwXjQyXohe_FcUlh_Bq-Z4ncru8_iCJPPR-cFipuDH5UTxBC9lXQmKvlusHuvZuf1PuAGCg7K0Q0KVPFAq77oaxfmMz_Som3E9oUQLOKl3BU3OrJRu1CDgIjGWmtcjZI-i_L3s5WA-jcVIAO6IcmNvLngRtrLHW-kscU2kFqb3ISJPDQbXx3rmdUq-O9gvjI2qbfluht4HWS8h6fzNB-2z3ImMMjzzZqwo41VF65AzOuFeNcO2B5yJqMqD-hutwMLlUEhv_w7itnF__CWCrurydD8wWMyNsiddD-axiPGRdXPxEjgcNRc3LcLffAoKFcDsyT0nWNEfVD-LIGMvzYnDC_nibRg1dyMEPJcHg4Rf3Q1Ovc9buAkxLjopyam-h8GDB2tmgnWRvS9Ux4SoQ3NigAsccvhiiw7lMr8fjRZ63NcmnFs-ZEdQVRoFVV5cVzfv5kRIPD-NWYgSBXO_g5F_PL6P6N1fcVgjFpSQW7tHBVYs0cvs6EBPeIT2VQeEhrXFfv8Zei62PszyhCvTi_g-EG8jqk_8QA_CoL3KI8-uOCga-HEBb4B2pIiz28qDikO6jislWFwbU0BTAMRjuQN442xj32Tg9iOcMwRQWujPKoNxJ9d7Vg5tnePkWIUrAF9efgs53xUTdl5xBwIlGiQUMx7u7BfXNo6ZBXQmAmJHeQrEUBvp_x3y9Jxn9vYq9CFQzvWtkL3p7xJtgOsuNfrvVvfIWdF-iaPrh0Xykwfj7YWJ-YAWOROltS5ExDbSUROBbb6GHH6GcjC0xGJgwZntatZjOFRMSl_6CBBUT3vzN-LLxxmSO5feF1IsNKFSBLQwuSk-5h-7ftxfpkZNe-mPQQhXth4cuELF6ziH8eMI1cwXWrKyAF7JGkehZNX6K8ies8BGy3yqK-DN8syto8ePxJua_y6lxZwzF1mFUpQ8KmEcr",
+							"summary": [
+								{
+									"type": "summary_text",
+									"text": "**Calculating subtraction**\n\nI need to calculate 1591 minus 551, which should equal 1040. It seems straightforward, but let me double-check the math. I’ll call the tool to confirm this subtraction. Once I get the result, I can proceed by adding it to whatever else is necessary afterward. It's just a simple calculation, but it's always good to be accurate! I'll work on getting that result."
+								}
+							]
+						},
+						"output_index": 0,
+						"sequence_number": 83
+					},
+					{
+						"type": "response.output_item.added",
+						"item": {
+							"id": "fc_008ff3f1962b8604016afb69baa71c8196b457486dc2234d45",
+							"type": "function_call",
+							"status": "in_progress",
+							"arguments": "",
+							"call_id": "call_vuWMdnpxBdk81VLUq5KJ45Ch",
+							"name": "get_secret_number"
+						},
+						"output_index": 1,
+						"sequence_number": 84
+					},
+					{
+						"type": "response.function_call_arguments.delta",
+						"delta": "{}",
+						"item_id": "fc_008ff3f1962b8604016afb69baa71c8196b457486dc2234d45",
+						"obfuscation": "bPhQ40QhCDW9WI",
+						"output_index": 1,
+						"sequence_number": 85
+					},
+					{
+						"type": "response.function_call_arguments.done",
+						"arguments": "{}",
+						"item_id": "fc_008ff3f1962b8604016afb69baa71c8196b457486dc2234d45",
+						"output_index": 1,
+						"sequence_number": 86
+					},
+					{
+						"type": "response.output_item.done",
+						"item": {
+							"id": "fc_008ff3f1962b8604016afb69baa71c8196b457486dc2234d45",
+							"type": "function_call",
+							"status": "completed",
+							"arguments": "{}",
+							"call_id": "call_vuWMdnpxBdk81VLUq5KJ45Ch",
+							"name": "get_secret_number"
+						},
+						"output_index": 1,
+						"sequence_number": 87
+					},
+					{
+						"type": "response.completed",
+						"response": {
+							"id": "resp_008ff3f1962b8604016afb69b954f48196b8c34bddfc0e0158",
+							"object": "response",
+							"created_at": 1794861497,
+							"status": "completed",
+							"access_programs": null,
+							"background": false,
+							"completed_at": 1794861498,
+							"content_filters": [
+								{
+									"blocked": false,
+									"source_type": "prompt",
+									"content_filter_raw": [],
+									"content_filter_results": {
+										"hate": {
+											"filtered": false,
+											"severity": "safe"
+										},
+										"sexual": {
+											"filtered": false,
+											"severity": "safe"
+										},
+										"violence": {
+											"filtered": false,
+											"severity": "safe"
+										},
+										"self_harm": {
+											"filtered": false,
+											"severity": "safe"
+										},
+										"jailbreak": {
+											"detected": false,
+											"filtered": false
+										}
+									},
+									"content_filter_offsets": {
+										"start_offset": 0,
+										"end_offset": 153,
+										"check_offset": 0
+									}
+								},
+								{
+									"blocked": false,
+									"source_type": "completion",
+									"content_filter_raw": [],
+									"content_filter_results": {
+										"protected_material_text": {
+											"detected": false,
+											"filtered": false
+										},
+										"protected_material_code": {
+											"detected": false,
+											"filtered": false
+										},
+										"hate": {
+											"filtered": false,
+											"severity": "safe"
+										},
+										"sexual": {
+											"filtered": false,
+											"severity": "safe"
+										},
+										"violence": {
+											"filtered": false,
+											"severity": "safe"
+										},
+										"self_harm": {
+											"filtered": false,
+											"severity": "safe"
+										}
+									},
+									"content_filter_offsets": {
+										"start_offset": 0,
+										"end_offset": 61,
+										"check_offset": 0
+									}
+								}
+							],
+							"error": null,
+							"frequency_penalty": 0,
+							"incomplete_details": null,
+							"instructions": null,
+							"max_output_tokens": 2000,
+							"max_tool_calls": null,
+							"model": "gpt-5.6-sol",
+							"moderation": null,
+							"output": [
+								{
+									"id": "rs_008ff3f1962b8604016afb69b9ebb08196b3857fb206ce0907",
+									"type": "reasoning",
+									"content": [],
+									"encrypted_content": "gAAAAABq-2m6n4Cn56ZAXoi9PcSuZxvO65bAqVYDxarPT9l0FkfrfROmrvb5ZomQnJFq25pH8syXHtQ_e3RZMsY7vQrQAUZWANg-8sVZaqzIHlkMyOG7AEbcXTc4AYQn5ul9_dSs5XxZw2duZmn5G66yyidCev-2BwWzCvyNgQeP0KmqJDAQqpGSylAUMq-cN4hyDDVwD0PDhVf75s7Q7yd0QAyHhv5O-skIHcOHQnFo8fFJ4j2Ayyh3yh1q2CXeUl-BR15DRZUyi7EnVphhRGqPudUpoGpNOpIVt0wYmI5lEBVEGd4sqGbTCXde8p0qdv0B6pIaqD5fjQA9WMs2cli-Bfwziicd_bSgPRQcg7SQuu8-aupnUVLtZ2AaOj5O6aFjUZtoSMva08gKiY6e7K3JmX6aD0wJdEN85Rm4i3AsdT2Pl41B11_a8LKUtgmbexOuwZYW91RLiA3kTFOgFr3aB4k9BfFmyit2Ouay-q-Cyuf134o1wvAQENyH7LXIh5xg0bO0C742Rpr8cXXjaUEA_bKK4BTRWALjgYb1dGlulvCr6HIPhIEdz52g2_ssqCiuftj6PzTXunu9B91cNtizwqBDEwWY5XwetFQR-HqaYiBLpIU3ga20jRs-IYo9s-10WwWz6cLzuNahKQ3nDHbhUwq9Q8ssbhudb6FKj9ORzmtQJpBbdk0w6ByQDAOk0Nl-XMggE5PiYb0BFVfZJbAd7mu4i66pdXJS1MIkIj9XSmyXaBxBgzpqRZ3OV7JmL6kt6kkO2lYb6J08Ete8Uq-fr9_wVbqWd12gXVuKYFYEYcy4q99P3SK6nBZphdM83GjHTHwUtvKLL9HmZmTivdjqHA0GlTaTo674XJe8GwxQbdwrhqdSs0ojxeRDnJjPIqFqIGlqkMUmi1lXiCBsLHjVr4ZRz-Dc80m_EZv3uEeXurUTdHDQTH4Km4Ws__Q6K-REWXCJFOmWQgWwOallAWceuGENfVlwdXcY72fRMb9KVRRp1AcatYsRmeNFR9QybjRR2CPguhBvfRBa0U7Y2LR1ojgHGVreiSP2bSQ3pbOL69XSLxR7YFW3fiqwmsvrNFKeSDpYJbcJwFGozUCzHC8Vj6ncVoqqmEjM9-OsteOZ83CoTVkK39VB4kEDqh4WGHXFATvToEeN4MpTYkAcuO47vLnnSDVtt-HYAtt7UFP64ufHZRljNTJvg6UKivANbt3jjx6yqWbZM5xkYJ7ImB90t9dVJ_i1J-a2bS7euO2IXWINxYmYAkYC7gQUBZLKg7uIEfDZPEGz80Za_vM5nRFoWsoJQImsZLSJSAm8rIMPlMfYereQoobXFtgEtWlJufwJslXRA8sE3t1ko5gYvcAYTbaU-69jvTd-4noD7bvCfTXaVsXIo8eOHYGaGRLtnT2b16lxDBUGYKLZUUXPQQWmnix97VpGHko2YeCSTLMHdeZShWdoUiwRovfFo-UwNXpXcgHJf59rRFIlwpRPmNKmwP02tUyUpZmkbecrFr9sfnHqwAF-vYt6M8SoAbwcJaXwfqSzW45xQRs0Aymxcxh7ZKD2fA139qZHLMiZpCaTsrRSF1lVkVhD806u_VopP4HgrxeOrxK1",
+									"summary": [
+										{
+											"type": "summary_text",
+											"text": "**Calculating subtraction**\n\nI need to calculate 1591 minus 551, which should equal 1040. It seems straightforward, but let me double-check the math. I’ll call the tool to confirm this subtraction. Once I get the result, I can proceed by adding it to whatever else is necessary afterward. It's just a simple calculation, but it's always good to be accurate! I'll work on getting that result."
+										}
+									]
+								},
+								{
+									"id": "fc_008ff3f1962b8604016afb69baa71c8196b457486dc2234d45",
+									"type": "function_call",
+									"status": "completed",
+									"arguments": "{}",
+									"call_id": "call_vuWMdnpxBdk81VLUq5KJ45Ch",
+									"name": "get_secret_number"
+								}
+							],
+							"parallel_tool_calls": true,
+							"presence_penalty": 0,
+							"previous_response_id": null,
+							"prompt_cache_key": null,
+							"prompt_cache_retention": "24h",
+							"reasoning": {
+								"context": "all_turns",
+								"effort": "medium",
+								"mode": "standard",
+								"summary": "detailed"
+							},
+							"safety_identifier": null,
+							"service_tier": "default",
+							"store": false,
+							"temperature": 1,
+							"text": {
+								"format": {
+									"type": "text"
+								},
+								"verbosity": "medium"
+							},
+							"tool_choice": "auto",
+							"tool_usage": {
+								"image_gen": {
+									"input_tokens": 0,
+									"input_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"output_tokens": 0,
+									"output_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"total_tokens": 0
+								},
+								"web_search": {
+									"num_requests": 0
+								}
+							},
+							"tools": [
+								{
+									"type": "function",
+									"description": "Returns the secret number.",
+									"name": "get_secret_number",
+									"output_schema": null,
+									"parameters": {
+										"type": "object",
+										"properties": {},
+										"additionalProperties": false
+									},
+									"strict": true
+								}
+							],
+							"top_logprobs": 0,
+							"top_p": 0.98,
+							"truncation": "disabled",
+							"usage": {
+								"input_tokens": 68,
+								"input_tokens_details": {
+									"cache_write_tokens": 0,
+									"cached_tokens": 0
+								},
+								"output_tokens": 39,
+								"output_tokens_details": {
+									"reasoning_tokens": 22
+								},
+								"total_tokens": 107
+							},
+							"user": null,
+							"metadata": {}
+						},
+						"sequence_number": 88
+					}
+				]
+			}
+		}
+	]
+}

@@ -249,7 +249,7 @@ func TestDecodeThinkingBlockRejectsMalformedContent(t *testing.T) {
 	encode := func(state string) string {
 		return encryptedThinkingPrefix + base64.RawURLEncoding.EncodeToString([]byte(state))
 	}
-	valid, ok := encodeThinkingBlock(AnthropicContentBlock{Type: AnthropicContentBlockTypeThinking, Thinking: schemas.Ptr(""), Signature: schemas.Ptr("sig")})
+	valid, ok := EncodeThinkingBlock(AnthropicContentBlock{Type: AnthropicContentBlockTypeThinking, Thinking: schemas.Ptr(""), Signature: schemas.Ptr("sig")})
 	if !ok {
 		t.Fatal("encode thinking")
 	}
@@ -271,7 +271,7 @@ func TestDecodeThinkingBlockRejectsMalformedContent(t *testing.T) {
 			t.Errorf("%s: decoded %+v", name, block)
 		}
 	}
-	if _, ok := encodeThinkingBlock(AnthropicContentBlock{Type: AnthropicContentBlockTypeThinking, Thinking: schemas.Ptr("x"), Signature: schemas.Ptr("")}); ok {
+	if _, ok := EncodeThinkingBlock(AnthropicContentBlock{Type: AnthropicContentBlockTypeThinking, Thinking: schemas.Ptr("x"), Signature: schemas.Ptr("")}); ok {
 		t.Error("encoded thinking without a signature")
 	}
 }
