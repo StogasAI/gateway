@@ -18,16 +18,22 @@ func streamErrorStatus(errType string) int {
 		return fasthttp.StatusBadRequest
 	case "authentication_error":
 		return fasthttp.StatusUnauthorized
+	case "billing_error":
+		return fasthttp.StatusPaymentRequired
 	case "permission_error":
 		return fasthttp.StatusForbidden
 	case "not_found_error":
 		return fasthttp.StatusNotFound
+	case "conflict_error":
+		return fasthttp.StatusConflict
 	case "request_too_large":
 		return fasthttp.StatusRequestEntityTooLarge
 	case "rate_limit_error":
 		return fasthttp.StatusTooManyRequests
 	case "api_error":
 		return fasthttp.StatusInternalServerError
+	case "timeout_error":
+		return fasthttp.StatusGatewayTimeout
 	case "overloaded_error":
 		// Anthropic's own non-standard overload status, already in the transient set.
 		return 529

@@ -325,3 +325,15 @@ func TestParseAnthropicErrorKeepsTheErrorCode(t *testing.T) {
 		}
 	}
 }
+
+// A stream error event carries the status that Anthropic documents for its type, so a
+// billing error before the first token rotates to another key instead of retrying a
+// transient 502 on the same one.
+func TestStreamErrorStatusGivesEachErrorTypeItsStatus(t *testing.T) {
+	for errType := range anthropicErrorTypes {
+		status := streamErrorStatus(errType)
+		if got := anthropicErrorTypeForStatus(status); got != errType {
+			t.Errorf("streamErrorStatus(%q) = %d, whose type is %q", errType, status, got)
+		}
+	}
+}
