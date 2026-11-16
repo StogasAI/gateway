@@ -374,7 +374,9 @@ func TestSettlementStoresTheLogWithItsHoldBindingAndCost(t *testing.T) {
 		wire.Usage.UpstreamCostUSD != "0.5" || wire.Usage.BilledCostUSD != "0.5" {
 		t.Fatalf("settled log = %s", calls[0].logs[0])
 	}
-	if got := s.Diagnostics().Settlement; got.Reserved != 0 || got.Queued != 0 || got.Calls != 1 || got.FailedCalls != 0 {
+	// The request returns when its call is answered, before the sender counts it out of the queue.
+	waitFor(t, func() bool { return s.Diagnostics().Settlement.Queued == 0 })
+	if got := s.Diagnostics().Settlement; got.Reserved != 0 || got.Calls != 1 || got.FailedCalls != 0 {
 		t.Fatalf("diagnostics = %+v", got)
 	}
 }
