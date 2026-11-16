@@ -16,6 +16,7 @@ import (
 	"mime"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/bytedance/sonic"
@@ -31,6 +32,10 @@ type Stats struct {
 	// there is none: a URL, a file ID, or a file that stays one, unless it is a text file, which
 	// Text reads. An Office file that stays a file is opaque.
 	Opaque string
+	// Extracted counts the files that became prompt text, and ExtractionTime is what reading
+	// them took.
+	Extracted      int
+	ExtractionTime time.Duration
 }
 
 // PartError refuses the attachment at Path, such as messages[0].content[1].
@@ -325,6 +330,7 @@ func (p *processor) text(path string, block, file map[string]json.RawMessage, re
 	refuse := func(reason string) (json.RawMessage, bool, error) {
 		return nil, false, &PartError{Path: path, Reason: reason}
 	}
+	started := time.Now()
 	// The request lease covers the decoded text beside the encoded file, and what replaces the
 	// file: a data URL of the same payload, or text, where every UTF-8 byte may require six
 	// JSON bytes.
@@ -383,12 +389,20 @@ func (p *processor) text(path string, block, file map[string]json.RawMessage, re
 		mediaType = ""
 	}
 	replacement, err := textBlock(path, block, file, responses, mediaType, string(decoded))
+	p.extracted(started)
 	return replacement, true, err
+}
+
+// extracted records a file that became prompt text.
+func (p *processor) extracted(started time.Time) {
+	p.stats.Extracted++
+	p.stats.ExtractionTime += time.Since(started)
 }
 
 // office reads the inline Office file of a block and returns the text block that replaces it.
 func (p *processor) office(path string, block, file map[string]json.RawMessage, responses bool, mediaType, payload string) (json.RawMessage, error) {
 	refuse := func(reason string) (json.RawMessage, error) { return nil, &PartError{Path: path, Reason: reason} }
+	started := time.Now()
 	// The request lease covers the decoded archive, and then what the extraction keeps.
 	retain := func(bytes int) error {
 		p.expansion += bytes
@@ -420,7 +434,9 @@ func (p *processor) office(path string, block, file map[string]json.RawMessage, 
 	if officeMediaTypes[strings.ToLower(mediaType)] == 0 {
 		mediaType = ""
 	}
-	return textBlock(path, block, file, responses, mediaType, text)
+	replacement, err := textBlock(path, block, file, responses, mediaType, text)
+	p.extracted(started)
+	return replacement, err
 }
 
 // textBlock builds the text block that replaces a file part: the file's text below a first line

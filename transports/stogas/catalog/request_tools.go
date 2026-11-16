@@ -3,20 +3,17 @@ package catalog
 import (
 	"bytes"
 	"encoding/json"
-	"net/url"
 	"slices"
-	"strings"
 	"sync"
 
 	providerutils "github.com/maximhq/bifrost/core/providers/utils"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/rawjson"
-	"golang.org/x/net/idna"
 )
 
 // requestTools are the tools that a request lists, as routing and policies read them from the
 // body as sent. A tool counts as one the model may call unless tool_choice rules out its type, so
-// a choice that forces one function or one MCP server still counts every tool of that type.
+// a choice that forces one function still counts every tool of that type.
 type requestTools struct {
 	hosted hostedToolUse
 	facts  *requestFacts
@@ -35,10 +32,6 @@ type requestFacts struct {
 	// clientTools are the names of the tools that the model may call and the client runs: function
 	// and custom tools, and shell and apply_patch under those names.
 	clientTools []string
-	// mcpServers name the remote MCP servers that the model may call: a URL's host, or a connector
-	// or tunnel ID, all lowercase. mcpTools lists server/name for each tool that the request allows
-	// on one of them, or server/* when it doesn't name the server's tools.
-	mcpServers, mcpTools []string
 	// systemMessages reports whether the request sends a system or developer message, or
 	// instructions. Only policies that read it scan the messages.
 	systemMessages func() bool
@@ -46,7 +39,7 @@ type requestFacts struct {
 
 // readRequestTools reads a request's tools in one pass. Only Responses requests list hosted tools.
 func readRequestTools(route Route, raw map[string]json.RawMessage) requestTools {
-	facts := &requestFacts{clientTools: []string{}, mcpServers: []string{}, mcpTools: []string{}}
+	facts := &requestFacts{clientTools: []string{}}
 	facts.systemMessages = sync.OnceValue(func() bool {
 		sends, _ := requestSendsSystemMessages(route, raw)
 		return sends
@@ -86,8 +79,6 @@ func readRequestTools(route Route, raw map[string]json.RawMessage) requestTools 
 			// their type, which no function or custom tool beside them may have.
 			case kind == schemas.ResponsesToolTypeShell || kind == schemas.ResponsesToolTypeApplyPatch:
 				facts.clientTools = append(facts.clientTools, string(kind))
-			case kind == schemas.ResponsesToolTypeMCP:
-				facts.addMCPServer(entry.Tool)
 			}
 		}
 	case RouteChat:
@@ -107,8 +98,6 @@ func readRequestTools(route Route, raw map[string]json.RawMessage) requestTools 
 		}
 	}
 	facts.clientTools = sortedNames(facts.clientTools)
-	facts.mcpServers = sortedNames(facts.mcpServers)
-	facts.mcpTools = sortedNames(facts.mcpTools)
 	return result
 }
 
@@ -170,67 +159,6 @@ func ResponsesLoadedTools(input json.RawMessage) []map[string]json.RawMessage {
 		}
 	}
 	return loaded
-}
-
-// addMCPServer adds an MCP tool's servers and the tools that it allows on them.
-func (f *requestFacts) addMCPServer(tool map[string]json.RawMessage) {
-	names := mcpAllowedToolNames(tool["allowed_tools"])
-	for _, server := range mcpServerNames(tool) {
-		f.mcpServers = append(f.mcpServers, server)
-		if len(names) == 0 {
-			f.mcpTools = append(f.mcpTools, server+"/*")
-		}
-		for _, name := range names {
-			f.mcpTools = append(f.mcpTools, server+"/"+name)
-		}
-	}
-}
-
-// mcpServerNames names the server of an MCP tool by each of server_url, connector_id and
-// tunnel_id that it sets, so a list of allowed servers checks whichever one the provider uses.
-// A URL reads as its host, with a Unicode host in its ASCII form. A URL without a host, or a tool
-// that names no server, reads as an empty name, which no allowed server matches.
-func mcpServerNames(tool map[string]json.RawMessage) []string {
-	var names []string
-	if address := rawStringValue(tool["server_url"]); address != "" {
-		host := ""
-		if parsed, err := url.Parse(address); err == nil {
-			host = strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".")
-			if ascii, err := idna.Lookup.ToASCII(host); err == nil {
-				host = ascii
-			}
-		}
-		names = append(names, host)
-	}
-	for _, key := range []string{"connector_id", "tunnel_id"} {
-		if id := rawStringValue(tool[key]); id != "" {
-			names = append(names, strings.ToLower(id))
-		}
-	}
-	if len(names) == 0 {
-		return []string{""}
-	}
-	return names
-}
-
-// mcpAllowedToolNames reads the tool names in allowed_tools, as a list or as a filter's
-// tool_names. None means the request doesn't name the server's tools: a missing list, an empty
-// one, or a filter by read_only alone.
-func mcpAllowedToolNames(raw json.RawMessage) []string {
-	if filter, ok := rawObjectValue(raw); ok && filter != nil {
-		raw = filter["tool_names"]
-	}
-	list, err := rawjson.Array(raw)
-	if err != nil {
-		return nil
-	}
-	names := make([]string, 0, len(list))
-	for _, item := range list {
-		if name := rawStringValue(item); name != "" {
-			names = append(names, name)
-		}
-	}
-	return names
 }
 
 // sortedNames sorts names and drops repeats. An empty name stays, so that a list of allowed

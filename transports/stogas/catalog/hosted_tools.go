@@ -22,11 +22,10 @@ type HostedTool string
 const (
 	HostedToolWebSearch HostedTool = "web_search"
 	HostedToolWebFetch  HostedTool = "web_fetch"
-	HostedToolMCP       HostedTool = "mcp"
 )
 
 // HostedTools lists every hosted tool in canonical order.
-var HostedTools = []HostedTool{HostedToolWebSearch, HostedToolWebFetch, HostedToolMCP}
+var HostedTools = []HostedTool{HostedToolWebSearch, HostedToolWebFetch}
 
 func hostedToolRank(tool HostedTool) int { return slices.Index(HostedTools, tool) }
 
@@ -252,8 +251,6 @@ func hostedToolForType(kind string) (HostedTool, bool) {
 		return HostedToolWebSearch, true
 	case schemas.ResponsesToolTypeWebFetch:
 		return HostedToolWebFetch, true
-	case schemas.ResponsesToolTypeMCP:
-		return HostedToolMCP, true
 	}
 	return "", false
 }

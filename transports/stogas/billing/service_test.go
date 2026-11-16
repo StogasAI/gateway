@@ -639,7 +639,7 @@ func TestLargestRequestLogFitsTheLimit(t *testing.T) {
 	}
 	for i := range MaxLoggedToolCalls {
 		event.Performance.ToolCalls = append(event.Performance.ToolCalls, ToolCall{
-			Type: "mcp_approval_request", StartMS: &count, LatencyMS: &count, CallIDHash: ToolCallIDHash(fmt.Sprint(i)),
+			Type: "custom_tool_call", StartMS: &count, LatencyMS: &count, CallIDHash: ToolCallIDHash(fmt.Sprint(i)),
 		})
 		event.Performance.AnsweredCalls = append(event.Performance.AnsweredCalls, ToolCallIDHash(fmt.Sprint(i)))
 	}

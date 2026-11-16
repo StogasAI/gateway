@@ -92,7 +92,7 @@ func TestAzureRejectsMalformedAndMaliciousCacheParameters(t *testing.T) {
 
 }
 
-func TestAzureAllowsClientExecutedToolsAndRejectsRemoteMCP(t *testing.T) {
+func TestAzureTakesOnlyClientExecutedTools(t *testing.T) {
 	valid := []struct {
 		body string
 		path string
@@ -123,14 +123,6 @@ func TestAzureAllowsClientExecutedToolsAndRejectsRemoteMCP(t *testing.T) {
 		{
 			path: "/v1/responses",
 			body: `{"model":"azure-gpt-5.6-sol","provider":"azure","input":"hi","tools":[{"type":"web_search"}]}`,
-		},
-		{
-			path: "/v1/responses",
-			body: `{"model":"azure-gpt-5.6-sol","provider":"azure","input":"hi","tools":[{"type":"mcp","server_label":"docs","server_url":"https://example.com","require_approval":"never"}]}`,
-		},
-		{
-			path: "/v1/responses",
-			body: `{"model":"azure-gpt-5.6-sol","provider":"azure","input":"hi","tools":[{"type":"mcp","server_label":"calendar","connector_id":"connector_googlecalendar","require_approval":"never"}]}`,
 		},
 	}
 	for _, tc := range invalid {
@@ -348,7 +340,7 @@ func TestAzureClaudeWithCustomDeploymentNameUsesAnthropicEndpoint(t *testing.T) 
 	}
 }
 
-func TestAzureClaudeRejectsOpenAIOnlyCacheAndMCPFields(t *testing.T) {
+func TestAzureClaudeRejectsOpenAIOnlyFields(t *testing.T) {
 	tests := []struct {
 		name string
 		body string
@@ -360,18 +352,6 @@ func TestAzureClaudeRejectsOpenAIOnlyCacheAndMCPFields(t *testing.T) {
 		{
 			name: "task budget",
 			body: `{"model":"azure-claude-opus-4-8-anthropic-hosted","input":"hi","task_budget":{"type":"tokens","total":20000},"max_output_tokens":64}`,
-		},
-		{
-			name: "MCP connector",
-			body: `{"model":"azure-claude-opus-4-8-anthropic-hosted","input":"hi","tools":[{"type":"mcp","server_label":"calendar","connector_id":"connector_googlecalendar"}],"max_output_tokens":64}`,
-		},
-		{
-			name: "MCP headers",
-			body: `{"model":"azure-claude-opus-4-8-anthropic-hosted","input":"hi","tools":[{"type":"mcp","server_label":"docs","server_url":"https://example.com","headers":{"authorization":"secret"}}],"max_output_tokens":64}`,
-		},
-		{
-			name: "MCP approval",
-			body: `{"model":"azure-claude-opus-4-8-anthropic-hosted","input":"hi","tools":[{"type":"mcp","server_label":"docs","server_url":"https://example.com","require_approval":"never"}],"max_output_tokens":64}`,
 		},
 	}
 

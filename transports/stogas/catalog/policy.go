@@ -61,8 +61,6 @@ type policyRequestData struct {
 	ClientTools []string `json:"clientTools"`
 	HostedTools []string `json:"hostedTools"`
 	Interface   string   `json:"interface"`
-	MCPServers  []string `json:"mcpServers"`
-	MCPTools    []string `json:"mcpTools"`
 	Model       string   `json:"model"`
 	// SystemMessages reads the request's messages only when a policy asks.
 	SystemMessages func() bool `json:"systemMessages"`
@@ -468,7 +466,7 @@ func receivingCompanies(provider, hosting string, sharedWith []string) []string 
 func (r *ResolvedRequest) policyRequestData(hostedTools []string) policyRequestData {
 	data := policyRequestData{BodyBytes: r.policyBodyBytes, HostedTools: hostedTools, Interface: r.Route.Interface(), Model: r.policyModel}
 	if facts := r.policyFacts; facts != nil {
-		data.ClientTools, data.MCPServers, data.MCPTools, data.SystemMessages = facts.clientTools, facts.mcpServers, facts.mcpTools, facts.systemMessages
+		data.ClientTools, data.SystemMessages = facts.clientTools, facts.systemMessages
 	}
 	return data
 }

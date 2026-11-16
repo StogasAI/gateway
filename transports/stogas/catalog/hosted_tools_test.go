@@ -13,8 +13,8 @@ import (
 )
 
 func TestRequestHostedToolsFollowToolChoice(t *testing.T) {
-	const tools = `[{"type":"function","name":"lookup","parameters":{}},{"type":"web_search_20250305"},{"type":"web_fetch"},{"type":"mcp","server_label":"docs","server_url":"https://example.com"}]`
-	all := []HostedTool{HostedToolWebSearch, HostedToolWebFetch, HostedToolMCP}
+	const tools = `[{"type":"function","name":"lookup","parameters":{}},{"type":"web_search_20250305"},{"type":"web_fetch"}]`
+	all := []HostedTool{HostedToolWebSearch, HostedToolWebFetch}
 	for _, test := range []struct {
 		name            string
 		route           Route
@@ -29,8 +29,8 @@ func TestRequestHostedToolsFollowToolChoice(t *testing.T) {
 		{name: "a forced tool", route: RouteResponses, body: `{"tools":` + tools + `,"tool_choice":{"type":"web_fetch"}}`, listed: all,
 			enabled: []HostedTool{HostedToolWebFetch}},
 		{name: "allowed tools", route: RouteResponses,
-			body:   `{"tools":` + tools + `,"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"mcp","server_label":"docs"},{"type":"web_search"}]}}`,
-			listed: all, enabled: []HostedTool{HostedToolWebSearch, HostedToolMCP}},
+			body:   `{"tools":` + tools + `,"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"function","name":"lookup"},{"type":"web_search"}]}}`,
+			listed: all, enabled: []HostedTool{HostedToolWebSearch}},
 		{name: "a preview search, once", route: RouteResponses, body: `{"tools":[{"type":"web_search_preview"},{"type":"web_search"}]}`,
 			listed: []HostedTool{HostedToolWebSearch}, enabled: []HostedTool{HostedToolWebSearch}},
 		{name: "function tools alone", route: RouteResponses, body: `{"tools":[{"type":"function","name":"lookup","parameters":{}}]}`},
@@ -62,8 +62,8 @@ func TestEffectiveDataHandlingOnlyWorsens(t *testing.T) {
 		HostedTools: map[HostedTool]HostedToolOffer{
 			HostedToolWebSearch: {DataHandling: HostedToolDataHandling{ProcessingLocation: "DE", RetentionDays: RetentionEffect{Set: true, Days: days(30)}}},
 			HostedToolWebFetch: {DataHandling: HostedToolDataHandling{ProcessingLocation: "unknown", StorageLocation: "unknown",
-				RetentionDays: RetentionEffect{Set: true}, ZeroDataRetention: &no, SharedWith: []string{"anthropic", "openai", "unknown"}}},
-			HostedToolMCP: {DataHandling: HostedToolDataHandling{TrainingUse: &yes, EndToEndEncrypted: &no, TEE: &no, TEEVerified: &no}},
+				RetentionDays: RetentionEffect{Set: true}, ZeroDataRetention: &no, TrainingUse: &yes, EndToEndEncrypted: &no, TEE: &no, TEEVerified: &no,
+				SharedWith: []string{"anthropic", "openai", "unknown"}}},
 		},
 	}
 	if got := deployment.EffectiveDataHandling(nil); !reflect.DeepEqual(got, deployment.DataHandling) {
@@ -76,12 +76,9 @@ func TestEffectiveDataHandlingOnlyWorsens(t *testing.T) {
 	}
 	fetch := deployment.EffectiveDataHandling([]HostedTool{HostedToolWebSearch, HostedToolWebFetch})
 	if fetch.ProcessingLocation != "unknown" || fetch.StorageLocation != "unknown" || fetch.RetentionDays != nil || fetch.ZeroDataRetention ||
+		fetch.TrainingUse == nil || !*fetch.TrainingUse || fetch.EndToEndEncrypted || fetch.TEE || fetch.TEEVerified ||
 		!slices.Equal(fetch.SharedWith, []string{"anthropic", "openai", "unknown"}) || !slices.Equal(search.SharedWith, []string{"openai"}) {
 		t.Fatalf("web fetch: %+v", fetch)
-	}
-	mcp := deployment.EffectiveDataHandling([]HostedTool{HostedToolMCP})
-	if mcp.ProcessingLocation != "US" || mcp.TrainingUse == nil || !*mcp.TrainingUse || mcp.EndToEndEncrypted || mcp.TEE || mcp.TEEVerified || !mcp.ZeroDataRetention {
-		t.Fatalf("mcp: %+v", mcp)
 	}
 	if *deployment.DataHandling.RetentionDays != 0 {
 		t.Fatal("the join changed the deployment's own retention")
@@ -261,11 +258,11 @@ func TestSnapshotValidationRejectsHostedToolsThatTheRouteCannotRun(t *testing.T)
 		{"zero data retention that the deployment lacks", "anthropic-claude-fable-5-1", "anthropic-messages",
 			func(route map[string]any) { effect(route, "web_fetch")["zeroDataRetention"] = true }, "would improve the deployment's"},
 		{"no training use", "openai-gpt-5.5-2026-04-23", "openai-responses",
-			func(route map[string]any) { effect(route, "mcp")["trainingUse"] = false }, "would improve the deployment's"},
+			func(route map[string]any) { effect(route, "web_search")["trainingUse"] = false }, "would improve the deployment's"},
 		{"negative retention", "openai-gpt-5.5-2026-04-23", "openai-responses",
-			func(route map[string]any) { effect(route, "mcp")["retentionDays"] = -1 }, "would improve the deployment's"},
+			func(route map[string]any) { effect(route, "web_search")["retentionDays"] = -1 }, "would improve the deployment's"},
 		{"a location that the catalog does not list", "openai-gpt-5.5-2026-04-23", "openai-responses",
-			func(route map[string]any) { effect(route, "mcp")["processingLocation"] = "atlantis" },
+			func(route map[string]any) { effect(route, "web_search")["processingLocation"] = "atlantis" },
 			"data handling in a location that the catalog does not list"},
 		{"web search without its price", "openai-gpt-5.5-2026-04-23", "openai-responses",
 			func(route map[string]any) {

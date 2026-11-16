@@ -327,15 +327,7 @@ func validResponsesStreamType(value schemas.ResponsesStreamResponseType) bool {
 		schemas.ResponsesStreamResponseTypeShellCallCommandDelta,
 		schemas.ResponsesStreamResponseTypeShellCallCommandDone,
 		schemas.ResponsesStreamResponseTypeApplyPatchCallOperationDiffDelta,
-		schemas.ResponsesStreamResponseTypeApplyPatchCallOperationDiffDone,
-		schemas.ResponsesStreamResponseTypeMCPListToolsInProgress,
-		schemas.ResponsesStreamResponseTypeMCPListToolsCompleted,
-		schemas.ResponsesStreamResponseTypeMCPListToolsFailed,
-		schemas.ResponsesStreamResponseTypeMCPCallInProgress,
-		schemas.ResponsesStreamResponseTypeMCPCallArgumentsDelta,
-		schemas.ResponsesStreamResponseTypeMCPCallArgumentsDone,
-		schemas.ResponsesStreamResponseTypeMCPCallCompleted,
-		schemas.ResponsesStreamResponseTypeMCPCallFailed:
+		schemas.ResponsesStreamResponseTypeApplyPatchCallOperationDiffDone:
 		return true
 	default:
 		return false

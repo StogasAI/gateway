@@ -2,6 +2,7 @@ package stogas
 
 import (
 	"bytes"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -223,6 +224,12 @@ func NewState(resolution *catalog.ResolvedRequest, rawAPIKey string, claims *bil
 
 func NewPair(resolution *catalog.ResolvedRequest, adapter Adapter) Pair {
 	pair := Pair{Resolution: resolution, Adapter: adapter}
+	if files := resolution.InputFiles(); files.Extracted > 0 {
+		pair.PluginMetrics.TextExtraction = &plugins.TextExtractionMetrics{
+			FilesExtracted: uint32(min(files.Extracted, math.MaxUint32)),
+			DurationUS:     uint32(min(max(files.ExtractionTime.Microseconds(), 0), math.MaxUint32)),
+		}
+	}
 	if summary := resolution.StructuredPIIRedactionSummary(); summary != nil {
 		pair.PluginMetrics.Redaction = &plugins.RedactionMetrics{
 			ItemsRedacted: summary.ItemsRedacted,
@@ -746,7 +753,6 @@ func responsesEventHasOutput(response *schemas.BifrostResponsesStreamResponse) b
 		schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDelta,
 		schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta,
 		schemas.ResponsesStreamResponseTypeReasoningTextDelta,
-		schemas.ResponsesStreamResponseTypeMCPCallArgumentsDelta,
 		schemas.ResponsesStreamResponseTypeCustomToolCallInputDelta,
 		schemas.ResponsesStreamResponseTypeShellCallCommandDelta,
 		schemas.ResponsesStreamResponseTypeApplyPatchCallOperationDiffDelta:
@@ -757,8 +763,7 @@ func responsesEventHasOutput(response *schemas.BifrostResponsesStreamResponse) b
 		return nonEmptyString(response.Text)
 	case schemas.ResponsesStreamResponseTypeRefusalDone:
 		return nonEmptyString(response.Refusal)
-	case schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDone,
-		schemas.ResponsesStreamResponseTypeMCPCallArgumentsDone:
+	case schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDone:
 		return nonEmptyString(response.Arguments)
 	case schemas.ResponsesStreamResponseTypeCustomToolCallInputDone:
 		return nonEmptyString(response.Input)
@@ -801,7 +806,6 @@ func responsesEventHasToken(response *schemas.BifrostResponsesStreamResponse) bo
 		schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDelta,
 		schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta,
 		schemas.ResponsesStreamResponseTypeReasoningTextDelta,
-		schemas.ResponsesStreamResponseTypeMCPCallArgumentsDelta,
 		schemas.ResponsesStreamResponseTypeCustomToolCallInputDelta,
 		schemas.ResponsesStreamResponseTypeShellCallCommandDelta,
 		schemas.ResponsesStreamResponseTypeApplyPatchCallOperationDiffDelta:
@@ -812,8 +816,7 @@ func responsesEventHasToken(response *schemas.BifrostResponsesStreamResponse) bo
 		return nonEmptyString(response.Text)
 	case schemas.ResponsesStreamResponseTypeRefusalDone:
 		return nonEmptyString(response.Refusal)
-	case schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDone,
-		schemas.ResponsesStreamResponseTypeMCPCallArgumentsDone:
+	case schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDone:
 		return nonEmptyString(response.Arguments)
 	case schemas.ResponsesStreamResponseTypeCustomToolCallInputDone:
 		return nonEmptyString(response.Input)
@@ -994,9 +997,6 @@ func responsesToolActionHasToken(action *schemas.ResponsesToolMessageActionStruc
 	if shell := action.ResponsesShellToolCallAction; shell != nil && len(shell.Commands) > 0 {
 		return true
 	}
-	if approval := action.ResponsesMCPApprovalRequestAction; approval != nil {
-		return approval.Name != "" || approval.ServerLabel != "" || approval.Arguments != ""
-	}
 	return false
 }
 
@@ -1026,10 +1026,6 @@ func responsesToolActionHasOutput(action *schemas.ResponsesToolMessageActionStru
 	}
 	if shell := action.ResponsesShellToolCallAction; shell != nil && len(shell.Commands) > 0 {
 		return true
-	}
-	if approval := action.ResponsesMCPApprovalRequestAction; approval != nil {
-		return approval.ID != "" || approval.Type != "" || approval.Name != "" ||
-			approval.ServerLabel != "" || approval.Arguments != ""
 	}
 	return false
 }

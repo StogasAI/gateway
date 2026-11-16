@@ -13,7 +13,7 @@ func TestPolicySimulationTakesToolTypesAlone(t *testing.T) {
 		valid      bool
 	}{
 		{"types and an allowed_tools choice", `{"interface":"responses","tools":["function","web_search_20250305"],"toolChoice":{"type":"allowed_tools","tools":[{"type":"function"}]}}`, true},
-		{"a mode", `{"interface":"responses","tools":["mcp"],"toolChoice":"none"}`, true},
+		{"a mode", `{"interface":"responses","tools":["web_fetch"],"toolChoice":"none"}`, true},
 		{"Chat Completions", `{"interface":"chat_completions","tools":["web_search"]}`, false},
 		{"an empty type", `{"interface":"responses","tools":[""]}`, false},
 		{"a tool definition", `{"interface":"responses","tools":[{"type":"web_search"}]}`, false},

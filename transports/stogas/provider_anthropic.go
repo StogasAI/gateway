@@ -387,11 +387,6 @@ func validateAnthropicChatCompletionPolicy(state *State) error {
 	if err := validateAnthropicChatCacheControls(raw); err != nil {
 		return err
 	}
-	for _, rawTool := range state.Resolution.RawTools() {
-		if rawString(rawTool["type"]) == "mcp_toolset" {
-			return invalidRequest("Anthropic MCP connectors are not supported because provider execution cannot be bounded per request")
-		}
-	}
 	tools, err := validateChatTools(raw["tools"])
 	if err != nil {
 		return err
@@ -786,9 +781,6 @@ func anthropicRefusal(response *schemas.BifrostResponse) (*schemas.ResponsesStop
 
 func (AnthropicAdapter) ValidateRawResponsesToolType(state *State, tool map[string]json.RawMessage) error {
 	rawType := rawString(tool["type"])
-	if rawType == "mcp" {
-		return invalidRequest("Remote MCP tools are not supported because provider execution cannot be bounded or approved per request")
-	}
 	if rawType == "custom" {
 		return invalidRequest("Custom tools are not supported for Anthropic-format deployments because free-form input formats are not preserved by the provider translation")
 	}

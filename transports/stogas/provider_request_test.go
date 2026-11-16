@@ -403,7 +403,7 @@ func TestPrepareProviderRequestRecordsSettingsWithoutContent(t *testing.T) {
 			name:  "responses records the hosted tools that the model may call",
 			route: "responses",
 			body: `{"model":"provider:openai gpt-5.5","input":"secret prompt","max_output_tokens":64,
-				"tools":[{"type":"web_search"},{"type":"mcp","server_label":"secret","server_url":"https://mcp.example.com"}],
+				"tools":[{"type":"web_search"},{"type":"function","name":"secret_tool","parameters":{"type":"object"}}],
 				"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_search"}]}}`,
 			want: `{"max_output_tokens":64,"include":["reasoning.encrypted_content"],"tool_choice":"allowed_tools","hosted_tools":["web_search"]}`,
 		},

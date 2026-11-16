@@ -138,6 +138,9 @@ func TestTextExtractionPrecedesASCIIAndRedaction(t *testing.T) {
 				if err := state.Adapter.ValidateRequest(state); err != nil {
 					t.Fatal(err)
 				}
+				if metrics := state.PluginMetrics.TextExtraction; metrics == nil || metrics.FilesExtracted != 1 {
+					t.Fatalf("the record does not count the extracted file: %+v", metrics)
+				}
 				raw, err := json.Marshal(resolved.RawBody())
 				if err != nil {
 					t.Fatal(err)

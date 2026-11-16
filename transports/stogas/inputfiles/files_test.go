@@ -53,7 +53,7 @@ func TestExtractionPreservesOrderAndLeavesDocumentsOpaque(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stats.Count != 2 || stats.InlineBytes != 6 || stats.Opaque != "input[0].content[2]" {
+	if stats.Count != 2 || stats.InlineBytes != 6 || stats.Opaque != "input[0].content[2]" || stats.Extracted != 1 {
 		t.Fatalf("wrong quantities: %+v", stats)
 	}
 	// Decode the public field names, independently of the processor's maps.
@@ -160,7 +160,7 @@ func TestKeptTextFilesStayFilesAndGiveTheirText(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(asked, []string{"input[0].content[0]", "input[0].content[1]", "input[0].content[2]"}) || !reflect.DeepEqual(texts, []string{"hi", "hi"}) ||
-		stats.Opaque != "" || stats.InlineBytes != 6 {
+		stats.Opaque != "" || stats.InlineBytes != 6 || stats.Extracted != 1 {
 		t.Fatalf("asked %v, texts %v, stats %+v", asked, texts, stats)
 	}
 	var got, want any
