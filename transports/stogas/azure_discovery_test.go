@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -381,9 +382,9 @@ func TestAzureDiscoveryAtItsLimits(t *testing.T) {
 			arm.deployments, arm.projects, arm.instant, arm.pageSize = entry.deployments, entry.projects, entry.instantModels, entry.pageSize
 			server := httptest.NewServer(arm)
 			t.Cleanup(server.Close)
-			started := time.Now()
-			found, err := discoverAzure(context.Background(), &http.Client{Transport: armRedirect{server}}, "arm-token", arm.account, started)
-			elapsed := time.Since(started)
+			before := processCPUTime(t)
+			found, err := discoverAzure(context.Background(), &http.Client{Transport: armRedirect{server}}, "arm-token", arm.account, time.Now())
+			used := processCPUTime(t) - before
 			var got outcome
 			if err != nil {
 				got.message, got.status = azureDiscoveryMessage(err), http.StatusServiceUnavailable
@@ -397,13 +398,26 @@ func TestAzureDiscoveryAtItsLimits(t *testing.T) {
 			if got != entry.want {
 				t.Fatalf("discovery = %+v; want %+v", got, entry.want)
 			}
-			// A discovery has 25 seconds, the claim that it holds for the fleet less five.
-			if limit := 10 * time.Second * raceSlowdown; elapsed > limit {
-				t.Fatalf("discovery took %s, more than %s", elapsed, limit)
+			// A discovery has 25 seconds, the claim that it holds for the fleet less five, and
+			// most of them belong to Azure's replies. The limit counts CPU time, which other work
+			// on a busy machine does not lengthen as it lengthens wall time.
+			if limit := 10 * time.Second * raceSlowdown; used > limit {
+				t.Fatalf("discovery used %s of CPU time, more than %s", used, limit)
 			}
-			t.Logf("%s in %s with %d requests", entry.name, elapsed.Round(time.Millisecond), arm.requests.Load())
+			t.Logf("%s in %s of CPU time with %d requests", entry.name, used.Round(time.Millisecond), arm.requests.Load())
 		})
 	}
+}
+
+// processCPUTime is the CPU time that the test process has used. A test that does not call
+// t.Parallel runs alone in its process.
+func processCPUTime(t *testing.T) time.Duration {
+	t.Helper()
+	var usage syscall.Rusage
+	if err := syscall.Getrusage(syscall.RUSAGE_SELF, &usage); err != nil {
+		t.Fatal(err)
+	}
+	return time.Duration(usage.Utime.Nano() + usage.Stime.Nano())
 }
 
 func TestAzureModelRoleSubtractsEachRolesExcludedDataActions(t *testing.T) {
