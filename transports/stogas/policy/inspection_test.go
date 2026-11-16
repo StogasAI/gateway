@@ -116,9 +116,14 @@ func TestInspectionPreservesOpaqueSourcesWithoutChargingTheirEncodingToCompiledS
 	if len(opaque) != 2 || opaque[0]["policy"].(map[string]any)["id"] != "first" || opaque[1]["policy"].(map[string]any)["id"] != "second" {
 		t.Fatalf("opaque identities changed: %v", opaque)
 	}
+	var want any
+	saved, _ := json.Marshal(map[string]any{"encrypted": envelope})
+	_ = json.Unmarshal(saved, &want)
 	for _, item := range opaque {
-		if item["plugin"] != "redaction" || !reflect.DeepEqual(item["encrypted"], envelope) {
-			t.Fatal("inspection changed an encrypted envelope or lost its plugin")
+		var got any
+		config, _ := item["config"].(json.RawMessage)
+		if item["plugin"] != "redaction" || json.Unmarshal(config, &got) != nil || !reflect.DeepEqual(got, want) {
+			t.Fatal("inspection changed an encrypted plugin or lost its name")
 		}
 	}
 	if !reflect.DeepEqual(result.Compiled.Plugins.Redaction.Presets, []string{"email_address"}) {

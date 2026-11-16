@@ -3,11 +3,24 @@ import { WASI, File, OpenFile, ConsoleStdout } from '@bjorn3/browser_wasi_shim';
 const encoder = new TextEncoder();
 const decoder = new TextDecoder('utf-8', { fatal: true });
 
-// The plugins a customer key can encrypt, in the order inspection reports them.
+// The plugins whose values a customer key can encrypt, in the order inspection reports them.
 const encryptablePlugins = ['export', 'redaction'];
+// Whether a value holds an encrypted value, as the compiler finds them: an object whose only
+// member is `encrypted`, an object, at most eight levels inside the plugin.
+const sealed = (value, depth = 0) => {
+	if (!value || typeof value !== 'object') return false;
+	if (Array.isArray(value)) return depth < 8 && value.some((item) => sealed(item, depth + 1));
+	const names = Object.keys(value);
+	if (names.length === 1 && names[0] === 'encrypted') {
+		const envelope = value.encrypted;
+		if (envelope && typeof envelope === 'object' && !Array.isArray(envelope)) return true;
+	}
+	return depth < 8 && names.some((name) => sealed(value[name], depth + 1));
+};
+// The plugins that hold encrypted values, each as it was saved. Inspection leaves them to the host.
 const encryptedPlugins = (plugins) =>
 	encryptablePlugins.flatMap((name) =>
-		plugins?.[name]?.encrypted ? [{ name, envelope: plugins[name].encrypted }] : []
+		sealed(plugins?.[name]) ? [{ name, config: plugins[name] }] : []
 	);
 
 // Initialization is explicit so hosts can create the compiler inside their
@@ -75,11 +88,11 @@ export function createPolicyCompiler(module) {
 							continue;
 						}
 						next += 1;
-						for (const { name, envelope } of envelopes) {
+						for (const { name, config } of envelopes) {
 							const plugin = rule.config?.plugins?.[name];
 							if (!plugin || !Object.hasOwn(plugin, 'encrypted'))
 								throw new Error('Policy inspection returned invalid rule references');
-							plugin.encrypted = { ...envelope };
+							rule.config.plugins[name] = structuredClone(config);
 						}
 					}
 					if (next !== rules.length)
@@ -91,9 +104,9 @@ export function createPolicyCompiler(module) {
 					if (opaque.length !== envelopes.length)
 						throw new Error('Policy inspection returned invalid opaque references');
 					for (const [index, item] of opaque.entries()) {
-						if (item.plugin !== envelopes[index].name)
+						if (item.plugin !== envelopes[index].name || item.config !== null)
 							throw new Error('Policy inspection returned invalid opaque references');
-						item.encrypted = { ...envelopes[index].envelope };
+						item.config = structuredClone(envelopes[index].config);
 					}
 				}
 				return result;

@@ -46,22 +46,35 @@ test('opaque plugins survive the memory bridge in their original order', () => {
 				}
 			}
 		})),
+		// A value sealed inside a plugin keeps the readable values around it.
+		{
+			scope: 'member',
+			config: {
+				plugins: {
+					export: { destinations: [{ url: { encrypted: envelope(5, 1000) }, content: false }] }
+				}
+			}
+		},
 		{ scope: 'key', config: {} }
 	];
 	for (let repeat = 0; repeat < 3; repeat++) {
 		const result = inspectPolicy({ sources });
 		assert.ok(!result.error);
 		assert.deepEqual(
-			result.effective.uncheckedPlugins.map((item) => [item.plugin, item.encrypted]),
+			result.effective.uncheckedPlugins.map((item) => [item.plugin, item.config]),
 			[
-				['redaction', envelope(1)],
-				['export', envelope(4, 1000)],
-				['redaction', envelope(2)],
-				['redaction', envelope(1)]
+				['redaction', { encrypted: envelope(1) }],
+				['export', { encrypted: envelope(4, 1000) }],
+				['redaction', { encrypted: envelope(2) }],
+				['redaction', { encrypted: envelope(1) }],
+				[
+					'export',
+					{ destinations: [{ url: { encrypted: envelope(5, 1000) }, content: false }] }
+				]
 			]
 		);
 		assert.deepEqual(result.effective.plugins.textExtraction, { text: 'always' });
-		result.effective.uncheckedPlugins[0].encrypted.blob = 'changed';
+		result.effective.uncheckedPlugins[0].config.encrypted.blob = 'changed';
 		assert.equal(sources[1].config.plugins.redaction.encrypted.blob, envelope(1).blob);
 	}
 });

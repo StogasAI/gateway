@@ -171,16 +171,17 @@ func (v *Inspector) Add(entry InspectionSource) error {
 			}
 		}
 		if v.omitCiphertext {
+			// The host restores each encrypted plugin as it was saved.
 			for i := range document.encrypted {
-				document.encrypted[i].envelope.Blob = ""
+				document.encrypted[i].skeleton, document.encrypted[i].sealed = nil, nil
 			}
 		}
 		for _, rule := range document.rules {
 			rule.source.canonical, rule.source.fields = nil, nil
 			if rule.source.Encrypted() {
-				// The preview owns the original envelopes, unless the host retains them.
+				// The rule's settings show its encrypted plugins as saved.
 				for i := range rule.source.encrypted {
-					rule.source.encrypted[i].envelope.Blob = ""
+					rule.source.encrypted[i].skeleton, rule.source.encrypted[i].sealed = nil, nil
 				}
 				if v.omitCiphertext {
 					var plugins map[string]json.RawMessage
@@ -308,7 +309,12 @@ func (v *Inspector) Finish() (*Inspection, error) {
 			routing["missingEncryptionKeys"] = compiled.Routing.MissingEncryptionKeys
 		}
 		for _, plugin := range document.encrypted {
-			opaque = append(opaque, map[string]any{"policy": inspectionReference(entry), "plugin": plugin.name, "encrypted": plugin.envelope})
+			// Null when the host restores the plugin as it was saved.
+			var config json.RawMessage
+			if plugin.skeleton != nil {
+				config = json.RawMessage(plugin.skeleton)
+			}
+			opaque = append(opaque, map[string]any{"policy": inspectionReference(entry), "plugin": plugin.name, "config": config})
 		}
 	}
 	if len(routing) > 0 {

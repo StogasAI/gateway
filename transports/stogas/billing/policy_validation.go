@@ -121,7 +121,7 @@ func (s *Service) ValidatePolicySources(raw []PolicyValidationSource, organizati
 		// Check the rest of the policy without each plugin whose root is missing.
 		var plugins map[string]json.RawMessage
 		for _, plugin := range document.EncryptedPlugins() {
-			if key.Matches(plugin.Envelope.KeyID) {
+			if matchesEvery(key, plugin.KeyIDs) {
 				continue
 			}
 			if plugins == nil && json.Unmarshal(doc["plugins"], &plugins) != nil {
@@ -169,7 +169,7 @@ func (s *Service) ValidatePolicySources(raw []PolicyValidationSource, organizati
 			}
 			var units policy.Permission
 			for _, plugin := range rule.Encrypted.EncryptedPlugins() {
-				if key.Matches(plugin.Envelope.KeyID) {
+				if matchesEvery(key, plugin.KeyIDs) {
 					units |= plugin.Unit
 					continue
 				}

@@ -10,11 +10,13 @@ import (
 	jsonv2 "encoding/json/v2"
 	"fmt"
 	"io"
+	"maps"
 	"net/netip"
 	"reflect"
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -95,30 +97,50 @@ type SourceDocument struct {
 	size             sourceSize
 }
 
-// encryptedPlugin is one plugin's settings under a customer key.
+// encryptedPlugin is a plugin that holds values under customer keys: the
+// whole plugin, or values inside it. Opening puts each plaintext in its place.
 type encryptedPlugin struct {
-	name     string
-	unit     Permission
-	envelope customerkey.Envelope
-	// bytes counts the envelope's JSON, which previews leave to their host.
+	name string
+	unit Permission
+	// skeleton is the plugin's value as saved, each sealed value in its place.
+	skeleton jsontext.Value
+	sealed   []sealedValue
+	// bytes counts the envelopes' JSON, which previews leave to their host.
 	bytes int
+	// delta is how much longer the plugin is once opened.
+	delta int
 }
 
-// plaintextBytes is the decrypted settings' length: the decoded ciphertext
-// without its 16-byte tag.
-func (p encryptedPlugin) plaintextBytes() int { return len(p.envelope.Blob)*3/4 - 16 }
+// sealedValue is one value of a plugin under a customer key.
+type sealedValue struct {
+	// at is the value's place in the plugin: member names and array indexes.
+	at []string
+	// purpose names the plugin and the members down to the value, without
+	// array indexes: a value cannot move to another setting, and reordering a
+	// list keeps its values readable.
+	purpose  string
+	envelope customerkey.Envelope
+}
 
-// encryptablePlugins are the plugins whose settings a customer key can
-// encrypt, each on its own. A text extraction switch has no secret, and its
-// ciphertext's length would show which way it is set.
+// plaintextBytes is the decrypted value's length: the decoded ciphertext
+// without its 16-byte tag.
+func (v sealedValue) plaintextBytes() int { return len(v.envelope.Blob)*3/4 - 16 }
+
+// encryptablePlugins are the plugins whose values a customer key can encrypt.
+// Text extraction holds no secret.
 var encryptablePlugins = []struct {
 	name string
 	unit Permission
 }{{"export", permissionExport}, {"redaction", permissionRedaction}}
 
-// pluginPurpose binds a plugin's ciphertext to that plugin, so that moving it
-// under another plugin cannot decrypt it.
-func pluginPurpose(name string) string { return "plugins/" + name }
+// maxSealedDepth bounds how deep inside a plugin the parser looks for sealed
+// values. The plugins' own settings nest five levels deep.
+const maxSealedDepth = 8
+
+// exportHeaders is the purpose of a destination's headers. Their secrets are
+// sealed only with the URL they go to: a sealed header map beside a readable
+// URL could be copied beside another URL, which would receive the secrets.
+const exportHeaders = "plugins/export/destinations/headers"
 
 // EncryptedPlugins is the encrypted plugin settings of one policy or rule
 // that apply to a request: the plugins in Units.
@@ -250,25 +272,35 @@ func (d *SourceDocument) EncryptionKeyIDs() []string { return d.encryptionKeyIDs
 func (d *SourceDocument) encryptionKeyIDs(units Permission) []string {
 	var ids []string
 	for _, plugin := range d.encrypted {
-		if plugin.unit&units != 0 && !slices.Contains(ids, plugin.envelope.KeyID) {
-			ids = append(ids, plugin.envelope.KeyID)
+		if plugin.unit&units != 0 {
+			ids = plugin.keyIDs(ids)
+		}
+	}
+	return ids
+}
+
+// keyIDs adds the roots of the plugin's sealed values to ids, once each.
+func (p encryptedPlugin) keyIDs(ids []string) []string {
+	for _, value := range p.sealed {
+		if !slices.Contains(ids, value.envelope.KeyID) {
+			ids = append(ids, value.envelope.KeyID)
 		}
 	}
 	return ids
 }
 
 // EncryptedPlugin is one encrypted plugin of a document. A policy check opens
-// the plugins whose root it has and names the others.
+// the plugins whose roots it has and names the others.
 type EncryptedPlugin struct {
-	Name     string
-	Unit     Permission
-	Envelope customerkey.Envelope
+	Name   string
+	Unit   Permission
+	KeyIDs []string
 }
 
 func (d *SourceDocument) EncryptedPlugins() []EncryptedPlugin {
 	plugins := make([]EncryptedPlugin, len(d.encrypted))
 	for i, plugin := range d.encrypted {
-		plugins[i] = EncryptedPlugin{Name: plugin.name, Unit: plugin.unit, Envelope: plugin.envelope}
+		plugins[i] = EncryptedPlugin{Name: plugin.name, Unit: plugin.unit, KeyIDs: plugin.keyIDs(nil)}
 	}
 	return plugins
 }
@@ -367,9 +399,10 @@ func sourceDocument(canonical []byte, fields map[string]json.RawMessage, envelop
 	return document, nil
 }
 
-// parsePlugins finds the plugins whose settings a customer key encrypts. Each
-// holds only its envelope, as {"encrypted": envelope}; the rest of the section
-// stays readable and compiles with the policy's other settings.
+// parsePlugins finds the plugins that hold values under a customer key, each
+// as {"encrypted": envelope} in place of the value: the whole plugin or any
+// value inside it. The rest of the section stays readable and compiles with
+// the policy's other settings.
 func (d *SourceDocument) parsePlugins(raw json.RawMessage, envelopes map[[32]byte]encryptedPlugin) error {
 	d.readablePlugins = raw
 	var section map[string]json.RawMessage
@@ -378,7 +411,7 @@ func (d *SourceDocument) parsePlugins(raw json.RawMessage, envelopes map[[32]byt
 		return nil
 	}
 	if section["encrypted"] != nil {
-		return configError("encrypt plugins.export or plugins.redaction on its own")
+		return configError("encrypt plugins.export, plugins.redaction or a value inside one, not the plugins section")
 	}
 	for _, plugin := range encryptablePlugins {
 		member := section[plugin.name]
@@ -388,16 +421,13 @@ func (d *SourceDocument) parsePlugins(raw json.RawMessage, envelopes map[[32]byt
 		identity := sha256.Sum256(member)
 		parsed, cached := envelopes[identity]
 		if !cached {
-			var fields map[string]json.RawMessage
-			if jsonv2.Unmarshal(member, &fields) != nil || fields["encrypted"] == nil {
+			parsed = encryptedPlugin{skeleton: jsontext.Value(member)}
+			if err := parsed.find(parsed.skeleton, nil, "plugins/"+plugin.name); err != nil {
+				return err
+			}
+			if len(parsed.sealed) == 0 {
 				continue
 			}
-			// v2 matches field names exactly. Every envelope member is required
-			// and Validate rejects its zero value, including JSON null.
-			if len(fields) != 1 || jsonv2.Unmarshal(fields["encrypted"], &parsed.envelope, jsonv2.RejectUnknownMembers(true)) != nil || parsed.envelope.Validate(MaxSourceBytes) != nil {
-				return configError("invalid encrypted %s plugin", plugin.name)
-			}
-			parsed.bytes = len(fields["encrypted"])
 			if envelopes != nil {
 				envelopes[identity] = parsed
 			}
@@ -405,7 +435,7 @@ func (d *SourceDocument) parsePlugins(raw json.RawMessage, envelopes map[[32]byt
 		parsed.name, parsed.unit = plugin.name, plugin.unit
 		d.encrypted = append(d.encrypted, parsed)
 		d.envelopeBytes += parsed.bytes
-		d.pluginDelta += parsed.plaintextBytes() - len(member)
+		d.pluginDelta += parsed.delta
 		delete(section, plugin.name)
 	}
 	if d.Encrypted() {
@@ -415,6 +445,127 @@ func (d *SourceDocument) parsePlugins(raw json.RawMessage, envelopes map[[32]byt
 		}
 	}
 	return nil
+}
+
+// find adds the sealed values in raw, which sits at at in the plugin, to p.
+// Values that are not JSON or not settings are left to readable compilation.
+func (p *encryptedPlugin) find(raw jsontext.Value, at []string, purpose string) error {
+	switch raw.Kind() {
+	case '{':
+		var members map[string]jsontext.Value
+		if jsonv2.Unmarshal(raw, &members) != nil {
+			return nil
+		}
+		if envelope := members["encrypted"]; len(members) == 1 && envelope.Kind() == '{' {
+			if purpose == exportHeaders || strings.HasPrefix(purpose, exportHeaders+"/") {
+				return configError("encrypt a destination's headers together with its url")
+			}
+			value := sealedValue{at: slices.Clone(at), purpose: purpose}
+			// v2 matches field names exactly. Every envelope member is required
+			// and Validate rejects its zero value, including JSON null.
+			if jsonv2.Unmarshal(envelope, &value.envelope, jsonv2.RejectUnknownMembers(true)) != nil || value.envelope.Validate(MaxSourceBytes) != nil {
+				return configError("invalid encrypted value in %s", purpose)
+			}
+			p.sealed = append(p.sealed, value)
+			p.bytes += len(envelope)
+			p.delta += value.plaintextBytes() - len(raw)
+			return nil
+		}
+		if len(at) == maxSealedDepth {
+			return nil
+		}
+		names := slices.Sorted(maps.Keys(members))
+		for _, name := range names {
+			if err := p.find(members[name], append(at[:len(at):len(at)], name), purpose+"/"+name); err != nil {
+				return err
+			}
+		}
+	case '[':
+		var items []jsontext.Value
+		if jsonv2.Unmarshal(raw, &items) != nil || len(at) == maxSealedDepth {
+			return nil
+		}
+		for index, item := range items {
+			if err := p.find(item, append(at[:len(at):len(at)], strconv.Itoa(index)), purpose); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// open decrypts the plugin's sealed values and returns the plugin with each
+// plaintext in its place. opened collects every buffer that holds plaintext.
+func (p encryptedPlugin) open(organizationID string, key customerkey.Keys, opened *[][]byte) (jsontext.Value, error) {
+	plaintexts := make(map[string]jsontext.Value, len(p.sealed))
+	prefixes := map[string]bool{}
+	for _, value := range p.sealed {
+		plaintext, err := key.Open(value.envelope, organizationID, value.purpose, MaxSourceBytes)
+		if err != nil {
+			return nil, err
+		}
+		*opened = append(*opened, plaintext)
+		if !jsontext.Value(plaintext).IsValid() {
+			return nil, configError("invalid encrypted value JSON")
+		}
+		plaintexts[pathKey(value.at)] = plaintext
+		for i := range value.at {
+			prefixes[pathKey(value.at[:i])] = true
+		}
+	}
+	combined, err := place(p.skeleton, nil, plaintexts, prefixes)
+	if err != nil {
+		return nil, configError("invalid encrypted value JSON")
+	}
+	*opened = append(*opened, combined)
+	return combined, nil
+}
+
+// place returns raw, at at in the plugin, with each plaintext at its path.
+// Only the containers on a path to a plaintext are encoded again.
+func place(raw jsontext.Value, at []string, plaintexts map[string]jsontext.Value, prefixes map[string]bool) (jsontext.Value, error) {
+	path := pathKey(at)
+	if plaintext, ok := plaintexts[path]; ok {
+		return plaintext, nil
+	}
+	if !prefixes[path] {
+		return raw, nil
+	}
+	if raw.Kind() == '[' {
+		var items []jsontext.Value
+		if err := jsonv2.Unmarshal(raw, &items); err != nil {
+			return nil, err
+		}
+		for index, item := range items {
+			placed, err := place(item, append(at[:len(at):len(at)], strconv.Itoa(index)), plaintexts, prefixes)
+			if err != nil {
+				return nil, err
+			}
+			items[index] = placed
+		}
+		return jsonv2.Marshal(items)
+	}
+	var members map[string]jsontext.Value
+	if err := jsonv2.Unmarshal(raw, &members); err != nil {
+		return nil, err
+	}
+	for name, member := range members {
+		placed, err := place(member, append(at[:len(at):len(at)], name), plaintexts, prefixes)
+		if err != nil {
+			return nil, err
+		}
+		members[name] = placed
+	}
+	return jsonv2.Marshal(members, jsonv2.Deterministic(true))
+}
+
+// pathKey names a place in a plugin without ambiguity.
+func pathKey(at []string) string {
+	if len(at) == 0 {
+		return "[]"
+	}
+	key, _ := json.Marshal(at)
+	return string(key)
 }
 
 // canonicalObject joins canonical members into a canonical JSON object.
@@ -710,18 +861,12 @@ func (d *SourceDocument) openPlugins(organizationID string, key customerkey.Keys
 		if plugin.unit&units == 0 {
 			continue
 		}
-		plaintext, err := key.Open(plugin.envelope, organizationID, pluginPurpose(plugin.name), MaxSourceBytes)
+		plaintext, err := plugin.open(organizationID, key, &opened)
 		if err != nil {
 			return nil, nil, err
 		}
-		opened = append(opened, plaintext)
-		if !jsontext.Value(plaintext).IsValid() {
-			return nil, nil, configError("invalid encrypted plugin JSON")
-		}
-		section[plugin.name] = plaintext
-		if !slices.Contains(ids, plugin.envelope.KeyID) {
-			ids = append(ids, plugin.envelope.KeyID)
-		}
+		section[plugin.name] = json.RawMessage(plaintext)
+		ids = plugin.keyIDs(ids)
 	}
 	if len(ids) == 0 {
 		return nil, nil, configError("no encrypted plugin applies")
