@@ -634,6 +634,8 @@ func TestPublicDrainRefusesSessionRequestsUntilSessionsEnd(t *testing.T) {
 		for !f.server.requests.diagnostics().Draining {
 			time.Sleep(time.Millisecond)
 		}
+		// The drain closes idle HTTP/1.1 connections, and a POST that meets that close fails without a retry.
+		f.endpoint.Client().CloseIdleConnections()
 		_, hello := sessionTestHello(t)
 		setup := f.post(t, hello, false)
 		_, _ = io.Copy(io.Discard, setup.Body)
