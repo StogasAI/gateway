@@ -141,10 +141,15 @@ func (r testRelease) summary(kind, id string) map[string]any {
 	return r.root["summaries"].(map[string]any)[kind].(map[string]any)[id].(map[string]any)
 }
 
-// record is the record that the summary of a model, route or deployment places in a part.
-func (r testRelease) record(kind, id string) map[string]any {
+// records are the records of one kind in the part where the summary of a model, route or
+// deployment places it.
+func (r testRelease) records(kind, id string) map[string]any {
 	part := r.parts[int(r.summary(kind, id)["part"].(float64))]
-	return part["graph"].(map[string]any)[kind].(map[string]any)[id].(map[string]any)
+	return part["graph"].(map[string]any)[kind].(map[string]any)
+}
+
+func (r testRelease) record(kind, id string) map[string]any {
+	return r.records(kind, id)[id].(map[string]any)
 }
 
 func (r testRelease) files(tb testing.TB) ([]byte, map[string][]byte) {
@@ -167,8 +172,8 @@ func (r testRelease) files(tb testing.TB) ([]byte, map[string][]byte) {
 	return root, parts
 }
 
-// The test catalog's dated part holds the records that retire, the last of them on 2128-03-11,
-// so it leaves at 12:00 UTC on 2128-03-12.
+// The test catalog's last dated part holds the records that retire last, on 2128-03-11, so it
+// leaves at 12:00 UTC on 2128-03-12.
 var datedPartLeaves = time.Date(2128, time.March, 12, 12, 0, 0, 0, time.UTC)
 
 func TestReleaseLeavesRecordsOutOnceTheyRetire(t *testing.T) {
@@ -186,13 +191,16 @@ func TestReleaseLeavesRecordsOutOnceTheyRetire(t *testing.T) {
 	if dated.Through == nil || *dated.Through != "2128-03-11" {
 		t.Fatalf("the test catalog's last part that Stogas serves is not the dated one: %#v", dated)
 	}
+	// Dated parts whose records all retired earlier have left already.
+	undated := slices.DeleteFunc(slices.Clone(served), func(file PartFile) bool { return file.Through != nil })
 	before := datedPartLeaves.Add(-time.Nanosecond)
-	if inEffect, err := PartsInEffect(root, before); err != nil || len(inEffect) != len(served) {
+	inEffect, err := PartsInEffect(root, before)
+	if err != nil || len(inEffect) != len(undated)+1 || inEffect[len(inEffect)-1].SHA256 != dated.SHA256 {
 		t.Fatalf("parts in effect before the dated part leaves: %v, %v", inEffect, err)
 	}
-	if inEffect, err := PartsInEffect(root, datedPartLeaves); err != nil || len(inEffect) != len(served)-1 ||
-		inEffect[len(inEffect)-1].SHA256 == dated.SHA256 {
-		t.Fatalf("parts in effect once the dated part leaves: %v, %v", inEffect, err)
+	if after, err := PartsInEffect(root, datedPartLeaves); err != nil || len(after) != len(undated) ||
+		after[len(after)-1].SHA256 == dated.SHA256 {
+		t.Fatalf("parts in effect once the dated part leaves: %v, %v", after, err)
 	}
 
 	// Until then, the part's records that have not retired serve, and the others name the day
@@ -222,8 +230,10 @@ func TestReleaseLeavesRecordsOutOnceTheyRetire(t *testing.T) {
 
 	// Once the part leaves, the release loads without it, and every one of its records names
 	// the day that it retired.
-	held := maps.Clone(parts)
-	delete(held, dated.SHA256)
+	held := make(map[string][]byte, len(undated))
+	for _, file := range undated {
+		held[file.SHA256] = parts[file.SHA256]
+	}
 	if _, err := snapshotFromFiles(root, held, Identity{}, before); err == nil || !strings.Contains(err.Error(), "in effect but missing") {
 		t.Fatalf("a release without a part in effect loaded: %v", err)
 	}
@@ -599,7 +609,7 @@ func TestReleaseRefusesFilesThatDifferFromTheRoot(t *testing.T) {
 			r.summary("deployments", "anthropic-claude-fable-5")["part"] = 1
 		}, "places elsewhere"},
 		"a missing record": {func(r testRelease) {
-			delete(r.parts[2]["graph"].(map[string]any)["deployments"].(map[string]any), deployment)
+			delete(r.records("deployments", deployment), deployment)
 		}, "omits a record"},
 		"a summary without a part": {func(r testRelease) {
 			r.summary("models", "deepseek-v4-flash-0423")["part"] = len(r.parts)

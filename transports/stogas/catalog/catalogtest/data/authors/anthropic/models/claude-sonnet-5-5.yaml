@@ -12,5 +12,6 @@ models:
     toolChoice: false
   reasoning: required
   reasoningEfforts: [low, medium, high, xhigh, max]
+  openWeights: false
   releaseDate: 2026-09-28
   knowledgeCutoff: 2026-06-01

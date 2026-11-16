@@ -10,4 +10,5 @@ models:
   reasoningMaxTokens:
     minimum: 1
     maximum: 262143
+  openWeights: true
   releaseDate: 2026-04-28

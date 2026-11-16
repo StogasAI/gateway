@@ -31,15 +31,19 @@ type policyDeploymentData struct {
 	MaxInputTokens      int                 `json:"maxInputTokens"`
 	DataHandling        policyDataHandling  `json:"dataHandling"`
 	Hosting             string              `json:"hosting"`
+	InputLimits         InputLimits         `json:"inputLimits"`
 	InputModalities     []string            `json:"inputModalities"`
 	MaxOutputTokens     int                 `json:"maxOutputTokens"`
 	ModelID             string              `json:"modelId"`
 	OutputModalities    []string            `json:"outputModalities"`
 	Pricing             Pricing             `json:"pricing"`
+	PromptCacheMinimum  *int                `json:"promptCacheMinimumTokens"`
 	Reasoning           string              `json:"reasoning"`
+	ReasoningDefault    *string             `json:"reasoningDefault"`
 	ReasoningEfforts    []string            `json:"reasoningEfforts"`
 	ReasoningMaxTokens  *ReasoningMaxTokens `json:"reasoningMaxTokens"`
 	RetirementDate      *string             `json:"retirementDate"`
+	Sampling            Sampling            `json:"sampling"`
 	Upstream            compiledUpstream    `json:"upstream"`
 	WeightPrecision     string              `json:"weightPrecision"`
 }
@@ -398,6 +402,8 @@ func newResolvedPolicyValues(candidate *ResolvedRequest) (*resolvedPolicyValues,
 		return nil, false
 	}
 	deployment := candidate.Deployment
+	// The record of the route that the candidate serves holds its limits and sampling.
+	served := compiledDeployment.Routes[ids.route]
 	// A hosted tool that the request lets the model call can send its content further, so the
 	// policy reads the deployment's data handling joined with the tools'.
 	dataHandling := candidate.EffectiveDataHandling()
@@ -419,18 +425,22 @@ func newResolvedPolicyValues(candidate *ResolvedRequest) (*resolvedPolicyValues,
 					StorageWithin:    deployment.Locations.Containing(dataHandling.StorageLocation),
 				},
 				Hosting:            deployment.Hosting,
+				InputLimits:        served.InputLimits,
 				InputModalities:    deployment.InputModalities,
 				MaxOutputTokens:    deployment.MaxOutputTokens,
 				ModelID:            deployment.ModelID,
 				OutputModalities:   deployment.OutputModalities,
 				Pricing:            deployment.Pricing,
+				PromptCacheMinimum: compiledDeployment.PromptCacheMinimumTokens,
 				Reasoning:          deployment.Reasoning,
+				ReasoningDefault:   compiledDeployment.ReasoningDefault,
 				ReasoningEfforts:   deployment.ReasoningEfforts,
 				ReasoningMaxTokens: deployment.ReasoningMaxTokens,
 				RetirementDate:     compiledDeployment.RetirementDate,
 				Upstream:           compiledDeployment.Upstream,
 				Companies:          receivingCompanies(provider.CompanyID, deployment.Hosting, dataHandling.SharedWith),
 				ApprovalRequired:   deployment.ApprovalRequired,
+				Sampling:           served.Sampling,
 				WeightPrecision:    deployment.WeightPrecision,
 			},
 		},

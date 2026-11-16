@@ -9,5 +9,6 @@ models:
   outputModalities: [text]
   reasoning: optional
   reasoningEfforts: [low, medium, high, xhigh, max]
+  openWeights: false
   releaseDate: 2026-06-30
   knowledgeCutoff: 2026-01-01

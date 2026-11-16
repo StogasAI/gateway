@@ -7,6 +7,7 @@ models:
   inputModalities: [text]
   outputModalities: [text]
   reasoning: unsupported
+  openWeights: true
   snapshot: 2024-07-01
   releaseDate: 2024-07-18
   knowledgeCutoff: 2024-04-01

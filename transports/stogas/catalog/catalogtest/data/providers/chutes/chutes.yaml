@@ -2,15 +2,6 @@ providers:
   name: Chutes
   credentialModes: [managed, byok]
   companyId: chutes
-  capabilities:
-    streaming: true
-    functionCalling: true
-    parallelFunctionCalling: false
-    implicitPromptCaching: true
-    explicitPromptCaching: false
-    structuredOutputs: true
-    systemMessages: true
-    toolChoice: true
   dataHandling:
     processingLocation: world
     storageLocation: none

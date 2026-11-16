@@ -448,6 +448,13 @@ func TestResolvedPolicyValuesExposeTypedRegisteredCatalogAndRequestData(t *testi
 		{path: "request.model", fieldType: "string", value: "model:gpt-5.6-sol"},
 		{path: "request.interface", fieldType: "string", value: "chat_completions"},
 		{path: "deployment.capabilities.streaming", fieldType: "boolean", value: "true"},
+		{path: "model.openWeights", fieldType: "boolean", value: "false"},
+		{path: "deployment.sampling.temperature", fieldType: "boolean", value: "true"},
+		{path: "deployment.sampling.topK", fieldType: "boolean", value: "false"},
+		{path: "deployment.reasoningDefault", fieldType: "string", value: "medium"},
+		{path: "deployment.promptCacheMinimumTokens", fieldType: "integer", value: "1024"},
+		{path: "deployment.inputLimits.images.count", fieldType: "integer", value: "1500"},
+		{path: "deployment.inputLimits.documents.totalBytes", fieldType: "integer", value: "50000000"},
 	}
 	for _, test := range tests {
 		value, exists := values.PolicyValue(test.path)
@@ -471,6 +478,17 @@ func TestResolvedPolicyValuesExposeTypedRegisteredCatalogAndRequestData(t *testi
 		} else if actual != test.value {
 			t.Errorf("PolicyValue(%q) = %q, want %q", test.path, actual, test.value)
 		}
+	}
+
+	// A limit that the provider does not state has no value, so a condition on it excludes the
+	// candidate instead of passing.
+	if value, exists := values.PolicyValue("deployment.inputLimits.requestBytes"); exists {
+		t.Fatalf("an unstated limit reads as %#v", value)
+	}
+	if query, err := policy.CompileRouting("deployment.inputLimits.requestBytes >= 1", nil); err != nil {
+		t.Fatal(err)
+	} else if matches, err := query.Matches(values); err != nil || matches {
+		t.Fatalf("a condition on an unstated limit: match=%v err=%v", matches, err)
 	}
 
 	groups, exists := values.PolicyValue("model.groupIds")

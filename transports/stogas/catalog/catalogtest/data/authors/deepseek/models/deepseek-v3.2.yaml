@@ -7,4 +7,5 @@ models:
   inputModalities: [text]
   outputModalities: [text]
   reasoning: optional
+  openWeights: true
   releaseDate: 2025-12-01

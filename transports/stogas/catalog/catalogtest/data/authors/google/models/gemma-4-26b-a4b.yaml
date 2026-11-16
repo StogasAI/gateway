@@ -7,6 +7,7 @@ models:
   inputModalities: [text, image, video]
   outputModalities: [text]
   reasoning: optional
+  openWeights: true
   releaseDate: 2026-03-31
   # Google discloses the same January 2025 pre-training cutoff for the Gemma 4 family.
   knowledgeCutoff: 2025-01-01

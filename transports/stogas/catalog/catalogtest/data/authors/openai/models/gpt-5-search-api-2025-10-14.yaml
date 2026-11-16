@@ -12,6 +12,7 @@ models:
     parallelFunctionCalling: false
     explicitPromptCaching: false
   reasoning: unsupported
+  openWeights: false
   snapshot: 2025-10-14
   releaseDate: 2025-10-14
   knowledgeCutoff: 2024-09-30

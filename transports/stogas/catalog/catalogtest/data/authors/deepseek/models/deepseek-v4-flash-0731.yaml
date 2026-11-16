@@ -8,5 +8,6 @@ models:
   outputModalities: [text]
   reasoning: optional
   reasoningEfforts: [low, high, max]
+  openWeights: true
   snapshot: 2026-07-31
   releaseDate: 2026-07-31

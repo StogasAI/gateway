@@ -8,5 +8,6 @@ models:
   outputModalities: [text]
   reasoning: required
   reasoningEfforts: [low, medium, high]
+  openWeights: true
   releaseDate: 2025-08-05
   knowledgeCutoff: 2024-06-01

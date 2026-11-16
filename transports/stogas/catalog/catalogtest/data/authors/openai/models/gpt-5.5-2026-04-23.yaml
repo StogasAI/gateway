@@ -11,6 +11,7 @@ models:
     explicitPromptCaching: false
   reasoning: optional
   reasoningEfforts: [low, medium, high, xhigh]
+  openWeights: false
   snapshot: 2026-04-23
   releaseDate: 2026-04-23
   knowledgeCutoff: 2025-12-01

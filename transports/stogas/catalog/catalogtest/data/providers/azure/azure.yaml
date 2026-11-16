@@ -40,15 +40,6 @@ providers:
     - ZA
     - apac
     - europe
-  capabilities:
-    streaming: true
-    functionCalling: true
-    parallelFunctionCalling: true
-    implicitPromptCaching: true
-    explicitPromptCaching: true
-    structuredOutputs: true
-    systemMessages: true
-    toolChoice: true
   dataHandling:
     processingLocation: world
     storageLocation: unknown

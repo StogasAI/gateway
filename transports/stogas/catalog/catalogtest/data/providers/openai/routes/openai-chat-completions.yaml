@@ -1,8 +1,32 @@
 routes:
   providerId: openai
-  endpoint: https://api.openai.com/v1/chat/completions
   interfaces: [chat_completions]
   inputModalities: [text, image, audio]
+  capabilities:
+    streaming: true
+    functionCalling: true
+    parallelFunctionCalling: true
+    implicitPromptCaching: true
+    explicitPromptCaching: true
+    structuredOutputs: true
+    systemMessages: true
+    toolChoice: true
+  sampling:
+    temperature: true
+    topP: true
+    topK: false
+    frequencyPenalty: true
+    presencePenalty: true
+    repetitionPenalty: false
+    seed: true
+    logitBias: true
+  inputLimits:
+    images:
+      count: 1500
+      totalBytes: 512000000
+    documents:
+      bytes: 50000000
+      totalBytes: 50000000
   # Native document formats reviewed 2026-10-05: https://developers.openai.com/api/docs/guides/file-inputs
   documentFormats:
     extensions: [.pdf]

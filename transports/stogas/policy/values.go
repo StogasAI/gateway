@@ -122,6 +122,7 @@ var fieldDomains = map[string]fieldDomain{
 	"deployment.outputModalities":                modalities,
 	"deployment.reasoning":                       reasoning,
 	"deployment.reasoningEfforts":                efforts,
+	"deployment.reasoningDefault":                oneOf(append([]string{"none", "enabled"}, ReasoningEfforts...)...),
 	"deployment.retirementDate":                  catalogDate,
 	"deployment.weightPrecision":                 oneOf("fp32", "bf16", "fp16", "fp8", "fp6", "fp4", "nvfp4", "mxfp4", "int8", "int4", "unknown"),
 	"deployment.dataHandling.processingLocation": processingLocation,

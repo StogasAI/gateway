@@ -193,22 +193,27 @@ type compiledAuthor struct {
 // A compiled deployment holds the facts that hold on all its routes, and for each route the
 // facts that combine the route with the model and deployment.
 type compiledDeployment struct {
-	ApprovalRequired    bool                               `json:"approvalRequired"`
-	ContextWindowTokens int                                `json:"contextWindowTokens"`
-	Hosting             string                             `json:"hosting"`
-	MaxInputTokens      int                                `json:"maxInputTokens"`
-	MaxOutputTokens     int                                `json:"maxOutputTokens"`
-	ModelID             string                             `json:"modelId"`
-	Notes               shown                              `json:"notes"`
-	OutputModalities    []string                           `json:"outputModalities"`
-	Pricing             Pricing                            `json:"pricing"`
-	Reasoning           string                             `json:"reasoning"`
-	ReasoningMaxTokens  *ReasoningMaxTokens                `json:"reasoningMaxTokens"`
-	RetirementDate      *string                            `json:"retirementDate"`
-	Routes              map[string]compiledDeploymentRoute `json:"routes"`
-	StogasSupported     shown                              `json:"stogasSupported"`
-	Upstream            compiledUpstream                   `json:"upstream"`
-	WeightPrecision     string                             `json:"weightPrecision"`
+	ApprovalRequired    bool     `json:"approvalRequired"`
+	ContextWindowTokens int      `json:"contextWindowTokens"`
+	Hosting             string   `json:"hosting"`
+	MaxInputTokens      int      `json:"maxInputTokens"`
+	MaxOutputTokens     int      `json:"maxOutputTokens"`
+	ModelID             string   `json:"modelId"`
+	Notes               shown    `json:"notes"`
+	OutputModalities    []string `json:"outputModalities"`
+	Pricing             Pricing  `json:"pricing"`
+	// PromptCacheMinimumTokens is the fewest prompt tokens that the provider caches, and
+	// ReasoningDefault what a request that sets no reasoning gets. Policies read both, and the
+	// gateway sends nothing because of either.
+	PromptCacheMinimumTokens *int                               `json:"promptCacheMinimumTokens"`
+	Reasoning                string                             `json:"reasoning"`
+	ReasoningDefault         *string                            `json:"reasoningDefault"`
+	ReasoningMaxTokens       *ReasoningMaxTokens                `json:"reasoningMaxTokens"`
+	RetirementDate           *string                            `json:"retirementDate"`
+	Routes                   map[string]compiledDeploymentRoute `json:"routes"`
+	StogasSupported          shown                              `json:"stogasSupported"`
+	Upstream                 compiledUpstream                   `json:"upstream"`
+	WeightPrecision          string                             `json:"weightPrecision"`
 }
 
 type compiledDeploymentRoute struct {
@@ -216,12 +221,52 @@ type compiledDeploymentRoute struct {
 	ChainHash    string       `json:"chainHash"`
 	DataHandling DataHandling `json:"dataHandling"`
 	// HostedTools are the tools that the route runs for this deployment, each with its call meters.
-	HostedTools     map[HostedTool]HostedToolOffer `json:"hostedTools"`
-	InputModalities []string                       `json:"inputModalities"`
+	HostedTools map[HostedTool]HostedToolOffer `json:"hostedTools"`
+	// InputLimits are the provider's limits on a request and its files. The provider enforces
+	// them, and policies read them.
+	InputLimits     InputLimits `json:"inputLimits"`
+	InputModalities []string    `json:"inputModalities"`
 	// Pricing holds every meter that the deployment bills on the route: the deployment's own
 	// and the call meters of the route's hosted tools. The loader derives it.
 	Pricing          Pricing  `json:"-"`
 	ReasoningEfforts []string `json:"reasoningEfforts"`
+	// Sampling says which sampling parameters the deployment accepts on the route. Policies read
+	// it, and the gateway forwards those parameters unchanged.
+	Sampling Sampling `json:"sampling"`
+}
+
+// InputLimits holds each limit in bytes before encoding, or nil where the provider states none.
+type InputLimits struct {
+	Documents    DocumentLimits `json:"documents"`
+	Images       ImageLimits    `json:"images"`
+	RequestBytes *int           `json:"requestBytes"`
+}
+
+type DocumentLimits struct {
+	Bytes      *int `json:"bytes"`
+	Count      *int `json:"count"`
+	Pages      *int `json:"pages"`
+	TotalBytes *int `json:"totalBytes"`
+}
+
+type ImageLimits struct {
+	Bytes      *int `json:"bytes"`
+	Count      *int `json:"count"`
+	Pixels     *int `json:"pixels"`
+	TotalBytes *int `json:"totalBytes"`
+}
+
+// Sampling says, for each parameter, whether a value other than the default is accepted in at
+// least one reasoning setting.
+type Sampling struct {
+	FrequencyPenalty  bool `json:"frequencyPenalty"`
+	LogitBias         bool `json:"logitBias"`
+	PresencePenalty   bool `json:"presencePenalty"`
+	RepetitionPenalty bool `json:"repetitionPenalty"`
+	Seed              bool `json:"seed"`
+	Temperature       bool `json:"temperature"`
+	TopK              bool `json:"topK"`
+	TopP              bool `json:"topP"`
 }
 
 type Capabilities struct {
@@ -252,12 +297,16 @@ type compiledModel struct {
 	// deployments and their routes already hold.
 	Capabilities                shown `json:"capabilities"`
 	ContextWindowTokens         shown `json:"contextWindowTokens"`
+	InputLimits                 shown `json:"inputLimits"`
 	InputModalities             shown `json:"inputModalities"`
 	KnowledgeCutoff             shown `json:"knowledgeCutoff"`
 	MaxInputTokens              shown `json:"maxInputTokens"`
 	Notes                       shown `json:"notes"`
 	OutputModalities            shown `json:"outputModalities"`
+	PromptCacheMinimumTokens    shown `json:"promptCacheMinimumTokens"`
+	ReasoningDefault            shown `json:"reasoningDefault"`
 	ReasoningEffortsByInterface shown `json:"reasoningEffortsByInterface"`
+	Sampling                    shown `json:"sampling"`
 	Snapshot                    shown `json:"snapshot"`
 
 	Aliases            []string            `json:"aliases"`
@@ -265,6 +314,7 @@ type compiledModel struct {
 	GroupIDs           []string            `json:"groupIds"`
 	MaxOutputTokens    int                 `json:"maxOutputTokens"`
 	Name               string              `json:"name"`
+	OpenWeights        bool                `json:"openWeights"`
 	Reasoning          string              `json:"reasoning"`
 	ReasoningEfforts   []string            `json:"reasoningEfforts"`
 	ReasoningMaxTokens *ReasoningMaxTokens `json:"reasoningMaxTokens"`
@@ -292,10 +342,11 @@ type compiledRoute struct {
 	Capabilities    shown `json:"capabilities"`
 	DataHandling    shown `json:"dataHandling"`
 	Batch           shown `json:"batch"`
-	Endpoint        shown `json:"endpoint"`
 	HostedTools     shown `json:"hostedTools"`
+	InputLimits     shown `json:"inputLimits"`
 	InputModalities shown `json:"inputModalities"`
 	Notes           shown `json:"notes"`
+	Sampling        shown `json:"sampling"`
 	// Stogas does not serve a route, so none of its deployments either.
 	StogasSupported shown `json:"stogasSupported"`
 

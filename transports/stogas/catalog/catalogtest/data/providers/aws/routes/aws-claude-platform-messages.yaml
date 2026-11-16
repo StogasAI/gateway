@@ -11,6 +11,24 @@ routes:
   hosting: anthropic
   interfaces: [chat_completions, responses]
   inputModalities: [text, image]
+  capabilities:
+    streaming: true
+    functionCalling: true
+    parallelFunctionCalling: true
+    implicitPromptCaching: false
+    explicitPromptCaching: true
+    structuredOutputs: true
+    systemMessages: true
+    toolChoice: true
+  sampling:
+    temperature: true
+    topP: true
+    topK: true
+    frequencyPenalty: false
+    presencePenalty: false
+    repetitionPenalty: false
+    seed: false
+    logitBias: false
   documentFormats:
     extensions: [.csv, .md, .pdf, .txt]
     mediaTypes: [application/pdf, text/plain]
