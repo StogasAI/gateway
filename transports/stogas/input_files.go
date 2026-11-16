@@ -35,7 +35,7 @@ func validateNativeAttachment(state *State, block map[string]json.RawMessage, pa
 			return err
 		}
 	case "input_audio":
-		if err := rejectUnsupportedInputKeys(block, path, "type", "input_audio"); err != nil {
+		if err := rejectUnsupportedInputKeys(block, path, "type", "input_audio", "prompt_cache_breakpoint"); err != nil {
 			return err
 		}
 		var err error

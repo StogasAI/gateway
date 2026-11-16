@@ -165,8 +165,9 @@ func rawPromptContent(route catalog.Route, raw map[string]json.RawMessage) json.
 }
 
 // The provider decides which prompt blocks accept a breakpoint and how many it
-// honors. The gateway checks only the mode, because a new mode could change the
-// cache-write price.
+// honors. The gateway checks only the mode and lifetime, because a new mode could
+// change the cache-write price, and a 12-hour write costs twice the 30-minute one,
+// as prompt_cache_options.ttl does.
 func validatePromptCacheBreakpoints(raw json.RawMessage) (int, error) {
 	count := 0
 	err := openAIWalkRawJSON(raw, "prompt_cache_breakpoint", func(object map[string]json.RawMessage) error {
@@ -175,8 +176,8 @@ func validatePromptCacheBreakpoints(raw json.RawMessage) (int, error) {
 			return nil
 		}
 		breakpoint, ok := rawObject(breakpointRaw)
-		if !ok || !onlyRawKeys(breakpoint, "mode") {
-			return invalidRequest("prompt_cache_breakpoint must contain only mode")
+		if !ok || !onlyRawKeysOptional(breakpoint, "mode", "ttl") {
+			return invalidRequest("prompt_cache_breakpoint supports only mode and ttl")
 		}
 		mode, ok := rawStringValue(breakpoint["mode"])
 		if !ok {
@@ -184,6 +185,11 @@ func validatePromptCacheBreakpoints(raw json.RawMessage) (int, error) {
 		}
 		if mode != "explicit" {
 			return invalidRequest("prompt_cache_breakpoint.mode must be explicit")
+		}
+		if ttlRaw, exists := breakpoint["ttl"]; exists {
+			if ttl, ok := rawStringValue(ttlRaw); !ok || ttl != "30m" {
+				return invalidRequest("prompt_cache_breakpoint.ttl must be 30m")
+			}
 		}
 		count++
 		return nil

@@ -3402,33 +3402,47 @@ func TestOpenAIPromptCacheOptionsAndBreakpointsReachWireRequest(t *testing.T) {
 	}
 }
 
-func TestOpenAIPromptCacheImplicitModeReachesTheWire(t *testing.T) {
-	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
-		Method: "POST",
-		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"provider:openai gpt-5.6-luna","input":"hi","prompt_cache_options":{"mode":"implicit","ttl":"30m"}}`),
-	})
-	if err != nil {
-		t.Fatalf("ResolveRequest returned error: %v", err)
-	}
-	state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
-	if err := state.Adapter.ValidateRequest(state); err != nil {
-		t.Fatalf("documented implicit cache mode was rejected: %v", err)
-	}
-	bifrostReq, err := resolution.ToBifrost(schemas.NewBifrostContext(context.Background(), schemas.NoDeadline))
-	if err != nil {
-		t.Fatalf("ToBifrost returned error: %v", err)
-	}
-	wireBytes, err := json.Marshal(openaiprovider.ToOpenAIResponsesRequest(
-		schemas.NewBifrostContext(context.Background(), schemas.NoDeadline),
-		bifrostReq.ResponsesRequest,
-	))
-	if err != nil {
-		t.Fatalf("marshal OpenAI Responses request: %v", err)
-	}
-	for _, field := range []string{`"mode":"implicit"`, `"ttl":"30m"`} {
-		if !strings.Contains(string(wireBytes), field) {
-			t.Fatalf("documented cache field %s was not preserved: %s", field, wireBytes)
+func TestOpenAIPromptCacheFieldsReachTheWire(t *testing.T) {
+	for _, tc := range []struct {
+		body   string
+		fields []string
+	}{
+		{
+			body:   `{"model":"provider:openai gpt-5.6-luna","input":"hi","prompt_cache_options":{"mode":"implicit","ttl":"30m"}}`,
+			fields: []string{`"mode":"implicit"`, `"ttl":"30m"`},
+		},
+		{
+			body:   `{"model":"provider:openai gpt-5.6-luna","input":[{"role":"user","content":[{"type":"input_text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit","ttl":"30m"}}]}]}`,
+			fields: []string{`"prompt_cache_breakpoint":{"mode":"explicit","ttl":"30m"}`},
+		},
+	} {
+		resolution, err := catalog.ResolveRequest(catalog.RequestInput{
+			Method: "POST",
+			Path:   "/v1/responses",
+			Body:   []byte(tc.body),
+		})
+		if err != nil {
+			t.Fatalf("ResolveRequest returned error: %v", err)
+		}
+		state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
+		if err := state.Adapter.ValidateRequest(state); err != nil {
+			t.Fatalf("documented cache fields were rejected: %v", err)
+		}
+		bifrostReq, err := resolution.ToBifrost(schemas.NewBifrostContext(context.Background(), schemas.NoDeadline))
+		if err != nil {
+			t.Fatalf("ToBifrost returned error: %v", err)
+		}
+		wireBytes, err := json.Marshal(openaiprovider.ToOpenAIResponsesRequest(
+			schemas.NewBifrostContext(context.Background(), schemas.NoDeadline),
+			bifrostReq.ResponsesRequest,
+		))
+		if err != nil {
+			t.Fatalf("marshal OpenAI Responses request: %v", err)
+		}
+		for _, field := range tc.fields {
+			if !strings.Contains(string(wireBytes), field) {
+				t.Fatalf("documented cache field %s was not preserved: %s", field, wireBytes)
+			}
 		}
 	}
 }
@@ -3495,6 +3509,12 @@ func TestOpenAIPromptCachingRejectsUnrepresentableShapes(t *testing.T) {
 			path: "/v1/responses",
 			body: `{"model":"provider:openai gpt-5.6-luna","input":[{"role":"user","content":[{"type":"input_text","text":"hi","prompt_cache_breakpoint":{"mode":"future"}}]}]}`,
 			want: "breakpoint.mode must be explicit",
+		},
+		{
+			name: "twelve-hour breakpoint",
+			path: "/v1/responses",
+			body: `{"model":"provider:openai gpt-5.6-luna","input":[{"role":"user","content":[{"type":"input_text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit","ttl":"12h"}}]}]}`,
+			want: "prompt_cache_breakpoint.ttl must be 30m",
 		},
 		{
 			name:          "breakpoint non-string mode",

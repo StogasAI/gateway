@@ -153,7 +153,7 @@ func TestChatBridgeRefusesWhatResponsesLackOrTheFormatRefuses(t *testing.T) {
 		{"repetition penalty", `"repetition_penalty":1.1`, "repetition_penalty is not supported for OpenAI-format deployments"},
 		{"reasoning display", `"reasoning":{"display":"summarized"}`, "reasoning.display"},
 		{"top_k", `"top_k":5`, "top_k"},
-		{"prompt cache breakpoint member", `"messages":[{"role":"user","content":[{"type":"text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit","ttl":"1h"}}]}]`, "prompt_cache_breakpoint must contain only mode"},
+		{"prompt cache breakpoint member", `"messages":[{"role":"user","content":[{"type":"text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit","ttl":"1h"}}]}]`, "prompt_cache_breakpoint.ttl must be 30m"},
 		{"prompt cache option", `"prompt_cache_options":{"mode":"implicit","scope":"org"}`, "prompt_cache_options supports only mode and ttl"},
 		{"breakpoint in a tool output", `"messages":[{"role":"user","content":"Find a1."},{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{\"id\":\"a1\"}"}}]},` +
 			`{"role":"tool","tool_call_id":"call_1","content":[{"type":"text","text":"42","prompt_cache_breakpoint":{"mode":"explicit"}}]}],` + chatBridgeTools,
