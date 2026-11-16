@@ -1,6 +1,7 @@
 package chutese2ee
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -178,8 +179,9 @@ type liveChutesUsage struct {
 }
 
 type liveChutesResponse struct {
-	Model string           `json:"model"`
-	Usage *liveChutesUsage `json:"usage"`
+	Model   string            `json:"model"`
+	Usage   *liveChutesUsage  `json:"usage"`
+	Choices []json.RawMessage `json:"choices"`
 }
 
 func assertLiveChutesResponseContract(t *testing.T, payload []byte, expectedModel string, stream bool) {
@@ -203,7 +205,8 @@ func assertLiveChutesResponseContract(t *testing.T, payload []byte, expectedMode
 	if len(frames) == 0 {
 		t.Fatal("Chutes response contained no JSON frames")
 	}
-	var sawModel, sawUsage bool
+	var sawModel, sawUsage, sawRunningUsage bool
+	completion := 0
 	for _, frame := range frames {
 		var response liveChutesResponse
 		if err := json.Unmarshal(frame, &response); err != nil {
@@ -221,6 +224,11 @@ func assertLiveChutesResponseContract(t *testing.T, payload []byte, expectedMode
 				response.Usage.TotalTokens != response.Usage.PromptTokens+response.Usage.CompletionTokens {
 				t.Fatalf("invalid Chutes usage: %+v", response.Usage)
 			}
+			if response.Usage.CompletionTokens < completion {
+				t.Fatalf("Chutes usage fell from %d to %d output tokens", completion, response.Usage.CompletionTokens)
+			}
+			completion = response.Usage.CompletionTokens
+			sawRunningUsage = sawRunningUsage || len(response.Choices) > 0
 		}
 	}
 	if !sawModel {
@@ -229,6 +237,142 @@ func assertLiveChutesResponseContract(t *testing.T, payload []byte, expectedMode
 	if !sawUsage {
 		t.Fatal("Chutes response omitted usage")
 	}
+	// The gateway stops a stream whose client left only after a chunk with output reported the
+	// usage so far, which the instance asks its engine for on every encrypted stream.
+	if stream && !sawRunningUsage {
+		t.Fatal("Chutes stream reported usage only after its output")
+	}
+}
+
+// TestLiveChutesE2EEClientLeaves leaves an encrypted stream after 40 output tokens, as a client
+// that disconnects, and checks that Chutes bills no more than those tokens and the 500 or fewer that
+// were on their way. A later call shows when Chutes' usage by chute includes the stream.
+func TestLiveChutesE2EEClientLeaves(t *testing.T) {
+	if os.Getenv("STOGAS_LIVE_CHUTES_CLIENT_LEAVES") != "1" {
+		t.Skip("set STOGAS_LIVE_CHUTES_CLIENT_LEAVES=1 to leave a paid Chutes stream and read what Chutes billed")
+	}
+	transport, apiKey := newLiveChutesTransport(t)
+	live := liveChutesTargets(t)[0]
+	target := ModelTarget{ChuteID: live.ChuteID, GPUCount: live.GPUCount}
+	before := liveChutesBilled(t, apiKey, live.ChuteID)
+
+	payload, err := json.Marshal(map[string]any{
+		"max_tokens": 3000,
+		"messages":   []map[string]string{{"content": "Count from 1 to 3000, one number per line.", "role": "user"}},
+		"model":      live.Model,
+		"stream":     true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := fasthttp.AcquireRequest()
+	response := fasthttp.AcquireResponse()
+	defer fasthttp.ReleaseRequest(request)
+	defer fasthttp.ReleaseResponse(response)
+	request.Header.SetMethod(http.MethodPost)
+	request.Header.SetContentType("application/json")
+	request.Header.Set("Authorization", "Bearer "+apiKey)
+	request.SetRequestURI("https://llm.chutes.ai/v1/chat/completions")
+	request.SetBodyRaw(payload)
+	ctx := schemas.NewBifrostContext(t.Context(), schemas.NoDeadline)
+	SetInvocation(ctx, target, 1, nil)
+	if retry, err := transport.roundTrip(ctx, request, response); err != nil || retry || response.StatusCode() != http.StatusOK {
+		t.Fatalf("live round trip status=%d retry=%t error=%v", response.StatusCode(), retry, err)
+	}
+	stream := response.BodyStream()
+	lines := bufio.NewScanner(stream)
+	lines.Buffer(make([]byte, 0, 64*1024), maxEncryptedSSELine)
+	seen, frames := 0, 0
+	for seen < 40 && frames < 200 && lines.Scan() {
+		data, ok := bytes.CutPrefix(lines.Bytes(), []byte("data: "))
+		var frame liveChutesResponse
+		if !ok || json.Unmarshal(data, &frame) != nil {
+			continue
+		}
+		frames++
+		if frame.Usage != nil && len(frame.Choices) > 0 {
+			seen = frame.Usage.CompletionTokens
+		}
+	}
+	if seen < 40 {
+		t.Fatalf("the stream reported %d output tokens in %d chunks: %v", seen, frames, lines.Err())
+	}
+	if closer, ok := stream.(io.Closer); ok {
+		_ = closer.Close()
+	}
+	ctx.Cancel()
+
+	control := invokeLiveChutesForTest(t, transport, apiKey, live.Model, target, false)
+	var controlled liveChutesResponse
+	if err := json.Unmarshal(control, &controlled); err != nil || controlled.Usage == nil {
+		t.Fatalf("the control call reported no usage: %s", control)
+	}
+	billed := liveChutesBilledSince(t, apiKey, live.ChuteID, before)
+	calls, output := billed.Count-1, billed.OutputTokens-controlled.Usage.CompletionTokens
+	if calls < 0 || calls > 1 || output < 0 || output > seen+500 {
+		t.Fatalf("Chutes billed %d calls and %d output tokens for a stream left at %d; another call of %s in the meantime needs a new run",
+			calls, output, seen, live.Model)
+	}
+	t.Logf("%s: left at %d output tokens; Chutes billed %d calls and %d output tokens for it", live.Model, seen, calls, output)
+}
+
+type liveChutesUsageBucket struct {
+	Bucket       string `json:"bucket"`
+	Count        int    `json:"count"`
+	OutputTokens int    `json:"output_tokens"`
+}
+
+// liveChutesBilled reads what Chutes billed the account for one chute, by hourly bucket.
+func liveChutesBilled(t *testing.T, apiKey, chuteID string) map[string]liveChutesUsageBucket {
+	t.Helper()
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet,
+		productionAPIBaseURL+"/users/me/usage?per_chute=true&limit=3&chute_id="+chuteID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer "+apiKey)
+	response, err := (&http.Client{Timeout: 30 * time.Second}).Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	var page struct {
+		Items []liveChutesUsageBucket `json:"items"`
+	}
+	if response.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&page) != nil {
+		t.Fatalf("Chutes usage: status %d", response.StatusCode)
+	}
+	buckets := make(map[string]liveChutesUsageBucket, len(page.Items))
+	for _, item := range page.Items {
+		buckets[item.Bucket] = item
+	}
+	return buckets
+}
+
+// liveChutesBilledSince returns what Chutes billed for the chute after before, once it has billed a
+// call and then nothing more for 75 seconds. Chutes adds calls to its usage about every minute.
+func liveChutesBilledSince(t *testing.T, apiKey, chuteID string, before map[string]liveChutesUsageBucket) liveChutesUsageBucket {
+	t.Helper()
+	var last liveChutesUsageBucket
+	unchanged := 0
+	for range 30 {
+		time.Sleep(15 * time.Second)
+		var added liveChutesUsageBucket
+		for bucket, item := range liveChutesBilled(t, apiKey, chuteID) {
+			added.Count += item.Count - before[bucket].Count
+			added.OutputTokens += item.OutputTokens - before[bucket].OutputTokens
+		}
+		if added == last {
+			unchanged++
+		} else {
+			last, unchanged = added, 0
+		}
+		if last.Count > 0 && unchanged == 5 {
+			return last
+		}
+	}
+	t.Fatal("Chutes usage did not settle within seven and a half minutes")
+	return liveChutesUsageBucket{}
 }
 
 type liveChutesTarget struct {

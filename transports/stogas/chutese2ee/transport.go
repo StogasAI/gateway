@@ -32,6 +32,7 @@ type Options struct {
 type invocationMetadataKey struct{}
 type invocationKey struct{}
 type retryObserverKey struct{}
+type usageObserverKey struct{}
 type dispatchKey struct{}
 
 type invocation struct {
@@ -54,6 +55,12 @@ func SetInvocation(ctx interface{ SetValue(any, any) }, target ModelTarget, atte
 // preparation is not a new dispatch.
 func SetRetryObserver(ctx interface{ SetValue(any, any) }, observe func(status int, instanceID string, completedAt, nextStartedAt time.Time)) {
 	ctx.SetValue(retryObserverKey{}, observe)
+}
+
+// SetUsageObserver reports, once, that the stream of the call carries the usage so far with its
+// output. Chutes instances add that usage to every chunk of an encrypted stream.
+func SetUsageObserver(ctx interface{ SetValue(any, any) }, observe func()) {
+	ctx.SetValue(usageObserverKey{}, observe)
 }
 
 // NotSent reports that the transport failed this request before it sent any
@@ -568,6 +575,7 @@ func (t *Transport) roundTripStream(
 		credential.diagnostics.recordProtocolFailure(ticket.ChuteID)
 	})
 	decrypted.admit = func(data []byte) error { return providerio.AdmitDecrypted(ctx, data) }
+	decrypted.observeUsage, _ = ctx.Value(usageObserverKey{}).(func())
 	response.SetBodyStream(decrypted, -1)
 	return true, nil
 }

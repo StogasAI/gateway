@@ -663,7 +663,14 @@ func (s *Server) startSSEStream(ctx *requestContext, run *providerRun, started p
 			}
 		}
 
+		providerStopped := false
 		for {
+			// A call whose output no client receives stops once stopping it bills what it has
+			// produced (stogas.State.RunningUsage).
+			if !clientConnected && !providerStopped && stream != nil && state.RunningUsage() {
+				providerStopped = true
+				outcome.Cancel()
+			}
 			var chunk *schemas.BifrostStreamChunk
 			select {
 			case <-providerDone:
@@ -725,8 +732,11 @@ func (s *Server) startSSEStream(ctx *requestContext, run *providerRun, started p
 				continue
 			case next, ok := <-stream:
 				if !ok {
-					finishSuccess(nil)
-					return
+					if !providerStopped {
+						finishSuccess(nil)
+						return
+					}
+					next = stogas.StoppedCallChunk(outcome)
 				}
 				chunk = next
 			}

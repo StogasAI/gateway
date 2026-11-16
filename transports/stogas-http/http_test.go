@@ -2941,6 +2941,68 @@ func TestWriteSSEStreamDrainsUpstreamAfterBlockedSendClose(t *testing.T) {
 	}
 }
 
+func TestWriteSSEStreamStopsCallWithRunningUsageAfterClientLeaves(t *testing.T) {
+	for name, coreCancellationChunk := range map[string]bool{
+		"core sends its cancellation": true,
+		"core drops its cancellation": false,
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := &Server{}
+			ctx := newTestRequest(t)
+			request, cancelRequest := schemas.NewBifrostContextWithCancel(t.Context())
+			defer cancelRequest()
+			call := schemas.NewBifrostContext(request, schemas.NoDeadline)
+			reported := &schemas.BifrostLLMUsage{PromptTokens: 11, CompletionTokens: 7, TotalTokens: 18}
+			call.SetValue(schemas.BifrostContextKeyStreamAccumulatedUsage, reported)
+			stream := make(chan *schemas.BifrostStreamChunk, 1)
+			state := &stogas.State{Pair: stogas.Pair{Adapter: stogas.DefaultAdapter{}, Resolution: &catalog.ResolvedRequest{Route: catalog.RouteChat}}, StartedAt: time.Now()}
+			completed := make(chan struct{})
+			run := &providerRun{server: server, client: ctx, request: request, state: state, cancel: cancelRequest}
+			body := server.startSSEStream(ctx, run, providerStreamStart{response: stream, ctx: call, called: true}, nil, nil, func() { close(completed) })
+
+			state.MarkRunningUsage()
+			stream <- &schemas.BifrostStreamChunk{BifrostChatResponse: &schemas.BifrostChatResponse{
+				ID: "chatcmpl_first", Object: "chat.completion.chunk", Model: "gemma-4-31b",
+				Choices: []schemas.BifrostResponseChoice{{ChatStreamResponseChoice: &schemas.ChatStreamResponseChoice{
+					Delta: &schemas.ChatStreamResponseChoiceDelta{Role: schemas.Ptr("assistant"), Content: schemas.Ptr("One")},
+				}}},
+			}}
+			if err := body.Close(); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-call.Done():
+			case <-time.After(time.Second):
+				t.Fatal("a call with running usage kept running after its client left")
+			}
+			if request.Err() != nil {
+				t.Fatal("stopping the call ended the request")
+			}
+			if coreCancellationChunk {
+				failure := &schemas.BifrostError{IsBifrostError: true, StatusCode: schemas.Ptr(499), Error: &schemas.ErrorField{Type: schemas.Ptr(schemas.RequestCancelled), Message: "Request cancelled: client disconnected"}}
+				providerutils.AttachBilledUsageFromContext(call, failure)
+				stream <- &schemas.BifrostStreamChunk{BifrostError: failure}
+			}
+			close(stream)
+			select {
+			case <-completed:
+			case <-time.After(time.Second):
+				t.Fatal("the stopped call never settled")
+			}
+
+			if status := billing.NormalizeUpstreamStatus(state.BifrostError); status != "cancelled" || state.ProcessingError != nil {
+				t.Fatalf("stopped call ended as %q with processing error %#v", status, state.ProcessingError)
+			}
+			if signals, ok := state.Signals.(*stogas.StandardSignals); !ok || signals.PromptTokens() != 11 || signals.CompletionTokens() != 7 {
+				t.Fatalf("stopped call billed %#v, want the usage that it reported", state.Signals)
+			}
+			if cancelled, _ := state.ClientStatus(); !cancelled {
+				t.Fatal("the client's stop was not recorded")
+			}
+		})
+	}
+}
+
 func TestWriteSSEStreamStopsAtRequestLifetime(t *testing.T) {
 	server := &Server{}
 	ctx := newTestRequest(t)

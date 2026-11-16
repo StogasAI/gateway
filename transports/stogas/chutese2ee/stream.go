@@ -15,18 +15,25 @@ import (
 )
 
 type streamReader struct {
-	source      *bufio.Reader
-	closer      io.Closer
-	responseKey *mlkem.DecapsulationKey768
-	streamKey   []byte
-	pending     bytes.Buffer
-	initialized bool
-	authDone    bool
-	done        bool
-	closed      bool
-	onError     func()
-	errorOnce   sync.Once
-	admit       func([]byte) error
+	source       *bufio.Reader
+	closer       io.Closer
+	responseKey  *mlkem.DecapsulationKey768
+	pending      bytes.Buffer
+	initialized  bool
+	authDone     bool
+	done         bool
+	onError      func()
+	errorOnce    sync.Once
+	admit        func([]byte) error
+	observeUsage func()
+	usageSeen    bool
+
+	// Core closes the stream from its own goroutine while a read waits on the network. mu keeps
+	// that close from retiring the key while a line is decrypted, and a read that the close
+	// interrupts is not a protocol failure.
+	mu        sync.Mutex
+	streamKey []byte
+	closed    bool
 }
 
 func newStreamReader(source io.Reader, responseKey *mlkem.DecapsulationKey768, onError func()) *streamReader {
@@ -41,7 +48,7 @@ func (r *streamReader) Read(target []byte) (int, error) {
 	if len(target) == 0 {
 		return 0, nil
 	}
-	if r.closed {
+	if r.isClosed() {
 		return 0, io.ErrClosedPipe
 	}
 	for r.pending.Len() == 0 {
@@ -50,17 +57,35 @@ func (r *streamReader) Read(target []byte) (int, error) {
 			return 0, io.EOF
 		}
 		line, err := r.readLine()
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				return 0, r.fail(fmt.Errorf("%w: encrypted stream ended before authenticated [DONE]", ErrInvalidE2EEResponse))
-			}
-			return 0, r.fail(err)
+		if err == nil {
+			err = r.process(line)
+		} else if errors.Is(err, io.EOF) {
+			err = fmt.Errorf("%w: encrypted stream ended before authenticated [DONE]", ErrInvalidE2EEResponse)
 		}
-		if err := r.processLine(line); err != nil {
+		if err != nil {
+			if r.isClosed() {
+				return 0, io.ErrClosedPipe
+			}
 			return 0, r.fail(err)
 		}
 	}
 	return r.pending.Read(target)
+}
+
+// process handles one line while Close waits, so the stream key outlives each use.
+func (r *streamReader) process(line []byte) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return io.ErrClosedPipe
+	}
+	return r.processLine(line)
+}
+
+func (r *streamReader) isClosed() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.closed
 }
 
 func (r *streamReader) fail(err error) error {
@@ -74,11 +99,15 @@ func (r *streamReader) fail(err error) error {
 }
 
 func (r *streamReader) Close() error {
+	r.mu.Lock()
 	if r.closed {
+		r.mu.Unlock()
 		return nil
 	}
 	r.closed = true
 	clear(r.streamKey)
+	r.mu.Unlock()
+	// Closing the connection ends a read that waits on it.
 	if r.closer != nil {
 		return r.closer.Close()
 	}
@@ -174,12 +203,16 @@ func (r *streamReader) processLine(line []byte) error {
 			r.done = true
 			return nil
 		}
-		normalized, err := normalizeDecryptedSSEEvent(plaintext)
+		normalized, object, err := normalizeDecryptedSSEEvent(plaintext)
 		if err != nil {
 			return fmt.Errorf("%w: invalid decrypted stream event: %v", ErrInvalidE2EEResponse, err)
 		}
 		if len(normalized) == 0 {
 			return nil
+		}
+		if !r.usageSeen && r.observeUsage != nil && reportsUsageWithOutput(object) {
+			r.usageSeen = true
+			r.observeUsage()
 		}
 		r.pending.Write(normalized)
 		r.pending.WriteString("\n\n")
@@ -202,33 +235,45 @@ func isDecryptedCompletionMarker(event []byte) bool {
 	return bytes.Equal(bytes.TrimSpace(event[len("data:"):]), []byte("[DONE]"))
 }
 
-func normalizeDecryptedSSEEvent(event []byte) ([]byte, error) {
+// normalizeDecryptedSSEEvent returns the event and its payload's fields.
+func normalizeDecryptedSSEEvent(event []byte) ([]byte, map[string]json.RawMessage, error) {
 	if len(event) == 0 || len(event) > maxEncryptedSSELine {
-		return nil, errors.New("event size is invalid")
+		return nil, nil, errors.New("event size is invalid")
 	}
 	event = bytes.TrimRight(event, "\r\n")
 	if len(event) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if !bytes.HasPrefix(event, []byte("data:")) {
 		if bytes.Equal(bytes.TrimSpace(event), []byte("[DONE]")) {
-			return nil, errors.New("encrypted completion marker")
+			return nil, nil, errors.New("encrypted completion marker")
 		}
 		if json.Valid(bytes.TrimSpace(event)) {
-			return nil, errors.New("unframed JSON event")
+			return nil, nil, errors.New("unframed JSON event")
 		}
-		return nil, fmt.Errorf("missing data field (length=%d first_byte=0x%02x)", len(event), event[0])
+		return nil, nil, fmt.Errorf("missing data field (length=%d first_byte=0x%02x)", len(event), event[0])
 	}
 	if bytes.ContainsAny(event, "\r\n") {
-		return nil, errors.New("event contains an internal line break")
+		return nil, nil, errors.New("event contains an internal line break")
 	}
 	payload := bytes.TrimSpace(event[len("data:"):])
 	if len(payload) == 0 || bytes.Equal(payload, []byte("[DONE]")) {
-		return nil, errors.New("event payload is empty or a completion marker")
+		return nil, nil, errors.New("event payload is empty or a completion marker")
 	}
 	var object map[string]json.RawMessage
 	if json.Unmarshal(payload, &object) != nil || object == nil {
-		return nil, errors.New("event payload is not a JSON object")
+		return nil, nil, errors.New("event payload is not a JSON object")
 	}
-	return event, nil
+	return event, object, nil
+}
+
+// reportsUsageWithOutput reports a chunk that carries output and the usage so far.
+func reportsUsageWithOutput(object map[string]json.RawMessage) bool {
+	var choices []json.RawMessage
+	var usage struct {
+		Prompt     *int64 `json:"prompt_tokens"`
+		Completion *int64 `json:"completion_tokens"`
+	}
+	return json.Unmarshal(object["choices"], &choices) == nil && len(choices) > 0 &&
+		json.Unmarshal(object["usage"], &usage) == nil && usage.Prompt != nil && usage.Completion != nil
 }

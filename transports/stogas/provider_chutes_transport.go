@@ -15,8 +15,9 @@ type chutesStandardCallKey struct{}
 
 // SetChutesCall passes a Chutes provider call into the transport of the route that its deployment
 // is on. An end-to-end encrypted route takes the chute and GPU count that the deployment names, and
-// chutese2ee sends it. A standard route sends the call to Chutes' own API over ordinary TLS, where
-// nothing is encrypted end to end, so its reply carries no encryption proof.
+// chutese2ee sends it and tells the request when the stream reports running usage. A standard route
+// sends the call to Chutes' own API over ordinary TLS, where nothing is encrypted end to end, so its
+// reply carries no encryption proof, and its stream reports usage only at the end.
 func SetChutesCall(ctx *schemas.BifrostContext, resolution *catalog.ResolvedRequest, attempts int, retryAllowed func() bool) {
 	if resolution.Deployment.DataHandling.EndToEndEncrypted {
 		upstream := resolution.Deployment.Upstream
@@ -25,6 +26,9 @@ func SetChutesCall(ctx *schemas.BifrostContext, resolution *catalog.ResolvedRequ
 			target.GPUCount = *upstream.GPUCount
 		}
 		chutese2ee.SetInvocation(ctx, target, attempts, retryAllowed)
+		if state, ok := StateFrom(ctx); ok {
+			chutese2ee.SetUsageObserver(ctx, state.MarkRunningUsage)
+		}
 		return
 	}
 	ctx.SetValue(chutesStandardCallKey{}, true)

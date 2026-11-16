@@ -1,6 +1,7 @@
 package chutese2ee
 
 import (
+	"bytes"
 	"crypto/mlkem"
 	"crypto/rand"
 	"encoding/base64"
@@ -294,6 +295,78 @@ func TestEncryptedStreamBoundsOuterEvent(t *testing.T) {
 	reader := newStreamReader(strings.NewReader(outer), responseKey, nil)
 	if _, err := io.ReadAll(reader); !errors.Is(err, ErrInvalidE2EEResponse) {
 		t.Fatalf("oversized event error = %v", err)
+	}
+}
+
+func TestEncryptedStreamReportsRunningUsageOnce(t *testing.T) {
+	responseKey, err := mlkem.GenerateKey768()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, test := range map[string]struct {
+		events []string
+		want   int32
+	}{
+		"usage with output": {[]string{
+			`data: {"choices":[{"delta":{"role":"assistant"}}],"usage":{"prompt_tokens":9,"completion_tokens":0}}`,
+			`data: {"choices":[{"delta":{"content":"a"}}],"usage":{"prompt_tokens":9,"completion_tokens":1}}`,
+		}, 1},
+		"usage only at the end": {[]string{
+			`data: {"choices":[{"delta":{"content":"a"}}],"usage":null}`,
+			`data: {"choices":[],"usage":{"prompt_tokens":9,"completion_tokens":1}}`,
+		}, 0},
+		"usage without output tokens": {[]string{
+			`data: {"choices":[{"delta":{"content":"a"}}],"usage":{"prompt_tokens":9}}`,
+		}, 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			initialization, streamKey := streamInitializationForTest(t, responseKey)
+			outer := sseEnvelopeForTest(t, map[string]any{"e2e_init": initialization})
+			for _, event := range append(test.events, "data: [DONE]\n\n") {
+				outer += sseEnvelopeForTest(t, map[string]any{"e2e": encryptStreamEventForTest(t, streamKey, event)})
+			}
+			var reports atomic.Int32
+			reader := newStreamReader(strings.NewReader(outer), responseKey, nil)
+			reader.observeUsage = func() { reports.Add(1) }
+			if _, err := io.ReadAll(reader); err != nil {
+				t.Fatal(err)
+			}
+			if reports.Load() != test.want {
+				t.Fatalf("running usage reports = %d, want %d", reports.Load(), test.want)
+			}
+		})
+	}
+}
+
+func TestEncryptedStreamCloseEndsAWaitingRead(t *testing.T) {
+	responseKey, err := mlkem.GenerateKey768()
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialization, streamKey := streamInitializationForTest(t, responseKey)
+	start := sseEnvelopeForTest(t, map[string]any{"e2e_init": initialization}) +
+		sseEnvelopeForTest(t, map[string]any{"e2e": encryptStreamEventForTest(t, streamKey, `data: {"choices":[]}`)})
+	source, upstream := io.Pipe()
+	go func() { _, _ = io.WriteString(upstream, start) }()
+	var failures atomic.Int32
+	reader := newStreamReader(source, responseKey, func() { failures.Add(1) })
+	buffer := make([]byte, 64*1024)
+	if _, err := reader.Read(buffer); err != nil {
+		t.Fatal(err)
+	}
+	read := make(chan error, 1)
+	go func() {
+		_, err := reader.Read(buffer)
+		read <- err
+	}()
+	if err := reader.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-read; !errors.Is(err, io.ErrClosedPipe) {
+		t.Fatalf("interrupted read = %v, want a closed stream", err)
+	}
+	if failures.Load() != 0 || !bytes.Equal(reader.streamKey, make([]byte, len(reader.streamKey))) {
+		t.Fatalf("closing the stream counted %d protocol failures or kept its key", failures.Load())
 	}
 }
 

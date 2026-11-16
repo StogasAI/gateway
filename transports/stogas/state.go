@@ -3,6 +3,7 @@ package stogas
 import (
 	"bytes"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/maximhq/bifrost/core/schemas"
@@ -77,6 +78,7 @@ type State struct {
 	ClientStoppedAt         time.Time
 	Cancelled               bool
 	clientStateMu           sync.RWMutex
+	runningUsage            atomic.Bool
 	GatewayVersion          string
 	NodeID                  string
 	ActualTier              string

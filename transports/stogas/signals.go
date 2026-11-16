@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/maximhq/bifrost/core/providers/utils"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
@@ -64,6 +65,37 @@ func hasMeasuredUsage(signals Signals) bool {
 
 func HasMeasuredUsage(state *State) bool {
 	return state != nil && hasMeasuredUsage(state.Signals)
+}
+
+// MarkRunningUsage records that the provider reports the usage so far with its output and bills a
+// call that stops by that report. Only Chutes' encrypted route does both: its instances add usage to
+// every chunk, and Chutes bills a stopped call for no more than the last usage that it saw. The
+// request keeps the mark because a stream that reports usage has started, and no other call follows
+// a started stream.
+func (s *State) MarkRunningUsage() {
+	if s != nil {
+		s.runningUsage.Store(true)
+	}
+}
+
+// RunningUsage reports that stopping the call bills what it has produced, so a call whose output no
+// client receives can stop.
+func (s *State) RunningUsage() bool {
+	return s != nil && s.runningUsage.Load()
+}
+
+// StoppedCallChunk ends the stream of a call that the gateway stopped: a cancellation that bills the
+// usage that the call reported. Core can drop its own copy on the way, so read it once the stream
+// has closed, when that usage no longer changes.
+func StoppedCallChunk(call *schemas.BifrostContext) *schemas.BifrostStreamChunk {
+	failure := &schemas.BifrostError{
+		IsBifrostError: true,
+		StatusCode:     schemas.Ptr(499),
+		AllowFallbacks: schemas.Ptr(false),
+		Error:          &schemas.ErrorField{Type: schemas.Ptr(schemas.RequestCancelled), Message: schemas.ErrRequestCancelled},
+	}
+	utils.AttachBilledUsageFromContext(call, failure)
+	return &schemas.BifrostStreamChunk{BifrostError: failure}
 }
 
 func validateReportedUsageMetadata(state *State, usage *schemas.BifrostLLMUsage) error {
