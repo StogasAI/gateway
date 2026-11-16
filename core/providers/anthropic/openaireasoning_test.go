@@ -23,9 +23,9 @@ func openAIReasoningReplyBlocks() []AnthropicContentBlock {
 	}
 }
 
-func openAIReasoningContext(encryptedContent bool) *schemas.BifrostContext {
+func openAIReasoningContext() *schemas.BifrostContext {
 	ctx := schemas.NewBifrostContext(nil, time.Time{})
-	SetOpenAIReasoning(ctx, encryptedContent)
+	SetOpenAIReasoning(ctx)
 	return ctx
 }
 
@@ -58,7 +58,7 @@ func replayedAssistantBlocks(t *testing.T, output []schemas.ResponsesMessage, ed
 			Output: &schemas.ResponsesToolMessageOutputStruct{ResponsesToolCallOutputStr: schemas.Ptr("18C")},
 		},
 	})
-	request, err := ToAnthropicResponsesRequest(openAIReasoningContext(true), &schemas.BifrostResponsesRequest{
+	request, err := ToAnthropicResponsesRequest(openAIReasoningContext(), &schemas.BifrostResponsesRequest{
 		Provider: schemas.Anthropic,
 		Model:    "claude-opus-5-5",
 		Input:    input,
@@ -100,7 +100,7 @@ func requireReplayedReply(t *testing.T, got []AnthropicContentBlock) {
 	}
 }
 
-func requireOpenAIReasoningItem(t *testing.T, item schemas.ResponsesMessage, summary string, encrypted bool) {
+func requireOpenAIReasoningItem(t *testing.T, item schemas.ResponsesMessage, summary string) {
 	t.Helper()
 	if item.Type == nil || *item.Type != schemas.ResponsesMessageTypeReasoning || item.Role != nil || item.Content != nil || item.ResponsesReasoning == nil {
 		t.Fatalf("item = %+v, want a reasoning item without a role or content", item)
@@ -112,8 +112,8 @@ func requireOpenAIReasoningItem(t *testing.T, item schemas.ResponsesMessage, sum
 	if !reflect.DeepEqual(item.ResponsesReasoning.Summary, want) {
 		t.Fatalf("summary = %+v, want %+v", item.ResponsesReasoning.Summary, want)
 	}
-	if got := item.ResponsesReasoning.EncryptedContent != nil; got != encrypted {
-		t.Fatalf("encrypted_content present = %v, want %v", got, encrypted)
+	if item.ResponsesReasoning.EncryptedContent == nil {
+		t.Fatal("encrypted_content is missing")
 	}
 }
 
@@ -121,16 +121,16 @@ func TestOpenAIReasoningReplyGivesEachBlockAnItem(t *testing.T) {
 	t.Parallel()
 
 	response := &AnthropicMessageResponse{ID: "msg_01", Model: "claude-opus-5-5", Content: openAIReasoningReplyBlocks(), StopReason: AnthropicStopReasonToolUse}
-	output := response.ToBifrostResponsesResponse(openAIReasoningContext(true)).Output
+	output := response.ToBifrostResponsesResponse(openAIReasoningContext()).Output
 	if len(output) != 5 {
 		t.Fatalf("output = %d items, want 5: %+v", len(output), output)
 	}
-	requireOpenAIReasoningItem(t, output[0], "Plan the lookup.", true)
-	requireOpenAIReasoningItem(t, output[1], "", true)
+	requireOpenAIReasoningItem(t, output[0], "Plan the lookup.")
+	requireOpenAIReasoningItem(t, output[1], "")
 	if output[2].Type == nil || *output[2].Type != schemas.ResponsesMessageTypeMessage {
 		t.Fatalf("output[2] = %+v, want the message", output[2])
 	}
-	requireOpenAIReasoningItem(t, output[3], "", true)
+	requireOpenAIReasoningItem(t, output[3], "")
 	if output[4].Type == nil || *output[4].Type != schemas.ResponsesMessageTypeFunctionCall {
 		t.Fatalf("output[4] = %+v, want the call", output[4])
 	}
@@ -139,10 +139,6 @@ func TestOpenAIReasoningReplyGivesEachBlockAnItem(t *testing.T) {
 	requireReplayedReply(t, replayedAssistantBlocks(t, output, func(input []schemas.ResponsesMessage) {
 		input[0].ResponsesReasoning.Summary = []schemas.ResponsesReasoningSummary{}
 	}))
-
-	withoutEncryptedContent := response.ToBifrostResponsesResponse(openAIReasoningContext(false)).Output
-	requireOpenAIReasoningItem(t, withoutEncryptedContent[0], "Plan the lookup.", false)
-	requireOpenAIReasoningItem(t, withoutEncryptedContent[1], "", false)
 }
 
 // openAIReasoningReplyStream streams the blocks of openAIReasoningReplyBlocks as
@@ -183,7 +179,7 @@ func openAIReasoningReplyStream() []*AnthropicStreamEvent {
 func TestOpenAIReasoningStreamFollowsOpenAIEventsAndRoundTrips(t *testing.T) {
 	t.Parallel()
 
-	ctx := openAIReasoningContext(true)
+	ctx := openAIReasoningContext()
 	state := AcquireAnthropicResponsesStreamState()
 	defer ReleaseAnthropicResponsesStreamState(state)
 	var events []*schemas.BifrostResponsesStreamResponse
@@ -233,9 +229,9 @@ func TestOpenAIReasoningStreamFollowsOpenAIEventsAndRoundTrips(t *testing.T) {
 	if !reflect.DeepEqual(first, wantFirst) {
 		t.Fatalf("first item events = %v, want %v", first, wantFirst)
 	}
-	requireOpenAIReasoningItem(t, done[0], "Plan the lookup.", true)
-	requireOpenAIReasoningItem(t, done[1], "", true)
-	requireOpenAIReasoningItem(t, done[3], "", true)
+	requireOpenAIReasoningItem(t, done[0], "Plan the lookup.")
+	requireOpenAIReasoningItem(t, done[1], "")
+	requireOpenAIReasoningItem(t, done[3], "")
 	if completed == nil || len(completed.Output) != 5 {
 		t.Fatalf("completed = %+v, want 5 items", completed)
 	}

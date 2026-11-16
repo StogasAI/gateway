@@ -273,11 +273,7 @@ func (r *ResolvedRequest) translateToResponses() error {
 	textToolOutputs(converted.Input)
 	params := converted.Params
 	params.Reasoning = deploymentReasoning(params.Reasoning, r.Deployment)
-	// A Chat Completions client cannot ask for the encrypted reasoning that the deployment takes
-	// back in a later turn, so the gateway asks for it.
-	if r.ReadsReasoning(EncryptedReasoning) && !slices.Contains(params.Include, responsesIncludeEncryptedReasoning) {
-		params.Include = append(params.Include, responsesIncludeEncryptedReasoning)
-	}
+	params.Include = r.includeEncryptedReasoning(params.Include)
 	fields, err := responsesWireFields(converted, r.chat.Stream, r.pricing.RawBody)
 	if err != nil {
 		return err
@@ -303,6 +299,16 @@ func (r *ResolvedRequest) translateToResponses() error {
 
 // responsesIncludeEncryptedReasoning asks a Responses reply for its reasoning's encrypted content.
 const responsesIncludeEncryptedReasoning = "reasoning.encrypted_content"
+
+// includeEncryptedReasoning returns a Responses include that asks for the encrypted reasoning that
+// the deployment takes back. The gateway stores no reply, so a client continues the model's
+// reasoning in a later turn only by sending that content back.
+func (r *ResolvedRequest) includeEncryptedReasoning(include []string) []string {
+	if !r.ReadsReasoning(EncryptedReasoning) || slices.Contains(include, responsesIncludeEncryptedReasoning) {
+		return include
+	}
+	return append(slices.Clip(include), responsesIncludeEncryptedReasoning)
+}
 
 // responsesBridgeGap refuses a Chat Completions request that a Responses body cannot carry whole:
 // one with a part that Responses lacks, or with a prompt cache breakpoint in a tool's output, which

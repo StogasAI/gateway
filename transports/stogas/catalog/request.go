@@ -1087,6 +1087,7 @@ func resolveResponsesRequests(input RequestInput, route Route) (*ResolvedRequest
 			return nil, err
 		}
 		request.ResponsesParameters.Reasoning = deploymentReasoning(request.ResponsesParameters.Reasoning, resolution.Deployment)
+		request.ResponsesParameters.Include = resolution.includeEncryptedReasoning(request.ResponsesParameters.Include)
 		resolution.responses = &request
 		resolution.hostedTools = variants.hostedTools
 		resolution.retainVariant(variant, candidatePolicy.Config, input)

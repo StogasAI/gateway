@@ -2,7 +2,6 @@ package stogas
 
 import (
 	"encoding/json"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -312,13 +311,13 @@ func responsesProviderBody(ctx *schemas.BifrostContext, request *schemas.Bifrost
 }
 
 // prepareAnthropicResponsesBody has core return Claude's thinking as OpenAI's
-// reasoning items, each block whole in an item's encrypted content when include
-// asks for it. It sends web search and web fetch at their basic versions. Core
-// picks newer versions for recent Claude models; those filter results with code
-// execution, which keeps container data for up to 30 days, and Azure-hosted
-// Claude rejects them.
+// reasoning items, each block whole in an item's encrypted content, which the
+// client sends back because the gateway stores no reply. It sends web search and
+// web fetch at their basic versions. Core picks newer versions for recent Claude
+// models; those filter results with code execution, which keeps container data for
+// up to 30 days, and Azure-hosted Claude rejects them.
 func prepareAnthropicResponsesBody(ctx *schemas.BifrostContext, request *schemas.BifrostResponsesRequest, config anthropicprovider.AnthropicRequestBuildConfig) ([]byte, *schemas.BifrostError) {
-	anthropicprovider.SetOpenAIReasoning(ctx, request.Params != nil && slices.Contains(request.Params.Include, "reasoning.encrypted_content"))
+	anthropicprovider.SetOpenAIReasoning(ctx)
 	body, bifrostErr := anthropicprovider.BuildAnthropicResponsesRequestBody(ctx, request, config)
 	if bifrostErr != nil {
 		return nil, bifrostErr

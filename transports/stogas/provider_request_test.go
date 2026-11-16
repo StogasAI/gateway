@@ -405,7 +405,7 @@ func TestPrepareProviderRequestRecordsSettingsWithoutContent(t *testing.T) {
 			body: `{"model":"provider:openai gpt-5.5","input":"secret prompt","max_output_tokens":64,
 				"tools":[{"type":"web_search"},{"type":"mcp","server_label":"secret","server_url":"https://mcp.example.com"}],
 				"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_search"}]}}`,
-			want: `{"max_output_tokens":64,"tool_choice":"allowed_tools","hosted_tools":["web_search"]}`,
+			want: `{"max_output_tokens":64,"include":["reasoning.encrypted_content"],"tool_choice":"allowed_tools","hosted_tools":["web_search"]}`,
 		},
 		{
 			name:  "responses to Anthropic reads extra parameters",
@@ -433,7 +433,7 @@ func TestPrepareProviderRequestRecordsSettingsWithoutContent(t *testing.T) {
 			route: "responses",
 			body: `{"model":"provider:openai gpt-5.5","input":"secret prompt","max_output_tokens":64,
 				"reasoning":{"effort":"low","summary":"` + strings.Repeat("x", 65) + `"}}`,
-			want: `{"max_output_tokens":64,"reasoning_effort":"low"}`,
+			want: `{"max_output_tokens":64,"reasoning_effort":"low","include":["reasoning.encrypted_content"]}`,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -1,0 +1,315 @@
+{
+	"shows": "OpenAI and Azure take include: [\"reasoning.encrypted_content\"] with reasoning effort none, and return no reasoning item.",
+	"recorded": "2026-11-16",
+	"exchanges": [
+		{
+			"name": "openai reasoning off",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 50,
+					"input": "Say hi."
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"input_transformations": [],
+					"id": "resp_04bd794ba00da7e6016afa5b4e589c87d19792988892c1ed38",
+					"object": "response",
+					"created_at": 1794792270,
+					"completed_at": 1794792271,
+					"status": "completed",
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"frequency_penalty": 0,
+					"presence_penalty": 0,
+					"moderation": null,
+					"model": "gpt-6-luna",
+					"access_programs": null,
+					"previous_response_id": null,
+					"instructions": null,
+					"output": [
+						{
+							"type": "message",
+							"id": "msg_04bd794ba00da7e6016afa5b4f42d887d1baf0d8646306155a",
+							"role": "assistant",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"text": "Hi!",
+									"annotations": [],
+									"logprobs": []
+								}
+							],
+							"phase": "final_answer"
+						}
+					],
+					"error": null,
+					"incomplete_details": null,
+					"tools": [],
+					"tool_choice": "auto",
+					"parallel_tool_calls": true,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"top_p": 0.98,
+					"top_logprobs": 0,
+					"temperature": 1,
+					"reasoning": {
+						"effort": "none",
+						"context": "all_turns",
+						"summary": null,
+						"mode": "standard"
+					},
+					"user": null,
+					"usage": {
+						"input_tokens": 9,
+						"input_tokens_details": {
+							"cached_tokens": 0,
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_30m_tokens": 0,
+								"ttl_12h_tokens": 0
+							}
+						},
+						"output_tokens": 6,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 15
+					},
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"output_tokens": 0,
+							"total_tokens": 0,
+							"input_tokens_details": {
+								"text_tokens": 0,
+								"image_tokens": 0
+							},
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							}
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"safety_identifier": null,
+					"store": false,
+					"metadata": {},
+					"max_output_tokens": 50,
+					"max_tool_calls": null,
+					"service_tier": "default",
+					"truncation": "disabled",
+					"image": {
+						"context_compression": "disabled"
+					}
+				}
+			}
+		},
+		{
+			"name": "azure reasoning off",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/responses",
+				"body": {
+					"model": "gpt-5.6-sol",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 50,
+					"input": "Say hi."
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_0188e26dc42655a7016afa5b4fb27c8194aabcba2daab81029",
+					"object": "response",
+					"created_at": 1794792271,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"completed_at": 1794792272,
+					"content_filters": [
+						{
+							"blocked": false,
+							"source_type": "prompt",
+							"content_filter_raw": [],
+							"content_filter_results": {
+								"hate": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"sexual": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"violence": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"self_harm": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"jailbreak": {
+									"detected": false,
+									"filtered": false
+								}
+							},
+							"content_filter_offsets": {
+								"start_offset": 0,
+								"end_offset": 784,
+								"check_offset": 0
+							}
+						},
+						{
+							"blocked": false,
+							"source_type": "completion",
+							"content_filter_raw": [],
+							"content_filter_results": {
+								"protected_material_text": {
+									"detected": false,
+									"filtered": false
+								},
+								"protected_material_code": {
+									"detected": false,
+									"filtered": false
+								},
+								"hate": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"sexual": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"violence": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"self_harm": {
+									"filtered": false,
+									"severity": "safe"
+								}
+							},
+							"content_filter_offsets": {
+								"start_offset": 0,
+								"end_offset": 3,
+								"check_offset": 0
+							}
+						}
+					],
+					"error": null,
+					"frequency_penalty": 0,
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 50,
+					"max_tool_calls": null,
+					"model": "gpt-5.6-sol",
+					"moderation": null,
+					"output": [
+						{
+							"id": "msg_0188e26dc42655a7016afa5b5045208194a6865eca68143dc2",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "Hi!"
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 9,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"output_tokens": 6,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 15
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		}
+	]
+}

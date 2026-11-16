@@ -1905,10 +1905,10 @@ func validateResponsesToolCallOutputInput(item map[string]json.RawMessage, path 
 
 // validateResponsesReasoningInput checks a reasoning item that a reply returned. Its encrypted
 // content holds OpenAI's encrypted reasoning or a Claude block, and without it, its content holds
-// plain reasoning text. An item with neither holds nothing to continue from, which is every
-// reasoning item of a reply to a request that did not include reasoning.encrypted_content. The
-// checks are the same on every deployment, and each deployment gets only the items that it takes
-// back (catalog.ResolvedRequest.KeepReadableReasoning).
+// plain reasoning text. An item with neither holds nothing to continue from, such as one whose
+// encrypted content a client dropped or a stored reply never had. The checks are the same on every
+// deployment, and each deployment gets only the items that it takes back
+// (catalog.ResolvedRequest.KeepReadableReasoning).
 func validateResponsesReasoningInput(item map[string]json.RawMessage, path string) error {
 	if err := rejectUnsupportedInputKeys(item, path, "type", "id", "status", "summary", "content", "encrypted_content"); err != nil {
 		return err

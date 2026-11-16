@@ -96,38 +96,31 @@ type openAIReasoningKeyType struct{}
 
 var openAIReasoningKey = openAIReasoningKeyType{}
 
-// openAIReasoning records that a Responses reply carries Claude's blocks as OpenAI's
-// reasoning items.
-type openAIReasoning struct {
-	// encryptedContent puts each block in its item's encrypted_content, which the
-	// client asks for with include: ["reasoning.encrypted_content"].
-	encryptedContent bool
-}
-
 // SetOpenAIReasoning makes the Responses reply to this request carry each thinking and
 // redacted_thinking block as its own reasoning item: the thinking text as the summary
-// and, with encryptedContent, the block in encrypted_content. Without it, the reply
-// keeps core's shape, with thinking text and signatures in reasoning_text blocks, which
-// the conversion back to Anthropic's format reads.
-func SetOpenAIReasoning(ctx *schemas.BifrostContext, encryptedContent bool) {
+// and the block in encrypted_content. Without it, the reply keeps core's shape, with
+// thinking text and signatures in reasoning_text blocks, which the conversion back to
+// Anthropic's format reads.
+func SetOpenAIReasoning(ctx *schemas.BifrostContext) {
 	if ctx != nil {
-		ctx.SetValue(openAIReasoningKey, openAIReasoning{encryptedContent: encryptedContent})
+		ctx.SetValue(openAIReasoningKey, true)
 	}
 }
 
-func openAIReasoningFrom(ctx context.Context) (openAIReasoning, bool) {
+// usesOpenAIReasoning reports whether SetOpenAIReasoning applies to the request.
+func usesOpenAIReasoning(ctx context.Context) bool {
 	if ctx == nil {
-		return openAIReasoning{}, false
+		return false
 	}
 	if bc, ok := ctx.(*schemas.BifrostContext); ok && bc == nil {
-		return openAIReasoning{}, false
+		return false
 	}
-	reasoning, ok := ctx.Value(openAIReasoningKey).(openAIReasoning)
-	return reasoning, ok
+	set, _ := ctx.Value(openAIReasoningKey).(bool)
+	return set
 }
 
-// reasoning returns the reasoning of one block's item.
-func (r openAIReasoning) reasoning(block AnthropicContentBlock) *schemas.ResponsesReasoning {
+// openAIReasoningOf returns the reasoning of one block's item.
+func openAIReasoningOf(block AnthropicContentBlock) *schemas.ResponsesReasoning {
 	reasoning := &schemas.ResponsesReasoning{Summary: []schemas.ResponsesReasoningSummary{}}
 	if block.Thinking != nil && *block.Thinking != "" {
 		reasoning.Summary = append(reasoning.Summary, schemas.ResponsesReasoningSummary{
@@ -135,25 +128,23 @@ func (r openAIReasoning) reasoning(block AnthropicContentBlock) *schemas.Respons
 			Text: *block.Thinking,
 		})
 	}
-	if r.encryptedContent {
-		if encoded, ok := encodeThinkingBlock(block); ok {
-			reasoning.EncryptedContent = &encoded
-		}
+	if encoded, ok := encodeThinkingBlock(block); ok {
+		reasoning.EncryptedContent = &encoded
 	}
 	return reasoning
 }
 
-// items gives each thinking and redacted_thinking block of a reply its own reasoning
-// item. It reads the conversion that keeps thinking where the reply has it: a run of
+// openAIReasoningItems gives each thinking and redacted_thinking block of a reply its
+// own reasoning item. It reads the conversion that keeps thinking where the reply has it: a run of
 // thinking blocks becomes one item with a reasoning_text block for each, and a
 // redacted_thinking block an item with its data as encrypted content.
-func (r openAIReasoning) items(converted []schemas.ResponsesMessage) []schemas.ResponsesMessage {
+func openAIReasoningItems(converted []schemas.ResponsesMessage) []schemas.ResponsesMessage {
 	items := make([]schemas.ResponsesMessage, 0, len(converted))
 	add := func(block AnthropicContentBlock) {
 		items = append(items, schemas.ResponsesMessage{
 			ID:                 schemas.Ptr("rs_" + schemas.GetRandomString(50)),
 			Type:               schemas.Ptr(schemas.ResponsesMessageTypeReasoning),
-			ResponsesReasoning: r.reasoning(block),
+			ResponsesReasoning: openAIReasoningOf(block),
 		})
 	}
 	for _, item := range converted {
@@ -178,7 +169,7 @@ func (r openAIReasoning) items(converted []schemas.ResponsesMessage) []schemas.R
 // openAIReasoningAdded opens the reasoning item of a thinking or redacted_thinking
 // block. A redacted block arrives whole, so its item is complete when content_block_stop
 // sends it.
-func (state *AnthropicResponsesStreamState) openAIReasoningAdded(block *AnthropicContentBlock, contentIndex *int, outputIndex, sequenceNumber int, reasoning openAIReasoning) []*schemas.BifrostResponsesStreamResponse {
+func (state *AnthropicResponsesStreamState) openAIReasoningAdded(block *AnthropicContentBlock, contentIndex *int, outputIndex, sequenceNumber int) []*schemas.BifrostResponsesStreamResponse {
 	itemID := fmt.Sprintf("reasoning_%d", outputIndex)
 	if state.MessageID != nil {
 		itemID = fmt.Sprintf("msg_%s_reasoning_%d", *state.MessageID, outputIndex)
@@ -201,7 +192,7 @@ func (state *AnthropicResponsesStreamState) openAIReasoningAdded(block *Anthropi
 		Item:           added,
 	}}
 	if block.Type == AnthropicContentBlockTypeRedactedThinking {
-		stored.ResponsesReasoning = reasoning.reasoning(*block)
+		stored.ResponsesReasoning = openAIReasoningOf(*block)
 		state.OutputItems[outputIndex] = &stored
 		return responses
 	}
@@ -255,7 +246,7 @@ func (state *AnthropicResponsesStreamState) openAIReasoningText(text string, out
 
 // openAIReasoningDone closes a thinking block's summary part and completes its stored
 // item, which content_block_stop then sends.
-func (state *AnthropicResponsesStreamState) openAIReasoningDone(outputIndex, sequenceNumber int, reasoning openAIReasoning) []*schemas.BifrostResponsesStreamResponse {
+func (state *AnthropicResponsesStreamState) openAIReasoningDone(outputIndex, sequenceNumber int) []*schemas.BifrostResponsesStreamResponse {
 	itemID := state.ItemIDs[outputIndex]
 	block := AnthropicContentBlock{Type: AnthropicContentBlockTypeThinking, Thinking: schemas.Ptr("")}
 	var responses []*schemas.BifrostResponsesStreamResponse
@@ -290,7 +281,7 @@ func (state *AnthropicResponsesStreamState) openAIReasoningDone(outputIndex, seq
 		delete(state.ReasoningSignatures, outputIndex)
 	}
 	if stored := state.OutputItems[outputIndex]; stored != nil {
-		stored.ResponsesReasoning = reasoning.reasoning(block)
+		stored.ResponsesReasoning = openAIReasoningOf(block)
 	}
 	return responses
 }

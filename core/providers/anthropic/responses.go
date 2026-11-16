@@ -2039,8 +2039,8 @@ func (chunk *AnthropicStreamEvent) ToBifrostResponsesStream(ctx context.Context,
 					Item:           item,
 				}}, nil, false
 			case AnthropicContentBlockTypeThinking:
-				if reasoning, ok := openAIReasoningFrom(ctx); ok {
-					return state.openAIReasoningAdded(chunk.ContentBlock, chunk.Index, outputIndex, sequenceNumber, reasoning), nil, false
+				if usesOpenAIReasoning(ctx) {
+					return state.openAIReasoningAdded(chunk.ContentBlock, chunk.Index, outputIndex, sequenceNumber), nil, false
 				}
 				// Thinking/reasoning block - emit output_item.added with type "reasoning"
 				messageType := schemas.ResponsesMessageTypeReasoning
@@ -2109,8 +2109,8 @@ func (chunk *AnthropicStreamEvent) ToBifrostResponsesStream(ctx context.Context,
 
 				return responses, nil, false
 			case AnthropicContentBlockTypeRedactedThinking:
-				if reasoning, ok := openAIReasoningFrom(ctx); ok {
-					return state.openAIReasoningAdded(chunk.ContentBlock, chunk.Index, outputIndex, sequenceNumber, reasoning), nil, false
+				if usesOpenAIReasoning(ctx) {
+					return state.openAIReasoningAdded(chunk.ContentBlock, chunk.Index, outputIndex, sequenceNumber), nil, false
 				}
 				// Redacted thinking blocks arrive complete in content_block_start (no
 				// deltas follow; data-less blocks were already skipped above, before
@@ -2291,7 +2291,7 @@ func (chunk *AnthropicStreamEvent) ToBifrostResponsesStream(ctx context.Context,
 				}
 
 			case AnthropicStreamDeltaTypeThinking:
-				if _, ok := openAIReasoningFrom(ctx); ok {
+				if usesOpenAIReasoning(ctx) {
 					if chunk.Delta.Thinking == nil || *chunk.Delta.Thinking == "" {
 						return nil, nil, false
 					}
@@ -2329,7 +2329,7 @@ func (chunk *AnthropicStreamEvent) ToBifrostResponsesStream(ctx context.Context,
 				// Store the signature in state for the reasoning item
 				if chunk.Delta.Signature != nil && *chunk.Delta.Signature != "" {
 					state.ReasoningSignatures[outputIndex] = *chunk.Delta.Signature
-					if _, ok := openAIReasoningFrom(ctx); ok {
+					if usesOpenAIReasoning(ctx) {
 						// The block, signature included, goes in the item's encrypted_content.
 						return nil, nil, false
 					}
@@ -2916,8 +2916,8 @@ func (chunk *AnthropicStreamEvent) ToBifrostResponsesStream(ctx context.Context,
 					delete(state.TextContentIndices, *chunk.Index)
 				}
 
-				if reasoning, ok := openAIReasoningFrom(ctx); ok && state.ReasoningContentIndices[*chunk.Index] {
-					responses = append(responses, state.openAIReasoningDone(outputIndex, sequenceNumber+len(responses), reasoning)...)
+				if usesOpenAIReasoning(ctx) && state.ReasoningContentIndices[*chunk.Index] {
+					responses = append(responses, state.openAIReasoningDone(outputIndex, sequenceNumber+len(responses))...)
 					delete(state.ReasoningContentIndices, *chunk.Index)
 				}
 				// Check if this content index is a reasoning block
@@ -5494,7 +5494,7 @@ func ToAnthropicResponsesRequest(ctx *schemas.BifrostContext, bifrostReq *schema
 		}
 
 		// Set regular messages
-		if _, ok := openAIReasoningFrom(ctx); ok {
+		if usesOpenAIReasoning(ctx) {
 			anthropicMessages = leaveOutLaterThinking(anthropicMessages)
 		}
 		anthropicReq.Messages = anthropicMessages
@@ -5706,8 +5706,8 @@ func (response *AnthropicMessageResponse) ToBifrostResponsesResponse(ctx *schema
 			},
 		}
 		var outputMessages []schemas.ResponsesMessage
-		if reasoning, ok := openAIReasoningFrom(ctx); ok {
-			outputMessages = reasoning.items(convertAnthropicMessagesToBifrostMessages(ctx, []AnthropicMessage{tempMsg}, nil, true, false, true))
+		if usesOpenAIReasoning(ctx) {
+			outputMessages = openAIReasoningItems(convertAnthropicMessagesToBifrostMessages(ctx, []AnthropicMessage{tempMsg}, nil, true, false, true))
 		} else {
 			outputMessages = ConvertAnthropicMessagesToBifrostMessages(ctx, []AnthropicMessage{tempMsg}, nil, true, false)
 		}

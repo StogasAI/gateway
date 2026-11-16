@@ -41,7 +41,10 @@ func (r *ResolvedRequest) ReadsReasoning(format ReasoningFormat) bool {
 		// Only OpenAI's own models return it, and they take it back only on Responses.
 		return r.runsOpenAIModel() && r.Deployment.ReasoningSupported && r.WireRoute() == RouteResponses
 	case PlainReasoning:
-		return r.Provider == ProviderChutes
+		// The other models return reasoning as text. Models that think between tool calls, such as
+		// DeepSeek's, read it back beside the calls, and the others ignore it
+		// (testdata/provider/azure/open-model-reasoning-tool-loop.json).
+		return !UsesClaudeWire(r.Provider, r.Deployment.ModelID) && !r.runsOpenAIModel()
 	}
 	return false
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -23,6 +24,13 @@ const testAccount = "acct-test"
 func boundReasoning(content string) string {
 	return "openai:" + testAccount + ":" + content
 }
+
+// historyDeployments are a deployment of each kind that takes back different reasoning: Claude,
+// OpenAI's models on OpenAI and Azure, and open models on Azure and Chutes.
+var historyDeployments = []string{"anthropic-claude-sonnet-4-6", "provider:openai gpt-5.5", "azure-gpt-5.6-sol", "azure-deepseek-v4-flash-0423", "chutes-glm-5.2"}
+
+// openModels are the deployments of historyDeployments that take back plain reasoning.
+var openModels = []string{"azure-deepseek-v4-flash-0423", "chutes-glm-5.2"}
 
 // testPair is the state of a pair whose credential reaches the test account.
 func testPair(resolution *catalog.ResolvedRequest) *State {
@@ -89,7 +97,7 @@ func requestCheckError(t *testing.T, path, body string) error {
 func claudeThinkingContent(t *testing.T, thinking string) string {
 	t.Helper()
 	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
-	anthropic.SetOpenAIReasoning(ctx, true)
+	anthropic.SetOpenAIReasoning(ctx)
 	var message anthropic.AnthropicMessageResponse
 	if err := json.Unmarshal([]byte(fmt.Sprintf(`{"id":"msg_01","type":"message","role":"assistant","model":"claude-sonnet-4-6",`+
 		`"content":[{"type":"thinking","thinking":%q,"signature":"sig-%s"},{"type":"text","text":"Hi."}],`+
@@ -298,22 +306,24 @@ func TestChatDeploymentsGetOnlyReasoningTheyTakeBack(t *testing.T) {
 		t.Fatalf("Claude's assistant turns =\n%s", strings.Join(got, "\n--\n"))
 	}
 
-	body, _, _ = providerBody(t, "/v1/chat/completions", `{"model":"chutes-glm-5.2",`+messages+`}`)
-	var wire []map[string]json.RawMessage
-	if err := json.Unmarshal(body["messages"], &wire); err != nil {
-		t.Fatal(err)
-	}
-	var reasoning []string
-	for _, message := range wire {
-		if string(message["role"]) == `"assistant"` {
-			reasoning = append(reasoning, string(message["reasoning_content"]))
+	for _, model := range openModels {
+		body, _, _ = providerBody(t, "/v1/chat/completions", `{"model":"`+model+`",`+messages+`}`)
+		var wire []map[string]json.RawMessage
+		if err := json.Unmarshal(body["messages"], &wire); err != nil {
+			t.Fatal(err)
 		}
-		if message["reasoning_details"] != nil || message["reasoning"] != nil {
-			t.Fatalf("Chutes messages = %s", body["messages"])
+		var reasoning []string
+		for _, message := range wire {
+			if string(message["role"]) == `"assistant"` {
+				reasoning = append(reasoning, string(message["reasoning_content"]))
+			}
+			if message["reasoning_details"] != nil || message["reasoning"] != nil {
+				t.Fatalf("%s messages = %s", model, body["messages"])
+			}
 		}
-	}
-	if strings.Join(reasoning, ",") != `,,"Plain thought."` {
-		t.Fatalf("Chutes reasoning = %s", strings.Join(reasoning, ","))
+		if strings.Join(reasoning, ",") != `,,"Plain thought."` {
+			t.Fatalf("%s reasoning = %s", model, strings.Join(reasoning, ","))
+		}
 	}
 }
 
@@ -323,8 +333,8 @@ func TestReasoningHistoryChecksAreTheSameOnEveryDeployment(t *testing.T) {
 	for _, test := range []struct{ name, path, fields, want string }{
 		{"altered Claude block", "/v1/responses", `"input":[{"role":"user","content":"hi"},{"type":"reasoning","id":"rs_1","summary":[],"encrypted_content":"claude:e30"},` +
 			`{"role":"assistant","content":"Hello."},{"role":"user","content":"again"}]`, "input[1].encrypted_content must be sent back unchanged"},
-		{"summary detail", "/v1/chat/completions", `"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"Hello.",` +
-			`"reasoning_details":[{"index":0,"type":"reasoning.summary","summary":"Plan."}]},{"role":"user","content":"again"}]`, "reasoning_details[0].type must be reasoning.text or reasoning.encrypted"},
+		{"unknown detail", "/v1/chat/completions", `"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"Hello.",` +
+			`"reasoning_details":[{"index":0,"type":"reasoning.plan","text":"Plan."}]},{"role":"user","content":"again"}]`, "reasoning_details[0].type must be reasoning.text, reasoning.summary or reasoning.encrypted"},
 		{"empty signature", "/v1/chat/completions", `"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"Hello.",` +
 			`"reasoning_details":[{"index":0,"type":"reasoning.text","text":"Plan.","signature":""}]},{"role":"user","content":"again"}]`, "signature"},
 		{"altered account item", "/v1/responses", `"input":[{"role":"user","content":"hi"},{"type":"reasoning","id":"rs_1","summary":[],"encrypted_content":"openai:acct-test"},` +
@@ -332,7 +342,7 @@ func TestReasoningHistoryChecksAreTheSameOnEveryDeployment(t *testing.T) {
 		{"altered account detail", "/v1/chat/completions", `"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"Hello.",` +
 			`"reasoning_details":[{"index":0,"type":"reasoning.encrypted","id":"rs_1","data":"openai::gAAAA"}]},{"role":"user","content":"again"}]`, "reasoning_details[0].data must be sent back unchanged"},
 	} {
-		for _, model := range []string{"anthropic-claude-sonnet-4-6", "provider:openai gpt-5.5", "azure-gpt-5.6-sol", "chutes-glm-5.2"} {
+		for _, model := range historyDeployments {
 			t.Run(test.name+"/"+model, func(t *testing.T) {
 				err := requestCheckError(t, test.path, `{"model":"`+model+`",`+test.fields+`}`)
 				if err == nil || !strings.Contains(err.Error(), test.want) {
@@ -346,7 +356,7 @@ func TestReasoningHistoryChecksAreTheSameOnEveryDeployment(t *testing.T) {
 // A reply to a Responses request that did not include reasoning.encrypted_content returns reasoning
 // items with a summary at most, and a client that appends the reply's output to its input sends
 // them back. They hold nothing to continue from, so every deployment takes the request and gets
-// the rest of the input. Plain reasoning reaches Chutes without the summary beside it.
+// the rest of the input. Plain reasoning reaches open models without the summary beside it.
 func TestReasoningItemsWithNothingToContinueFromAreLeftOut(t *testing.T) {
 	input := `"input":[{"role":"user","content":"Weather in Paris?"},` +
 		`{"id":"rs_1","type":"reasoning","summary":[{"type":"summary_text","text":"Look it up."}]},` +
@@ -354,7 +364,7 @@ func TestReasoningItemsWithNothingToContinueFromAreLeftOut(t *testing.T) {
 		`{"id":"rs_3","type":"reasoning","summary":[{"type":"summary_text","text":"Shown."}],"content":[{"type":"reasoning_text","text":"Paris, then."}]},` +
 		`{"type":"function_call","call_id":"call_1","name":"get_weather","arguments":"{\"city\":\"Paris\"}"},` +
 		`{"type":"function_call_output","call_id":"call_1","output":"18 C and sunny"}]`
-	for _, model := range []string{"anthropic-claude-sonnet-4-6", "provider:openai gpt-5.5", "azure-gpt-5.6-sol", "chutes-glm-5.2"} {
+	for _, model := range historyDeployments {
 		body, _, _ := providerBody(t, "/v1/responses", `{"model":"`+model+`",`+weatherTool+`,`+input+`}`)
 		history := string(body["input"]) + string(body["messages"])
 		if !strings.Contains(history, "get_weather") || !strings.Contains(history, "18 C and sunny") {
@@ -365,7 +375,7 @@ func TestReasoningItemsWithNothingToContinueFromAreLeftOut(t *testing.T) {
 				t.Fatalf("%s got %q: %s", model, gone, history)
 			}
 		}
-		if plain := strings.Contains(history, "Paris, then."); plain != (model == "chutes-glm-5.2") {
+		if plain := strings.Contains(history, "Paris, then."); plain != slices.Contains(openModels, model) {
 			t.Fatalf("%s plain reasoning sent = %v: %s", model, plain, history)
 		}
 	}
@@ -377,7 +387,7 @@ func TestEmptyReplyArraysInChatHistoryAreAccepted(t *testing.T) {
 	messages := `"messages":[{"role":"user","content":"hi"},` +
 		`{"role":"assistant","content":"Hello.","refusal":null,"annotations":[],"reasoning_details":[]},` +
 		`{"role":"user","content":"again"}]`
-	for _, model := range []string{"anthropic-claude-sonnet-4-6", "provider:openai gpt-5.5", "azure-gpt-5.6-sol", "chutes-glm-5.2"} {
+	for _, model := range historyDeployments {
 		body, _, _ := providerBody(t, "/v1/chat/completions", `{"model":"`+model+`",`+messages+`}`)
 		history := string(body["input"]) + string(body["messages"])
 		if !strings.Contains(history, "Hello.") || strings.Contains(history, "annotations") || strings.Contains(history, "reasoning_details") {
@@ -414,7 +424,7 @@ func TestChatReplyWithReasoningTextGoesBackUnchanged(t *testing.T) {
 	conversation := func(assistant string) string {
 		return `"messages":[{"role":"user","content":"2+2?"},` + assistant + `,{"role":"user","content":"again"}]`
 	}
-	for _, model := range []string{"anthropic-claude-sonnet-4-6", "provider:openai gpt-5.5", "azure-gpt-5.6-sol", "chutes-glm-5.2"} {
+	for _, model := range historyDeployments {
 		for name, assistant := range map[string]string{
 			"the reply":              string(reply),
 			"reasoning_content only": `{"role":"assistant","content":"4","reasoning_content":"two and two"}`,
@@ -434,15 +444,72 @@ func TestChatReplyWithReasoningTextGoesBackUnchanged(t *testing.T) {
 		}
 	}
 
-	// Chutes takes plain reasoning back, once, whichever name the client used.
-	for _, assistant := range []string{string(reply), `{"role":"assistant","content":"4","reasoning_content":"two and two"}`} {
-		body, _, _ := providerBody(t, "/v1/chat/completions", `{"model":"chutes-glm-5.2",`+conversation(assistant)+`}`)
+	// Open models take plain reasoning back, once, whichever name the client used.
+	for _, model := range openModels {
+		for _, assistant := range []string{string(reply), `{"role":"assistant","content":"4","reasoning_content":"two and two"}`} {
+			body, _, _ := providerBody(t, "/v1/chat/completions", `{"model":"`+model+`",`+conversation(assistant)+`}`)
+			var wire []map[string]json.RawMessage
+			if err := json.Unmarshal(body["messages"], &wire); err != nil {
+				t.Fatal(err)
+			}
+			if string(wire[1]["reasoning_content"]) != `"two and two"` || wire[1]["reasoning"] != nil || wire[1]["reasoning_details"] != nil {
+				t.Fatalf("%s assistant message = %s", model, body["messages"])
+			}
+		}
+	}
+}
+
+// A conversation can move from OpenRouter, whose reasoning details carry a format, can lack an
+// index, and include summaries. Every deployment takes them. No provider gets a summary or a
+// format, and open models get the plain reasoning of a message without a summary.
+func TestOpenRouterReasoningDetailsAreAccepted(t *testing.T) {
+	messages := `"messages":[{"role":"user","content":"hi"},` +
+		`{"role":"assistant","content":"Hello.","reasoning":"Summed up.","reasoning_details":[` +
+		`{"type":"reasoning.summary","summary":"Summed up.","id":"rs_1","format":"openai-responses-v1","index":0},` +
+		`{"type":"reasoning.encrypted","data":"gAAAAforeign","id":"rs_1","format":"openai-responses-v1","index":0}]},` +
+		`{"role":"user","content":"Go on."},` +
+		`{"role":"assistant","content":"More.","reasoning":"Thought it through.","reasoning_details":[` +
+		`{"type":"reasoning.text","text":"Thought it through.","format":"unknown"}]},` +
+		`{"role":"user","content":"Done?"}]`
+	for _, model := range historyDeployments {
+		body, _, _ := providerBody(t, "/v1/chat/completions", `{"model":"`+model+`",`+messages+`}`)
+		history := string(body["input"]) + string(body["messages"])
+		for _, gone := range []string{"Summed up.", "gAAAAforeign", "format"} {
+			if strings.Contains(history, gone) {
+				t.Fatalf("%s got %q: %s", model, gone, history)
+			}
+		}
+		if plain := strings.Contains(history, "Thought it through."); plain != slices.Contains(openModels, model) {
+			t.Fatalf("%s plain reasoning sent = %v: %s", model, plain, history)
+		}
+	}
+}
+
+// TestRecordedOpenModelReasoningGoesBackAsTheProviderTookIt replays tool loops recorded from
+// Azure's DeepSeek V4 Flash, which reads the reasoning that comes back beside its tool call, and
+// gpt-oss-120b, which ignores it. Each gets the assistant message with the reasoning_content that
+// the provider took in the recording.
+func TestRecordedOpenModelReasoningGoesBackAsTheProviderTookIt(t *testing.T) {
+	exchanges := providerCapture(t, "azure/open-model-reasoning-tool-loop")
+	for recorded, model := range map[string]string{"deepseek-v4-flash": "azure-deepseek-v4-flash-0423", "gpt-oss-120b": "azure-gpt-oss-120b"} {
+		sent := exchange(t, exchanges, recorded+" reasoning sent back")
+		if sent.Response.Status != 200 {
+			t.Fatalf("%s: the provider answered %d in the recording", recorded, sent.Response.Status)
+		}
+		var took struct {
+			Messages []map[string]json.RawMessage `json:"messages"`
+		}
+		if err := json.Unmarshal(sent.Request.Body, &took); err != nil {
+			t.Fatal(err)
+		}
+		body, _, _ := providerBody(t, "/v1/chat/completions", forGateway(t, sent.Request.Body, model, ""))
 		var wire []map[string]json.RawMessage
 		if err := json.Unmarshal(body["messages"], &wire); err != nil {
 			t.Fatal(err)
 		}
-		if string(wire[1]["reasoning_content"]) != `"two and two"` || wire[1]["reasoning"] != nil || wire[1]["reasoning_details"] != nil {
-			t.Fatalf("Chutes assistant message = %s", body["messages"])
+		if len(wire) != len(took.Messages) || len(took.Messages[1]["reasoning_content"]) < 3 ||
+			string(wire[1]["reasoning_content"]) != string(took.Messages[1]["reasoning_content"]) {
+			t.Fatalf("%s: messages sent = %s, the provider took %s", model, body["messages"], sent.Request.Body)
 		}
 	}
 }

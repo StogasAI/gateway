@@ -1006,7 +1006,10 @@ func validateChatMessageContent(state *State, raw json.RawMessage, path string, 
 
 // validateChatReasoningDetails checks the reasoning details that replies return: text, with
 // Claude's signature or plain, and encrypted data, under the ID of OpenAI's reasoning item or as
-// Claude's redacted thinking.
+// Claude's redacted thinking. It also takes the summaries, formats and missing indexes of
+// OpenRouter's details, so that a conversation can move from OpenRouter. No provider reads a
+// summary, an index or a format back, so the gateway leaves summaries out and never sends the other
+// two.
 func validateChatReasoningDetails(raw json.RawMessage, path string) error {
 	var details []map[string]json.RawMessage
 	if err := sonic.Unmarshal(raw, &details); err != nil || len(details) == 0 {
@@ -1014,16 +1017,14 @@ func validateChatReasoningDetails(raw json.RawMessage, path string) error {
 	}
 	for index, detail := range details {
 		detailPath := fmt.Sprintf("%s[%d]", path, index)
-		value, exists, err := rawInteger(detail["index"], detailPath+".index")
-		if err != nil || !exists {
-			return invalidRequest(detailPath + ".index must be an integer")
-		}
-		if value != index {
-			return invalidRequest(detailPath + ".index must match its array position")
+		if format, ok := detail["format"]; ok {
+			if _, ok := rawStringValue(format); !ok {
+				return invalidRequest(detailPath + ".format must be a string")
+			}
 		}
 		switch rawString(detail["type"]) {
 		case string(schemas.BifrostReasoningDetailsTypeText):
-			if err := rejectUnsupportedInputKeys(detail, detailPath, "id", "index", "type", "text", "signature"); err != nil {
+			if err := rejectUnsupportedInputKeys(detail, detailPath, "id", "index", "format", "type", "text", "signature"); err != nil {
 				return err
 			}
 			_, signed := detail["signature"]
@@ -1038,8 +1039,15 @@ func validateChatReasoningDetails(raw json.RawMessage, path string) error {
 					return err
 				}
 			}
+		case string(schemas.BifrostReasoningDetailsTypeSummary):
+			if err := rejectUnsupportedInputKeys(detail, detailPath, "id", "index", "format", "type", "summary"); err != nil {
+				return err
+			}
+			if _, err := requiredInputString(detail, "summary", detailPath, true); err != nil {
+				return err
+			}
 		case string(schemas.BifrostReasoningDetailsTypeEncrypted):
-			if err := rejectUnsupportedInputKeys(detail, detailPath, "id", "index", "type", "data"); err != nil {
+			if err := rejectUnsupportedInputKeys(detail, detailPath, "id", "index", "format", "type", "data"); err != nil {
 				return err
 			}
 			data, err := requiredInputString(detail, "data", detailPath, false)
@@ -1050,7 +1058,7 @@ func validateChatReasoningDetails(raw json.RawMessage, path string) error {
 				return invalidRequest(detailPath + ".data must be sent back unchanged")
 			}
 		default:
-			return invalidRequest(detailPath + ".type must be reasoning.text or reasoning.encrypted")
+			return invalidRequest(detailPath + ".type must be reasoning.text, reasoning.summary or reasoning.encrypted")
 		}
 		if id, ok := detail["id"]; ok {
 			if _, ok := rawStringValue(id); !ok {
