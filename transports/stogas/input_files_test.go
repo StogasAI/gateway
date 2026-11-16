@@ -468,9 +468,24 @@ func TestTextFilesReachTheProviderAsItReadsThem(t *testing.T) {
 	const (
 		claude = "anthropic-claude-opus-4-8"
 		openai = "openai-gpt-5.6-luna"
-		// claudeText is how Claude reads a text file.
-		claudeText = `"source":{"type":"text","media_type":"text/plain","data":"hello"}`
 	)
+	// claudeText is how Claude reads a text file: the source that Claude took for a CSV file in the
+	// capture, which also shows that it refuses the file's own type and text in base64.
+	var taken struct {
+		Messages []struct {
+			Content []struct {
+				Source struct {
+					Type      string `json:"type"`
+					MediaType string `json:"media_type"`
+				} `json:"source"`
+			} `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(exchange(t, providerCapture(t, "aws/claude-document-sources"), "CSV as text/plain").Request.Body, &taken); err != nil {
+		t.Fatal(err)
+	}
+	source := taken.Messages[0].Content[0].Source
+	claudeText := `"source":{"type":"` + source.Type + `","media_type":"` + source.MediaType + `","data":"hello"}`
 	for _, tc := range []struct {
 		name, model, route, policy, file string
 		// want is in the provider's request, and opaque whether the gateway could not read the file.

@@ -1,0 +1,246 @@
+{
+	"shows": "Claude on Amazon Bedrock takes a base64 document only as application/pdf and a text document only as text/plain: it refuses text/plain in base64, text/csv as text and a Word file, and reads a CSV file sent as text/plain and a PDF.",
+	"recorded": "2026-11-16",
+	"exchanges": [
+		{
+			"name": "text/plain in base64",
+			"provider": "aws",
+			"request": {
+				"path": "/anthropic/v1/messages",
+				"body": {
+					"model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+					"max_tokens": 20,
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "document",
+									"source": {
+										"type": "base64",
+										"media_type": "text/plain",
+										"data": "bmFtZSx2YWx1ZQpzZWNyZXQsSEFSQk9SCg=="
+									}
+								},
+								{
+									"type": "text",
+									"text": "What is the secret word in the file? Reply with only the word."
+								}
+							]
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"type": "error",
+					"error": {
+						"type": "invalid_request_error",
+						"message": "messages.0.content.0.document.source.base64.media_type: Input should be 'application/pdf'"
+					}
+				}
+			}
+		},
+		{
+			"name": "text/csv as text",
+			"provider": "aws",
+			"request": {
+				"path": "/anthropic/v1/messages",
+				"body": {
+					"model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+					"max_tokens": 20,
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "document",
+									"source": {
+										"type": "text",
+										"media_type": "text/csv",
+										"data": "name,value\nsecret,HARBOR\n"
+									}
+								},
+								{
+									"type": "text",
+									"text": "What is the secret word in the file? Reply with only the word."
+								}
+							]
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"type": "error",
+					"error": {
+						"type": "invalid_request_error",
+						"message": "messages.0.content.0.document.source.text.media_type: Input should be 'text/plain'"
+					}
+				}
+			}
+		},
+		{
+			"name": "CSV as text/plain",
+			"provider": "aws",
+			"request": {
+				"path": "/anthropic/v1/messages",
+				"body": {
+					"model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+					"max_tokens": 20,
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "document",
+									"source": {
+										"type": "text",
+										"media_type": "text/plain",
+										"data": "name,value\nsecret,HARBOR\n"
+									}
+								},
+								{
+									"type": "text",
+									"text": "What is the secret word in the file? Reply with only the word."
+								}
+							]
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"model": "anthropic.claude-haiku-4-5-20251001-v1:0",
+					"id": "msg_bdrk_3a7y2wl5xxo4hpvdwm4wtxd4hncqcr56w5rfxr6oa57nn2mr7dta",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "HARBOR"
+						}
+					],
+					"container": null,
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"stop_details": null,
+					"usage": {
+						"input_tokens": 68,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"cache_creation": {
+							"ephemeral_5m_input_tokens": 0,
+							"ephemeral_1h_input_tokens": 0
+						},
+						"output_tokens": 5,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"name": "PDF in base64",
+			"provider": "aws",
+			"request": {
+				"path": "/anthropic/v1/messages",
+				"body": {
+					"model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+					"max_tokens": 20,
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "document",
+									"source": {
+										"type": "base64",
+										"media_type": "application/pdf",
+										"data": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCAzMDAgMTAwXSAvQ29udGVudHMgNCAwIFIgL1Jlc291cmNlcyA8PCAvRm9udCA8PCAvRjEgNSAwIFIgPj4gPj4gPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCA1NiA+PgpzdHJlYW0KQlQgL0YxIDEyIFRmIDIwIDUwIFRkIChUaGUgc2VjcmV0IHdvcmQgaXMgSEFSQk9SLikgVGogRVQKZW5kc3RyZWFtCmVuZG9iago1IDAgb2JqCjw8IC9UeXBlIC9Gb250IC9TdWJ0eXBlIC9UeXBlMSAvQmFzZUZvbnQgL0hlbHZldGljYSA+PgplbmRvYmoKeHJlZgowIDYKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwNTggMDAwMDAgbiAKMDAwMDAwMDExNSAwMDAwMCBuIAowMDAwMDAwMjQxIDAwMDAwIG4gCjAwMDAwMDAzNDcgMDAwMDAgbiAKdHJhaWxlcgo8PCAvU2l6ZSA2IC9Sb290IDEgMCBSID4+CnN0YXJ0eHJlZgo0MTcKJSVFT0YK"
+									}
+								},
+								{
+									"type": "text",
+									"text": "What is the secret word in the file? Reply with only the word."
+								}
+							]
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"model": "anthropic.claude-haiku-4-5-20251001-v1:0",
+					"id": "msg_bdrk_d7y5xutkjz424i6tejdrnxev7y6jqkoovmrkewwmalpdjzhbbqoa",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "HARBOR"
+						}
+					],
+					"container": null,
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"stop_details": null,
+					"usage": {
+						"input_tokens": 1137,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"cache_creation": {
+							"ephemeral_5m_input_tokens": 0,
+							"ephemeral_1h_input_tokens": 0
+						},
+						"output_tokens": 5,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"name": "Word file in base64",
+			"provider": "aws",
+			"request": {
+				"path": "/anthropic/v1/messages",
+				"body": {
+					"model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+					"max_tokens": 20,
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "document",
+									"source": {
+										"type": "base64",
+										"media_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+										"data": "UEsDBA=="
+									}
+								},
+								{
+									"type": "text",
+									"text": "What is the secret word in the file? Reply with only the word."
+								}
+							]
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"type": "error",
+					"error": {
+						"type": "invalid_request_error",
+						"message": "messages.0.content.0.document.source.base64.media_type: Input should be 'application/pdf'"
+					}
+				}
+			}
+		}
+	]
+}
