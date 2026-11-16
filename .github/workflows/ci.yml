@@ -1,11 +1,15 @@
-name: Gateway Tests
+name: CI
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# A release needs a passing run for its exact commit, so only the newest push
+# to a ref runs to the end.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -49,3 +53,33 @@ jobs:
         run: |
           npm ci --ignore-scripts
           npm run test:policy
+
+  dependencies:
+    name: Dependencies and Release Inputs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GOWORK: 'off'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: transports/go.mod
+          cache-dependency-path: |
+            core/go.sum
+            transports/go.sum
+      - name: Verify release pins
+        run: node stogas/release/scripts/verify-pins.mjs
+      - name: Test release scripts
+        run: node --test stogas/release/scripts/*.test.mjs
+      - name: Verify Go modules
+        working-directory: transports
+        run: |
+          go mod verify
+          go mod tidy -diff
+      # A release needs a passing run, so none ships with a known vulnerability that it calls.
+      - name: Run Go vulnerability scan
+        working-directory: transports
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 -tags=stogas_gateway ./...

@@ -18,6 +18,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:
+      actions: read
       attestations: write
       artifact-metadata: write
       contents: read
@@ -36,8 +37,20 @@ jobs:
           test "$(git rev-parse --verify "$GITHUB_REF^{commit}")" = "$commit"
           test "$GITHUB_SHA" = "$commit"
 
-      - name: Test release scripts
-        run: node --test stogas/release/scripts/*.test.mjs
+      # CI starts when the commit reaches main, so a tag pushed with it waits for that run.
+      - name: Require a passing CI run for the tagged commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          runs="repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&per_page=100"
+          for _ in $(seq 60); do
+            if [ "$(gh api "$runs&status=success" --jq .total_count)" != 0 ]; then exit 0; fi
+            if [ "$(gh api "$runs" --jq '[.workflow_runs[] | select(.status != "completed")] | length')" = 0 ]; then break; fi
+            sleep 30
+          done
+          echo "::error::CI has not passed for $GITHUB_SHA. Fix it, or run ci.yml on the tag if a newer push cancelled it."
+          exit 1
 
       - name: Install pinned Guix bootstrap
         run: stogas/release/scripts/install-guix-bootstrap.sh
