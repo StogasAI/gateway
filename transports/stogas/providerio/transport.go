@@ -34,6 +34,8 @@ type transport struct {
 // NewTransport preserves the core socket, TLS, cancellation and no-replay
 // policy while reading bodies through admission before core can buffer them.
 // Encrypted envelopes defer their plaintext structure charge to decryption.
+// Requests leave without a User-Agent, which no provider needs; fasthttp
+// clients add their own name to a request that has none.
 func NewTransport(maximum int, encrypted bool) fasthttp.RoundTripper {
 	return &transport{inner: utils.NewContextTransport(), maximum: int64(maximum), encrypted: encrypted}
 }
@@ -43,6 +45,7 @@ func (t *transport) RoundTrip(hc *fasthttp.HostClient, request *fasthttp.Request
 	upstream := fasthttp.AcquireResponse()
 	upstream.SkipBody = response.SkipBody
 	upstream.StreamBody = true
+	request.Header.Del(fasthttp.HeaderUserAgent)
 	retry, err := t.inner.RoundTrip(hc, request, upstream)
 	if err != nil {
 		fasthttp.ReleaseResponse(upstream)
