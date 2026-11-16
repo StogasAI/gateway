@@ -23,9 +23,10 @@ import (
 // the credential, so a deployment that Azure upgraded, deleted or failed stops serving within
 // minutes instead of at the daily discovery. Requests never wait for Azure: they use the targets
 // that the last read left in service while the next read runs in the background. Reads are shared
-// through PostgreSQL, so one gateway reads Azure for the fleet. Control discovers a stored
-// credential's targets; only gateways can open a customer-encrypted one, so a request that finds
-// its discovery due starts one in the background, under the same claim.
+// through PostgreSQL, so one gateway reads Azure for the fleet. Control schedules the discovery of
+// a stored credential's targets, which a gateway runs for it; only gateways can open a
+// customer-encrypted one, so a request that finds its discovery due starts one in the background,
+// under the same claim.
 const (
 	// A request whose targets were confirmed longer ago than this starts a check.
 	azureCheckFresh = 10 * time.Minute
@@ -487,8 +488,8 @@ func jsonText(value json.RawMessage) string {
 	return trimJS(text)
 }
 
-// trimJS trims what JavaScript's String.prototype.trim does, so gateways and Control's discovery
-// report the same values.
+// trimJS trims what JavaScript's String.prototype.trim does, as the dashboard's schemas trim the
+// values that discovery reports.
 func trimJS(value string) string {
 	return strings.TrimFunc(value, func(r rune) bool {
 		switch r {

@@ -90,7 +90,7 @@ func newTestByokChecker(server *httptest.Server, google googleSignIn, now time.T
 	}
 }
 
-func TestByokCheckReadsEachProviderAsControlDoes(t *testing.T) {
+func TestByokCheckReadsEachProvider(t *testing.T) {
 	status := http.StatusOK
 	server, seen := byokCheckTestServer(t, &status)
 	now := time.Date(2026, time.November, 3, 12, 0, 0, 0, time.UTC)
@@ -98,8 +98,8 @@ func TestByokCheckReadsEachProviderAsControlDoes(t *testing.T) {
 	ctx := context.Background()
 
 	for _, provider := range []string{"openai", "anthropic", "chutes"} {
-		if failure := checker.check(ctx, provider, "secret-"+provider, nil); failure != "" {
-			t.Fatalf("%s: %s", provider, failure)
+		if failure := checker.check(ctx, provider, "secret-"+provider, nil); failure != (byokFailure{}) {
+			t.Fatalf("%s: %+v", provider, failure)
 		}
 	}
 	requests := seen()
@@ -118,27 +118,23 @@ func TestByokCheckReadsEachProviderAsControlDoes(t *testing.T) {
 	}
 
 	// Only a provider's refusal rejects the credential; a refusal that a retry can clear, an outage
-	// or a redirect leaves it unverified, as in Control's check.
-	for code, want := range map[int]string{
-		200: "", 204: "",
-		400: byokRejected("openai"), 401: byokRejected("openai"), 403: byokRejected("openai"), 404: byokRejected("openai"),
-		408: byokUnavailable("openai"), 409: byokUnavailable("openai"), 425: byokUnavailable("openai"), 429: byokUnavailable("openai"),
-		302: byokUnavailable("openai"), 500: byokUnavailable("openai"), 503: byokUnavailable("openai"),
+	// or a redirect leaves it unverified.
+	rejected, unavailable := refusal(byokRejected("openai")), unverified(byokUnavailable("openai"))
+	for code, want := range map[int]byokFailure{
+		200: {}, 204: {},
+		400: rejected, 401: rejected, 403: rejected, 404: rejected,
+		408: unavailable, 409: unavailable, 425: unavailable, 429: unavailable,
+		302: unavailable, 500: unavailable, 503: unavailable,
 	} {
 		status = code
 		if got := checker.check(ctx, "openai", "sk-test", nil); got != want {
-			t.Fatalf("status %d: %q, want %q", code, got, want)
+			t.Fatalf("status %d: %+v, want %+v", code, got, want)
 		}
 	}
-	if byokRejected("openai") != "OpenAI did not accept this API key or configuration" ||
-		byokUnavailable("aws") != "Could not verify the AWS credential. Try again." {
-		t.Fatal("messages differ from Control's")
-	}
-
 	// A secret that no request could send is refused before any provider call.
 	before := len(seen())
-	if got := checker.check(ctx, "openai", "sk test", nil); got != invalidByokSecret("openai") {
-		t.Fatalf("invalid secret: %q", got)
+	if got := checker.check(ctx, "openai", "sk test", nil); got != invalidSecret("openai") {
+		t.Fatalf("invalid secret: %+v", got)
 	}
 	if len(seen()) != before {
 		t.Fatal("an invalid secret reached the provider")
@@ -147,8 +143,8 @@ func TestByokCheckReadsEachProviderAsControlDoes(t *testing.T) {
 	unreachable := newTestByokChecker(server, nil, now)
 	unreachable.openAIBaseURL = "http://127.0.0.1:1"
 	status = http.StatusOK
-	if got := unreachable.check(ctx, "openai", "sk-test", nil); got != byokUnavailable("openai") {
-		t.Fatalf("unreachable provider: %q", got)
+	if got := unreachable.check(ctx, "openai", "sk-test", nil); got != unavailable {
+		t.Fatalf("unreachable provider: %+v", got)
 	}
 }
 
@@ -218,8 +214,8 @@ func TestByokCheckSignsInToAWSWithEachKindOfCredential(t *testing.T) {
 			http.MethodGet, "aws-external-anthropic.us-west-2.api.aws", "/v1/models", "limit=1", "customer-api-key", testWorkspaceID},
 	}
 	for i, c := range cases {
-		if failure := checker.check(ctx, "aws", c.secret, &c.target); failure != "" {
-			t.Fatalf("case %d: %s", i, failure)
+		if failure := checker.check(ctx, "aws", c.secret, &c.target); failure != (byokFailure{}) {
+			t.Fatalf("case %d: %+v", i, failure)
 		}
 		r := seen()[i]
 		if r.method != c.method || r.host != c.host || r.path != c.path || r.query != c.query {
@@ -239,8 +235,8 @@ func TestByokCheckSignsInToAWSWithEachKindOfCredential(t *testing.T) {
 	verifySigV4(t, sts, "sts", "eu-west-1")
 
 	status = http.StatusForbidden
-	if got := checker.check(ctx, "aws", awsIAMSecret(t, "eu-west-1", ""), &billing.CloudTarget{Hosting: []string{"amazon"}, Region: "eu-west-1"}); got != byokRejected("aws") {
-		t.Fatalf("rejected access key: %q", got)
+	if got := checker.check(ctx, "aws", awsIAMSecret(t, "eu-west-1", ""), &billing.CloudTarget{Hosting: []string{"amazon"}, Region: "eu-west-1"}); got != refusal(byokRejected("aws")) {
+		t.Fatalf("rejected access key: %+v", got)
 	}
 }
 
@@ -265,8 +261,8 @@ func TestByokCheckHoldsCloudSecretsToTheirTarget(t *testing.T) {
 		"Google workspace":   {"google-cloud", googleSecret(t, ""), &billing.CloudTarget{Hosting: []string{"anthropic", "google"}}},
 		"Google with Region": {"google-cloud", googleSecret(t, ""), &billing.CloudTarget{Hosting: []string{"google"}, Region: "us"}},
 	} {
-		if got := checker.check(ctx, c.provider, c.secret, c.target); got == "" || !strings.Contains(got, "stogas encrypt printed") {
-			t.Fatalf("%s: %q", name, got)
+		if got := checker.check(ctx, c.provider, c.secret, c.target); !got.rejected || !strings.Contains(got.message, "stogas encrypt printed") {
+			t.Fatalf("%s: %+v", name, got)
 		}
 	}
 	if len(seen()) != 0 || len(signIns) != 0 {
@@ -275,25 +271,25 @@ func TestByokCheckHoldsCloudSecretsToTheirTarget(t *testing.T) {
 
 	// Requests parse a secret the same way, so these would fail at every request too.
 	for _, secret := range []string{`{"schema":"stogas.aws-byok.v1"}`, "not json", awsIAMSecret(t, "mars-north-1", ""), strings.Replace(awsIAMSecret(t, "us-east-1", ""), `"region"`, `"unknown":"x","region"`, 1)} {
-		if got := checker.check(ctx, "aws", secret, &billing.CloudTarget{Hosting: []string{"amazon"}, Region: "us-east-1"}); got != invalidByokSecret("aws") {
-			t.Fatalf("invalid AWS secret: %q", got)
+		if got := checker.check(ctx, "aws", secret, &billing.CloudTarget{Hosting: []string{"amazon"}, Region: "us-east-1"}); got != invalidSecret("aws") {
+			t.Fatalf("invalid AWS secret: %+v", got)
 		}
 	}
 
 	target := &billing.CloudTarget{Hosting: []string{"google"}}
-	if got := checker.check(ctx, "google-cloud", googleSecret(t, ""), target); got != "" {
-		t.Fatalf("Google: %q", got)
+	if got := checker.check(ctx, "google-cloud", googleSecret(t, ""), target); got != (byokFailure{}) {
+		t.Fatalf("Google: %+v", got)
 	}
 	if len(signIns) != 1 || signIns[0].ClientEmail != "runner@stogas-test.iam.gserviceaccount.com" || signIns[0].PrivateKeyID != testGoogleKeyID {
 		t.Fatalf("sign-ins = %+v", signIns)
 	}
-	for err, want := range map[error]string{
-		googleauth.ErrCredential:  byokRejected("google-cloud"),
-		googleauth.ErrUnavailable: byokUnavailable("google-cloud"),
+	for err, want := range map[error]byokFailure{
+		googleauth.ErrCredential:  refusal(byokRejected("google-cloud")),
+		googleauth.ErrUnavailable: unverified(byokUnavailable("google-cloud")),
 	} {
 		checker.google = googleSignInFunc(func(context.Context, googleauth.Credential) error { return err })
 		if got := checker.check(ctx, "google-cloud", googleSecret(t, ""), target); got != want {
-			t.Fatalf("%v: %q", err, got)
+			t.Fatalf("%v: %+v", err, got)
 		}
 	}
 }
@@ -416,8 +412,8 @@ func (s *fakeAzureSignIn) SignIn(_ context.Context, credential azureauth.Credent
 	return "arm-token", nil
 }
 
-// An Azure credential's check signs in anew and discovers the account's targets as Control does,
-// so the dashboard counts them as it counts a stored credential's.
+// An Azure credential's check signs in anew and discovers the account's targets, so the dashboard
+// counts them as it counts a stored credential's.
 func TestCheckByokDiscoversAnAzureAccount(t *testing.T) {
 	status := http.StatusOK
 	server, _ := byokCheckTestServer(t, &status)

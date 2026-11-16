@@ -22,7 +22,7 @@ func TestParseAzureBoundBindingNamesTheTargetAndItsAccount(t *testing.T) {
 		t.Fatalf("unconfirmed binding = %#v, %v", bound, err)
 	}
 	// A customer-encrypted credential's hold says when its next discovery is due; a stored one's
-	// says nothing, since Control discovers those.
+	// says nothing, since Control schedules those discoveries.
 	var encrypted Authorization
 	raw := `{"schema":"stogas.azure-binding.v1","accountId":"` + account + `","verifiedAt":null,"discoverAt":"2026-11-03T12:00:00.5+00:00","binding":` + binding + `}`
 	if !encrypted.bindAzure(&raw) || !encrypted.AzureDiscoverAt.Equal(time.Date(2026, 11, 3, 12, 0, 0, 5e8, time.UTC)) ||

@@ -23,8 +23,8 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
 
-// azureDiscoveryCase is one case in testdata/azure-discovery, which Control's discovery runs too:
-// what Azure Resource Manager answers, and what the discovery makes of it.
+// azureDiscoveryCase is one case in testdata/azure-discovery: what Azure Resource Manager answers,
+// and what the discovery makes of it.
 type azureDiscoveryCase struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
@@ -139,9 +139,8 @@ func azureDiscoveryCaseNamed(t *testing.T, name string) azureDiscoveryCase {
 	return azureDiscoveryCase{}
 }
 
-// TestAzureDiscoveryCases runs the gateway's discovery on the cases that Control's discovery
-// runs, so both save the same targets from the same answers, fail with the same messages, and
-// make the same requests.
+// TestAzureDiscoveryCases checks the targets that discovery saves from Azure's answers, the
+// messages that it fails with, and the requests that it makes.
 func TestAzureDiscoveryCases(t *testing.T) {
 	for _, entry := range loadAzureDiscoveryCases(t) {
 		t.Run(entry.Name, func(t *testing.T) {
@@ -219,7 +218,9 @@ type azureDiscoveryAtScale struct {
 	projects    int
 	instant     int
 	pageSize    int
-	requests    atomic.Int32
+	// Lengthens each deployment's name and model.
+	padding  string
+	requests atomic.Int32
 }
 
 const azureScaleSubscription = "00000000-0000-4000-8000-000000000003"
@@ -280,12 +281,12 @@ func (a *azureDiscoveryAtScale) ServeHTTP(w http.ResponseWriter, r *http.Request
 		})
 	case path == a.account+"/deployments":
 		page(a.deployments, func(index int) any {
-			name := fmt.Sprintf("deployment-%05d", index)
+			name := fmt.Sprintf("deployment-%05d", index) + a.padding
 			return map[string]any{
 				"id": a.account + "/deployments/" + name, "type": "Microsoft.CognitiveServices/accounts/deployments", "name": name,
 				"sku": map[string]any{"name": "GlobalStandard", "capacity": 450},
 				"properties": map[string]any{
-					"model":                map[string]any{"format": "OpenAI", "name": fmt.Sprintf("model-%05d", index), "version": "2026-07-09"},
+					"model":                map[string]any{"format": "OpenAI", "name": fmt.Sprintf("model-%05d", index) + a.padding, "version": "2026-07-09"},
 					"versionUpgradeOption": "OnceNewDefaultVersionAvailable", "currentCapacity": 450,
 					"capabilities": map[string]any{
 						"area": "US", "chatCompletion": "true", "jsonObjectResponse": "true", "maxContextToken": "400000",
@@ -356,8 +357,7 @@ func (a *azureDiscoveryAtScale) ServeHTTP(w http.ResponseWriter, r *http.Request
 }
 
 // TestAzureDiscoveryAtItsLimits discovers the most targets that a discovery keeps, 20,000, as an
-// account's deployments and as Instant models in Foundry projects, and one more of each. Control's
-// discovery runs the same cases.
+// account's deployments and as Instant models in Foundry projects, and one more of each.
 func TestAzureDiscoveryAtItsLimits(t *testing.T) {
 	type outcome struct {
 		bindings, deployments int

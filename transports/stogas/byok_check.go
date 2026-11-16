@@ -24,12 +24,12 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/googleauth"
 )
 
-// A member checks a customer-encrypted credential through a gateway, which alone can open it.
-// The check makes the free read that Control's check of a stored credential makes, and reports
-// and records the result in the same words, so the dashboard shows both kinds alike. A 2xx answer
-// accepts the credential, a 4xx answer other than 408, 409, 425 and 429 rejects it, and anything
-// else leaves it unverified. An Azure credential's check signs in to Entra anew and discovers the
-// account's targets, as Control's check of a stored one does.
+// Gateways check every credential: a member checks a customer-encrypted one, which only a gateway
+// can open, and Control checks stored ones when they are saved, on demand and on its schedule. A
+// check makes the cheapest read that the provider answers for the credential. A 2xx answer accepts
+// it, a 4xx answer other than 408, 409, 425 and 429 rejects it, and anything else leaves it
+// unverified. An Azure credential's check signs in to Entra anew and discovers the account's
+// targets.
 const (
 	byokCheckTimeout       = 8 * time.Second
 	byokCheckLimit         = 4
@@ -109,7 +109,7 @@ func defaultString(value, fallback string) string {
 	return value
 }
 
-// byokCheckClient never follows a redirect, as Control's check does not.
+// byokCheckClient never follows a redirect.
 func byokCheckClient(config *tls.Config) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = config
@@ -118,6 +118,24 @@ func byokCheckClient(config *tls.Config) *http.Client {
 	return &http.Client{Transport: transport, Timeout: byokCheckTimeout, CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}}
+}
+
+// byokFailure is why a check did not accept a credential: the message that the dashboard shows,
+// whether the provider or the secret itself refused the credential, which trying again does not
+// change, rather than leaving it unverified, and whether the secret holds no credential of its
+// provider at all. The zero value accepts the credential.
+type byokFailure struct {
+	message  string
+	rejected bool
+	invalid  bool
+}
+
+func refusal(message string) byokFailure { return byokFailure{message: message, rejected: true} }
+
+func unverified(message string) byokFailure { return byokFailure{message: message} }
+
+func invalidSecret(provider string) byokFailure {
+	return byokFailure{message: invalidByokSecret(provider), rejected: true, invalid: true}
 }
 
 // CheckByok checks the customer-encrypted credential that grant names with keys, and records the
@@ -143,38 +161,50 @@ func checkByok(ctx context.Context, store byokCheckStore, checker *byokChecker, 
 	if err != nil {
 		return nil, err
 	}
-	select {
-	case checker.slots <- struct{}{}:
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	found, failure, err := checker.run(ctx, target.Provider, secret, target.Target, target.AzureAccountID, target.StartedAt)
+	if err != nil {
+		return nil, err
 	}
-	var failure string
-	var discovery *billing.AzureDiscoveryResult
-	if target.Provider == "azure" {
-		failure, discovery = checker.discover(ctx, secret, target.AzureAccountID, target.StartedAt)
-	} else {
-		failure = checker.check(ctx, target.Provider, secret, target.Target)
+	message, discovery := failure.message, (*billing.AzureDiscoveryResult)(nil)
+	if found != nil {
+		message, discovery = azureDiscoveryOutcome(found, nil)
 	}
-	<-checker.slots
-	record, err := store.RecordByokCheck(ctx, target, failure, discovery)
+	record, err := store.RecordByokCheck(ctx, target, message, discovery)
 	if err != nil {
 		return nil, err
 	}
 	result := &ByokCheckResult{CheckedAt: record.CheckedAt, AzureTargets: record.AzureTargets}
-	if failure != "" {
-		result.CheckError = &failure
+	if message != "" {
+		result.CheckError = &message
 	}
 	return result, nil
 }
 
-// check returns "" when the provider accepts secret, and otherwise why it did not.
-func (c *byokChecker) check(ctx context.Context, provider, secret string, registered *billing.CloudTarget) string {
+// run checks a credential while it holds one of the checker's slots. For an Azure credential, it
+// discovers the targets of the account accountID from startedAt, the database's time, and returns
+// what the discovery found when it read the account.
+func (c *byokChecker) run(ctx context.Context, provider, secret string, registered *billing.CloudTarget, accountID string, startedAt time.Time) (*azureDiscovery, byokFailure, error) {
+	select {
+	case c.slots <- struct{}{}:
+	case <-ctx.Done():
+		return nil, byokFailure{}, ctx.Err()
+	}
+	defer func() { <-c.slots }()
+	if provider == "azure" {
+		found, failure := c.discover(ctx, secret, accountID, startedAt)
+		return found, failure, nil
+	}
+	return nil, c.check(ctx, provider, secret, registered), nil
+}
+
+// check returns why the provider did not accept secret, the zero value when it did.
+func (c *byokChecker) check(ctx context.Context, provider, secret string, registered *billing.CloudTarget) byokFailure {
 	ctx, cancel := context.WithTimeout(ctx, byokCheckTimeout)
 	defer cancel()
 	switch provider {
 	case "openai", "anthropic", "chutes":
 		if !validUpstreamAPIKey(secret) {
-			return invalidByokSecret(provider)
+			return invalidSecret(provider)
 		}
 		var request *http.Request
 		var err error
@@ -197,7 +227,7 @@ func (c *byokChecker) check(ctx context.Context, provider, secret string, regist
 			}
 		}
 		if err != nil {
-			return byokUnavailable(provider)
+			return unverified(byokUnavailable(provider))
 		}
 		return c.read(provider, c.client, request)
 	case "aws":
@@ -205,31 +235,51 @@ func (c *byokChecker) check(ctx context.Context, provider, secret string, regist
 	case "google-cloud":
 		return c.checkGoogle(ctx, secret, registered)
 	}
-	return byokUnavailable(provider)
+	return unverified(byokUnavailable(provider))
 }
 
 // discover signs in to Entra anew with the application in secret, bypassing the token cache, so
 // an application whose secret expired or was deleted fails now. It then discovers the targets of
-// the account from startedAt, the database's time, as Control's check of a stored credential does.
-func (c *byokChecker) discover(ctx context.Context, secret, accountID string, startedAt time.Time) (string, *billing.AzureDiscoveryResult) {
+// the account from startedAt, the database's time.
+func (c *byokChecker) discover(ctx context.Context, secret, accountID string, startedAt time.Time) (*azureDiscovery, byokFailure) {
 	app, err := parseAzureByokCredential(secret)
 	if err != nil {
-		return invalidByokSecret("azure"), nil
+		return nil, invalidSecret("azure")
 	}
-	if c.azure == nil {
-		return azureAppUnavailable, nil
-	}
-	// The sign-in and the discovery share the discovery's bound, so the member's wait has one.
+	// The sign-in and the discovery share the discovery's bound, so the wait has one.
 	ctx, cancel := context.WithTimeout(ctx, azureDiscoveryTimeout)
 	defer cancel()
-	token, err := c.azure.SignIn(ctx, azureauth.Credential{TenantID: app.TenantID, ClientID: app.ClientID, Secret: app.ClientSecret, Scope: armScope})
-	if err != nil {
-		if errors.Is(err, azureauth.ErrCredential) {
-			return azureAppRejected, nil
-		}
-		return azureAppUnavailable, nil
+	token, failure := c.signIn(ctx, app)
+	if failure.message != "" {
+		return nil, failure
 	}
-	return azureDiscoveryOutcome(discoverAzure(ctx, c.arm, token, accountID, startedAt))
+	found, err := discoverAzure(ctx, c.arm, token, accountID, startedAt)
+	if err != nil {
+		return nil, azureDiscoveryFailure(err)
+	}
+	return found, byokFailure{}
+}
+
+// signIn returns an Azure Resource Manager token for app, signed in anew.
+func (c *byokChecker) signIn(ctx context.Context, app azureByokCredential) (string, byokFailure) {
+	if c.azure == nil {
+		return "", unverified(azureAppUnavailable)
+	}
+	token, err := c.azure.SignIn(ctx, azureauth.Credential{TenantID: app.TenantID, ClientID: app.ClientID, Secret: app.ClientSecret, Scope: armScope})
+	switch {
+	case err == nil:
+		return token, byokFailure{}
+	case errors.Is(err, azureauth.ErrCredential):
+		return "", refusal(azureAppRejected)
+	default:
+		return "", unverified(azureAppUnavailable)
+	}
+}
+
+// azureDiscoveryFailure is a discovery that stopped, as a check reports it.
+func azureDiscoveryFailure(err error) byokFailure {
+	var problem *azureDiscoveryError
+	return byokFailure{message: azureDiscoveryMessage(err), rejected: errors.As(err, &problem) && problem.rejected}
 }
 
 // azureDiscoveryOutcome is a discovery as a check records it: the message, empty when nothing is
@@ -253,12 +303,12 @@ func azureDiscoveryOutcome(found *azureDiscovery, err error) (string, *billing.A
 // checkAWS makes the cheapest request that each AWS credential can: an access key asks STS who it
 // is, which needs no permission; a Bedrock API key lists Anthropic models, and a Claude Platform on
 // AWS API key lists its workspace's models.
-func (c *byokChecker) checkAWS(ctx context.Context, secret string, registered *billing.CloudTarget) string {
+func (c *byokChecker) checkAWS(ctx context.Context, secret string, registered *billing.CloudTarget) byokFailure {
 	credential, err := parseAWSByokCredential(secret)
 	if err != nil {
-		return invalidByokSecret("aws")
+		return invalidSecret("aws")
 	}
-	if failure := cloudTargetMismatch(catalog.ProviderAWS, secret, registered); failure != "" {
+	if failure := cloudTargetMismatch(catalog.ProviderAWS, secret, registered); failure.message != "" {
 		return failure
 	}
 	var request *http.Request
@@ -266,18 +316,18 @@ func (c *byokChecker) checkAWS(ctx context.Context, secret string, registered *b
 	case credential.AccessKeyID != "":
 		request, err = http.NewRequestWithContext(ctx, http.MethodPost, "https://sts."+credential.Region+".amazonaws.com/", strings.NewReader(stsRequestBody))
 		if err != nil {
-			return byokUnavailable("aws")
+			return unverified(byokUnavailable("aws"))
 		}
 		request.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
 		digest := sha256.Sum256([]byte(stsRequestBody))
 		if err := v4.NewSigner().SignHTTP(ctx, aws.Credentials{AccessKeyID: credential.AccessKeyID, SecretAccessKey: credential.SecretAccessKey},
 			request, hex.EncodeToString(digest[:]), "sts", credential.Region, c.now()); err != nil {
-			return byokUnavailable("aws")
+			return unverified(byokUnavailable("aws"))
 		}
 	case credential.WorkspaceID != "":
 		request, err = http.NewRequestWithContext(ctx, http.MethodGet, "https://aws-external-anthropic."+credential.Region+".api.aws/v1/models?limit=1", nil)
 		if err != nil {
-			return byokUnavailable("aws")
+			return unverified(byokUnavailable("aws"))
 		}
 		request.Header.Set("Authorization", "Bearer "+credential.APIKey)
 		request.Header.Set("anthropic-version", "2023-06-01")
@@ -285,7 +335,7 @@ func (c *byokChecker) checkAWS(ctx context.Context, secret string, registered *b
 	default:
 		request, err = http.NewRequestWithContext(ctx, http.MethodGet, "https://bedrock."+credential.Region+".amazonaws.com/foundation-models?byProvider=Anthropic", nil)
 		if err != nil {
-			return byokUnavailable("aws")
+			return unverified(byokUnavailable("aws"))
 		}
 		request.Header.Set("Authorization", "Bearer "+credential.APIKey)
 	}
@@ -294,61 +344,61 @@ func (c *byokChecker) checkAWS(ctx context.Context, secret string, registered *b
 
 // checkGoogle exchanges a newly signed assertion at Google's token endpoint, bypassing the token
 // cache, so a key that Google disabled since its last token fails now.
-func (c *byokChecker) checkGoogle(ctx context.Context, secret string, registered *billing.CloudTarget) string {
+func (c *byokChecker) checkGoogle(ctx context.Context, secret string, registered *billing.CloudTarget) byokFailure {
 	credential, err := parseGoogleCloudByokCredential(secret)
 	if err != nil {
-		return invalidByokSecret("google-cloud")
+		return invalidSecret("google-cloud")
 	}
-	if failure := cloudTargetMismatch(catalog.ProviderGoogleCloud, secret, registered); failure != "" {
+	if failure := cloudTargetMismatch(catalog.ProviderGoogleCloud, secret, registered); failure.message != "" {
 		return failure
 	}
 	if c.google == nil {
-		return byokUnavailable("google-cloud")
+		return unverified(byokUnavailable("google-cloud"))
 	}
 	err = c.google.SignIn(ctx, googleauth.Credential{ClientEmail: credential.ClientEmail, PrivateKeyID: credential.PrivateKeyID, PrivateKey: credential.PrivateKey})
 	switch {
 	case err == nil:
-		return ""
+		return byokFailure{}
 	case errors.Is(err, googleauth.ErrCredential):
-		return byokRejected("google-cloud")
+		return refusal(byokRejected("google-cloud"))
 	default:
-		return byokUnavailable("google-cloud")
+		return unverified(byokUnavailable("google-cloud"))
 	}
 }
 
-// cloudTargetMismatch reports a secret that cannot serve the target that the credential was added
+// cloudTargetMismatch refuses a secret that cannot serve the target that the credential was added
 // with, which requests would refuse: another Region, or a hosting that the secret does not serve.
-func cloudTargetMismatch(provider schemas.ModelProvider, secret string, registered *billing.CloudTarget) string {
+func cloudTargetMismatch(provider schemas.ModelProvider, secret string, registered *billing.CloudTarget) byokFailure {
 	actual, err := cloudCredentialTarget(provider, secret)
 	if err != nil {
-		return invalidByokSecret(string(provider))
+		return invalidSecret(string(provider))
 	}
 	if registered == nil || registered.Region != actual.Region {
-		return "The credential is for another Region than the target it was added with. Add the target that stogas encrypt printed for it."
+		return refusal("The credential is for another Region than the target it was added with. Add the target that stogas encrypt printed for it.")
 	}
 	for _, hosting := range registered.Hosting {
 		if !slices.Contains(actual.Hosting, hosting) {
-			return "The credential cannot serve every hosting of the target it was added with. Add the target that stogas encrypt printed for it."
+			return refusal("The credential cannot serve every hosting of the target it was added with. Add the target that stogas encrypt printed for it.")
 		}
 	}
-	return ""
+	return byokFailure{}
 }
 
-func (c *byokChecker) read(provider string, client *http.Client, request *http.Request) string {
+func (c *byokChecker) read(provider string, client *http.Client, request *http.Request) byokFailure {
 	request.Header.Set("Accept", "application/json")
 	response, err := client.Do(request)
 	if err != nil {
-		return byokUnavailable(provider)
+		return unverified(byokUnavailable(provider))
 	}
 	defer response.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, byokCheckResponseLimit))
 	switch status := response.StatusCode; {
 	case status >= 200 && status < 300:
-		return ""
+		return byokFailure{}
 	case status >= 400 && status < 500 && status != 408 && status != 409 && status != 425 && status != 429:
-		return byokRejected(provider)
+		return refusal(byokRejected(provider))
 	default:
-		return byokUnavailable(provider)
+		return unverified(byokUnavailable(provider))
 	}
 }
 

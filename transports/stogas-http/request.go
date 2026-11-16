@@ -17,6 +17,8 @@ type apiCredential struct {
 	Dashboard      *billing.DashboardCredential
 	// Check is the grant that a credential check carries instead of an API key.
 	Check *billing.ByokCheckGrant
+	// Stored is the grant with which Control uses a stored credential.
+	Stored *billing.StoredByokGrant
 	// PolicyCheck is the grant that a policy check may carry instead of an API key.
 	PolicyCheck *billing.PolicyCheckGrant
 	Raw         string
@@ -98,7 +100,8 @@ func validCredentialValue(value string) bool {
 
 func (s *Server) requireAPIKey(ctx *requestContext) (apiCredential, bool) {
 	route, ok := catalog.RouteForPath(ctx.request.URL.Path)
-	if ctx.request.URL.Path == policyValidationPath || ctx.request.URL.Path == policySimulationPath || ctx.request.URL.Path == byokCheckPath {
+	if ctx.request.URL.Path == policyValidationPath || ctx.request.URL.Path == policySimulationPath || ctx.request.URL.Path == byokCheckPath ||
+		isStoredByokPath(ctx.request.URL.Path) {
 		route, ok = catalog.RouteChat, true
 	}
 	if !ok {
@@ -139,6 +142,16 @@ func (s *Server) requireAPIKey(ctx *requestContext) (apiCredential, bool) {
 		}
 		clearInferenceCredentials(ctx)
 		return apiCredential{Check: grant}, true
+	}
+	// Only Control uses a stored credential, with a grant for the one use.
+	if isStoredByokPath(ctx.request.URL.Path) {
+		grant, err := s.runtime.ParseStoredByokGrant(token)
+		if err != nil {
+			s.writeBillingError(ctx, err)
+			return apiCredential{}, false
+		}
+		clearInferenceCredentials(ctx)
+		return apiCredential{Stored: grant}, true
 	}
 	// A member may check policy text with a grant instead of an API key, such as a plugin's
 	// settings before they encrypt them. No other request takes one.

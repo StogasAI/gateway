@@ -18,18 +18,18 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// Only a gateway can open a customer-encrypted Azure credential, so a gateway discovers its
-// targets as Control discovers a stored credential's: the same reads of Azure Resource Manager,
-// bounds, targets and messages, so the dashboard shows both kinds alike. The cases in
-// testdata/azure-discovery run against both implementations.
+// Gateways discover the targets of every Azure credential: a customer-encrypted one's, which only a
+// gateway can open, when a request finds its discovery due, and a stored one's when Control checks
+// it. Both read Azure Resource Manager alike, so the dashboard shows both kinds alike.
 const (
 	armInstantAPIVersion     = "2026-01-15-preview"
 	armLocationsAPIVersion   = "2022-12-01"
 	armPermissionsAPIVersion = "2022-04-01"
-	// Control's bounds: each read, the reads in flight, and the Foundry projects and targets.
+	// The bounds of each read, of the reads in flight, and of the Foundry projects and targets.
 	azureDiscoveryRequestTimeout = 12 * time.Second
 	azureDiscoveryConcurrency    = 8
 	azureDiscoveryMaxProjects    = 2_048
+	azureMaxAccounts             = 512
 	azureDiscoveryMaxBindings    = 20_000
 	// A discovery finishes within the 30-second claim that it holds for the fleet.
 	azureDiscoveryTimeout = 25 * time.Second
@@ -41,6 +41,7 @@ const (
 	azureRoleMissing    = "The application has no data role on this account, so requests to its deployments fail. Give it the Foundry User role on the account."
 	azureAppRejected    = "Azure did not accept this tenant, client ID, and client secret"
 	azureAppUnavailable = "Could not authenticate with Azure. Try again."
+	azureTooManyTargets = "Azure discovery returned too many deployments"
 )
 
 var (
@@ -66,7 +67,7 @@ var (
 	azureDiscoveryDateLayout = []string{time.RFC3339Nano, "2006-01-02T15:04:05.999999999", "2006-01-02T15:04", "2006-01-02"}
 )
 
-// azureDiscoveryError is why a discovery stopped, in the words that Control records. Rejected marks
+// azureDiscoveryError is why a discovery stopped, in the words that a check records. Rejected marks
 // a problem with the application or the account, which trying again does not fix.
 type azureDiscoveryError struct {
 	message  string
@@ -435,7 +436,7 @@ func (c *azureDiscoveryContext) storageLocation() string {
 
 func (c *azureDiscoveryContext) append(bindings []azureDiscoveredBinding, binding azureDiscoveredBinding) ([]azureDiscoveredBinding, error) {
 	if c.bindings++; c.bindings > azureDiscoveryMaxBindings {
-		return nil, azureDiscoveryRejected("Azure discovery returned too many deployments")
+		return nil, azureDiscoveryRejected(azureTooManyTargets)
 	}
 	return append(bindings, binding), nil
 }
@@ -618,26 +619,23 @@ func armStringEntries(raw json.RawMessage) ([]armEntry, bool) {
 	return entries, true
 }
 
-// discoverAzure discovers the targets of the account accountID with an ARM token, as Control does.
-func discoverAzure(ctx context.Context, client *http.Client, token string, accountID string, now time.Time) (*azureDiscovery, error) {
-	ctx, cancel := context.WithTimeout(ctx, azureDiscoveryTimeout)
-	defer cancel()
-	if !azureAccountIDPattern.MatchString(accountID) {
-		return nil, azureDiscoveryRejected("Use the resource ID of a Foundry or Azure OpenAI account")
-	}
-	reads := newARMReads(client, token)
-	subscriptionID := strings.Split(accountID, "/")[2]
-	accountBody, err := reads.data(ctx, armResource(accountID, armAPIVersion), azureAccountDenied)
-	if err != nil {
-		return nil, err
-	}
-	account, ok := armObject(accountBody)
-	id, idOK := armRequiredString(account, "id")
-	kind, kindOK := armRequiredString(account, "kind")
-	location, locationOK := armRequiredString(account, "location")
-	name, nameOK := armRequiredString(account, "name")
-	properties, propertiesOK := armObject(account["properties"])
-	if _, present := account["properties"]; !present {
+// azureAccount is a Cognitive Services account as Azure Resource Manager returns it.
+type azureAccount struct {
+	id, kind, location, name string
+	properties               map[string]json.RawMessage
+	endpoints                []armEntry
+}
+
+// readAzureAccount reads an account, false when a field that the gateway reads is missing or has
+// another type.
+func readAzureAccount(value json.RawMessage) (azureAccount, bool) {
+	object, ok := armObject(value)
+	id, idOK := armRequiredString(object, "id")
+	kind, kindOK := armRequiredString(object, "kind")
+	location, locationOK := armRequiredString(object, "location")
+	name, nameOK := armRequiredString(object, "name")
+	properties, propertiesOK := armObject(object["properties"])
+	if _, present := object["properties"]; !present {
 		properties, propertiesOK = map[string]json.RawMessage{}, true
 	}
 	var endpoints []armEntry
@@ -653,20 +651,89 @@ func discoverAzure(ctx context.Context, client *http.Client, token string, accou
 		_, actionOK := armOptionalString(acls, "defaultAction", true)
 		aclsOK = isObject && actionOK
 	}
-	if !ok || !idOK || !kindOK || !locationOK || !nameOK || !propertiesOK || !endpointsOK || !subdomainOK ||
-		!publicOK || !aclsOK || azureAccountResourceID(id) != accountID {
+	return azureAccount{id: id, kind: kind, location: location, name: name, properties: properties, endpoints: endpoints},
+		ok && idOK && kindOK && locationOK && nameOK && propertiesOK && endpointsOK && subdomainOK && publicOK && aclsOK
+}
+
+// modelAccount reports a Foundry or Azure OpenAI account, the kinds that serve models.
+func (a azureAccount) modelAccount() bool {
+	kind := strings.ToLower(trimJS(a.kind))
+	return kind == "aiservices" || kind == "openai"
+}
+
+// StoredAzureAccount is a Foundry or Azure OpenAI account that an application can read, with the
+// problem that keeps requests from reaching it, empty when there is none.
+type StoredAzureAccount struct {
+	ID       string  `json:"id"`
+	Location string  `json:"location"`
+	Name     string  `json:"name"`
+	Problem  *string `json:"problem"`
+}
+
+// listAzureAccounts lists the model accounts of each subscription that an ARM token can read.
+// Azure leaves out the accounts that the application cannot read, so an application with roles on
+// single accounts still finds them.
+func listAzureAccounts(ctx context.Context, client *http.Client, token string, subscriptionIDs []string) ([]StoredAzureAccount, error) {
+	reads := newARMReads(client, token)
+	listed := make([][]json.RawMessage, len(subscriptionIDs))
+	group, groupCtx := errgroup.WithContext(ctx)
+	for index, subscriptionID := range subscriptionIDs {
+		group.Go(func() (err error) {
+			listed[index], err = reads.pages(groupCtx, armResource("/subscriptions/"+subscriptionID+"/providers/Microsoft.CognitiveServices/accounts", armAPIVersion),
+				"This application cannot list the accounts in subscription "+subscriptionID+". Check the subscription ID and give the application the Foundry User role on the accounts.")
+			return err
+		})
+	}
+	if err := group.Wait(); err != nil {
+		return nil, err
+	}
+	accounts := []StoredAzureAccount{}
+	for index, values := range listed {
+		for _, value := range values {
+			account, ok := readAzureAccount(value)
+			id := azureAccountResourceID(account.id)
+			if !ok || !strings.HasPrefix(id, "/subscriptions/"+subscriptionIDs[index]+"/") || !account.modelAccount() {
+				continue
+			}
+			if len(accounts) == azureMaxAccounts {
+				return nil, azureDiscoveryRejected("Azure returned too many model accounts")
+			}
+			listedAccount := StoredAzureAccount{ID: id, Location: strings.ToLower(trimJS(account.location)), Name: trimJS(account.name)}
+			if _, _, problem := azureAccountEndpoints(account.kind, account.properties, account.endpoints); problem != "" {
+				listedAccount.Problem = &problem
+			}
+			accounts = append(accounts, listedAccount)
+		}
+	}
+	return accounts, nil
+}
+
+// discoverAzure discovers the targets of the account accountID with an ARM token.
+func discoverAzure(ctx context.Context, client *http.Client, token string, accountID string, now time.Time) (*azureDiscovery, error) {
+	ctx, cancel := context.WithTimeout(ctx, azureDiscoveryTimeout)
+	defer cancel()
+	if !azureAccountIDPattern.MatchString(accountID) {
+		return nil, azureDiscoveryRejected("Use the resource ID of a Foundry or Azure OpenAI account")
+	}
+	reads := newARMReads(client, token)
+	subscriptionID := strings.Split(accountID, "/")[2]
+	accountBody, err := reads.data(ctx, armResource(accountID, armAPIVersion), azureAccountDenied)
+	if err != nil {
+		return nil, err
+	}
+	account, ok := readAzureAccount(accountBody)
+	if !ok || azureAccountResourceID(account.id) != accountID {
 		return nil, azureDiscoveryFailed("Azure returned an invalid account")
 	}
-	normalizedKind := strings.ToLower(trimJS(kind))
-	if normalizedKind != "aiservices" && normalizedKind != "openai" {
+	if !account.modelAccount() {
 		return nil, azureDiscoveryRejected("This resource is not a Foundry or Azure OpenAI account")
 	}
-	foundry, openAI, problem := azureAccountEndpoints(kind, properties, endpoints)
+	foundry, openAI, problem := azureAccountEndpoints(account.kind, account.properties, account.endpoints)
 	if problem != "" {
 		return nil, azureDiscoveryRejected(azureAccountProblems[problem])
 	}
-	accountLocation := strings.ToLower(trimJS(location))
-	supportsInstant := normalizedKind == "aiservices" && accountLocation == azureInstantLocation && foundry != ""
+	accountLocation := strings.ToLower(trimJS(account.location))
+	supportsInstant := strings.ToLower(trimJS(account.kind)) == "aiservices" && accountLocation == azureInstantLocation && foundry != ""
 
 	var rawLocations, rawModels, rawDeployments, rawProjects []json.RawMessage
 	var allowed map[string]bool
@@ -731,7 +798,7 @@ func discoverAzure(ctx context.Context, client *http.Client, token string, accou
 	if err != nil {
 		return nil, err
 	}
-	result := &azureDiscovery{DiscoveredAt: now, Deployments: deployments, Name: trimJS(name)}
+	result := &azureDiscovery{DiscoveredAt: now, Deployments: deployments, Name: trimJS(account.name)}
 	// Instant targets take roles from their project, so only the account's own deployments need one.
 	if len(bindings) > 0 {
 		role, err := azureHasModelRole(ctx, reads, accountID)
