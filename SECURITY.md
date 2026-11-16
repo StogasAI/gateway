@@ -1,7 +1,5 @@
 # Security Policy
 
-Report Stogas Gateway vulnerabilities privately to the Stogas security contact for this repository. Do not disclose security issues in public GitHub issues.
+Report a vulnerability privately through this repository's **Security** tab. Do not report it in a public issue.
 
-Stogas Gateway releases are accepted only when the measured IGVM hash and SEV-SNP launch measurement are bound by official GitHub artifact attestation and Stogas local provenance. The public reproducible-build audit map is `stogas/release/BUILD_AUDIT.md`.
-
-Upstream Bifrost security fixes are imported through the allowlisted upstream sync flow, not by full upstream merges.
+A release serves only after GitHub attests its image and Stogas signs a rebuild that gives the same bytes. The [build audit](stogas/release/BUILD_AUDIT.md) describes the build.

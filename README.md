@@ -1,27 +1,20 @@
 # Stogas Gateway
 
-The open-source, OpenAI-compatible gateway that runs inside Stogas confidential VMs, with its reproducible AMD SEV-SNP IGVM build.
+The OpenAI-compatible gateway that runs inside Stogas confidential VMs, with the reproducible build of its AMD SEV-SNP image.
 
-[Documentation](https://stogas.ai/docs) · [Build audit](stogas/release/BUILD_AUDIT.md) · [Security](SECURITY.md)
-
-## What it does
-
-- Serves Chat Completions and Responses over ordinary HTTPS, attested TLS, and end-to-end encryption over HTTPS.
-- Verifies the signed evidence for its environment before serving and loads the newest approved catalog that its release can read.
-- Keeps credentials, decryption, provider calls, receipts, and response encryption inside the guest. `Stogas-Metadata: v1` returns a signed receipt for each request.
-- Applies organization policies, redaction, and opt-in plugins such as [export](https://stogas.ai/docs/plugins/export).
+[Website](https://stogas.ai) · [Documentation](https://stogas.ai/docs) · [Build audit](stogas/release/BUILD_AUDIT.md) · [Security](SECURITY.md)
 
 ## Repository
 
-- `core/`: Maxim Bifrost's runtime and provider layer, with our changes committed in place. `stogas/upstream-sync.lock` names the upstream commit
-- `transports/`: the Stogas API transport, signed catalog loader, routing, policies, and entrypoint
-- `stogas/`: the reproducible IGVM release pipeline
-
-The public listener uses port `5185`; private readiness uses `5186` and TLS diagnostics `5187`. Confidential ingress requires a PROXYv2 header before TLS, so allow backend access only from trusted load balancers.
+| Path              | Contents                                                                                                                                                         |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `core/`           | The provider layer of [Bifrost](https://github.com/maximhq/bifrost), with our changes committed in place. `stogas/upstream-sync.lock` names the upstream commit. |
+| `transports/`     | The Stogas API, the signed catalog loader, routing, policies, and the entrypoint                                                                                 |
+| `stogas/release/` | The reproducible image build                                                                                                                                     |
 
 ## Build and test
 
-Install Bun, Go, Rust through rustup, and jq, then run:
+Install Bun, Go, Rust through rustup, and jq. Then run:
 
 ```console
 bun install --frozen-lockfile
@@ -29,12 +22,18 @@ bun run check
 bun run build
 ```
 
-The scripts first build the native verifier library at the commit pinned in `stogas/release/pins.lock.json`. `check` validates the embedded emergency catalog and runs the transport Go tests.
+`check` runs the Go tests. Both scripts first build the verifier library at the commit that `stogas/release/pins.lock.json` names.
 
-## Releases
+## Rebuild a release
 
-Tagged releases build `gateway.igvm` and a manifest that binds its hash, build inputs, SNP launch policies, launch measurement, and the oldest catalog release it reads, which `stogas/release/release-policy.json` sets. GitHub attests the manifest and image. Stogas rebuilds the same pinned Guix derivation independently and signs the manifest only when the result matches.
+```console
+stogas/release/scripts/build-release.sh v<version> <empty-directory>
+```
+
+The build needs x86_64 Linux and Guix. It writes `gateway.igvm` and a manifest that holds the image's hash and its SEV-SNP launch measurement, and the same tag gives the same bytes on every host. Each release also has a CycloneDX bill of materials, `sbom.cdx.json`. GitHub attests the manifest, the image, and the bill of materials of each release. Stogas signs a manifest only after its own rebuild gives the same bytes.
+
+The [build audit](stogas/release/BUILD_AUDIT.md) lists every input and step.
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE) for upstream attribution.
+[Apache-2.0](LICENSE). [NOTICE](NOTICE) credits Bifrost and the other upstream work.
