@@ -112,7 +112,7 @@ type mergedNamespace struct {
 // that is not an object, or a namespace without a member list, stays as it is for the tool checks
 // to name.
 func mergeToolDeclarations(top, declared []json.RawMessage) ([]json.RawMessage, error) {
-	merged := make([]json.RawMessage, 0, len(top)+len(declared))
+	merged := make([]json.RawMessage, 0, len(top))
 	namespaces := make(map[string]int)
 	entries := make(map[int]*mergedNamespace)
 	slots := make(map[[2]string]toolSlot)

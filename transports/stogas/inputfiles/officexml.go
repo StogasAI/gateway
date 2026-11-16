@@ -206,7 +206,7 @@ func unescapeXML(raw []byte) ([]byte, error) {
 			}
 			n, err := strconv.ParseUint(digits, base, 32)
 			// XML has no NUL, surrogate or character past U+10FFFF.
-			if err != nil || n == 0 || !utf8.ValidRune(rune(n)) {
+			if err != nil || n == 0 || n > utf8.MaxRune || !utf8.ValidRune(rune(n)) {
 				return nil, errOfficeUnreadable
 			}
 			out = utf8.AppendRune(out, rune(n))

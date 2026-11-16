@@ -1404,7 +1404,7 @@ func requestPricingContextForRaw(route Route, rawData map[string]json.RawMessage
 		pricing.ToolsParseFailed = true
 		return pricing
 	}
-	toolTypes := make([]string, 0, len(tools)+len(pricing.ToolTypes))
+	toolTypes := make([]string, 0, len(tools))
 	if route == RouteResponses {
 		var normalizedTools []schemas.ResponsesTool
 		if err := sonic.Unmarshal(rawTools, &normalizedTools); err == nil {
