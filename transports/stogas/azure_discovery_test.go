@@ -219,8 +219,10 @@ type azureDiscoveryAtScale struct {
 	instant     int
 	pageSize    int
 	// Lengthens each deployment's name and model.
-	padding  string
-	requests atomic.Int32
+	padding string
+	// Lengthens each deployment's model alone, whose name has no limit.
+	modelPadding string
+	requests     atomic.Int32
 }
 
 const azureScaleSubscription = "00000000-0000-4000-8000-000000000003"
@@ -286,7 +288,7 @@ func (a *azureDiscoveryAtScale) ServeHTTP(w http.ResponseWriter, r *http.Request
 				"id": a.account + "/deployments/" + name, "type": "Microsoft.CognitiveServices/accounts/deployments", "name": name,
 				"sku": map[string]any{"name": "GlobalStandard", "capacity": 450},
 				"properties": map[string]any{
-					"model":                map[string]any{"format": "OpenAI", "name": fmt.Sprintf("model-%05d", index) + a.padding, "version": "2026-07-09"},
+					"model":                map[string]any{"format": "OpenAI", "name": fmt.Sprintf("model-%05d", index) + a.padding + a.modelPadding, "version": "2026-07-09"},
 					"versionUpgradeOption": "OnceNewDefaultVersionAvailable", "currentCapacity": 450,
 					"capabilities": map[string]any{
 						"area": "US", "chatCompletion": "true", "jsonObjectResponse": "true", "maxContextToken": "400000",

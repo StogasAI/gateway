@@ -239,8 +239,9 @@ func TestCheckStoredByokRefusesADiscoveryLargerThanControlReads(t *testing.T) {
 	status := http.StatusOK
 	server, _ := byokCheckTestServer(t, &status)
 	arm := newAzureDiscoveryAtScale(false)
-	// Names longer than Azure allows take the lists of 20,000 targets past the bound.
-	arm.deployments, arm.pageSize, arm.padding = 20_000, 200, strings.Repeat("x", 200)
+	// Model names of 10,000 characters take the lists of 2,000 targets past the bound. The lists of
+	// 20,000 targets take longer to read under the race detector than a discovery may.
+	arm.deployments, arm.pageSize, arm.modelPadding = 2_000, 200, strings.Repeat("x", 10_000)
 	armServer := httptest.NewServer(arm)
 	t.Cleanup(armServer.Close)
 	startedAt := time.Now()
