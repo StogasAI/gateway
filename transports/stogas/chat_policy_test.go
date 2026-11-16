@@ -1529,6 +1529,9 @@ func TestRequestAppReadsTheAttributionHeaders(t *testing.T) {
 		{name: "repeated", headers: map[string][]string{"Http-Referer": {"https://a.example", "https://b.example"}, "X-Title": {"A", "B"}}},
 		{name: "control character", headers: map[string][]string{"X-Title": {"a\x01b"}}},
 		{name: "blank OpenRouter title", headers: map[string][]string{"X-Openrouter-Title": {" "}, "X-Title": {"Cline"}}, want: App{Title: "Cline"}},
+		{name: "Stogas headers win", headers: map[string][]string{"Stogas-App-Title": {"Support bot"}, "Stogas-App-Url": {"https://support.example.com/"}, "X-Title": {"Cline"}, "Http-Referer": {"https://cline.bot"}}, want: App{Title: "Support bot", URL: "https://support.example.com"}},
+		{name: "each value from its own header", headers: map[string][]string{"Stogas-App-Title": {"Support bot"}, "Http-Referer": {"https://cline.bot"}}, want: App{Title: "Support bot", URL: "https://cline.bot"}},
+		{name: "invalid Stogas URL names none", headers: map[string][]string{"Stogas-App-Url": {"support"}, "Http-Referer": {"https://cline.bot"}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

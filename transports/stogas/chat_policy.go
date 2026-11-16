@@ -490,19 +490,27 @@ type App struct {
 	URL   string
 }
 
-// RequestApp reads the attribution headers that OpenRouter and Vercel's AI Gateway define:
-// HTTP-Referer for the app's URL, and X-OpenRouter-Title, or the older X-Title, for its name.
-// Clients such as Cline and Roo Code send them on their own, so a missing, repeated or invalid
-// header names nothing and never fails the request. The URL loses its credentials, query and
-// fragment, which can hold secrets, and its final slash, so that one app has one URL.
-// Providers never receive either value.
+// RequestApp reads the headers that name the application that sent a request: Stogas-App-Title
+// and Stogas-App-URL, else the attribution headers that OpenRouter and Vercel's AI Gateway
+// define, X-OpenRouter-Title, or the older X-Title, for its name and HTTP-Referer for its URL.
+// Each value comes from the first of its headers that the request sends. Clients such as Cline
+// and Roo Code send OpenRouter's headers on their own, so a missing, repeated or invalid header
+// names nothing and never fails the request. The URL loses its credentials, query and fragment,
+// which can hold secrets, and its final slash, so that one app has one URL. Providers never
+// receive either value.
 func RequestApp(header http.Header) App {
-	app := App{URL: appURL(singleHeader(header, "Http-Referer"))}
-	for _, name := range []string{"X-Openrouter-Title", "X-Title"} {
+	var app App
+	for _, name := range []string{"Stogas-App-Title", "X-Openrouter-Title", "X-Title"} {
 		if title := strings.TrimSpace(singleHeader(header, name)); title != "" {
 			if len(title) <= billing.MaxMetadataValueBytes && metadataText(title) {
 				app.Title = title
 			}
+			break
+		}
+	}
+	for _, name := range []string{"Stogas-App-Url", "Http-Referer"} {
+		if value := strings.TrimSpace(singleHeader(header, name)); value != "" {
+			app.URL = appURL(value)
 			break
 		}
 	}
