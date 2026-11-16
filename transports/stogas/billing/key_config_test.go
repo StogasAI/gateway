@@ -2,7 +2,9 @@ package billing
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -511,6 +513,41 @@ func TestSourceDeltaRequiresPinnedIdentityAndRevision(t *testing.T) {
 	cache.releaseSources([]*sharedPolicySource{source})
 	if cache.bytes != 0 || len(cache.sources) != 0 {
 		t.Fatal("failed deltas leaked source references")
+	}
+}
+
+// A key whose policies do not combine keeps the failure in its cache entry, with the sources that
+// compiled, so its retries reach neither PostgreSQL nor the compiler, and a sibling key reuses the
+// organization's policy.
+func TestFailedChainAnswersFromCacheAndSharesItsCompiledSources(t *testing.T) {
+	s := &Service{}
+	defer s.keyConfigs.close()
+	claims := &APIKeyClaims{OrganizationID: "org", KeyID: "first", ResponsibleID: "user"}
+	generation := 1
+	row := keyConfigRow{Claims: claims, CredentialsGeneration: &generation, Sources: []policySourceRecord{
+		{PolicyVersion: PolicyVersion{Scope: policy.OrganizationScope, ID: "org", Revision: 3}, Source: json.RawMessage(`{"input":{"asciiOnly":true}}`)},
+		{PolicyVersion: PolicyVersion{Scope: policy.KeyScope, ID: "first", Revision: 1}, Source: json.RawMessage(`{"removedField":true}`)},
+	}}
+	failed, err := s.composeKeyConfig(row, policySourcePins{}, nil)
+	if !errors.Is(err, policy.ErrInvalidConfig) || failed == nil || len(failed.sourceRefs) != 2 || failed.sourceRefs[0] == nil || failed.sourceRefs[1] != nil {
+		t.Fatalf("failed chain: %v", err)
+	}
+	s.keyConfigs.put("api:first", failed, time.Now())
+	s.keyConfigs.releaseSources(failed.sourceRefs)
+	// Without a database, a lookup that missed the cache would fail as unavailable.
+	if snapshot, err := s.cachedOrFetchKeyConfig(context.Background(), "api:first", nil, nil, "first", nil, claims); snapshot != nil || !errors.Is(err, policy.ErrInvalidConfig) {
+		t.Fatalf("retry was not answered from the cache: %v", err)
+	}
+	sibling := *claims
+	sibling.KeyID = "second"
+	pins := s.keyConfigs.pinSourcesForClaims(&sibling, nil)
+	if pins.known["organization:org"] != 3 || pins.byID["organization:org"] != failed.sourceRefs[0] {
+		t.Fatal("a sibling key would compile the organization's policy again")
+	}
+	s.keyConfigs.releaseSources(pins.sources)
+	s.keyConfigs.remove("api:first")
+	if s.keyConfigs.bytes != 0 || len(s.keyConfigs.sources) != 0 || len(s.keyConfigs.sourceOwners) != 0 {
+		t.Fatal("the failed entry leaked its sources")
 	}
 }
 

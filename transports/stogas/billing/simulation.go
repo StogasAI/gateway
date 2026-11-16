@@ -34,11 +34,13 @@ func (s *Service) SimulationConfig(ctx context.Context, credential *DashboardCre
 	}
 	applied := draft != nil && row.replacePolicy(*draft)
 	snapshot, err := s.composeKeyConfig(row, policySourcePins{}, nil)
+	if snapshot != nil {
+		// The snapshot keeps ordinary references to the sources it composed.
+		s.keyConfigs.releaseSources(snapshot.sourceRefs)
+	}
 	if err != nil {
 		return nil, applied, err
 	}
-	// The snapshot keeps ordinary references to the sources it composed.
-	s.keyConfigs.releaseSources(snapshot.sourceRefs)
 	snapshot.owner, snapshot.credentialPolicies = &s.keyConfigs, make(map[string]*PolicySnapshot)
 	sources := make(map[string]*sharedCredentialPolicy)
 	for _, selections := range snapshot.Credentials {

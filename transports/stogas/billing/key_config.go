@@ -102,6 +102,10 @@ type KeyConfigSnapshot struct {
 	credentialPolicies    map[string]*PolicySnapshot
 	owner                 *keyConfigCache
 	retained              bool
+	// failure is why the policies in Versions do not combine. Like other refusals from cached
+	// settings, it lasts until the entry expires, so a client that retries reaches neither
+	// PostgreSQL nor the compiler.
+	failure error
 }
 
 type keyConfigRow struct {
@@ -165,12 +169,14 @@ func (s *Service) cachedOrFetchKeyConfig(
 	encryptionKeys customerkey.Keys,
 	claims *APIKeyClaims,
 ) (*KeyConfigSnapshot, error) {
-	if snapshot, ok := s.keyConfigs.get(cacheKey, time.Now()); ok && snapshot.Config != nil {
+	if snapshot, err := s.keyConfigs.current(cacheKey, time.Now()); err != nil {
+		return nil, err
+	} else if snapshot != nil {
 		return snapshot, snapshot.checkEncryptionKeys(encryptionKeys)
 	}
 	value, err, _ := s.keyConfigFlights.Do(cacheKey, func() (any, error) {
-		if snapshot, ok := s.keyConfigs.get(cacheKey, time.Now()); ok && snapshot.Config != nil {
-			return snapshot, nil
+		if snapshot, err := s.keyConfigs.current(cacheKey, time.Now()); snapshot != nil || err != nil {
+			return snapshot, err
 		}
 		return s.fetchKeyConfig(
 			ctx,
@@ -274,19 +280,24 @@ func (s *Service) fetchKeyConfig(
 		return nil, ErrInvalidAPIKey
 	}
 	snapshot, err := s.composeKeyConfig(row, pins, encryptionKeys)
-	if err != nil {
+	if snapshot == nil {
 		return nil, err
 	}
 	defer s.keyConfigs.releaseSources(snapshot.sourceRefs)
-	return s.keyConfigs.put(cacheKey, snapshot, checkedAt), nil
+	// A newer entry that the cache keeps instead answers this request too.
+	if snapshot = s.keyConfigs.put(cacheKey, snapshot, checkedAt); snapshot.failure != nil {
+		return nil, snapshot.failure
+	}
+	return snapshot, nil
 }
 
 // composeKeyConfig compiles a key's policies and checks its credentials. The
 // caller releases the snapshot's source references. An invalid combination
-// fails every request until someone changes a policy, so it is not reported
-// as an unavailable gateway.
+// fails every request of the key until someone changes a policy, so it is not
+// reported as an unavailable gateway, and it returns a snapshot that records
+// the failure along with the error.
 func (s *Service) composeKeyConfig(row keyConfigRow, pins policySourcePins, encryptionKeys customerkey.Keys) (*KeyConfigSnapshot, error) {
-	if len(row.Sources) < 2 || len(row.Sources) > 36 {
+	if len(row.Sources) < 2 || len(row.Sources) > 36 || row.CredentialsGeneration == nil || *row.CredentialsGeneration < 1 {
 		return nil, ErrGatewayUnavailable
 	}
 	first, last := row.Sources[0], row.Sources[len(row.Sources)-1]
@@ -295,30 +306,43 @@ func (s *Service) composeKeyConfig(row keyConfigRow, pins policySourcePins, encr
 		return nil, ErrGatewayUnavailable
 	}
 	sources, err := s.keyConfigs.acquireSourceDelta(row.Sources, row.Claims.OrganizationID, pins, encryptionKeys)
-	if err != nil {
-		if errors.Is(err, customerkey.ErrKey) || errors.Is(err, customerkey.ErrEnvelope) || errors.Is(err, policy.ErrInvalidConfig) {
-			return nil, err
+	versions := make(PolicyVersions, len(row.Sources))
+	for i, record := range row.Sources {
+		versions[i] = record.PolicyVersion
+	}
+	var compiled *policy.Config
+	var digest string
+	if err == nil {
+		values := make([]policy.ScopedSource, len(sources))
+		for i, source := range sources {
+			values[i] = policy.ScopedSource{Scope: versions[i].Scope, Value: source.value}
 		}
-		return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, err)
+		digest = policy.ChainDigest(values)
+		compiled, err = s.keyConfigs.composeSources(values, digest)
 	}
-	versions := make(PolicyVersions, len(sources))
-	values := make([]policy.ScopedSource, len(sources))
-	for i, source := range sources {
-		versions[i] = row.Sources[i].PolicyVersion
-		values[i] = policy.ScopedSource{Scope: versions[i].Scope, Value: source.value}
+	// Routing sources never open encrypted content, so the failure is the same for every request
+	// of the key. It keeps the sources that compiled, so that the organization's other keys, which
+	// share its policy, do not compile them again.
+	if errors.Is(err, policy.ErrInvalidConfig) {
+		refs := make([]*sharedPolicySource, len(row.Sources))
+		copy(refs, sources)
+		return &KeyConfigSnapshot{
+			Claims:                row.Claims,
+			PolicySnapshot:        PolicySnapshot{Versions: &versions, sourceRefs: refs},
+			CredentialsGeneration: *row.CredentialsGeneration,
+			failure:               err,
+		}, err
 	}
-	digest := policy.ChainDigest(values)
-	compiled, err := s.keyConfigs.composeSources(values, digest)
 	if err == nil {
 		row.Credentials = knownCredentials(row.Credentials)
 		err = restoreCredentialPolicySources(row.Credentials, pins, row.CredentialSources)
 	}
-	if err == nil && (row.CredentialsGeneration == nil || *row.CredentialsGeneration < 1 || validateCredentials(row.Claims, row.Credentials) != nil) {
+	if err == nil && validateCredentials(row.Claims, row.Credentials) != nil {
 		err = ErrGatewayUnavailable
 	}
 	if err != nil {
 		s.keyConfigs.releaseSources(sources)
-		if errors.Is(err, policy.ErrInvalidConfig) || errors.Is(err, ErrGatewayUnavailable) {
+		if errors.Is(err, customerkey.ErrKey) || errors.Is(err, ErrGatewayUnavailable) {
 			return nil, err
 		}
 		return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, err)
@@ -371,8 +395,8 @@ func (s *Service) confirmKeyConfig(apiKeyHash string, dashboard *DashboardCreden
 	// Invalidation wins once and retains reusable compilation. Concurrent misses share this fetch, whose
 	// existing timeout bounds its lifetime independently of the inference.
 	s.keyConfigFlights.DoChan(key, func() (any, error) {
-		if existing, ok := s.keyConfigs.get(key, time.Now()); ok && existing.Config != nil {
-			return existing, nil
+		if existing, err := s.keyConfigs.current(key, time.Now()); existing != nil || err != nil {
+			return existing, err
 		}
 		return s.fetchKeyConfig(context.Background(), key, hash, dashboard, expectedKeyID, nil, snapshot.Claims)
 	})

@@ -3,6 +3,7 @@ package billing
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"runtime"
 	"strconv"
 
@@ -121,6 +122,15 @@ func (c *keyConfigCache) acquireSourceDelta(records []policySourceRecord, organi
 		return nil, ErrGatewayUnavailable
 	}
 	result := make([]*sharedPolicySource, 0, len(records))
+	// When the chain itself is invalid, the caller keeps the sources acquired so far, in order;
+	// any other failure releases them.
+	fail := func(err error) ([]*sharedPolicySource, error) {
+		if errors.Is(err, policy.ErrInvalidConfig) {
+			return result, err
+		}
+		c.releaseSources(result)
+		return nil, err
+	}
 	seen := make(map[string]bool, len(records))
 	var budget policy.SourceBudget
 	for _, record := range records {
@@ -142,8 +152,7 @@ func (c *keyConfigCache) acquireSourceDelta(records []policySourceRecord, organi
 				return nil, customerkey.ErrKey
 			}
 			if err := budget.AddSource(source.value); err != nil {
-				c.releaseSources(result)
-				return nil, err
+				return fail(err)
 			}
 			c.mu.Lock()
 			source.refs++
@@ -159,18 +168,15 @@ func (c *keyConfigCache) acquireSourceDelta(records []policySourceRecord, organi
 			err = budget.AddDocument(parsed)
 		}
 		if err != nil {
-			c.releaseSources(result)
-			return nil, err
+			return fail(err)
 		}
 		source, err := c.acquireSourceDocument(parsed, document, organizationID, key, true)
 		if err != nil {
-			c.releaseSources(result)
-			return nil, err
+			return fail(err)
 		}
 		result = append(result, source)
 		if err := budget.AddSource(source.value); err != nil {
-			c.releaseSources(result)
-			return nil, err
+			return fail(err)
 		}
 	}
 	return result, nil

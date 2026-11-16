@@ -89,6 +89,19 @@ func (c *keyConfigCache) get(key string, now time.Time) (*KeyConfigSnapshot, boo
 	return nil, false
 }
 
+// current answers from the key's unexpired entry: its settings, or the reason its policies do not
+// combine. It returns neither when the gateway must ask PostgreSQL.
+func (c *keyConfigCache) current(key string, now time.Time) (*KeyConfigSnapshot, error) {
+	snapshot, ok := c.get(key, now)
+	switch {
+	case ok && snapshot.failure != nil:
+		return nil, snapshot.failure
+	case ok && snapshot.Config != nil:
+		return snapshot, nil
+	}
+	return nil, nil
+}
+
 // Retain source references across the database wait even if capacity eviction
 // removes this key meanwhile. The caller releases the pins after installation.
 func (c *keyConfigCache) pinForRefresh(key string) *KeyConfigSnapshot {
