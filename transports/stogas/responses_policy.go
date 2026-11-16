@@ -8,6 +8,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	anthropicprovider "github.com/maximhq/bifrost/core/providers/anthropic"
+	openaiprovider "github.com/maximhq/bifrost/core/providers/openai"
 	providerutils "github.com/maximhq/bifrost/core/providers/utils"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
@@ -116,7 +117,7 @@ func validateBridgedResponsesNamespaces(raw json.RawMessage) error {
 			continue
 		}
 		path := fmt.Sprintf("tools[%d]", index)
-		name, err := validateResponsesNamespaceTool(tool, path)
+		name, err := validateResponsesNamespaceTool(tool, path, false)
 		if err != nil {
 			return err
 		}
@@ -298,6 +299,8 @@ func parseResponsesTools(state *State, raw json.RawMessage) ([]schemas.Responses
 	seenNamespaces := make(map[string]bool)
 	seenHostedTypes := make(map[schemas.ResponsesToolType]bool, len(rawTools))
 	seenServers := make(map[string]bool)
+	// deferred is the first tool that defers its loading to a tool search.
+	deferred := ""
 	for index, rawTool := range rawTools {
 		if err := validateRawResponsesToolType(state, rawTool); err != nil {
 			return nil, err
@@ -312,6 +315,9 @@ func parseResponsesTools(state *State, raw json.RawMessage) ([]schemas.Responses
 				return nil, invalidRequest(fmt.Sprintf("tools[%d].name duplicates another client tool", index))
 			}
 			seenNames[name] = true
+			if deferred == "" && rawBool(rawTool["defer_loading"]) {
+				deferred = fmt.Sprintf("tools[%d]", index)
+			}
 		case schemas.ResponsesToolTypeNamespace:
 			if seenNamespaces[name] {
 				return nil, invalidRequest(fmt.Sprintf("tools[%d].name duplicates another namespace", index))
@@ -320,6 +326,9 @@ func parseResponsesTools(state *State, raw json.RawMessage) ([]schemas.Responses
 			for member, entry := range catalog.ResponsesToolList([]map[string]json.RawMessage{rawTool}) {
 				if err := validateRawResponsesToolType(state, entry.Tool); err != nil {
 					return nil, err
+				}
+				if deferred == "" && rawBool(entry.Tool["defer_loading"]) {
+					deferred = fmt.Sprintf("tools[%d].tools[%d]", index, member)
 				}
 				if entry.Namespace != "" {
 					continue
@@ -331,9 +340,10 @@ func parseResponsesTools(state *State, raw json.RawMessage) ([]schemas.Responses
 				}
 				seenNames[memberName] = true
 			}
-		case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview, schemas.ResponsesToolTypeWebFetch:
+		case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview, schemas.ResponsesToolTypeWebFetch,
+			schemas.ResponsesToolTypeToolSearch:
 			if seenHostedTypes[toolType] {
-				return nil, invalidRequest(fmt.Sprintf("tools[%d].type duplicates another hosted tool", index))
+				return nil, invalidRequest(fmt.Sprintf("tools[%d].type duplicates another %s tool", index, toolType))
 			}
 			seenHostedTypes[toolType] = true
 		case schemas.ResponsesToolTypeMCP:
@@ -344,6 +354,16 @@ func parseResponsesTools(state *State, raw json.RawMessage) ([]schemas.Responses
 			seenServers[name] = true
 		}
 	}
+	if deferred != "" {
+		// Core keeps defer_loading only for the models that it knows take tool search, and would
+		// send the tool with all the others at once to any other.
+		if model := state.Resolution.Deployment.Upstream.Model; !openaiprovider.SupportsToolSearch(state.Resolution.Provider, model) {
+			return nil, invalidRequest(deferred + ".defer_loading is not supported for model " + model)
+		}
+		if !seenHostedTypes[schemas.ResponsesToolTypeToolSearch] {
+			return nil, invalidRequest(deferred + ".defer_loading needs a tool_search tool")
+		}
+	}
 	var tools []schemas.ResponsesTool
 	if err := sonic.Unmarshal(raw, &tools); err != nil {
 		return nil, invalidRequest("tools must be an array")
@@ -352,11 +372,11 @@ func parseResponsesTools(state *State, raw json.RawMessage) ([]schemas.Responses
 		switch tool.Type {
 		case schemas.ResponsesToolTypeFunction, schemas.ResponsesToolTypeCustom, schemas.ResponsesToolTypeNamespace:
 		case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview, schemas.ResponsesToolTypeWebFetch:
-		case schemas.ResponsesToolTypeMCP:
+		case schemas.ResponsesToolTypeMCP, schemas.ResponsesToolTypeToolSearch:
 		case schemas.ResponsesToolTypeShell, schemas.ResponsesToolTypeApplyPatch:
 		case catalog.AnthropicBashToolType, catalog.AnthropicTextEditorToolType:
 		default:
-			return nil, invalidRequest("Only function, custom, namespace, shell, apply_patch, web_fetch, and priced hosted web search tools are supported")
+			return nil, invalidRequest("Only function, custom, namespace, shell, apply_patch, tool_search, web_fetch, and priced hosted web search tools are supported")
 		}
 	}
 	return tools, nil
@@ -389,14 +409,16 @@ func validateRawResponsesToolShape(state *State, tool map[string]json.RawMessage
 	}
 	switch toolType {
 	case schemas.ResponsesToolTypeFunction:
-		name, err := validateResponsesFunctionTool(tool, path, maxClientToolName)
+		name, err := validateResponsesFunctionTool(tool, path, maxClientToolName, false)
 		return toolType, name, err
 	case schemas.ResponsesToolTypeCustom:
 		name, err := validateResponsesCustomTool(tool, path, maxClientToolName)
 		return toolType, name, err
 	case schemas.ResponsesToolTypeNamespace:
-		name, err := validateResponsesNamespaceTool(tool, path)
+		name, err := validateResponsesNamespaceTool(tool, path, false)
 		return toolType, name, err
+	case schemas.ResponsesToolTypeToolSearch:
+		return toolType, "", validateResponsesToolSearchTool(tool, path)
 	case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview:
 		return toolType, "", validateResponsesWebSearchTool(state, tool, path, toolType)
 	case schemas.ResponsesToolTypeWebFetch:
@@ -440,6 +462,39 @@ func validateAnthropicClientTool(tool map[string]json.RawMessage, path, name str
 func responsesLocalToolsSupported(state *State) bool {
 	return state != nil && state.Resolution != nil && state.Resolution.Route == catalog.RouteResponses &&
 		state.Resolution.Provider == schemas.OpenAI
+}
+
+// responsesToolSearchSupported reports whether the deployment takes OpenAI's tool search: OpenAI's
+// own Responses API, on which a search and the tools that it loads replay in input without stored
+// state (capture openai/tool-search). A search costs only its tokens. Azure's is unreviewed.
+func responsesToolSearchSupported(state *State) bool {
+	return state != nil && state.Resolution != nil && state.Resolution.Route == catalog.RouteResponses &&
+		state.Resolution.Provider == schemas.OpenAI
+}
+
+// validateResponsesToolSearchTool checks a tool_search tool. OpenAI runs the search over the
+// request's deferred tools, or with execution client, the model asks the client, which answers
+// with the tools to load. The two produce different reply items, so execution must be one of them.
+func validateResponsesToolSearchTool(tool map[string]json.RawMessage, path string) error {
+	if err := rejectUnsupportedResponsesToolKeys(tool, path, "type", "execution", "description", "parameters"); err != nil {
+		return err
+	}
+	if raw := tool["execution"]; rawJSONValueSet(raw) {
+		if execution, _ := rawStringValue(raw); execution != "server" && execution != schemas.ToolSearchExecutionClient {
+			return invalidRequest(path + ".execution must be server or client")
+		}
+	}
+	if raw := tool["description"]; rawJSONValueSet(raw) {
+		if err := validateResponsesToolDescription(raw, path+".description"); err != nil {
+			return err
+		}
+	}
+	if raw := tool["parameters"]; rawJSONValueSet(raw) {
+		if schema, ok := rawObject(raw); !ok || schema == nil {
+			return invalidRequest(path + ".parameters must be an object")
+		}
+	}
+	return nil
 }
 
 // validateResponsesShellTool accepts only a shell that the client runs. A hosted environment
@@ -488,8 +543,9 @@ func validateResponsesShellTool(tool map[string]json.RawMessage, path string) er
 
 // validateResponsesNamespaceTool checks a namespace and its tools. A namespace holds only function
 // and custom tools, as on OpenAI, whose names may be longer than top-level ones. The tools of a
-// namespace need different names, so that a call names one of them.
-func validateResponsesNamespaceTool(tool map[string]json.RawMessage, path string) (string, error) {
+// namespace need different names, so that a call names one of them. loaded marks a namespace that
+// a tool_search_output loads.
+func validateResponsesNamespaceTool(tool map[string]json.RawMessage, path string, loaded bool) (string, error) {
 	if err := rejectUnsupportedResponsesToolKeys(tool, path, "type", "name", "description", "tools"); err != nil {
 		return "", err
 	}
@@ -520,7 +576,7 @@ func validateResponsesNamespaceTool(tool map[string]json.RawMessage, path string
 		}
 		var memberName string
 		if memberType == "function" {
-			memberName, err = validateResponsesFunctionTool(member, memberPath, maxNamespacedToolName)
+			memberName, err = validateResponsesFunctionTool(member, memberPath, maxNamespacedToolName, loaded)
 		} else {
 			memberName, err = validateResponsesCustomTool(member, memberPath, maxNamespacedToolName)
 		}
@@ -535,8 +591,14 @@ func validateResponsesNamespaceTool(tool map[string]json.RawMessage, path string
 	return name, nil
 }
 
-func validateResponsesFunctionTool(tool map[string]json.RawMessage, path string, maxName int) (string, error) {
-	name, err := validateNamedResponsesTool(tool, path, maxName, "parameters", "strict")
+// validateResponsesFunctionTool checks a function tool. loaded marks one that a tool_search_output
+// loads, which can carry the output_schema that OpenAI's own search returns each function with.
+func validateResponsesFunctionTool(tool map[string]json.RawMessage, path string, maxName int, loaded bool) (string, error) {
+	keys := []string{"parameters", "strict", "defer_loading"}
+	if loaded {
+		keys = append(keys, "output_schema")
+	}
+	name, err := validateNamedResponsesTool(tool, path, maxName, keys...)
 	if err != nil {
 		return "", err
 	}
@@ -546,10 +608,17 @@ func validateResponsesFunctionTool(tool map[string]json.RawMessage, path string,
 			return "", invalidRequest(path + ".parameters must be an object")
 		}
 	}
-	if strict, ok := tool["strict"]; ok {
-		var value bool
-		if err := sonic.Unmarshal(strict, &value); err != nil {
-			return "", invalidRequest(path + ".strict must be a boolean")
+	if raw := tool["output_schema"]; rawJSONValueSet(raw) {
+		if schema, ok := rawObject(raw); !ok || schema == nil {
+			return "", invalidRequest(path + ".output_schema must be an object")
+		}
+	}
+	for _, key := range []string{"strict", "defer_loading"} {
+		if raw, ok := tool[key]; ok {
+			var value bool
+			if err := sonic.Unmarshal(raw, &value); err != nil {
+				return "", invalidRequest(path + "." + key + " must be a boolean")
+			}
 		}
 	}
 	if err := validateResponsesToolCacheControl(tool["cache_control"], path+".cache_control"); err != nil {
@@ -559,9 +628,15 @@ func validateResponsesFunctionTool(tool map[string]json.RawMessage, path string,
 }
 
 func validateResponsesCustomTool(tool map[string]json.RawMessage, path string, maxName int) (string, error) {
-	name, err := validateNamedResponsesTool(tool, path, maxName, "format")
+	name, err := validateNamedResponsesTool(tool, path, maxName, "format", "defer_loading")
 	if err != nil {
 		return "", err
+	}
+	if raw, ok := tool["defer_loading"]; ok {
+		var deferred bool
+		if err := sonic.Unmarshal(raw, &deferred); err != nil {
+			return "", invalidRequest(path + ".defer_loading must be a boolean")
+		}
 	}
 	if formatRaw, ok := tool["format"]; ok {
 		format, ok := rawObject(formatRaw)
@@ -645,8 +720,10 @@ func validateResponsesWebSearchTool(state *State, tool map[string]json.RawMessag
 
 	allowed := []string{"type", "search_context_size", "user_location"}
 	if toolType == schemas.ResponsesToolTypeWebSearch {
-		// Searching only cached pages changes neither the call fee nor the content billed.
-		allowed = append(allowed, "filters", "external_web_access")
+		// Searching only cached pages changes neither the call fee nor the content billed, and a
+		// search for images costs what one for text does: the call fee and the content at the
+		// model's rates.
+		allowed = append(allowed, "filters", "external_web_access", "search_content_types")
 	}
 	if err := rejectUnsupportedResponsesToolKeys(tool, path, allowed...); err != nil {
 		return err
@@ -658,6 +735,17 @@ func validateResponsesWebSearchTool(state *State, tool map[string]json.RawMessag
 		return err
 	}
 	if toolType == schemas.ResponsesToolTypeWebSearch {
+		if raw := tool["search_content_types"]; rawJSONValueSet(raw) {
+			var kinds []string
+			if err := sonic.Unmarshal(raw, &kinds); err != nil {
+				return invalidRequest(path + ".search_content_types must be an array of text and image")
+			}
+			for _, kind := range kinds {
+				if kind != "text" && kind != "image" {
+					return invalidRequest(path + ".search_content_types must be an array of text and image")
+				}
+			}
+		}
 		return validateResponsesDomainFilters(tool["filters"], path+".filters")
 	}
 	return nil
@@ -1279,7 +1367,8 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 		if validation.pendingCalls > 0 {
 			switch itemType {
 			case "function_call", "function_call_output", "custom_tool_call", "custom_tool_call_output",
-				"shell_call", "shell_call_output", "apply_patch_call", "apply_patch_call_output":
+				"shell_call", "shell_call_output", "apply_patch_call", "apply_patch_call_output",
+				"tool_search_call", "tool_search_output":
 			// Reasoning, MCP and hosted tool items are the provider's own steps, which a response can
 			// interleave with client calls, as Claude does with a progress update before each call.
 			case "reasoning", "mcp_list_tools", "mcp_call", "mcp_approval_request", "mcp_approval_response",
@@ -1369,6 +1458,19 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 				return err
 			}
 			turn.call()
+		case "tool_search_call", "tool_search_output":
+			if !responsesToolSearchSupported(state) {
+				return invalidRequest(itemType + " input items are supported only for OpenAI deployments")
+			}
+			callID, err := validateResponsesToolSearchInput(item, path, itemType, &validation)
+			if err != nil {
+				return err
+			}
+			if itemType == "tool_search_output" && callID != "" {
+				turn.result(callID)
+			} else {
+				turn.call()
+			}
 		case "input_file":
 			return invalidRequest("file inputs are not supported")
 		default:
@@ -1699,6 +1801,103 @@ func validateResponsesToolCallInput(state *State, item map[string]json.RawMessag
 	}
 	validation.calls[callID] = kind
 	validation.pendingCalls++
+	return nil
+}
+
+// validateResponsesToolSearchInput checks a tool_search_call or tool_search_output that a reply
+// returned, or the client's output for its own search, and returns the call ID of a search that the
+// client runs. That search's output answers the call, as a client tool result does. OpenAI's own
+// search has no call ID and needs no answer.
+func validateResponsesToolSearchInput(item map[string]json.RawMessage, path, itemType string, validation *responsesInputValidation) (string, error) {
+	payload := "arguments"
+	if itemType == "tool_search_output" {
+		payload = "tools"
+	}
+	if err := rejectUnsupportedInputKeys(item, path, "type", "id", "status", "call_id", "execution", payload); err != nil {
+		return "", err
+	}
+	if err := validateResponsesInputItemIdentity(item, path); err != nil {
+		return "", err
+	}
+	if itemType == "tool_search_call" {
+		if arguments, ok := rawObject(item["arguments"]); !ok || arguments == nil {
+			return "", invalidRequest(path + ".arguments must be an object")
+		}
+	} else if err := validateResponsesLoadedTools(item["tools"], path+".tools"); err != nil {
+		return "", err
+	}
+	execution, _ := rawStringValue(item["execution"])
+	switch execution {
+	case "server":
+		if rawJSONValueSet(item["call_id"]) {
+			return "", invalidRequest(path + ".call_id must be null when OpenAI runs the search")
+		}
+		return "", nil
+	case schemas.ToolSearchExecutionClient:
+	default:
+		return "", invalidRequest(path + ".execution must be server or client")
+	}
+	callID, err := requiredInputString(item, "call_id", path, false)
+	if err != nil {
+		return "", err
+	}
+	if len(callID) > 64 {
+		return "", invalidRequest(path + ".call_id must contain at most 64 bytes")
+	}
+	if itemType == "tool_search_call" {
+		if _, exists := validation.calls[callID]; exists {
+			return "", invalidRequest(path + ".call_id duplicates another client tool call")
+		}
+		validation.calls[callID] = "tool_search"
+		validation.pendingCalls++
+		return callID, nil
+	}
+	switch kind, exists := validation.calls[callID]; {
+	case !exists:
+		return "", invalidRequest(path + ".call_id must match an earlier client tool call")
+	case kind != "tool_search":
+		return "", invalidRequest(path + ".call_id selects a different client tool type")
+	case validation.outputs[callID]:
+		return "", invalidRequest(path + ".call_id duplicates a client tool output")
+	}
+	validation.outputs[callID] = true
+	validation.pendingCalls--
+	validation.meaningful = true
+	return callID, nil
+}
+
+// validateResponsesLoadedTools checks the tools that a tool_search_output loads, which the model
+// then calls as it calls the request's own tools: function, custom and namespace tools, checked as
+// those are.
+func validateResponsesLoadedTools(raw json.RawMessage, path string) error {
+	tools, err := rawjson.Array(raw)
+	if err != nil {
+		return invalidRequest(path + " must be an array")
+	}
+	for index, rawTool := range tools {
+		toolPath := fmt.Sprintf("%s[%d]", path, index)
+		tool, err := rawjson.Object(rawTool)
+		if err != nil {
+			return invalidRequest(toolPath + " must be an object")
+		}
+		// OpenAI receives the item as the client sends it.
+		if _, ok := tool["cache_control"]; ok {
+			return invalidRequest(toolPath + ".cache_control is not supported")
+		}
+		switch rawString(tool["type"]) {
+		case "function":
+			_, err = validateResponsesFunctionTool(tool, toolPath, maxClientToolName, true)
+		case "custom":
+			_, err = validateResponsesCustomTool(tool, toolPath, maxClientToolName)
+		case "namespace":
+			_, err = validateResponsesNamespaceTool(tool, toolPath, true)
+		default:
+			return invalidRequest(toolPath + ".type must be function, custom or namespace")
+		}
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

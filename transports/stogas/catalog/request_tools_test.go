@@ -34,6 +34,14 @@ func TestRequestFactsListToolsServersAndSystemMessages(t *testing.T) {
 			body: `{"tools":[{"type":"function","name":"lookup"},{"type":"namespace","name":"functions","description":"","tools":[{"type":"function","name":"exec"}]},` +
 				`{"type":"namespace","name":"crm","description":"CRM tools.","tools":[{"type":"function","name":"find"},{"type":"custom","name":"note"}]}]}`,
 			client: []string{"exec", "find", "lookup", "note"}},
+		// A search that the client runs can load tools that the request does not declare.
+		{name: "tools that a tool search loaded", route: RouteResponses,
+			body: `{"tools":[{"type":"function","name":"lookup"}],"input":[{"type":"tool_search_output","call_id":"call_1","execution":"client","tools":[` +
+				`{"type":"namespace","name":"crm","description":"CRM tools.","tools":[{"type":"function","name":"find"},{"type":"custom","name":"note"}]},{"type":"function","name":"run_shell"}]}]}`,
+			client: []string{"find", "lookup", "note", "run_shell"}},
+		{name: "a loaded tool whose item type JSON escapes", route: RouteResponses,
+			body:   `{"input":[{"type":"tool_search\u005foutput","tools":[{"type":"function","name":"run_shell"}]}]}`,
+			client: []string{"run_shell"}},
 		{name: "a forced function counts every function", route: RouteResponses,
 			body: `{"tools":` + responsesTools + `,"tool_choice":{"type":"function","name":"lookup"}}`, client: []string{"lookup"}},
 		{name: "shell and apply_patch by their types", route: RouteResponses,

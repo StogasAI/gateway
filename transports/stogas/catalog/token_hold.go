@@ -225,9 +225,10 @@ func collectMessageObject(raw json.RawMessage, stats *inputHoldStats) {
 	}
 	itemType := rawStringValue(object["type"])
 	switch itemType {
-	case "function_call", "function_call_output", "tool_call", "tool_result",
+	case "function_call", "function_call_output", "custom_tool_call", "custom_tool_call_output", "tool_call", "tool_result",
 		"shell_call", "shell_call_output", "apply_patch_call", "apply_patch_call_output",
-		"web_search_call", "web_fetch_call":
+		"web_search_call", "web_fetch_call", "tool_search_call", "tool_search_output",
+		"mcp_list_tools", "mcp_call", "mcp_approval_request", "mcp_approval_response":
 		stats.ToolEvents++
 	}
 	if rawToolCalls, ok := object["tool_calls"]; ok {
@@ -239,8 +240,12 @@ func collectMessageObject(raw json.RawMessage, stats *inputHoldStats) {
 	}
 	for key, value := range object {
 		switch key {
-		case "content", "role", "type", "tool_calls", "tools", "response_format", "metadata":
+		case "content", "role", "type", "tool_calls", "response_format", "metadata":
 			continue
+		case "tools":
+			// The tools that a tool search loaded, or that an MCP server listed, reach the model as
+			// the request's own tools do.
+			appendToolDefinitions(value, stats)
 		case "reasoning":
 			// Anthropic history repeats the visible summary beside signed details.
 			// The authenticated envelope supplies the actual thinking input.

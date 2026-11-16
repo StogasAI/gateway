@@ -154,10 +154,12 @@ type providerResponsesItem struct {
 	compactionPayload string
 	toolCallerPayload string
 	toolActionPayload string
-	parts             map[int]*providerResponsesPart
-	reasoningParts    map[int]*providerResponsesPart
-	value             *bytes.Buffer
-	valueDone         bool
+	// execution is where a tool search runs: server or client.
+	execution      string
+	parts          map[int]*providerResponsesPart
+	reasoningParts map[int]*providerResponsesPart
+	value          *bytes.Buffer
+	valueDone      bool
 	// commands holds the streamed commands of a shell call.
 	commands         []*providerResponsesCommand
 	completedPayload string

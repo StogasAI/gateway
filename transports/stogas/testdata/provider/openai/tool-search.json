@@ -1,0 +1,1715 @@
+{
+	"shows": "With store: false, OpenAI streams a tool search that the client runs as one tool_search_call and takes back the call with the tools that its tool_search_output loads; its own search streams a call and an output that load the deferred tools, which it takes back too. It refuses deferred tools without tool_search, and takes search_content_types on web_search.",
+	"recorded": "2026-11-16",
+	"exchanges": [
+		{
+			"name": "client search stream",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-5.4-mini",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 300,
+					"parallel_tool_calls": false,
+					"tools": [
+						{
+							"type": "tool_search",
+							"execution": "client",
+							"description": "Finds tools for a goal.",
+							"parameters": {
+								"type": "object",
+								"properties": {
+									"goal": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"goal"
+								],
+								"additionalProperties": false
+							}
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Look up customer 42 in the CRM."
+						}
+					],
+					"stream": true
+				}
+			},
+			"response": {
+				"status": 200,
+				"events": [
+					{
+						"type": "response.created",
+						"response": {
+							"id": "resp_06a6c0e914bf5aff016afa779c58dc87d19cd965f3c863243c",
+							"object": "response",
+							"created_at": 1794799516,
+							"status": "in_progress",
+							"access_programs": null,
+							"background": false,
+							"completed_at": null,
+							"error": null,
+							"frequency_penalty": 0,
+							"image": {
+								"context_compression": "disabled"
+							},
+							"incomplete_details": null,
+							"input_transformations": [],
+							"instructions": null,
+							"max_output_tokens": 300,
+							"max_tool_calls": null,
+							"model": "gpt-5.4-mini-2026-03-17",
+							"moderation": null,
+							"output": [],
+							"parallel_tool_calls": false,
+							"presence_penalty": 0,
+							"previous_response_id": null,
+							"prompt_cache_key": null,
+							"prompt_cache_retention": "24h",
+							"reasoning": {
+								"context": "current_turn",
+								"effort": "none",
+								"mode": "standard",
+								"summary": null
+							},
+							"safety_identifier": null,
+							"service_tier": "auto",
+							"store": false,
+							"temperature": 1,
+							"text": {
+								"format": {
+									"type": "text"
+								},
+								"verbosity": "medium"
+							},
+							"tool_choice": "auto",
+							"tool_usage": {
+								"image_gen": {
+									"input_tokens": 0,
+									"input_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"output_tokens": 0,
+									"output_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"total_tokens": 0
+								},
+								"web_search": {
+									"num_requests": 0
+								}
+							},
+							"tools": [
+								{
+									"type": "tool_search",
+									"description": "Finds tools for a goal.",
+									"execution": "client",
+									"parameters": {
+										"type": "object",
+										"properties": {
+											"goal": {
+												"type": "string"
+											}
+										},
+										"required": [
+											"goal"
+										],
+										"additionalProperties": false
+									}
+								}
+							],
+							"top_logprobs": 0,
+							"top_p": 0.98,
+							"truncation": "disabled",
+							"usage": null,
+							"user": null,
+							"metadata": {}
+						},
+						"sequence_number": 0
+					},
+					{
+						"type": "response.in_progress",
+						"response": {
+							"id": "resp_06a6c0e914bf5aff016afa779c58dc87d19cd965f3c863243c",
+							"object": "response",
+							"created_at": 1794799516,
+							"status": "in_progress",
+							"access_programs": null,
+							"background": false,
+							"completed_at": null,
+							"error": null,
+							"frequency_penalty": 0,
+							"image": {
+								"context_compression": "disabled"
+							},
+							"incomplete_details": null,
+							"input_transformations": [],
+							"instructions": null,
+							"max_output_tokens": 300,
+							"max_tool_calls": null,
+							"model": "gpt-5.4-mini-2026-03-17",
+							"moderation": null,
+							"output": [],
+							"parallel_tool_calls": false,
+							"presence_penalty": 0,
+							"previous_response_id": null,
+							"prompt_cache_key": null,
+							"prompt_cache_retention": "24h",
+							"reasoning": {
+								"context": "current_turn",
+								"effort": "none",
+								"mode": "standard",
+								"summary": null
+							},
+							"safety_identifier": null,
+							"service_tier": "auto",
+							"store": false,
+							"temperature": 1,
+							"text": {
+								"format": {
+									"type": "text"
+								},
+								"verbosity": "medium"
+							},
+							"tool_choice": "auto",
+							"tool_usage": {
+								"image_gen": {
+									"input_tokens": 0,
+									"input_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"output_tokens": 0,
+									"output_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"total_tokens": 0
+								},
+								"web_search": {
+									"num_requests": 0
+								}
+							},
+							"tools": [
+								{
+									"type": "tool_search",
+									"description": "Finds tools for a goal.",
+									"execution": "client",
+									"parameters": {
+										"type": "object",
+										"properties": {
+											"goal": {
+												"type": "string"
+											}
+										},
+										"required": [
+											"goal"
+										],
+										"additionalProperties": false
+									}
+								}
+							],
+							"top_logprobs": 0,
+							"top_p": 0.98,
+							"truncation": "disabled",
+							"usage": null,
+							"user": null,
+							"metadata": {}
+						},
+						"sequence_number": 1
+					},
+					{
+						"type": "response.output_item.added",
+						"item": {
+							"id": "tsc_06a6c0e914bf5aff016afa779cf2b887d1b00e28188ff5ce33",
+							"type": "tool_search_call",
+							"status": "in_progress",
+							"arguments": {},
+							"call_id": "call_XAOoe2DdPwUQcdFr05SX9CAQ",
+							"execution": "client"
+						},
+						"output_index": 0,
+						"sequence_number": 2
+					},
+					{
+						"type": "response.output_item.done",
+						"item": {
+							"id": "tsc_06a6c0e914bf5aff016afa779cf2b887d1b00e28188ff5ce33",
+							"type": "tool_search_call",
+							"status": "completed",
+							"arguments": {
+								"goal": "Find CRM lookup or customer record retrieval tool for customer 42"
+							},
+							"call_id": "call_XAOoe2DdPwUQcdFr05SX9CAQ",
+							"execution": "client"
+						},
+						"output_index": 0,
+						"sequence_number": 3
+					},
+					{
+						"type": "response.completed",
+						"response": {
+							"id": "resp_06a6c0e914bf5aff016afa779c58dc87d19cd965f3c863243c",
+							"object": "response",
+							"created_at": 1794799516,
+							"status": "completed",
+							"access_programs": null,
+							"background": false,
+							"completed_at": 1794799517,
+							"error": null,
+							"frequency_penalty": 0,
+							"image": {
+								"context_compression": "disabled"
+							},
+							"incomplete_details": null,
+							"input_transformations": [],
+							"instructions": null,
+							"max_output_tokens": 300,
+							"max_tool_calls": null,
+							"model": "gpt-5.4-mini-2026-03-17",
+							"moderation": null,
+							"output": [
+								{
+									"id": "tsc_06a6c0e914bf5aff016afa779cf2b887d1b00e28188ff5ce33",
+									"type": "tool_search_call",
+									"status": "completed",
+									"arguments": {
+										"goal": "Find CRM lookup or customer record retrieval tool for customer 42"
+									},
+									"call_id": "call_XAOoe2DdPwUQcdFr05SX9CAQ",
+									"execution": "client"
+								}
+							],
+							"parallel_tool_calls": false,
+							"presence_penalty": 0,
+							"previous_response_id": null,
+							"prompt_cache_key": null,
+							"prompt_cache_retention": "24h",
+							"reasoning": {
+								"context": "current_turn",
+								"effort": "none",
+								"mode": "standard",
+								"summary": null
+							},
+							"safety_identifier": null,
+							"service_tier": "default",
+							"store": false,
+							"temperature": 1,
+							"text": {
+								"format": {
+									"type": "text"
+								},
+								"verbosity": "medium"
+							},
+							"tool_choice": "auto",
+							"tool_usage": {
+								"image_gen": {
+									"input_tokens": 0,
+									"input_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"output_tokens": 0,
+									"output_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"total_tokens": 0
+								},
+								"web_search": {
+									"num_requests": 0
+								}
+							},
+							"tools": [
+								{
+									"type": "tool_search",
+									"description": "Finds tools for a goal.",
+									"execution": "client",
+									"parameters": {
+										"type": "object",
+										"properties": {
+											"goal": {
+												"type": "string"
+											}
+										},
+										"required": [
+											"goal"
+										],
+										"additionalProperties": false
+									}
+								}
+							],
+							"top_logprobs": 0,
+							"top_p": 0.98,
+							"truncation": "disabled",
+							"usage": {
+								"input_tokens": 131,
+								"input_tokens_details": {
+									"cache_write_tokens": 0,
+									"cache_write_tokens_details": {
+										"ttl_12h_tokens": 0,
+										"ttl_30m_tokens": 0
+									},
+									"cached_tokens": 0
+								},
+								"output_tokens": 37,
+								"output_tokens_details": {
+									"reasoning_tokens": 0
+								},
+								"total_tokens": 168
+							},
+							"user": null,
+							"metadata": {}
+						},
+						"sequence_number": 4
+					}
+				]
+			}
+		},
+		{
+			"name": "client search replay",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-5.4-mini",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 300,
+					"parallel_tool_calls": false,
+					"tools": [
+						{
+							"type": "tool_search",
+							"execution": "client",
+							"description": "Finds tools for a goal.",
+							"parameters": {
+								"type": "object",
+								"properties": {
+									"goal": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"goal"
+								],
+								"additionalProperties": false
+							}
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Look up customer 42 in the CRM."
+						},
+						{
+							"id": "tsc_06a6c0e914bf5aff016afa779cf2b887d1b00e28188ff5ce33",
+							"type": "tool_search_call",
+							"status": "completed",
+							"arguments": {
+								"goal": "Find CRM lookup or customer record retrieval tool for customer 42"
+							},
+							"call_id": "call_XAOoe2DdPwUQcdFr05SX9CAQ",
+							"execution": "client"
+						},
+						{
+							"type": "tool_search_output",
+							"execution": "client",
+							"call_id": "call_XAOoe2DdPwUQcdFr05SX9CAQ",
+							"status": "completed",
+							"tools": [
+								{
+									"type": "namespace",
+									"name": "crm",
+									"description": "Customer records.",
+									"tools": [
+										{
+											"type": "function",
+											"name": "find_customer",
+											"description": "Returns the name and email address of a customer.",
+											"parameters": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "integer"
+													}
+												},
+												"required": [
+													"id"
+												],
+												"additionalProperties": false
+											},
+											"strict": true,
+											"defer_loading": true
+										}
+									]
+								}
+							]
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_06a6c0e914bf5aff016afa779d454887d1bb63cdc39aaa5add",
+					"object": "response",
+					"created_at": 1794799517,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1794799518,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 300,
+					"max_tool_calls": null,
+					"model": "gpt-5.4-mini-2026-03-17",
+					"moderation": null,
+					"output": [
+						{
+							"id": "fc_06a6c0e914bf5aff016afa779e11ac87d1ade94e5639479eb6",
+							"type": "function_call",
+							"status": "completed",
+							"arguments": "{\"id\":42}",
+							"call_id": "call_jniktMiZqYH0n343GL2JOGk1",
+							"name": "find_customer",
+							"namespace": "crm"
+						}
+					],
+					"parallel_tool_calls": false,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "current_turn",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "tool_search",
+							"description": "Finds tools for a goal.",
+							"execution": "client",
+							"parameters": {
+								"type": "object",
+								"properties": {
+									"goal": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"goal"
+								],
+								"additionalProperties": false
+							}
+						},
+						{
+							"type": "namespace",
+							"description": "Customer records.",
+							"name": "crm",
+							"tools": [
+								{
+									"type": "function",
+									"description": "Returns the name and email address of a customer.",
+									"name": "find_customer",
+									"output_schema": null,
+									"parameters": {
+										"type": "object",
+										"properties": {
+											"id": {
+												"type": "integer"
+											}
+										},
+										"required": [
+											"id"
+										],
+										"additionalProperties": false
+									},
+									"strict": true
+								}
+							]
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 315,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 18,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 333
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "hosted search stream",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-5.4-mini",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 300,
+					"parallel_tool_calls": false,
+					"tools": [
+						{
+							"type": "namespace",
+							"name": "crm",
+							"description": "Customer records.",
+							"tools": [
+								{
+									"type": "function",
+									"name": "find_customer",
+									"description": "Returns the name and email address of a customer.",
+									"parameters": {
+										"type": "object",
+										"properties": {
+											"id": {
+												"type": "integer"
+											}
+										},
+										"required": [
+											"id"
+										],
+										"additionalProperties": false
+									},
+									"strict": true,
+									"defer_loading": true
+								}
+							]
+						},
+						{
+							"type": "tool_search"
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Look up customer 42 in the CRM."
+						}
+					],
+					"stream": true
+				}
+			},
+			"response": {
+				"status": 200,
+				"events": [
+					{
+						"type": "response.created",
+						"response": {
+							"id": "resp_0d0a23ba1e3257f8016afa779e53f087d18716713e2b710d99",
+							"object": "response",
+							"created_at": 1794799518,
+							"status": "in_progress",
+							"access_programs": null,
+							"background": false,
+							"completed_at": null,
+							"error": null,
+							"frequency_penalty": 0,
+							"image": {
+								"context_compression": "disabled"
+							},
+							"incomplete_details": null,
+							"input_transformations": [],
+							"instructions": null,
+							"max_output_tokens": 300,
+							"max_tool_calls": null,
+							"model": "gpt-5.4-mini-2026-03-17",
+							"moderation": null,
+							"output": [],
+							"parallel_tool_calls": false,
+							"presence_penalty": 0,
+							"previous_response_id": null,
+							"prompt_cache_key": null,
+							"prompt_cache_retention": "24h",
+							"reasoning": {
+								"context": "current_turn",
+								"effort": "none",
+								"mode": "standard",
+								"summary": null
+							},
+							"safety_identifier": null,
+							"service_tier": "auto",
+							"store": false,
+							"temperature": 1,
+							"text": {
+								"format": {
+									"type": "text"
+								},
+								"verbosity": "medium"
+							},
+							"tool_choice": "auto",
+							"tool_usage": {
+								"image_gen": {
+									"input_tokens": 0,
+									"input_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"output_tokens": 0,
+									"output_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"total_tokens": 0
+								},
+								"web_search": {
+									"num_requests": 0
+								}
+							},
+							"tools": [
+								{
+									"type": "tool_search",
+									"description": null,
+									"parameters": null
+								},
+								{
+									"type": "namespace",
+									"description": "Customer records.",
+									"name": "crm",
+									"tools": [
+										{
+											"type": "function",
+											"defer_loading": true,
+											"description": "Returns the name and email address of a customer.",
+											"name": "find_customer",
+											"output_schema": null,
+											"parameters": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "integer"
+													}
+												},
+												"required": [
+													"id"
+												],
+												"additionalProperties": false
+											},
+											"strict": true
+										}
+									]
+								}
+							],
+							"top_logprobs": 0,
+							"top_p": 0.98,
+							"truncation": "disabled",
+							"usage": null,
+							"user": null,
+							"metadata": {}
+						},
+						"sequence_number": 0
+					},
+					{
+						"type": "response.in_progress",
+						"response": {
+							"id": "resp_0d0a23ba1e3257f8016afa779e53f087d18716713e2b710d99",
+							"object": "response",
+							"created_at": 1794799518,
+							"status": "in_progress",
+							"access_programs": null,
+							"background": false,
+							"completed_at": null,
+							"error": null,
+							"frequency_penalty": 0,
+							"image": {
+								"context_compression": "disabled"
+							},
+							"incomplete_details": null,
+							"input_transformations": [],
+							"instructions": null,
+							"max_output_tokens": 300,
+							"max_tool_calls": null,
+							"model": "gpt-5.4-mini-2026-03-17",
+							"moderation": null,
+							"output": [],
+							"parallel_tool_calls": false,
+							"presence_penalty": 0,
+							"previous_response_id": null,
+							"prompt_cache_key": null,
+							"prompt_cache_retention": "24h",
+							"reasoning": {
+								"context": "current_turn",
+								"effort": "none",
+								"mode": "standard",
+								"summary": null
+							},
+							"safety_identifier": null,
+							"service_tier": "auto",
+							"store": false,
+							"temperature": 1,
+							"text": {
+								"format": {
+									"type": "text"
+								},
+								"verbosity": "medium"
+							},
+							"tool_choice": "auto",
+							"tool_usage": {
+								"image_gen": {
+									"input_tokens": 0,
+									"input_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"output_tokens": 0,
+									"output_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"total_tokens": 0
+								},
+								"web_search": {
+									"num_requests": 0
+								}
+							},
+							"tools": [
+								{
+									"type": "tool_search",
+									"description": null,
+									"parameters": null
+								},
+								{
+									"type": "namespace",
+									"description": "Customer records.",
+									"name": "crm",
+									"tools": [
+										{
+											"type": "function",
+											"defer_loading": true,
+											"description": "Returns the name and email address of a customer.",
+											"name": "find_customer",
+											"output_schema": null,
+											"parameters": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "integer"
+													}
+												},
+												"required": [
+													"id"
+												],
+												"additionalProperties": false
+											},
+											"strict": true
+										}
+									]
+								}
+							],
+							"top_logprobs": 0,
+							"top_p": 0.98,
+							"truncation": "disabled",
+							"usage": null,
+							"user": null,
+							"metadata": {}
+						},
+						"sequence_number": 1
+					},
+					{
+						"type": "response.output_item.added",
+						"item": {
+							"id": "tsc_0d0a23ba1e3257f8016afa779ed81c87d1b42bc0a4e5ffa603",
+							"type": "tool_search_call",
+							"status": "in_progress",
+							"arguments": {},
+							"call_id": null,
+							"execution": "server"
+						},
+						"output_index": 0,
+						"sequence_number": 2
+					},
+					{
+						"type": "response.output_item.done",
+						"item": {
+							"id": "tsc_0d0a23ba1e3257f8016afa779ed81c87d1b42bc0a4e5ffa603",
+							"type": "tool_search_call",
+							"status": "completed",
+							"arguments": {
+								"paths": [
+									"crm"
+								]
+							},
+							"call_id": null,
+							"execution": "server"
+						},
+						"output_index": 0,
+						"sequence_number": 3
+					},
+					{
+						"type": "response.output_item.added",
+						"item": {
+							"id": "tso_0d0a23ba1e3257f8016afa779ef33087d1ab16fcd9735eb7ce",
+							"type": "tool_search_output",
+							"status": "in_progress",
+							"call_id": null,
+							"execution": "server",
+							"tools": [
+								{
+									"type": "namespace",
+									"description": "Customer records.",
+									"name": "crm",
+									"tools": [
+										{
+											"type": "function",
+											"defer_loading": true,
+											"description": "Returns the name and email address of a customer.",
+											"name": "find_customer",
+											"output_schema": null,
+											"parameters": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "integer"
+													}
+												},
+												"required": [
+													"id"
+												],
+												"additionalProperties": false
+											},
+											"strict": true
+										}
+									]
+								}
+							]
+						},
+						"output_index": 1,
+						"sequence_number": 4
+					},
+					{
+						"type": "response.output_item.done",
+						"item": {
+							"id": "tso_0d0a23ba1e3257f8016afa779ef33087d1ab16fcd9735eb7ce",
+							"type": "tool_search_output",
+							"status": "completed",
+							"call_id": null,
+							"execution": "server",
+							"tools": [
+								{
+									"type": "namespace",
+									"description": "Customer records.",
+									"name": "crm",
+									"tools": [
+										{
+											"type": "function",
+											"defer_loading": true,
+											"description": "Returns the name and email address of a customer.",
+											"name": "find_customer",
+											"output_schema": null,
+											"parameters": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "integer"
+													}
+												},
+												"required": [
+													"id"
+												],
+												"additionalProperties": false
+											},
+											"strict": true
+										}
+									]
+								}
+							]
+						},
+						"output_index": 1,
+						"sequence_number": 5
+					},
+					{
+						"type": "response.output_item.added",
+						"item": {
+							"id": "fc_0d0a23ba1e3257f8016afa779f257087d18a5ce1eb746d1e1a",
+							"type": "function_call",
+							"status": "in_progress",
+							"arguments": "",
+							"call_id": "call_UYXGSm0QwZPWFufrduf0LvV0",
+							"name": "find_customer",
+							"namespace": "crm"
+						},
+						"output_index": 2,
+						"sequence_number": 6
+					},
+					{
+						"type": "response.function_call_arguments.delta",
+						"delta": "{\"",
+						"item_id": "fc_0d0a23ba1e3257f8016afa779f257087d18a5ce1eb746d1e1a",
+						"obfuscation": "jx11nMq3sntbni",
+						"output_index": 2,
+						"sequence_number": 7
+					},
+					{
+						"type": "response.function_call_arguments.delta",
+						"delta": "id",
+						"item_id": "fc_0d0a23ba1e3257f8016afa779f257087d18a5ce1eb746d1e1a",
+						"obfuscation": "X2HG0huBj8zZVQ",
+						"output_index": 2,
+						"sequence_number": 8
+					},
+					{
+						"type": "response.function_call_arguments.delta",
+						"delta": "\":",
+						"item_id": "fc_0d0a23ba1e3257f8016afa779f257087d18a5ce1eb746d1e1a",
+						"obfuscation": "HK1nWgBPNTBgCH",
+						"output_index": 2,
+						"sequence_number": 9
+					},
+					{
+						"type": "response.function_call_arguments.delta",
+						"delta": "42",
+						"item_id": "fc_0d0a23ba1e3257f8016afa779f257087d18a5ce1eb746d1e1a",
+						"obfuscation": "x5q9pNKgCCSnO0",
+						"output_index": 2,
+						"sequence_number": 10
+					},
+					{
+						"type": "response.function_call_arguments.delta",
+						"delta": "}",
+						"item_id": "fc_0d0a23ba1e3257f8016afa779f257087d18a5ce1eb746d1e1a",
+						"obfuscation": "YhBeL78lRYq18i0",
+						"output_index": 2,
+						"sequence_number": 11
+					},
+					{
+						"type": "response.function_call_arguments.done",
+						"arguments": "{\"id\":42}",
+						"item_id": "fc_0d0a23ba1e3257f8016afa779f257087d18a5ce1eb746d1e1a",
+						"output_index": 2,
+						"sequence_number": 12
+					},
+					{
+						"type": "response.output_item.done",
+						"item": {
+							"id": "fc_0d0a23ba1e3257f8016afa779f257087d18a5ce1eb746d1e1a",
+							"type": "function_call",
+							"status": "completed",
+							"arguments": "{\"id\":42}",
+							"call_id": "call_UYXGSm0QwZPWFufrduf0LvV0",
+							"name": "find_customer",
+							"namespace": "crm"
+						},
+						"output_index": 2,
+						"sequence_number": 13
+					},
+					{
+						"type": "response.completed",
+						"response": {
+							"id": "resp_0d0a23ba1e3257f8016afa779e53f087d18716713e2b710d99",
+							"object": "response",
+							"created_at": 1794799518,
+							"status": "completed",
+							"access_programs": null,
+							"background": false,
+							"completed_at": 1794799519,
+							"error": null,
+							"frequency_penalty": 0,
+							"image": {
+								"context_compression": "disabled"
+							},
+							"incomplete_details": null,
+							"input_transformations": [],
+							"instructions": null,
+							"max_output_tokens": 300,
+							"max_tool_calls": null,
+							"model": "gpt-5.4-mini-2026-03-17",
+							"moderation": null,
+							"output": [
+								{
+									"id": "tsc_0d0a23ba1e3257f8016afa779ed81c87d1b42bc0a4e5ffa603",
+									"type": "tool_search_call",
+									"status": "completed",
+									"arguments": {
+										"paths": [
+											"crm"
+										]
+									},
+									"call_id": null,
+									"execution": "server"
+								},
+								{
+									"id": "tso_0d0a23ba1e3257f8016afa779ef33087d1ab16fcd9735eb7ce",
+									"type": "tool_search_output",
+									"status": "completed",
+									"call_id": null,
+									"execution": "server",
+									"tools": [
+										{
+											"type": "namespace",
+											"description": "Customer records.",
+											"name": "crm",
+											"tools": [
+												{
+													"type": "function",
+													"defer_loading": true,
+													"description": "Returns the name and email address of a customer.",
+													"name": "find_customer",
+													"output_schema": null,
+													"parameters": {
+														"type": "object",
+														"properties": {
+															"id": {
+																"type": "integer"
+															}
+														},
+														"required": [
+															"id"
+														],
+														"additionalProperties": false
+													},
+													"strict": true
+												}
+											]
+										}
+									]
+								},
+								{
+									"id": "fc_0d0a23ba1e3257f8016afa779f257087d18a5ce1eb746d1e1a",
+									"type": "function_call",
+									"status": "completed",
+									"arguments": "{\"id\":42}",
+									"call_id": "call_UYXGSm0QwZPWFufrduf0LvV0",
+									"name": "find_customer",
+									"namespace": "crm"
+								}
+							],
+							"parallel_tool_calls": false,
+							"presence_penalty": 0,
+							"previous_response_id": null,
+							"prompt_cache_key": null,
+							"prompt_cache_retention": "24h",
+							"reasoning": {
+								"context": "current_turn",
+								"effort": "none",
+								"mode": "standard",
+								"summary": null
+							},
+							"safety_identifier": null,
+							"service_tier": "default",
+							"store": false,
+							"temperature": 1,
+							"text": {
+								"format": {
+									"type": "text"
+								},
+								"verbosity": "medium"
+							},
+							"tool_choice": "auto",
+							"tool_usage": {
+								"image_gen": {
+									"input_tokens": 0,
+									"input_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"output_tokens": 0,
+									"output_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"total_tokens": 0
+								},
+								"web_search": {
+									"num_requests": 0
+								}
+							},
+							"tools": [
+								{
+									"type": "tool_search",
+									"description": null,
+									"parameters": null
+								},
+								{
+									"type": "namespace",
+									"description": "Customer records.",
+									"name": "crm",
+									"tools": [
+										{
+											"type": "function",
+											"defer_loading": true,
+											"description": "Returns the name and email address of a customer.",
+											"name": "find_customer",
+											"output_schema": null,
+											"parameters": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "integer"
+													}
+												},
+												"required": [
+													"id"
+												],
+												"additionalProperties": false
+											},
+											"strict": true
+										}
+									]
+								}
+							],
+							"top_logprobs": 0,
+							"top_p": 0.98,
+							"truncation": "disabled",
+							"usage": {
+								"input_tokens": 557,
+								"input_tokens_details": {
+									"cache_write_tokens": 0,
+									"cache_write_tokens_details": {
+										"ttl_12h_tokens": 0,
+										"ttl_30m_tokens": 0
+									},
+									"cached_tokens": 0
+								},
+								"output_tokens": 37,
+								"output_tokens_details": {
+									"reasoning_tokens": 19
+								},
+								"total_tokens": 594
+							},
+							"user": null,
+							"metadata": {}
+						},
+						"sequence_number": 14
+					}
+				]
+			}
+		},
+		{
+			"name": "hosted search replay",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-5.4-mini",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 300,
+					"parallel_tool_calls": false,
+					"tools": [
+						{
+							"type": "namespace",
+							"name": "crm",
+							"description": "Customer records.",
+							"tools": [
+								{
+									"type": "function",
+									"name": "find_customer",
+									"description": "Returns the name and email address of a customer.",
+									"parameters": {
+										"type": "object",
+										"properties": {
+											"id": {
+												"type": "integer"
+											}
+										},
+										"required": [
+											"id"
+										],
+										"additionalProperties": false
+									},
+									"strict": true,
+									"defer_loading": true
+								}
+							]
+						},
+						{
+							"type": "tool_search"
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Look up customer 42 in the CRM."
+						},
+						{
+							"id": "tsc_0d0a23ba1e3257f8016afa779ed81c87d1b42bc0a4e5ffa603",
+							"type": "tool_search_call",
+							"status": "completed",
+							"arguments": {
+								"paths": [
+									"crm"
+								]
+							},
+							"call_id": null,
+							"execution": "server"
+						},
+						{
+							"id": "tso_0d0a23ba1e3257f8016afa779ef33087d1ab16fcd9735eb7ce",
+							"type": "tool_search_output",
+							"status": "completed",
+							"call_id": null,
+							"execution": "server",
+							"tools": [
+								{
+									"type": "namespace",
+									"description": "Customer records.",
+									"name": "crm",
+									"tools": [
+										{
+											"type": "function",
+											"defer_loading": true,
+											"description": "Returns the name and email address of a customer.",
+											"name": "find_customer",
+											"output_schema": null,
+											"parameters": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "integer"
+													}
+												},
+												"required": [
+													"id"
+												],
+												"additionalProperties": false
+											},
+											"strict": true
+										}
+									]
+								}
+							]
+						},
+						{
+							"id": "fc_0d0a23ba1e3257f8016afa779f257087d18a5ce1eb746d1e1a",
+							"type": "function_call",
+							"status": "completed",
+							"arguments": "{\"id\":42}",
+							"call_id": "call_UYXGSm0QwZPWFufrduf0LvV0",
+							"name": "find_customer",
+							"namespace": "crm"
+						},
+						{
+							"type": "function_call_output",
+							"call_id": "call_UYXGSm0QwZPWFufrduf0LvV0",
+							"output": "Ada Lovelace, ada@example.com"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"input_transformations": [],
+					"id": "resp_0d0a23ba1e3257f8016afa779f73e487d1bc6f54361ea4d578",
+					"object": "response",
+					"created_at": 1794799519,
+					"completed_at": 1794799519,
+					"status": "completed",
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"frequency_penalty": 0,
+					"presence_penalty": 0,
+					"moderation": null,
+					"model": "gpt-5.4-mini-2026-03-17",
+					"access_programs": null,
+					"previous_response_id": null,
+					"instructions": null,
+					"output": [
+						{
+							"type": "message",
+							"id": "msg_0d0a23ba1e3257f8016afa779fd56887d1a9f1cc2f4af8ba19",
+							"role": "assistant",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"text": "Customer 42: Ada Lovelace, ada@example.com",
+									"annotations": [],
+									"logprobs": []
+								}
+							],
+							"phase": "final_answer"
+						}
+					],
+					"error": null,
+					"incomplete_details": null,
+					"tools": [
+						{
+							"type": "tool_search",
+							"description": null,
+							"parameters": null
+						},
+						{
+							"type": "namespace",
+							"name": "crm",
+							"description": "Customer records.",
+							"tools": [
+								{
+									"type": "function",
+									"strict": true,
+									"name": "find_customer",
+									"description": "Returns the name and email address of a customer.",
+									"output_schema": null,
+									"parameters": {
+										"type": "object",
+										"properties": {
+											"id": {
+												"type": "integer"
+											}
+										},
+										"required": [
+											"id"
+										],
+										"additionalProperties": false
+									}
+								}
+							]
+						}
+					],
+					"tool_choice": "auto",
+					"parallel_tool_calls": false,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"top_p": 0.98,
+					"top_logprobs": 0,
+					"temperature": 1,
+					"reasoning": {
+						"effort": "none",
+						"context": "current_turn",
+						"summary": null,
+						"mode": "standard"
+					},
+					"user": null,
+					"usage": {
+						"input_tokens": 594,
+						"input_tokens_details": {
+							"cached_tokens": 0,
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_30m_tokens": 0,
+								"ttl_12h_tokens": 0
+							}
+						},
+						"output_tokens": 16,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 610
+					},
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"output_tokens": 0,
+							"total_tokens": 0,
+							"input_tokens_details": {
+								"text_tokens": 0,
+								"image_tokens": 0
+							},
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							}
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"safety_identifier": null,
+					"store": false,
+					"metadata": {},
+					"max_output_tokens": 300,
+					"max_tool_calls": null,
+					"service_tier": "default",
+					"truncation": "disabled",
+					"image": {
+						"context_compression": "disabled"
+					}
+				}
+			}
+		},
+		{
+			"name": "deferred tools without tool_search",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-5.4-mini",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 300,
+					"parallel_tool_calls": false,
+					"tools": [
+						{
+							"type": "namespace",
+							"name": "crm",
+							"description": "Customer records.",
+							"tools": [
+								{
+									"type": "function",
+									"name": "find_customer",
+									"description": "Returns the name and email address of a customer.",
+									"parameters": {
+										"type": "object",
+										"properties": {
+											"id": {
+												"type": "integer"
+											}
+										},
+										"required": [
+											"id"
+										],
+										"additionalProperties": false
+									},
+									"strict": true,
+									"defer_loading": true
+								}
+							]
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Look up customer 42 in the CRM."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Invalid Value: 'tools.defer_loading'. Deferred tools require tools.tool_search.",
+						"type": "invalid_request_error",
+						"param": "tools.defer_loading",
+						"code": null
+					}
+				}
+			}
+		},
+		{
+			"name": "web search with images",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-5.4-mini",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 300,
+					"parallel_tool_calls": false,
+					"tools": [
+						{
+							"type": "web_search",
+							"search_content_types": [
+								"text",
+								"image"
+							]
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Reply with OK."
+						}
+					],
+					"tool_choice": "none"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_08d2bf5fab87f36d016afa77a056e887d18ec9ae5d30beea4c",
+					"object": "response",
+					"created_at": 1794799520,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1794799521,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 300,
+					"max_tool_calls": null,
+					"model": "gpt-5.4-mini-2026-03-17",
+					"moderation": null,
+					"output": [
+						{
+							"id": "msg_08d2bf5fab87f36d016afa77a0fa4087d18732db7a9b79a6d6",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "OK"
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": false,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "current_turn",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "none",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "web_search",
+							"return_token_budget": "default",
+							"search_content_types": [
+								"text",
+								"image"
+							],
+							"search_context_size": "medium",
+							"user_location": {
+								"type": "approximate",
+								"city": null,
+								"country": "US",
+								"region": null,
+								"timezone": null
+							}
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 4446,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 5,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 4451
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		}
+	]
+}

@@ -76,8 +76,9 @@ func validateResponsesMCPTool(tool map[string]json.RawMessage, path string) (mcp
 		if err := sonic.Unmarshal(raw, &deferred); err != nil {
 			return mcpServer{}, invalidRequest(path + ".defer_loading must be a boolean")
 		}
+		// A tool search that loads an MCP server's tools is unreviewed.
 		if deferred {
-			return mcpServer{}, invalidRequest(path + ".defer_loading needs tool_search, which is not supported")
+			return mcpServer{}, invalidRequest(path + ".defer_loading is not supported for MCP tools")
 		}
 	}
 	unattended, err := mcpRunsWithoutApproval(tool["require_approval"], path+".require_approval")

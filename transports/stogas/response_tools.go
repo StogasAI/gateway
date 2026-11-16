@@ -683,6 +683,14 @@ func validateProviderResponsesTerminalItem(item *schemas.ResponsesMessage, befor
 		if result.ResultType == "web_fetch_result" && (result.URL == nil || *result.URL != actionURL) {
 			return ErrProviderResponseMalformed
 		}
+	case schemas.ResponsesMessageTypeToolSearchCall:
+		if !stringInSet(*item.Status, "completed", "incomplete") || item.ResponsesToolMessage == nil || item.ResponsesToolMessage.Arguments == nil {
+			return ErrProviderResponseMalformed
+		}
+	case schemas.ResponsesMessageTypeToolSearchOutput:
+		if !stringInSet(*item.Status, "completed", "incomplete") || len(item.ToolSearchOutputTools) == 0 {
+			return ErrProviderResponseMalformed
+		}
 	}
 	return nil
 }
@@ -1017,7 +1025,8 @@ func validateProviderResponsesItem(state *State, item *schemas.ResponsesMessage)
 	}
 	if item.Role != nil && *item.Role != schemas.ResponsesInputMessageRoleAssistant ||
 		rawProviderExtensionSet(item.Author) || rawProviderExtensionSet(item.Recipient) ||
-		rawProviderExtensionSet(item.ToolSearchOutputTools) || rawProviderExtensionSet(item.AdditionalTools) ||
+		rawProviderExtensionSet(item.ToolSearchOutputTools) && *item.Type != schemas.ResponsesMessageTypeToolSearchOutput ||
+		rawProviderExtensionSet(item.AdditionalTools) ||
 		!validProviderCacheControl(item.CacheControl) ||
 		item.Phase != nil && !stringInSet(*item.Phase, "commentary", "final_answer") {
 		return providerResponsesItem{}, ErrProviderResponseMalformed
@@ -1099,6 +1108,10 @@ func validateProviderResponsesItem(state *State, item *schemas.ResponsesMessage)
 		if err := validateProviderResponsesMCPItem(state, item, &observed); err != nil {
 			return providerResponsesItem{}, err
 		}
+	case schemas.ResponsesMessageTypeToolSearchCall, schemas.ResponsesMessageTypeToolSearchOutput:
+		if err := validateProviderToolSearchItem(state, item, &observed); err != nil {
+			return providerResponsesItem{}, err
+		}
 	default:
 		return providerResponsesItem{}, ErrProviderResponseMalformed
 	}
@@ -1112,6 +1125,33 @@ func validateProviderResponsesItem(state *State, item *schemas.ResponsesMessage)
 	}
 	observed.compactionPayload = providerResponsesCompactionPayload(item)
 	return observed, nil
+}
+
+// validateProviderToolSearchItem checks a step of the tool search that the request declares. The
+// search that the client runs is one call, which the client answers by its call ID. OpenAI's own
+// search is a call without one and an output that loads some of the request's deferred tools, which
+// the client sends back with the reply and which must pass the checks of its next request.
+func validateProviderToolSearchItem(state *State, item *schemas.ResponsesMessage, observed *providerResponsesItem) error {
+	tool := item.ResponsesToolMessage
+	if item.Role != nil || item.Phase != nil || item.Content != nil || item.ResponsesReasoning != nil || tool == nil ||
+		tool.Name != nil || tool.ResponsesToolSearchCall != nil || tool.Execution == nil ||
+		!providerResponsesToolTypeAllowed(state, schemas.ResponsesToolTypeToolSearch) ||
+		*tool.Execution != state.providerTools().toolSearch {
+		return ErrProviderResponseMalformed
+	}
+	observed.execution = *tool.Execution
+	client := *tool.Execution == schemas.ToolSearchExecutionClient
+	if *item.Type == schemas.ResponsesMessageTypeToolSearchOutput {
+		if client || tool.CallID != nil || tool.Arguments != nil ||
+			validateResponsesLoadedTools(item.ToolSearchOutputTools, "tools") != nil {
+			return ErrProviderResponseMalformed
+		}
+		return nil
+	}
+	if !client && tool.CallID != nil || tool.Arguments != nil && !catalog.ValidateJSONObjectText(*tool.Arguments) {
+		return ErrProviderResponseMalformed
+	}
+	return validateAndRecordProviderResponsesToolCall(state, item, observed, client)
 }
 
 func providerResponsesToolIdentity(item *schemas.ResponsesMessage) (string, string, error) {
@@ -1598,6 +1638,12 @@ func validateAndRecordProviderResponsesToolCall(state *State, item *schemas.Resp
 			schemas.ResponsesMessageTypeShellCall, schemas.ResponsesMessageTypeApplyPatchCall:
 			state.responsesDeclaredCalls++
 			state.responsesClientCalls++
+		case schemas.ResponsesMessageTypeToolSearchCall:
+			// OpenAI's own search has no fee, so no cap on hosted calls counts it.
+			state.responsesDeclaredCalls++
+			if observed.execution == schemas.ToolSearchExecutionClient {
+				state.responsesClientCalls++
+			}
 		case schemas.ResponsesMessageTypeWebSearchCall, schemas.ResponsesMessageTypeWebFetchCall, schemas.ResponsesMessageTypeMCPCall:
 			state.responsesDeclaredCalls++
 			state.responsesHostedCalls++
@@ -2104,6 +2150,9 @@ type providerToolSet struct {
 	web []providerWebTool
 	// mcp holds the labels of the MCP servers that tool_choice leaves callable.
 	mcp map[string]bool
+	// toolSearch is where the request's tool search runs, server or client, when tool_choice leaves
+	// it callable.
+	toolSearch string
 }
 
 // providerToolName names a declared tool. A tool in a namespace other than functions goes by its
@@ -2149,7 +2198,7 @@ func readProviderTools(resolution *catalog.ResolvedRequest) *providerToolSet {
 			tools.types[catalog.CanonicalResponsesToolType(rawType)] = true
 		}
 	}
-	for _, entry := range catalog.ResponsesToolList(resolution.RawTools()) {
+	for _, entry := range resolution.CallableTools() {
 		tool := entry.Tool
 		var name providerToolName
 		if chat {
@@ -2170,6 +2219,14 @@ func readProviderTools(resolution *catalog.ResolvedRequest) *providerToolSet {
 				label := providerToolName{kind: schemas.ResponsesToolTypeMCP, name: rawString(tool["server_label"])}
 				if tools.types[label.kind] && (selected == nil || selected[label]) {
 					tools.mcp[label.name] = true
+				}
+				continue
+			case schemas.ResponsesToolTypeToolSearch:
+				if tools.types[name.kind] {
+					tools.toolSearch = rawString(tool["execution"])
+					if tools.toolSearch == "" {
+						tools.toolSearch = "server"
+					}
 				}
 				continue
 			}

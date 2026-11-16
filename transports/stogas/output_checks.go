@@ -344,7 +344,7 @@ func (c *outputChecker) toolCall(namespace, name string, arguments []byte) check
 	if c.parameters == nil {
 		c.parameters = make(map[checkedTool]json.RawMessage)
 		chat := c.resolution.Route == catalog.RouteChat
-		for _, entry := range catalog.ResponsesToolList(c.resolution.RawTools()) {
+		for _, entry := range c.resolution.CallableTools() {
 			tool := entry.Tool
 			if catalog.CanonicalResponsesToolType(rawString(tool["type"])) != schemas.ResponsesToolTypeFunction {
 				continue

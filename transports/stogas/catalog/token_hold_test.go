@@ -62,6 +62,24 @@ func TestInputHoldCountsEachToolOfANamespace(t *testing.T) {
 	}
 }
 
+// The tools that a tool search loads reach the model as declared tools do, and each step of the
+// search is a tool event.
+func TestInputHoldCountsToolsThatASearchLoaded(t *testing.T) {
+	description := strings.Repeat("Customer records. ", 64)
+	raw, err := DecodeRequestBody([]byte(`{"input":[{"role":"user","content":"hi"},`+
+		`{"type":"tool_search_call","call_id":"call_1","execution":"client","arguments":{"goal":"crm"}},`+
+		`{"type":"tool_search_output","call_id":"call_1","execution":"client","tools":[{"type":"namespace","name":"crm","description":"`+description+`",`+
+		`"tools":[{"type":"function","name":"find","description":"Find a customer."},{"type":"custom","name":"note"}]}]}]}`), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stats := requestInputHoldStats(raw, RouteResponses)
+	fields := strings.Join(stats.TextFields, "\n")
+	if stats.ToolDefinitions != 2 || stats.ToolEvents != 2 || strings.Count(fields, description) != 2 || !strings.Contains(fields, "Find a customer.") {
+		t.Fatalf("tools %d, events %d, fields %q", stats.ToolDefinitions, stats.ToolEvents, fields)
+	}
+}
+
 func TestInputHoldSupportsTwoMillionTokenCatalogLimit(t *testing.T) {
 	text := strings.Repeat("\ufdd0", 1_000_000)
 	body := []byte(fmt.Sprintf(`{"messages":[{"role":"user","content":%q}]}`, text))

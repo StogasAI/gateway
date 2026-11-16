@@ -31,6 +31,11 @@ func responsesLoggedToolCall(item providerResponsesItem) (string, bool) {
 		return item.callID, true
 	case schemas.ResponsesMessageTypeMCPApprovalRequest:
 		return item.id, true
+	case schemas.ResponsesMessageTypeToolSearchCall:
+		if item.execution == schemas.ToolSearchExecutionClient {
+			return item.callID, true
+		}
+		return "", true
 	case schemas.ResponsesMessageTypeWebSearchCall, schemas.ResponsesMessageTypeWebFetchCall,
 		schemas.ResponsesMessageTypeMCPCall, schemas.ResponsesMessageTypeMCPListTools:
 		return "", true

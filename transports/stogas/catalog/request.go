@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -291,7 +292,11 @@ type requestPricingContext struct {
 	ToolsParseFailed    bool
 	RawBody             map[string]json.RawMessage
 	RawTools            []map[string]json.RawMessage
-	ToolTypes           []string
+	// LoadedTools are the tools that the tool_search_output items of a Responses input load.
+	LoadedTools []map[string]json.RawMessage
+	// ToolTypes are the types of the tools that the model may call, those of RawTools and
+	// LoadedTools, with the tools of each namespace in its place.
+	ToolTypes []string
 }
 
 type ProviderRoutingPreference struct {
@@ -632,12 +637,14 @@ func (r *ResolvedRequest) ReleaseInput() {
 		}
 		r.wireBody = wire
 	}
-	for i, tool := range r.pricing.RawTools {
-		retained := make(map[string]json.RawMessage, len(tool))
-		for key, value := range tool {
-			retained[strings.Clone(key)] = bytes.Clone(value)
+	for _, tools := range [][]map[string]json.RawMessage{r.pricing.RawTools, r.pricing.LoadedTools} {
+		for i, tool := range tools {
+			retained := make(map[string]json.RawMessage, len(tool))
+			for key, value := range tool {
+				retained[strings.Clone(key)] = bytes.Clone(value)
+			}
+			tools[i] = retained
 		}
-		r.pricing.RawTools[i] = retained
 	}
 	for i, kind := range r.pricing.ToolTypes {
 		r.pricing.ToolTypes[i] = strings.Clone(kind)
@@ -653,6 +660,15 @@ func (r *ResolvedRequest) RawTools() []map[string]json.RawMessage {
 		return nil
 	}
 	return r.pricing.RawTools
+}
+
+// CallableTools lists the tools that the model may call, with the tools of each namespace in its
+// place: the request's own tools, then those that a tool search in its input loaded.
+func (r *ResolvedRequest) CallableTools() []NamespacedTool {
+	if r == nil {
+		return nil
+	}
+	return ResponsesToolList(append(slices.Clip(r.pricing.RawTools), r.pricing.LoadedTools...))
 }
 
 func (r *ResolvedRequest) ToolTypes() []string {
@@ -1376,24 +1392,32 @@ func rawStringValue(raw json.RawMessage) string {
 }
 
 func requestPricingContextForRaw(route Route, rawData map[string]json.RawMessage) requestPricingContext {
-	searchContextSize := ""
-	hasWebSearchOptions := false
+	pricing := requestPricingContext{Route: route, RawBody: rawData}
 	if rawOptions, ok := rawData["web_search_options"]; ok {
-		hasWebSearchOptions = true
+		pricing.HasWebSearchOptions = true
 		var options map[string]json.RawMessage
 		if err := sonic.Unmarshal(rawOptions, &options); err == nil {
-			searchContextSize = rawjson.NormalizedStringField(options, "search_context_size")
+			pricing.SearchContextSize = rawjson.NormalizedStringField(options, "search_context_size")
+		}
+	}
+	if route == RouteResponses {
+		pricing.LoadedTools = ResponsesLoadedTools(rawData["input"])
+		for _, entry := range ResponsesToolList(pricing.LoadedTools) {
+			if kind := rawStringValue(entry.Tool["type"]); kind != "" {
+				pricing.ToolTypes = append(pricing.ToolTypes, kind)
+			}
 		}
 	}
 	rawTools, ok := rawData["tools"]
 	if !ok {
-		return requestPricingContext{Route: route, HasWebSearchOptions: hasWebSearchOptions, SearchContextSize: searchContextSize, RawBody: rawData}
+		return pricing
 	}
 	var tools []map[string]json.RawMessage
 	if err := sonic.Unmarshal(rawTools, &tools); err != nil {
-		return requestPricingContext{Route: route, HasWebSearchOptions: hasWebSearchOptions, SearchContextSize: searchContextSize, ToolsParseFailed: true, RawBody: rawData}
+		pricing.ToolsParseFailed = true
+		return pricing
 	}
-	toolTypes := make([]string, 0, len(tools))
+	toolTypes := make([]string, 0, len(tools)+len(pricing.ToolTypes))
 	if route == RouteResponses {
 		var normalizedTools []schemas.ResponsesTool
 		if err := sonic.Unmarshal(rawTools, &normalizedTools); err == nil {
@@ -1420,7 +1444,8 @@ func requestPricingContextForRaw(route Route, rawData map[string]json.RawMessage
 			}
 		}
 	}
-	return requestPricingContext{Route: route, HasWebSearchOptions: hasWebSearchOptions, SearchContextSize: searchContextSize, RawBody: rawData, RawTools: tools, ToolTypes: toolTypes}
+	pricing.RawTools, pricing.ToolTypes = tools, append(toolTypes, pricing.ToolTypes...)
+	return pricing
 }
 
 func effectiveOutputTokenLimit(requested *int, max int) (int, error) {

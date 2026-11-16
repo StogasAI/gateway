@@ -62,8 +62,9 @@ func readRequestTools(route Route, raw map[string]json.RawMessage) requestTools 
 	}
 	switch route {
 	case RouteResponses:
-		// A tool in a namespace counts by its own name.
-		list := ResponsesToolList(tools)
+		// A tool in a namespace counts by its own name, and so does a tool that a tool search in the
+		// input loaded.
+		list := ResponsesToolList(append(tools, ResponsesLoadedTools(raw["input"])...))
 		declared := make([]string, 0, len(list))
 		for _, entry := range list {
 			if kind := rawStringValue(entry.Tool["type"]); kind != "" {
@@ -140,6 +141,35 @@ func ResponsesToolList(tools []map[string]json.RawMessage) []NamespacedTool {
 		}
 	}
 	return list
+}
+
+// ResponsesLoadedTools returns the tools that the tool_search_output items of a Responses input
+// load. The model calls them as it calls the request's own tools, and a search that the client
+// runs can load tools that the request does not declare.
+func ResponsesLoadedTools(input json.RawMessage) []map[string]json.RawMessage {
+	// JSON can spell the type only plainly or with \u escapes, so input without either holds no
+	// such item.
+	if !bytes.Contains(input, []byte("tool_search_output")) && !bytes.Contains(input, []byte(`\u`)) {
+		return nil
+	}
+	items, err := rawjson.Array(input)
+	if err != nil {
+		return nil
+	}
+	var loaded []map[string]json.RawMessage
+	for _, raw := range items {
+		item, err := rawjson.Object(raw)
+		if err != nil || rawStringValue(item["type"]) != "tool_search_output" {
+			continue
+		}
+		tools, _ := rawjson.Array(item["tools"])
+		for _, rawTool := range tools {
+			if tool, err := rawjson.Object(rawTool); err == nil {
+				loaded = append(loaded, tool)
+			}
+		}
+	}
+	return loaded
 }
 
 // addMCPServer adds an MCP tool's servers and the tools that it allows on them.
