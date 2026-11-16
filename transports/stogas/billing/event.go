@@ -271,6 +271,7 @@ func requestProviderAttempts(input EventInput, startedAt time.Time, totalTimeMS 
 			ResolvedCatalogChainHash: changedCatalogResolution(observed.ResolvedCatalogChainHash, observed.CatalogChainHash),
 			Status:                   providerAttemptStatus(observed.Error, observed.Response, observed.Refusal),
 			StatusCode:               providerStatusCode(observed.Error),
+			ErrorCode:                providerErrorCode(observed.Error),
 			StartMS:                  startMS,
 			LatencyMS:                min(uint32Duration(observed.CompletedAt.Sub(observed.StartedAt)), totalTimeMS-startMS),
 			OutputObserved:           observed.OutputObserved,
@@ -429,9 +430,8 @@ func NormalizeUpstreamStatus(bifrostErr *schemas.BifrostError) string {
 		return messageRefusal(bifrostErr)
 	case identifiers.has("rate_limit_error", "rate_limited", "too_many_requests", "upstream_rate_limit_error", "rate_limit_exceeded"):
 		return "rate_limited"
-	// OpenAI sends invalid_prompt, as a 400, for a prompt that its safety checks flag.
-	case identifiers.has("content_filter", "content_filter_error", "safety_error", "content_policy_violation", "refusal", "cyber_policy",
-		"invalid_prompt"):
+	case identifiers.has("content_filter", "content_filter_error", "safety_error", "content_policy_violation", "refusal", "cyber_policy"),
+		flaggedPrompt(bifrostErr, identifiers):
 		return "content_filter"
 	case identifiers.has("model_decommissioned", "servicemodeldeprecating"):
 		// The provider retired the model, whatever status it sends: Groq and Azure
@@ -467,7 +467,7 @@ func NormalizeUpstreamStatus(bifrostErr *schemas.BifrostError) string {
 		return "model_retired"
 	case statusCode == 400 || statusCode == 409 || statusCode == 415 || statusCode == 422:
 		return "invalid_request"
-	case identifiers.has("invalid_request", "invalid_request_error", "bad_request_error"):
+	case identifiers.has("invalid_request", "invalid_request_error", "bad_request_error", "invalid_prompt"):
 		// A generic invalid-request type is useful when status is absent. It must
 		// not hide a more reliable 404, 429, or 5xx status.
 		return "invalid_request"
@@ -515,9 +515,69 @@ func messageRefusal(bifrostErr *schemas.BifrostError) string {
 	return ""
 }
 
-// maxMessageRefusalBytes bounds the messages that messageRefusal reads; those it knows are under
-// 500 bytes.
+// maxMessageRefusalBytes bounds the messages that messageRefusal and flaggedPrompt read; those
+// they know are under 500 bytes.
 const maxMessageRefusalBytes = 1024
+
+// flaggedPrompt reports OpenAI's invalid_prompt for a prompt that its safety checks flagged:
+// "Invalid prompt: your prompt was flagged as potentially violating our usage policy." and
+// "Invalid prompt: we've limited access to this content for safety reasons." OpenAI sends the
+// same 400 code for other prompts that it refuses, such as "Sorry! We've encountered an issue
+// with repetitive patterns in your prompt.", which stay invalid requests, so the refusal rate
+// counts only what a safety check refused. The attempt's error_code keeps invalid_prompt either way.
+func flaggedPrompt(bifrostErr *schemas.BifrostError, identifiers errorIdentifierSet) bool {
+	if !identifiers.has("invalid_prompt") || bifrostErr.Error == nil || len(bifrostErr.Error.Message) > maxMessageRefusalBytes {
+		return false
+	}
+	message := strings.ToLower(strings.TrimSpace(bifrostErr.Error.Message))
+	return strings.HasPrefix(message, "invalid prompt: ") &&
+		(strings.Contains(message, "usage polic") || strings.Contains(message, "safety reasons"))
+}
+
+// maxErrorCodeBytes bounds an attempt's error_code. The longest that providers send are under 40
+// bytes, such as unsupported_country_region_territory and ServiceQuotaExceededException.
+const maxErrorCodeBytes = 48
+
+// providerErrorCode is the most specific identifier in a provider's error reply: its code, else
+// its type, such as OpenAI's invalid_prompt, Anthropic's overloaded_error or Bedrock's
+// ValidationException. The status says what the failure means to us; the code keeps what the
+// provider said, which the status may generalize. A value that is not a short identifier, or
+// that only repeats an HTTP status, names nothing. Errors that the gateway or core raised
+// themselves, such as a lost connection, have no provider code.
+func providerErrorCode(bifrostErr *schemas.BifrostError) string {
+	if bifrostErr == nil || bifrostErr.IsBifrostError {
+		return ""
+	}
+	candidates := []*string{bifrostErr.Type}
+	if bifrostErr.Error != nil {
+		candidates = []*string{bifrostErr.Error.Code, bifrostErr.Error.Type, bifrostErr.Type}
+	}
+	for _, value := range candidates {
+		if value != nil {
+			if code := strings.TrimSpace(*value); errorCodeText(code) {
+				return code
+			}
+		}
+	}
+	return ""
+}
+
+func errorCodeText(code string) bool {
+	if code == "" || len(code) > maxErrorCodeBytes || !isASCIILetter(code[0]) {
+		return false
+	}
+	for index := 1; index < len(code); index++ {
+		character := code[index]
+		if !isASCIILetter(character) && (character < '0' || character > '9') && character != '_' && character != '.' && character != '-' {
+			return false
+		}
+	}
+	return true
+}
+
+func isASCIILetter(character byte) bool {
+	return character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z'
+}
 
 type errorIdentifierSet map[string]struct{}
 

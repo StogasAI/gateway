@@ -23,6 +23,7 @@ type ProviderAttempt struct {
 	Provider                 string  `json:"provider"`
 	Status                   string  `json:"status"`
 	StatusCode               *int    `json:"status_code"`
+	ErrorCode                string  `json:"error_code,omitempty"`
 	StartMS                  uint32  `json:"start_ms"`
 	LatencyMS                uint32  `json:"latency_ms"`
 	OutputObserved           bool    `json:"output_observed"`

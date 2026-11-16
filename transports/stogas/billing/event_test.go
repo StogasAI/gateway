@@ -111,6 +111,10 @@ func TestNormalizeUpstreamStatus(t *testing.T) {
 		{name: "bad request network option", statusCode: intPtr(400), message: "network setting is invalid", wantStatus: "invalid_request"},
 		{name: "Azure content filter code", statusCode: intPtr(400), message: "content_filter", code: "content_filter", wantStatus: "content_filter"},
 		{name: "provider safety type", statusCode: intPtr(400), message: "blocked by safety filter", errorType: "safety_error", wantStatus: "content_filter"},
+		{name: "OpenAI prompt flagged by its usage policy", statusCode: intPtr(400), errorType: "invalid_request_error", code: "invalid_prompt", message: "Invalid prompt: your prompt was flagged as potentially violating our usage policy. Please try again with a different prompt: https://platform.openai.com/docs/guides/reasoning#advice-on-prompting", wantStatus: "content_filter"},
+		{name: "OpenAI prompt limited for safety reasons", statusCode: intPtr(400), errorType: "invalid_request_error", code: "invalid_prompt", message: "Invalid prompt: we've limited access to this content for safety reasons. This type of information may be used to benefit or to harm people.", wantStatus: "content_filter"},
+		{name: "OpenAI prompt with repetitive patterns", statusCode: intPtr(400), errorType: "invalid_request_error", code: "invalid_prompt", message: "Sorry! We've encountered an issue with repetitive patterns in your prompt. Please try again with a different prompt.", wantStatus: "invalid_request"},
+		{name: "safety wording without invalid_prompt is a request's own error", statusCode: intPtr(400), errorType: "invalid_request_error", message: "Invalid prompt: your prompt was flagged as potentially violating our usage policy.", wantStatus: "invalid_request"},
 		{name: "untyped conversion wording is not guessed", message: "failed to marshal request: missing required field messages", wantStatus: "provider_error"},
 		{name: "untyped required-field wording is not guessed", message: "missing required 'type' field in ResponsesTool", wantStatus: "provider_error"},
 		{name: "untyped nil-request wording is not guessed", message: "bifrost request cannot be nil", wantStatus: "provider_error"},
@@ -222,7 +226,7 @@ func TestNormalizeUpstreamStatusExhaustiveStructuredIdentifierMatrix(t *testing.
 		{identifier: "content_filter_error", want: "content_filter"},
 		{identifier: "safety_error", want: "content_filter"},
 		{identifier: "cyber_policy", want: "content_filter"},
-		{identifier: "invalid_prompt", want: "content_filter"},
+		{identifier: "invalid_prompt", want: "invalid_request", generic: true},
 		{identifier: "invalid_request", want: "invalid_request", generic: true},
 		{identifier: "invalid_request_error", want: "invalid_request", generic: true},
 		{identifier: "bad_request_error", want: "invalid_request", generic: true},
@@ -603,5 +607,29 @@ func TestUnavailableProviderHasNoInventedFinishReason(t *testing.T) {
 	attempts := requestProviderAttempts(EventInput{ProviderAttempts: []ProviderAttemptInput{{Provider: "openai", StartedAt: at, CompletedAt: at, Error: upstreamError}}}, at, 0)
 	if len(attempts) != 1 || attempts[0].Status != "provider_unavailable" || attempts[0].FinishReason != "" {
 		t.Fatalf("provider failure invented a terminal: %+v", attempts)
+	}
+}
+
+func TestProviderErrorCode(t *testing.T) {
+	tests := []struct {
+		name string
+		err  *schemas.BifrostError
+		want string
+	}{
+		{name: "no error", err: nil, want: ""},
+		{name: "OpenAI code before its type", err: &schemas.BifrostError{Error: &schemas.ErrorField{Type: stringPtr("invalid_request_error"), Code: stringPtr("invalid_prompt")}}, want: "invalid_prompt"},
+		{name: "Anthropic type without a code", err: &schemas.BifrostError{Error: &schemas.ErrorField{Type: stringPtr("overloaded_error")}}, want: "overloaded_error"},
+		{name: "Bedrock exception as the outer type", err: &schemas.BifrostError{Type: stringPtr("ValidationException"), Error: &schemas.ErrorField{}}, want: "ValidationException"},
+		{name: "a numeric code repeats the HTTP status", err: &schemas.BifrostError{Error: &schemas.ErrorField{Type: stringPtr("BadRequestError"), Code: stringPtr("400")}}, want: "BadRequestError"},
+		{name: "text that is not an identifier", err: &schemas.BifrostError{Error: &schemas.ErrorField{Code: stringPtr("see https://example.com"), Type: stringPtr("server_error")}}, want: "server_error"},
+		{name: "a code longer than the limit", err: &schemas.BifrostError{Error: &schemas.ErrorField{Code: stringPtr(strings.Repeat("c", maxErrorCodeBytes+1))}}, want: ""},
+		{name: "an error that the gateway raised", err: &schemas.BifrostError{IsBifrostError: true, Error: &schemas.ErrorField{Type: stringPtr(schemas.RequestCancelled)}}, want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := providerErrorCode(tt.err); got != tt.want {
+				t.Fatalf("got %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

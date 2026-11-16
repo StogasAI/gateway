@@ -624,7 +624,8 @@ func TestLargestRequestLogFitsTheLimit(t *testing.T) {
 		status := 599
 		event.ProviderAttempts = append(event.ProviderAttempts, ProviderAttempt{
 			CatalogChainHash: "sha256:" + strings.Repeat("f", 64), ResolvedCatalogChainHash: "sha256:" + strings.Repeat("e", 64),
-			Provider: quotes(maxProviderNameBytes), Status: "context_length_exceeded", StatusCode: &status, StartMS: count, LatencyMS: count,
+			Provider: quotes(maxProviderNameBytes), Status: "context_length_exceeded", StatusCode: &status, ErrorCode: strings.Repeat("e", maxErrorCodeBytes),
+			StartMS: count, LatencyMS: count,
 			OutputObserved: true, ProviderRequestID: quotes(maxProviderRequestIDBytes), ProviderResponseID: quotes(maxProviderResponseIDBytes),
 			ProviderModel: quotes(maxProviderModelBytes), ProviderInstanceID: quotes(maxProviderInstanceIDBytes), FinishReason: quotes(maxProviderReasonBytes),
 			Byok: new(uuid.NewString()),
