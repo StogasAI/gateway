@@ -956,6 +956,8 @@ func responsesSearchHoldKind(ctx openAIAdapterContext) string {
 	return selected
 }
 
+// Later passes read earlier results again mostly from OpenAI's automatic cache,
+// so a hold covers each call's content once.
 func webSearchContentHoldTokensForKind(ctx openAIAdapterContext, kind string) int {
 	if webSearchFixedContentTokensForKind(ctx.Deployment.Model, kind) > 0 || webSearchContentTokensBilledAtModelRatesForKind(ctx, kind) {
 		return hostedCallContentTokens
@@ -975,8 +977,6 @@ func webSearchContentTokensBilledAtModelRatesForKind(ctx openAIAdapterContext, k
 
 func webSearchFixedContentTokensForKind(model string, kind string) int {
 	if kind != "web_search" {
-// Later passes read earlier results again mostly from OpenAI's automatic cache,
-// so a hold covers each call's content once.
 		return 0
 	}
 	normalized := strings.ToLower(strings.TrimSpace(model))

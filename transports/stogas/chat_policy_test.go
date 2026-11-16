@@ -4744,7 +4744,6 @@ func TestAnthropicResponsesWebFetchIsCappedAndTokenPriced(t *testing.T) {
 	}
 	if err := state.Adapter.SanitizeRequest(state); err != nil {
 		t.Fatalf("SanitizeRequest returned error: %v", err)
-		wantCompaction  bool
 	}
 	if err := state.Adapter.EstimateHold(state); err != nil {
 		t.Fatalf("EstimateHold returned error: %v", err)
@@ -4763,13 +4762,6 @@ func TestAnthropicResponsesWebFetchIsCappedAndTokenPriced(t *testing.T) {
 		bifrostReq.ResponsesRequest,
 		anthropicprovider.AnthropicRequestBuildConfig{Provider: schemas.Anthropic},
 	)
-		{
-			name:            "ten searches can reach the lowest trigger",
-			body:            `{"model":"anthropic-claude-sonnet-4-6","input":"hi","max_output_tokens":64,"context_management":{"edits":[{"type":"compact_20260112","trigger":{"type":"input_tokens","value":50000}}]},"tools":[{"type":"web_search_20250305","name":"web_search"}]}`,
-			wantIterations:  10,
-			wantCompaction:  true,
-			wantHostedCalls: "10",
-		},
 	if bifrostErr != nil {
 		t.Fatalf("BuildAnthropicResponsesRequestBody returned error: %v", bifrostErr)
 	}
@@ -4812,6 +4804,7 @@ func TestAnthropicCompactionHoldOnlyWhenTheTriggerIsReachable(t *testing.T) {
 		name            string
 		body            string
 		wantIterations  int
+		wantCompaction  bool
 		wantHostedCalls string
 	}{
 		{
@@ -4829,6 +4822,13 @@ func TestAnthropicCompactionHoldOnlyWhenTheTriggerIsReachable(t *testing.T) {
 			body:            `{"model":"anthropic-claude-sonnet-4-6","input":"hi","max_output_tokens":64,"context_management":{"edits":[{"type":"compact_20260112","trigger":{"type":"input_tokens","value":50000}}]},"tools":[{"type":"web_search_20250305","name":"web_search"}],"max_tool_calls":2}`,
 			wantIterations:  3,
 			wantHostedCalls: "2",
+		},
+		{
+			name:            "ten searches can reach the lowest trigger",
+			body:            `{"model":"anthropic-claude-sonnet-4-6","input":"hi","max_output_tokens":64,"context_management":{"edits":[{"type":"compact_20260112","trigger":{"type":"input_tokens","value":50000}}]},"tools":[{"type":"web_search_20250305","name":"web_search"}]}`,
+			wantIterations:  10,
+			wantCompaction:  true,
+			wantHostedCalls: "10",
 		},
 	}
 
