@@ -66,3 +66,4 @@ result="$(
 mkdir -p "$out_dir"
 cp -r -- "$result"/. "$out_dir"/
 chmod -R u+w -- "$out_dir"
+node "$release_root/scripts/sbom.mjs" "$snapshot/gateway" > "$out_dir/sbom.cdx.json"

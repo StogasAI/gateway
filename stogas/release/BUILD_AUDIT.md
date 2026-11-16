@@ -67,10 +67,28 @@ Guix applies each patch with zero fuzz.
 | File                                                           | Use                                                       |
 | -------------------------------------------------------------- | --------------------------------------------------------- |
 | `gateway.igvm`, `release-manifest.json`, `LICENSE`, `NOTICE`   | Published in the GitHub release with a build attestation. |
+| `sbom.cdx.json`                                                | Published in the GitHub release as the bill of materials. |
 | `gateway.init`, `gateway.kernel`, `gateway.initramfs.cpio.zst` | Local tests.                                              |
 | `kernel-config.txt`                                            | Review of the full kernel configuration.                  |
 
 The manifest records the image hash and size, the launch measurement and launch policies, the source commit and digest, the digests of the verifier source and the vendored Go modules, the Guix commit, the hashes of the kernel, firmware, EFI stub, UKI, and measurement tool, and the hashes of the inputs above.
+
+## Bill of materials
+
+`sbom.cdx.json` is a CycloneDX 1.6 file that you can give to a vulnerability scanner such as OSV-Scanner, Grype, or Dependency-Track. `scripts/sbom.mjs` writes it from the tagged source alone, so a rebuild gives the same bytes. It lists:
+
+- Each source in `pins.lock.json`, at its commit. Linux, systemd, EDK II, and the Go standard library also carry the CPE that the NVD uses.
+- Each Go module that the build vendors, with its `go.sum` hash.
+- Each crate in `locks/`, with its checksum.
+- The Guix commit, which fixes the compiler, the C library, and every build input that the file does not list.
+
+A component with the scope `excluded` is a build tool that the image does not contain.
+
+GitHub attests the file for the image. To check it:
+
+```console
+gh attestation verify gateway.igvm --repo StogasAI/gateway --predicate-type https://cyclonedx.org/bom --source-ref refs/tags/<tag> --deny-self-hosted-runners
+```
 
 ## Reproducibility
 
