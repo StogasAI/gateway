@@ -334,7 +334,9 @@ func waitFor(t *testing.T, condition func() bool) {
 
 func drainSettlements(t *testing.T, s *Service) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// The deadline only ends a drain that hangs: under a full test run, draining thousands of
+	// rejection rows has taken more than ten seconds.
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	if err := s.DrainFinalizations(ctx); err != nil {
 		t.Fatal(err)
