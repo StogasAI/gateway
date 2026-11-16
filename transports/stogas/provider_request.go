@@ -1,6 +1,7 @@
 package stogas
 
 import (
+	"bytes"
 	"encoding/json"
 	"strconv"
 	"strings"
@@ -219,7 +220,7 @@ func prepareChatProviderBody(ctx *schemas.BifrostContext, request *schemas.Bifro
 	if bifrostErr != nil || !usesAnthropicWireFormat(ctx, request.Provider, request.Model) {
 		return body, bifrostErr
 	}
-	return streamToolInput(body)
+	return streamToolInput(body, streaming)
 }
 
 func chatProviderBody(ctx *schemas.BifrostContext, request *schemas.BifrostChatRequest, streaming bool, hosting string) ([]byte, *schemas.BifrostError) {
@@ -267,7 +268,7 @@ func prepareResponsesProviderBody(ctx *schemas.BifrostContext, request *schemas.
 	if bifrostErr != nil || !usesAnthropicWireFormat(ctx, request.Provider, request.Model) {
 		return body, bifrostErr
 	}
-	return streamToolInput(body)
+	return streamToolInput(body, streaming)
 }
 
 func responsesProviderBody(ctx *schemas.BifrostContext, request *schemas.BifrostResponsesRequest, streaming bool, hosting string) ([]byte, *schemas.BifrostError) {
@@ -393,36 +394,57 @@ func restoreStrictTools(body []byte, hosting string, strict map[string]bool) ([]
 	if hosting != hostingAmazon && hosting != hostingGoogle {
 		return body, nil
 	}
-	for index, tool := range providerutils.GetJSONField(body, "tools").Array() {
-		toolType := tool.Get("type").String()
-		if !strict[tool.Get("name").String()] || (toolType != "" && toolType != "custom") || tool.Get("strict").Exists() {
-			continue
-		}
-		var err error
-		if body, err = providerutils.SetJSONField(body, "tools."+strconv.Itoa(index)+".strict", true); err != nil {
-			return nil, providerutils.NewBifrostOperationError(schemas.ErrProviderRequestMarshal, err)
-		}
-	}
-	return body, nil
+	return setToolFlag(body, "strict", func(tool []byte) bool {
+		return claudeFunctionTool(tool) && strict[providerutils.GetJSONField(tool, "name").String()] &&
+			!providerutils.JSONFieldExists(tool, "strict")
+	})
 }
 
-// streamToolInput has Claude send the input of each function tool as it writes it
-// (`eager_input_streaming`). Claude otherwise holds each parameter back until it is complete, so
-// a long one, such as a file's content, arrives in one piece after a silence that can outlast the
-// request's output idle limit. Every Claude hosting takes the field without a beta header. Each
-// gets it, on streamed and whole requests alike, because Claude compares `tools` before it
-// accepts earlier thinking, and only the tools that the client defines take it. The input is
-// then not checked before it streams; a finished call that holds no JSON object fails the reply,
-// as it does from every provider.
-func streamToolInput(body []byte) ([]byte, *schemas.BifrostError) {
-	for index, tool := range providerutils.GetJSONField(body, "tools").Array() {
-		if toolType := tool.Get("type").String(); toolType != "" && toolType != "custom" {
+// streamToolInput has Claude send the input of each function tool of a streamed request as it
+// writes it (`eager_input_streaming`). Claude otherwise holds each parameter back until it is
+// complete, so a long one, such as a file's content, arrives in one piece after a silence that can
+// outlast the request's output idle limit. Every Claude hosting takes the field without a beta
+// header, only on the tools that the client defines, and ignores it on a whole request, which
+// therefore goes without it, as Anthropic advises. The input is then not checked before it
+// streams; a finished call that holds no JSON object fails the reply, as it does from every
+// provider.
+func streamToolInput(body []byte, streaming bool) ([]byte, *schemas.BifrostError) {
+	if !streaming {
+		return body, nil
+	}
+	return setToolFlag(body, "eager_input_streaming", claudeFunctionTool)
+}
+
+// claudeFunctionTool reports whether a tool of a Claude request is one that the client defines,
+// which has no type or the type `custom`, rather than one of Anthropic's own tools.
+func claudeFunctionTool(tool []byte) bool {
+	toolType := providerutils.GetJSONField(tool, "type").String()
+	return toolType == "" || toolType == "custom"
+}
+
+// setToolFlag sets field to true on each tool that selects. It changes each tool apart and
+// writes `tools` once, because a change through the body copies all of it, once for each tool.
+func setToolFlag(body []byte, field string, selects func(tool []byte) bool) ([]byte, *schemas.BifrostError) {
+	tools := providerutils.GetJSONField(body, "tools").Array()
+	parts := make([][]byte, len(tools))
+	changed := false
+	for index, tool := range tools {
+		parts[index] = []byte(tool.Raw)
+		if !selects(parts[index]) {
 			continue
 		}
 		var err error
-		if body, err = providerutils.SetJSONField(body, "tools."+strconv.Itoa(index)+".eager_input_streaming", true); err != nil {
+		if parts[index], err = providerutils.SetJSONField(parts[index], field, true); err != nil {
 			return nil, providerutils.NewBifrostOperationError(schemas.ErrProviderRequestMarshal, err)
 		}
+		changed = true
+	}
+	if !changed {
+		return body, nil
+	}
+	body, err := providerutils.SetRawJSONField(body, "tools", append(append([]byte{'['}, bytes.Join(parts, []byte{','})...), ']'))
+	if err != nil {
+		return nil, providerutils.NewBifrostOperationError(schemas.ErrProviderRequestMarshal, err)
 	}
 	return body, nil
 }

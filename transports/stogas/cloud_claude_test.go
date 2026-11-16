@@ -651,9 +651,9 @@ func TestCloudClaudeKeepsMidConversationSystemMessagesInPlace(t *testing.T) {
 
 // Every hosting gets the output format natively and keeps the client's strict
 // tools, although core's tables drop strict where AWS or Google runs Claude.
-// Every hosting gets fine-grained tool streaming on each function tool, which
-// core would add on some hostings and models only, so every hosting sends the
-// same tools. The edge-cases note describes both; update it when they change.
+// Every hosting gets fine-grained tool streaming on each function tool of a
+// streamed request, which core would add on some hostings and models only, with
+// a beta header. The edge-cases note describes both; update it when they change.
 func TestCloudClaudeKeepsStrictToolsOnEveryHosting(t *testing.T) {
 	format := `"type":"json_schema","strict":true,"schema":{"type":"object","properties":{"a":{"type":"string"}},"required":["a"],"additionalProperties":false}`
 	parameters := `"parameters":{"type":"object","properties":{"q":{"type":"string"}},"required":["q"],"additionalProperties":false}`
@@ -703,9 +703,11 @@ func TestCloudClaudeKeepsStrictToolsOnEveryHosting(t *testing.T) {
 				if lookup.Get("name").String() != "lookup" || !lookup.Get("strict").Bool() || loose.Get("strict").Bool() {
 					t.Errorf("%s %s: strict lost or added: %s", path, deployment, wire)
 				}
-				// Claude sends each tool's input as it writes it, on every hosting and on whole requests too.
-				if !lookup.Get("eager_input_streaming").Bool() || !loose.Get("eager_input_streaming").Bool() {
-					t.Errorf("%s %s streaming %v: a tool lacks eager_input_streaming: %s", path, deployment, streaming, wire)
+				// Claude sends each tool's input of a stream as it writes it, and ignores the field on a whole request.
+				for _, tool := range tools {
+					if tool.Get("eager_input_streaming").Exists() != streaming || streaming && !tool.Get("eager_input_streaming").Bool() {
+						t.Errorf("%s %s streaming %v: eager_input_streaming: %s", path, deployment, streaming, wire)
+					}
 				}
 				if strings.Contains(string(wire), "structured-outputs-") || strings.Contains(string(wire), "fine-grained-tool-streaming-") ||
 					hosting == hostingAmazon && strings.Contains(string(wire), "anthropic_beta") {
