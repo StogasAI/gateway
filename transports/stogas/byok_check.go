@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -78,7 +79,7 @@ type byokChecker struct {
 	azure  azureSignIn
 	roles  awsRoleSignIn
 	now    func() time.Time
-	slots  chan struct{}
+	slots  *checkSlots
 }
 
 // newByokChecker reaches each provider as requests do. The runtime sets google and azure once
@@ -104,7 +105,7 @@ func newByokChecker(config Config) (*byokChecker, error) {
 		aws:              byokCheckClient(awsTLS),
 		arm:              armClient,
 		now:              time.Now,
-		slots:            make(chan struct{}, byokCheckLimit),
+		slots:            newCheckSlots(byokCheckLimit),
 	}, nil
 }
 
@@ -134,6 +135,8 @@ type byokFailure struct {
 	message  string
 	rejected bool
 	invalid  bool
+	// The secret cannot serve the target that the credential names.
+	target bool
 }
 
 func refusal(message string) byokFailure { return byokFailure{message: message, rejected: true} }
@@ -186,16 +189,72 @@ func checkByok(ctx context.Context, store byokCheckStore, checker *byokChecker, 
 	return result, nil
 }
 
+// checkSlots bounds the checks that a gateway runs at once: byokCheckLimit in all, and half of them
+// for one organization, so one organization's checks, which can each wait 25 seconds for Azure,
+// never make every other organization's wait.
+type checkSlots struct {
+	all chan struct{}
+	mu  sync.Mutex
+	// The organizations that hold or wait for a slot, each with its share.
+	organizations map[string]*organizationCheckSlots
+}
+
+type organizationCheckSlots struct {
+	share chan struct{}
+	users int
+}
+
+func newCheckSlots(limit int) *checkSlots {
+	return &checkSlots{all: make(chan struct{}, limit), organizations: map[string]*organizationCheckSlots{}}
+}
+
+// take waits for a slot of the organization's share and then for one of all, and returns what
+// frees both. An organization holds nothing while it waits for all.
+func (s *checkSlots) take(ctx context.Context, organizationID string) (func(), error) {
+	s.mu.Lock()
+	organization := s.organizations[organizationID]
+	if organization == nil {
+		organization = &organizationCheckSlots{share: make(chan struct{}, max(1, cap(s.all)/2))}
+		s.organizations[organizationID] = organization
+	}
+	organization.users++
+	s.mu.Unlock()
+	leave := func() {
+		s.mu.Lock()
+		if organization.users--; organization.users == 0 {
+			delete(s.organizations, organizationID)
+		}
+		s.mu.Unlock()
+	}
+	select {
+	case organization.share <- struct{}{}:
+	case <-ctx.Done():
+		leave()
+		return nil, ctx.Err()
+	}
+	select {
+	case s.all <- struct{}{}:
+	case <-ctx.Done():
+		<-organization.share
+		leave()
+		return nil, ctx.Err()
+	}
+	return func() {
+		<-s.all
+		<-organization.share
+		leave()
+	}, nil
+}
+
 // run checks an organization's credential while it holds one of the checker's slots. For an Azure
 // credential, it discovers the targets of the account accountID from startedAt, the database's
 // time, and returns what the discovery found when it read the account.
 func (c *byokChecker) run(ctx context.Context, organizationID, provider, secret string, registered *billing.CloudTarget, accountID string, startedAt time.Time) (*azureDiscovery, byokFailure, error) {
-	select {
-	case c.slots <- struct{}{}:
-	case <-ctx.Done():
-		return nil, byokFailure{}, ctx.Err()
+	release, err := c.slots.take(ctx, organizationID)
+	if err != nil {
+		return nil, byokFailure{}, err
 	}
-	defer func() { <-c.slots }()
+	defer release()
 	if provider == "azure" {
 		found, failure := c.discover(ctx, organizationID, secret, accountID, startedAt)
 		return found, failure, nil
@@ -401,12 +460,15 @@ func cloudTargetMismatch(provider schemas.ModelProvider, secret string, register
 	if err != nil {
 		return invalidSecret(string(provider))
 	}
+	failure := byokFailure{rejected: true, target: true}
 	if registered == nil || registered.Region != actual.Region {
-		return refusal("The credential is for another Region than the target it was added with. Add the target that stogas encrypt printed for it.")
+		failure.message = "The credential is for another Region than the target it was added with. Add the target that stogas encrypt printed for it."
+		return failure
 	}
 	for _, hosting := range registered.Hosting {
 		if !slices.Contains(actual.Hosting, hosting) {
-			return refusal("The credential cannot serve every hosting of the target it was added with. Add the target that stogas encrypt printed for it.")
+			failure.message = "The credential cannot serve every hosting of the target it was added with. Add the target that stogas encrypt printed for it."
+			return failure
 		}
 	}
 	return byokFailure{}
@@ -470,7 +532,7 @@ func byokUnavailable(provider string) string {
 
 func invalidByokSecret(provider string) string {
 	return "The decrypted secret is not a valid " + byokProviderNames[provider] + " " + byokCredentialName(provider) +
-		". Encrypt it again with stogas encrypt --purpose byok/" + provider + "."
+		". Encrypt it again with stogas encrypt --credential " + provider + "."
 }
 
 // invalidStoredSecret is invalidByokSecret for a stored credential, whose secret a member replaces

@@ -87,7 +87,7 @@ func newTestByokChecker(server *httptest.Server, google googleSignIn, now time.T
 	return &byokChecker{
 		openAIBaseURL: server.URL, anthropicBaseURL: server.URL, chutesAPIBaseURL: server.URL,
 		client: client, aws: awsClient, google: google, now: func() time.Time { return now },
-		slots: make(chan struct{}, byokCheckLimit),
+		slots: newCheckSlots(byokCheckLimit),
 	}
 }
 
@@ -545,7 +545,7 @@ func TestCheckByokDiscoversAnAzureAccount(t *testing.T) {
 		{"named-deployments", federatedApp, &fakeAzureSignIn{err: azureauth.ErrCredential}, azureFederationRejected},
 		{"named-deployments", app, &fakeAzureSignIn{err: azureauth.ErrUnavailable}, azureAppUnavailable},
 		{"named-deployments", app, nil, azureAppUnavailable},
-		{"named-deployments", `{"clientId":"x"}`, &fakeAzureSignIn{}, "The decrypted secret is not a valid Azure application. Encrypt it again with stogas encrypt --purpose byok/azure."},
+		{"named-deployments", `{"clientId":"x"}`, &fakeAzureSignIn{}, "The decrypted secret is not a valid Azure application. Encrypt it again with stogas encrypt --credential azure."},
 	} {
 		store, _, _, arm := check(test.name, test.plaintext, test.signIn)
 		answered, unexpected := arm.counts()
@@ -553,5 +553,50 @@ func TestCheckByokDiscoversAnAzureAccount(t *testing.T) {
 			(test.want != azureAccountDenied && answered != 0) {
 			t.Fatalf("%s: recorded %q with %+v after %d Azure reads", test.want, store.recorded[0], store.discoveries[0], answered)
 		}
+	}
+}
+
+// One organization's checks take at most half of a gateway's slots, so another organization's
+// check never waits for all of them, and a check that stops waiting holds nothing.
+func TestCheckSlotsKeepRoomForOtherOrganizations(t *testing.T) {
+	slots := newCheckSlots(byokCheckLimit)
+	ctx := context.Background()
+	take := func(organizationID string) func() {
+		t.Helper()
+		release, err := slots.take(ctx, organizationID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return release
+	}
+	waits := func(organizationID string) bool {
+		t.Helper()
+		waiting, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+		defer cancel()
+		release, err := slots.take(waiting, organizationID)
+		if err == nil {
+			release()
+		}
+		return errors.Is(err, context.DeadlineExceeded)
+	}
+	first := []func(){take("a"), take("a")}
+	if !waits("a") {
+		t.Fatal("one organization took more than half of the slots")
+	}
+	second := []func(){take("b"), take("b")}
+	if !waits("c") {
+		t.Fatal("a check ran beyond the gateway's slots")
+	}
+	first[0]()
+	// The slot that a frees serves c, not a third check of b.
+	if !waits("b") {
+		t.Fatal("one organization took more than half of the slots")
+	}
+	third := take("c")
+	for _, release := range append(append(first[1:], second...), third) {
+		release()
+	}
+	if len(slots.all) != 0 || len(slots.organizations) != 0 {
+		t.Fatalf("%d slots and %d organizations held after every check ended", len(slots.all), len(slots.organizations))
 	}
 }

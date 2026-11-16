@@ -32,6 +32,9 @@ var (
 	ErrStoredByokRequest = &RequestError{"invalid_request", "Send the credential's sealed secret with what its provider's check needs.", 400}
 	// Control sealed the secret with a key that this gateway does not hold, or for another credential.
 	ErrStoredByokSecret = &RequestError{"secret_unreadable", "The gateway cannot open this credential's secret.", 500}
+	// The secret cannot serve the target that Control stores beside it, which Control derives from
+	// the secret as gateways do, so the two read the secret differently.
+	ErrStoredByokTarget = &RequestError{"target_mismatch", "The credential's secret cannot serve the target stored with it.", 500}
 )
 
 // StoredByokGrant names the use of a stored credential that Control allowed.

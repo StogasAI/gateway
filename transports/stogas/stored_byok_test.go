@@ -102,6 +102,10 @@ func TestCheckStoredByokChecksTheSealedSecret(t *testing.T) {
 			Secret: "sealed", AzureAccountID: strings.ToUpper(storedTestAccount), StartedAt: &now,
 		}, billing.ErrStoredByokRequest},
 		"another credential's secret": {grant, StoredByokCheckRequest{Secret: "other"}, billing.ErrStoredByokSecret},
+		"AWS without a target":        {storedTestGrant("aws", billing.StoredByokCheck), StoredByokCheckRequest{Secret: "sealed"}, billing.ErrStoredByokRequest},
+		"a target for OpenAI": {grant, StoredByokCheckRequest{
+			Secret: "sealed", Target: &billing.CloudTarget{Hosting: []string{"amazon"}, Region: "us-east-1"},
+		}, billing.ErrStoredByokRequest},
 	} {
 		if _, err := checkStoredByok(ctx, opener, checker, c.grant, c.request); !errors.Is(err, c.want) {
 			t.Fatalf("%s: %v, want %v", name, err, c.want)
@@ -111,10 +115,11 @@ func TestCheckStoredByokChecksTheSealedSecret(t *testing.T) {
 		t.Fatal("a refused request opened its secret or reached the provider")
 	}
 
-	// A stored cloud secret serves the target that Control derived from it, so the check reaches
-	// the target's own host.
+	// The check holds a stored cloud secret to the target that Control stores beside it, as requests
+	// do, and reaches the target's own host.
+	awsTarget := &billing.CloudTarget{Hosting: []string{"amazon"}, Region: "eu-west-1"}
 	opener.secret = awsIAMSecret(t, "eu-west-1", "")
-	got, err := checkStoredByok(ctx, opener, checker, storedTestGrant("aws", billing.StoredByokCheck), StoredByokCheckRequest{Secret: "sealed"})
+	got, err := checkStoredByok(ctx, opener, checker, storedTestGrant("aws", billing.StoredByokCheck), StoredByokCheckRequest{Secret: "sealed", Target: awsTarget})
 	if err != nil || got.Outcome != storedByokAccepted || seen()[len(seen())-1].host != "sts.eu-west-1.amazonaws.com" {
 		t.Fatalf("AWS: %+v, %v", got, err)
 	}
@@ -123,10 +128,31 @@ func TestCheckStoredByokChecksTheSealedSecret(t *testing.T) {
 		signIns = append(signIns, credential)
 		return nil
 	})
+	googleTarget := &billing.CloudTarget{Hosting: []string{"anthropic", "google"}}
 	opener.secret = googleSecret(t, testWorkspaceID)
-	got, err = checkStoredByok(ctx, opener, checker, storedTestGrant("google-cloud", billing.StoredByokCheck), StoredByokCheckRequest{Secret: "sealed"})
+	got, err = checkStoredByok(ctx, opener, checker, storedTestGrant("google-cloud", billing.StoredByokCheck), StoredByokCheckRequest{Secret: "sealed", Target: googleTarget})
 	if err != nil || got.Outcome != storedByokAccepted || len(signIns) != 1 {
 		t.Fatalf("Google Cloud: %+v, %v", got, err)
+	}
+	// Control derives the stored target from the secret as gateways do, so a secret that cannot
+	// serve it means that the two read it differently, which is ours to fix, and no call follows.
+	before = len(seen())
+	for name, c := range map[string]struct {
+		provider, secret string
+		target           *billing.CloudTarget
+	}{
+		"AWS in another Region":   {"aws", awsIAMSecret(t, "us-east-1", ""), awsTarget},
+		"Google without Claude":   {"google-cloud", googleSecret(t, ""), googleTarget},
+		"AWS without a workspace": {"aws", awsIAMSecret(t, "eu-west-1", ""), &billing.CloudTarget{Hosting: []string{"amazon", "anthropic"}, Region: "eu-west-1"}},
+	} {
+		opener.secret = c.secret
+		got, err := checkStoredByok(ctx, opener, checker, storedTestGrant(c.provider, billing.StoredByokCheck), StoredByokCheckRequest{Secret: "sealed", Target: c.target})
+		if got != nil || !errors.Is(err, billing.ErrStoredByokTarget) {
+			t.Fatalf("%s: %+v, %v", name, got, err)
+		}
+	}
+	if len(seen()) != before || len(signIns) != 1 {
+		t.Fatal("a secret that cannot serve its target reached the provider")
 	}
 	// Control reads only the form of a new secret, so a secret that is not its provider's credential
 	// is refused as the member's to replace, without a call. Control's contract takes this Google key,
@@ -136,13 +162,16 @@ func TestCheckStoredByokChecksTheSealedSecret(t *testing.T) {
 		"privateKeyId": testGoogleKeyID, "privateKey": base64.StdEncoding.EncodeToString([]byte("not an RSA key")),
 	})
 	before = len(seen())
-	for provider, test := range map[string]struct{ secret, want string }{
-		"aws":          {"not json", "The secret is not a valid AWS credential"},
-		"google-cloud": {notRSA, "The secret is not a valid Google Cloud credential"},
-		"openai":       {"sk stored", "The secret is not a valid OpenAI API key"},
+	for provider, test := range map[string]struct {
+		secret, want string
+		target       *billing.CloudTarget
+	}{
+		"aws":          {"not json", "The secret is not a valid AWS credential", awsTarget},
+		"google-cloud": {notRSA, "The secret is not a valid Google Cloud credential", googleTarget},
+		"openai":       {"sk stored", "The secret is not a valid OpenAI API key", nil},
 	} {
 		opener.secret = test.secret
-		got, err := checkStoredByok(ctx, opener, checker, storedTestGrant(provider, billing.StoredByokCheck), StoredByokCheckRequest{Secret: "sealed"})
+		got, err := checkStoredByok(ctx, opener, checker, storedTestGrant(provider, billing.StoredByokCheck), StoredByokCheckRequest{Secret: "sealed", Target: test.target})
 		if err != nil || got.Outcome != storedByokRejected || got.Message == nil || *got.Message != test.want || got.Azure != nil {
 			t.Fatalf("an invalid %s secret: %+v, %v", provider, got, err)
 		}
@@ -239,9 +268,9 @@ func TestCheckStoredByokRefusesADiscoveryLargerThanControlReads(t *testing.T) {
 	status := http.StatusOK
 	server, _ := byokCheckTestServer(t, &status)
 	arm := newAzureDiscoveryAtScale(false)
-	// Model names of 10,000 characters take the lists of 2,000 targets past the bound. The lists of
+	// Model names of 5,000 characters take the list of 2,000 deployments past the bound. The lists of
 	// 20,000 targets take longer to read under the race detector than a discovery may.
-	arm.deployments, arm.pageSize, arm.modelPadding = 2_000, 200, strings.Repeat("x", 10_000)
+	arm.deployments, arm.pageSize, arm.modelPadding = 2_000, 200, strings.Repeat("x", 5_000)
 	armServer := httptest.NewServer(arm)
 	t.Cleanup(armServer.Close)
 	startedAt := time.Now()

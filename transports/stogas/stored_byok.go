@@ -6,7 +6,6 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
@@ -21,23 +20,26 @@ const (
 	storedByokUnavailable = "unavailable"
 	// The subscriptions that one listing of Azure accounts may search, as the dashboard bounds them.
 	storedAzureMaxSubscriptions = 64
-	// Control saves a stored credential's discovery in a Worker, which has 128 MB and holds about
-	// twice an answer while it reads one, so an answer's targets and deployments take at most 32 MiB
-	// as JSON. At the bound on targets they take about 18 MiB with names of usual length.
-	storedAzureMaxDiscoveryBytes = 32 << 20
+	// Control saves a stored credential's discovery in a Worker, which has 128 MB. While it reads an
+	// answer it holds about five times the answer's size, most of all when the answer lists many
+	// small targets, so an answer's targets and deployments take at most 8 MiB as JSON, which Control
+	// reads in about 40 MiB. That holds about 8,000 targets, and Azure allows an account 32 standard
+	// deployments and 10 fine-tuned ones.
+	storedAzureMaxDiscoveryBytes = 8 << 20
 )
 
 // A subscription ID only names a path of Azure Resource Manager, so it takes any UUID that an
 // account's resource ID may hold.
 var azureSubscriptionIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
-// StoredByokCheckRequest checks a stored credential: its secret, sealed as Control stores it, and
-// for an Azure credential the account that it connects and the database time that the check
-// starts from.
+// StoredByokCheckRequest checks a stored credential: its secret, sealed as Control stores it, for an
+// AWS or Google Cloud credential the target that Control stores beside it, and for an Azure
+// credential the account that it connects and the database time that the check starts from.
 type StoredByokCheckRequest struct {
-	Secret         string     `json:"secret"`
-	AzureAccountID string     `json:"azureAccountId,omitempty"`
-	StartedAt      *time.Time `json:"startedAt,omitempty"`
+	Secret         string               `json:"secret"`
+	Target         *billing.CloudTarget `json:"target,omitempty"`
+	AzureAccountID string               `json:"azureAccountId,omitempty"`
+	StartedAt      *time.Time           `json:"startedAt,omitempty"`
 }
 
 // StoredByokCheck is how a check of a stored credential ended. Message is nil when nothing is
@@ -98,9 +100,10 @@ func checkStoredByok(ctx context.Context, opener storedByokOpener, checker *byok
 		return nil, billing.ErrStoredByokGrant
 	}
 	azure := grant.Provider == "azure"
+	cloud := grant.Provider == string(catalog.ProviderAWS) || grant.Provider == string(catalog.ProviderGoogleCloud)
 	var startedAt time.Time
 	switch {
-	case request.Secret == "":
+	case request.Secret == "" || cloud != (request.Target != nil):
 		return nil, billing.ErrStoredByokRequest
 	case azure:
 		if request.StartedAt == nil || !azureAccountIDPattern.MatchString(request.AzureAccountID) {
@@ -114,15 +117,19 @@ func checkStoredByok(ctx context.Context, opener storedByokOpener, checker *byok
 	if err != nil {
 		return nil, err
 	}
-	found, failure, err := checker.run(ctx, grant.OrganizationID, grant.Provider, secret, storedCloudTarget(grant.Provider, secret), request.AzureAccountID, startedAt)
+	// The check holds the secret to the target that requests hold it to.
+	found, failure, err := checker.run(ctx, grant.OrganizationID, grant.Provider, secret, request.Target, request.AzureAccountID, startedAt)
 	if err != nil {
 		return nil, err
 	}
-	// Control reads only the form of a new secret, so this check is the first to read it as its
-	// provider's credential, and a secret that is not one, such as a Google key that is not RSA, is
-	// the member's to replace, as one that the provider refuses is.
-	if failure.invalid {
+	switch {
+	case failure.invalid:
+		// Control reads only the form of a new secret, so this check is the first to read it as its
+		// provider's credential, and a secret that is not one, such as a Google key that is not RSA,
+		// is the member's to replace, as one that the provider refuses is.
 		failure.message = invalidStoredSecret(grant.Provider)
+	case failure.target:
+		return nil, billing.ErrStoredByokTarget
 	}
 	if found == nil {
 		return &StoredByokCheck{Outcome: storedByokOutcome(failure), Message: optionalMessage(failure.message)}, nil
@@ -188,12 +195,11 @@ func listStoredAzureAccounts(ctx context.Context, opener storedByokOpener, check
 // accounts lists the model accounts in subscriptionIDs that the application in secret can read,
 // while it holds one of the checker's slots.
 func (c *byokChecker) accounts(ctx context.Context, organizationID, secret string, subscriptionIDs []string) ([]StoredAzureAccount, byokFailure, error) {
-	select {
-	case c.slots <- struct{}{}:
-	case <-ctx.Done():
-		return nil, byokFailure{}, ctx.Err()
+	release, err := c.slots.take(ctx, organizationID)
+	if err != nil {
+		return nil, byokFailure{}, err
 	}
-	defer func() { <-c.slots }()
+	defer release()
 	app, err := parseAzureByokCredential(secret)
 	if err != nil {
 		return nil, invalidSecret("azure"), nil
@@ -209,20 +215,6 @@ func (c *byokChecker) accounts(ctx context.Context, organizationID, secret strin
 		return nil, azureDiscoveryFailure(err), nil
 	}
 	return accounts, byokFailure{}, nil
-}
-
-// storedCloudTarget is the target that a stored AWS or Google Cloud secret serves, which Control
-// stores beside it, so the check compares the secret with its own target. It is nil for other
-// providers and for a secret that does not parse, which the check refuses.
-func storedCloudTarget(provider, secret string) *billing.CloudTarget {
-	if provider != string(catalog.ProviderAWS) && provider != string(catalog.ProviderGoogleCloud) {
-		return nil
-	}
-	target, err := cloudCredentialTarget(schemas.ModelProvider(provider), secret)
-	if err != nil {
-		return nil
-	}
-	return &target
 }
 
 // validSubscriptionIDs holds for 1 to 64 distinct subscription IDs in lowercase.
