@@ -132,15 +132,10 @@ func (s *Server) startRun(ctx *requestContext, startedAt time.Time, preparation 
 			return nil
 		},
 		PairWaits: func(provider schemas.ModelProvider, index int, deployment catalog.Deployment) error {
-			key, ok := pairWaitKey(keyConfig, provider, index, deployment.ID)
-			if !ok {
-				return nil
+			if key, ok := pairWaitKey(keyConfig, provider, index, deployment.ID); ok {
+				return s.pairWaits.refusal(key)
 			}
-			tests, err := s.pairWaits.refusal(key)
-			if tests {
-				run.tests = append(run.tests, key)
-			}
-			return err
+			return nil
 		},
 		// The run ranks a pair that the plan refused like a failed call, and
 		// the plan, when it refuses every pair, keeps the one the run would.
