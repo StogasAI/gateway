@@ -125,7 +125,7 @@ type record struct {
 }
 
 // release erases the payload under the read lock and returns its reservation.
-// Reclaim and the last delivery may both call it.
+// Reclaim calls it for a record it takes, and the last delivery for any other.
 func (r *record) release() int64 {
 	r.mu.Lock()
 	parts := r.parts
@@ -399,6 +399,8 @@ func (e *Engine) finishDelivery(r *record, result attempt) {
 	}
 	r.remaining--
 	last := r.remaining == 0
+	// Reclaim releases the records it takes, so that it reports every byte it frees.
+	release := last && !r.reclaimed
 	if last && r.element != nil {
 		e.records.Remove(r.element)
 		r.element = nil
@@ -406,6 +408,8 @@ func (e *Engine) finishDelivery(r *record, result attempt) {
 	e.mu.Unlock()
 	if last {
 		r.cancel()
+	}
+	if release {
 		r.release()
 	}
 	e.pending.Add(-1)
