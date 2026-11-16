@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"time"
 
-	azureprovider "github.com/maximhq/bifrost/core/providers/azure"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/azureauth"
 	gatewaybilling "github.com/maximhq/bifrost/transports/stogas/billing"
@@ -244,23 +243,25 @@ func applyUpstreamCredentials(
 					return err
 				}
 			}
-			token, err := azureTokens.Token(ctx, azureauth.Credential{
+			signIn := azureauth.Credential{
 				TenantID:       azure.TenantID.GetValue(),
 				ClientID:       azure.ClientID.GetValue(),
 				Secret:         azure.ClientSecret.GetValue(),
 				Scope:          azure.Scopes[0],
 				OrganizationID: authorization.OrganizationID,
-			})
-			if err != nil {
+			}
+			// The first token decides before dispatch whether the credential works.
+			if _, err := azureTokens.Token(ctx, signIn); err != nil {
 				if errors.Is(err, azureauth.ErrCredential) {
 					return gatewaybilling.ErrByok
 				}
 				return gatewaybilling.ErrGatewayUnavailable
 			}
-			// Bifrost's supported context-token path avoids its process-lifetime
-			// SDK credential cache. The provider never receives the client secret.
+			// Core's own sign-in keeps every credential for the life of the
+			// process, so the provider never receives the client secret. It reads
+			// a token for each attempt from the signer instead.
 			azure.ClientID, azure.ClientSecret, azure.TenantID = nil, nil, nil
-			ctx.SetValue(azureprovider.AzureAuthorizationTokenKey, token)
+			ctx.SetValue(schemas.BifrostContextKeyRequestSigner, bearerSigner(func() (string, error) { return azureTokens.Token(ctx, signIn) }))
 		}
 		ctx.SetValue(schemas.BifrostContextKeyDirectKey, directKey)
 	}

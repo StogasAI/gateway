@@ -17,6 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/transports/stogas/accesstoken"
 	"github.com/maximhq/bifrost/transports/stogas/awsauth"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
@@ -341,7 +342,7 @@ func cloudClaudeRequest(ctx context.Context, provider schemas.ModelProvider, org
 			}
 			return cloudRequest{}, billing.ErrGatewayUnavailable
 		}
-		request.signer = googleBearer(ctx, googleTokens, signIn)
+		request.signer = bearerSigner(func() (string, error) { return googleTokens.Token(ctx, signIn) })
 		return request, nil
 	}
 	return cloudRequest{}, billing.ErrByok
@@ -384,11 +385,11 @@ func sigV4Signer(current func() (aws.Credentials, error), service, region, url s
 	}
 }
 
-// googleBearer reads the access token for each attempt, so a retry late in a
+// bearerSigner reads the access token for each attempt, so a retry late in a
 // long request gets a current token rather than the one its first attempt used.
-func googleBearer(ctx context.Context, tokens googleTokenSource, credential googleauth.Credential) schemas.RequestSigner {
+func bearerSigner(current func() (string, error)) schemas.RequestSigner {
 	return func([]byte) (map[string]string, *schemas.BifrostError) {
-		token, err := tokens.Token(ctx, credential)
+		token, err := current()
 		if err != nil {
 			return nil, upstreamSignInFailure(err)
 		}
@@ -401,7 +402,7 @@ func googleBearer(ctx context.Context, tokens googleTokenSource, credential goog
 func upstreamSignInFailure(err error) *schemas.BifrostError {
 	status, message := http.StatusServiceUnavailable, "Upstream sign-in is unavailable"
 	// Every sign-in reports a rejected credential as accesstoken.ErrCredential.
-	if errors.Is(err, googleauth.ErrCredential) {
+	if errors.Is(err, accesstoken.ErrCredential) {
 		status, message = http.StatusUnauthorized, "Upstream credential rejected"
 	}
 	return &schemas.BifrostError{StatusCode: schemas.Ptr(status), Error: &schemas.ErrorField{Message: message}}

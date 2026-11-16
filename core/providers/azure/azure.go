@@ -155,6 +155,17 @@ func (provider *AzureProvider) getAzureAuthHeaders(ctx *schemas.BifrostContext, 
 		return authHeader, nil
 	}
 
+	// Context signer authentication: the caller supplies each attempt's headers,
+	// so a retry late in a long request never sends an expired token.
+	if signer := providerUtils.ContextBodySigner(ctx); signer != nil {
+		headers, bifrostErr := signer(nil)
+		if bifrostErr != nil {
+			return nil, bifrostErr
+		}
+		maps.Copy(authHeader, headers)
+		return authHeader, nil
+	}
+
 	// Context token authentication
 	if authToken, ok := ctx.Value(AzureAuthorizationTokenKey).(string); ok && authToken != "" {
 		authHeader["Authorization"] = fmt.Sprintf("Bearer %s", authToken)

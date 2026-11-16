@@ -3,11 +3,11 @@ package stogas
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
-	azureprovider "github.com/maximhq/bifrost/core/providers/azure"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/azureauth"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
@@ -474,11 +474,13 @@ func TestApplyUpstreamCredentialsInstallsAzureBoundKey(t *testing.T) {
 	state.Authorization.OrganizationID = testOrganizationID
 	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 	// The sign-in names the organization, whose token a federated application accepts.
+	signIns := 0
 	if err := applyUpstreamCredentials(ctx, state, azureTokenFunc(func(_ context.Context, credential azureauth.Credential) (string, error) {
 		if credential.Scope != azureDataScope || credential.Secret != "azure-client-secret" || credential.OrganizationID != testOrganizationID {
 			t.Fatal("incorrect Azure token credential")
 		}
-		return "test-access-token", nil
+		signIns++
+		return fmt.Sprintf("token-%d", signIns), nil
 	}), cloudSignIns{}, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -487,7 +489,18 @@ func TestApplyUpstreamCredentialsInstallsAzureBoundKey(t *testing.T) {
 		!directKey.Models.IsAllowed("customer-sol") {
 		t.Fatalf("Azure bound key was not installed: key=%#v resolution=%#v", directKey, state.Resolution)
 	}
-	if directKey.AzureKeyConfig.ClientID != nil || directKey.AzureKeyConfig.ClientSecret != nil || directKey.AzureKeyConfig.TenantID != nil || ctx.Value(azureprovider.AzureAuthorizationTokenKey) != "test-access-token" {
-		t.Fatal("Azure SDK credentials retained or access token missing")
+	if directKey.AzureKeyConfig.ClientID != nil || directKey.AzureKeyConfig.ClientSecret != nil || directKey.AzureKeyConfig.TenantID != nil {
+		t.Fatal("Azure SDK credentials retained")
+	}
+	// The first token checked the credential before dispatch, and each attempt
+	// reads the one current when it starts.
+	signer, _ := ctx.Value(schemas.BifrostContextKeyRequestSigner).(schemas.RequestSigner)
+	for _, want := range []string{"Bearer token-2", "Bearer token-3"} {
+		if signer == nil {
+			t.Fatal("Azure signer missing")
+		}
+		if headers, err := signer(nil); err != nil || headers["Authorization"] != want {
+			t.Fatalf("attempt headers %v %v, want %q", headers, err, want)
+		}
 	}
 }
