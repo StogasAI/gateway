@@ -39,7 +39,10 @@ test('opaque plugins survive the memory bridge in their original order', () => {
 				// Inspection reports a policy's export before its redaction.
 				plugins: {
 					redaction: { encrypted: envelope(byte) },
-					...(index === 1 && { textExtraction: { text: 'always' }, export: { encrypted: envelope(4, 1000) } })
+					...(index === 1 && {
+						textExtraction: { text: 'always' },
+						export: { encrypted: envelope(4, 1000) }
+					})
 				}
 			}
 		})),
@@ -102,7 +105,10 @@ test('conditional opaque rules preserve their source identity without retaining 
 				rules: {
 					z_opaque: {
 						when: "provider.id == 'openai'",
-						plugins: { textExtraction: { text: 'always' }, redaction: { encrypted: envelope(byte) } }
+						plugins: {
+							textExtraction: { text: 'always' },
+							redaction: { encrypted: envelope(byte) }
+						}
 					},
 					a_plain: { input: { asciiOnly: true } }
 				}
@@ -125,7 +131,10 @@ test('conditional opaque rules preserve their source identity without retaining 
 		first.effective.rules
 			.filter((rule) => rule.name === 'z_opaque')
 			.map((rule) => rule.config.plugins),
-		[1, 2].map((byte) => ({ textExtraction: { text: 'always' }, redaction: { encrypted: envelope(byte) } }))
+		[1, 2].map((byte) => ({
+			textExtraction: { text: 'always' },
+			redaction: { encrypted: envelope(byte) }
+		}))
 	);
 	first.effective.rules[1].config.plugins.redaction.encrypted.blob = 'changed';
 	assert.equal(sources[1].config.rules.z_opaque.plugins.redaction.encrypted.blob, envelope(1).blob);
