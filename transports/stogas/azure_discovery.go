@@ -43,7 +43,7 @@ const (
 	// An application without a client secret signs in with the organization's token.
 	azureFederationRejected = "Azure did not accept this organization's token for this tenant and client ID. Add a federated credential with the issuer, subject and audience to the application."
 	azureAppUnavailable     = "Could not authenticate with Azure. Try again."
-	azureTooManyTargets     = "Azure discovery returned too many deployments"
+	azureTooManyTargets     = "These accounts have more deployments than one credential can hold. Connect fewer accounts to this credential."
 )
 
 var (
@@ -204,7 +204,7 @@ func (r *armReads) pages(ctx context.Context, first string, denied string) ([]js
 			return nil, azureDiscoveryFailed("Azure returned invalid management data")
 		}
 		if items = append(items, values...); len(items) > azureDiscoveryMaxBindings {
-			return nil, azureDiscoveryRejected("Azure discovery returned too many resources")
+			return nil, azureDiscoveryRejected(azureTooManyTargets)
 		}
 		next = ""
 		if state == armText {

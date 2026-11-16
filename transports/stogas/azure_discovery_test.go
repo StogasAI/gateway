@@ -376,8 +376,8 @@ func TestAzureDiscoveryAtItsLimits(t *testing.T) {
 		{name: "20,000 deployments", deployments: 20_000, pageSize: 200, want: outcome{bindings: 20_000, deployments: 20_000}},
 		{name: "20,000 Instant targets", instant: true, projects: 2_000, instantModels: 10, pageSize: 200, want: outcome{bindings: 20_000}},
 		{name: "a page more", deployments: 20_001, pageSize: 200, want: outcome{message: "Azure discovery returned too many pages", status: http.StatusServiceUnavailable}},
-		{name: "a deployment more", deployments: 20_001, pageSize: 500, want: outcome{message: "Azure discovery returned too many resources", status: http.StatusBadRequest}},
-		{name: "an Instant target more", instant: true, projects: 2_001, instantModels: 10, pageSize: 200, want: outcome{message: "Azure discovery returned too many deployments", status: http.StatusBadRequest}},
+		{name: "a deployment more", deployments: 20_001, pageSize: 500, want: outcome{message: azureTooManyTargets, status: http.StatusBadRequest}},
+		{name: "an Instant target more", instant: true, projects: 2_001, instantModels: 10, pageSize: 200, want: outcome{message: azureTooManyTargets, status: http.StatusBadRequest}},
 	} {
 		t.Run(entry.name, func(t *testing.T) {
 			arm := newAzureDiscoveryAtScale(entry.instant)
