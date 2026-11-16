@@ -426,3 +426,9 @@ func invalidByokSecret(provider string) string {
 	return "The decrypted secret is not a valid " + byokProviderNames[provider] + " " + byokCredentialName(provider) +
 		". Encrypt it again with stogas encrypt --purpose byok/" + provider + "."
 }
+
+// invalidStoredSecret is invalidByokSecret for a stored credential, whose secret a member replaces
+// in the dashboard rather than encrypts.
+func invalidStoredSecret(provider string) string {
+	return "The secret is not a valid " + byokProviderNames[provider] + " " + byokCredentialName(provider)
+}

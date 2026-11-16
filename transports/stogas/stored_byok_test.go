@@ -2,6 +2,7 @@ package stogas
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -127,18 +128,27 @@ func TestCheckStoredByokChecksTheSealedSecret(t *testing.T) {
 	if err != nil || got.Outcome != storedByokAccepted || len(signIns) != 1 {
 		t.Fatalf("Google Cloud: %+v, %v", got, err)
 	}
-	// Control stores only secrets that read as their provider's, so one that does not is ours to fix:
-	// the check fails instead of blaming the credential.
+	// Control reads only the form of a new secret, so a secret that is not its provider's credential
+	// is refused as the member's to replace, without a call. Control's contract takes this Google key,
+	// which is base64 but not an RSA key.
+	notRSA := cloudSecret(t, map[string]string{
+		"schema": googleCloudByokSchema, "projectId": "stogas-test", "clientEmail": "runner@stogas-test.iam.gserviceaccount.com",
+		"privateKeyId": testGoogleKeyID, "privateKey": base64.StdEncoding.EncodeToString([]byte("not an RSA key")),
+	})
 	before = len(seen())
-	for provider, secret := range map[string]string{"aws": "not json", "google-cloud": "{}", "openai": "sk stored"} {
-		opener.secret = secret
-		request := StoredByokCheckRequest{Secret: "sealed"}
-		if _, err := checkStoredByok(ctx, opener, checker, storedTestGrant(provider, billing.StoredByokCheck), request); !errors.Is(err, billing.ErrStoredByokSecret) {
-			t.Fatalf("an unreadable %s secret: %v", provider, err)
+	for provider, test := range map[string]struct{ secret, want string }{
+		"aws":          {"not json", "The secret is not a valid AWS credential"},
+		"google-cloud": {notRSA, "The secret is not a valid Google Cloud credential"},
+		"openai":       {"sk stored", "The secret is not a valid OpenAI API key"},
+	} {
+		opener.secret = test.secret
+		got, err := checkStoredByok(ctx, opener, checker, storedTestGrant(provider, billing.StoredByokCheck), StoredByokCheckRequest{Secret: "sealed"})
+		if err != nil || got.Outcome != storedByokRejected || got.Message == nil || *got.Message != test.want || got.Azure != nil {
+			t.Fatalf("an invalid %s secret: %+v, %v", provider, got, err)
 		}
 	}
 	if len(seen()) != before || len(signIns) != 1 {
-		t.Fatal("an unreadable secret reached the provider")
+		t.Fatal("an invalid secret reached the provider")
 	}
 }
 
@@ -216,8 +226,10 @@ func TestCheckStoredByokDiscoversAnAzureAccount(t *testing.T) {
 	checker := newTestByokChecker(server, nil, startedAt)
 	checker.azure = signIn
 	request := StoredByokCheckRequest{Secret: "sealed", AzureAccountID: storedTestAccount, StartedAt: &startedAt}
-	if _, err := checkStoredByok(context.Background(), &fakeStoredOpener{secret: `{"clientId":"x"}`}, checker, grant, request); !errors.Is(err, billing.ErrStoredByokSecret) || len(signIn.calls) != 0 {
-		t.Fatalf("an unreadable application: %v after %d sign-ins", err, len(signIn.calls))
+	got, err := checkStoredByok(context.Background(), &fakeStoredOpener{secret: `{"clientId":"x"}`}, checker, grant, request)
+	if err != nil || got.Outcome != storedByokRejected || got.Message == nil || *got.Message != "The secret is not a valid Azure application" ||
+		got.Azure != nil || len(signIn.calls) != 0 {
+		t.Fatalf("an invalid application: %+v, %v after %d sign-ins", got, err, len(signIn.calls))
 	}
 }
 
@@ -394,7 +406,7 @@ func TestListStoredAzureAccountsFailures(t *testing.T) {
 		t.Fatalf("too many accounts: %s", encodeJSON(t, got))
 	}
 
-	// Sign-in failures and an unreadable application stop before Azure Resource Manager.
+	// Sign-in failures and an invalid application stop before Azure Resource Manager.
 	var reads int
 	var mu sync.Mutex
 	unreached := serveAzureAccounts(t, func(w http.ResponseWriter, _ *http.Request, _ string) {
@@ -419,11 +431,13 @@ func TestListStoredAzureAccountsFailures(t *testing.T) {
 	signIn := &fakeAzureSignIn{}
 	idle := httptest.NewServer(http.NotFoundHandler())
 	t.Cleanup(idle.Close)
-	unreadable := newTestByokChecker(idle, nil, time.Now())
-	unreadable.arm, unreadable.azure = unreached, signIn
-	if _, err := listStoredAzureAccounts(context.Background(), &fakeStoredOpener{secret: `{"clientId":"x"}`}, unreadable,
-		storedTestGrant("azure", billing.StoredByokAzureAccounts), StoredAzureAccountsRequest{Secret: "sealed", SubscriptionIDs: []string{first}}); !errors.Is(err, billing.ErrStoredByokSecret) || len(signIn.calls) != 0 {
-		t.Fatalf("an unreadable application: %v after %d sign-ins", err, len(signIn.calls))
+	invalid := newTestByokChecker(idle, nil, time.Now())
+	invalid.arm, invalid.azure = unreached, signIn
+	got, err := listStoredAzureAccounts(context.Background(), &fakeStoredOpener{secret: `{"clientId":"x"}`}, invalid,
+		storedTestGrant("azure", billing.StoredByokAzureAccounts), StoredAzureAccountsRequest{Secret: "sealed", SubscriptionIDs: []string{first}})
+	if err != nil || got.Outcome != storedByokRejected || got.Message == nil || *got.Message != "The secret is not a valid Azure application" ||
+		got.Accounts == nil || len(got.Accounts) != 0 || len(signIn.calls) != 0 {
+		t.Fatalf("an invalid application: %+v, %v after %d sign-ins", got, err, len(signIn.calls))
 	}
 	if reads != 0 {
 		t.Fatalf("%d listings after failed sign-ins", reads)

@@ -118,10 +118,11 @@ func checkStoredByok(ctx context.Context, opener storedByokOpener, checker *byok
 	if err != nil {
 		return nil, err
 	}
-	// Control stores only secrets that it read as its provider's, so one that no longer reads so is
-	// ours to fix, not the customer's.
+	// Control reads only the form of a new secret, so this check is the first to read it as its
+	// provider's credential, and a secret that is not one, such as a Google key that is not RSA, is
+	// the member's to replace, as one that the provider refuses is.
 	if failure.invalid {
-		return nil, billing.ErrStoredByokSecret
+		failure.message = invalidStoredSecret(grant.Provider)
 	}
 	if found == nil {
 		return &StoredByokCheck{Outcome: storedByokOutcome(failure), Message: optionalMessage(failure.message)}, nil
@@ -176,7 +177,7 @@ func listStoredAzureAccounts(ctx context.Context, opener storedByokOpener, check
 		return nil, err
 	}
 	if failure.invalid {
-		return nil, billing.ErrStoredByokSecret
+		failure.message = invalidStoredSecret("azure")
 	}
 	if failure.message != "" {
 		return &StoredAzureAccounts{Outcome: storedByokOutcome(failure), Message: &failure.message, Accounts: []StoredAzureAccount{}}, nil
