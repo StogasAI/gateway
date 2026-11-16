@@ -12,7 +12,7 @@ func TestCatalogDecodeRejectsAmbiguousMembers(t *testing.T) {
 		{&catalogRoot{}, `{"locations":{"world":{"name":"World","parentIds":[],"name":"Earth"}}}`},
 		{&catalogRoot{}, `{"locations":{"world":{"name":"World","parentIds":[],"childIds":[]}}}`},
 		{&catalogRoot{}, `{"summaries":{"deployments":{"a":{"part":0,"retirementDate":null,"notes":""}}}}`},
-		{&catalogRoot{}, `{"summaries":{"providers":{"openai":{"aliases":[],"credentialModes":["byok"],"name":"OpenAI","retirementDate":null,"region":"us"}}}}`},
+		{&catalogRoot{}, `{"summaries":{"providers":{"openai":{"aliases":[],"stogasByok":true,"stogasManaged":false,"name":"OpenAI","retirementDate":null,"region":"us"}}}}`},
 		{&catalogPart{}, `{"graph":{"deployments":{"a":{"pricing":{"input_tokens":{"per_mill_tokens":"1","per_mill_tokens":"2"}}}}}}`},
 		{&catalogPart{}, `{"graph":{"routes":{"openai-responses":{"documentFormats":{"mediaTypes":[],"extensions":[],"remoteParser":"https://example.com"}}}}}`},
 		{&catalogPart{}, `{"graph":{"models":{"m":{"capabilities":{},"description":"shown nowhere"}}}}`},

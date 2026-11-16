@@ -153,7 +153,8 @@ func TestRoutingRefusesAnAttachmentThatNoCandidateCanRead(t *testing.T) {
 // credential leaves without using the request's one pair, even where it shares the customer
 // credential's policy, and refusals come before any credential is prepared.
 func TestRoutingSendsProviderFileIDsOnlyThroughCustomerCredentials(t *testing.T) {
-	loadTestCatalog(t)
+	// Stogas serves this deployment with its own account too, so its credentials reach it.
+	loadTestCatalog(t).graph.Deployments["openai-gpt-5.6-sol"].StogasManaged = true
 	const (
 		part   = "input[0].content[1]"
 		shared = part + " is a provider file ID, which only the credential of the account that holds the file can read, and this request can use "

@@ -53,6 +53,27 @@ type Identity struct {
 	Digest   string `json:"digest"`
 }
 
+// Serving says how Stogas serves a record: with a customer's own credential for the provider, with
+// Stogas's own provider account, or both.
+type Serving struct {
+	StogasByok    bool `json:"stogasByok"`
+	StogasManaged bool `json:"stogasManaged"`
+}
+
+// Serves says whether Stogas serves the record at all.
+func (s Serving) Serves() bool {
+	return s.StogasByok || s.StogasManaged
+}
+
+// ServesWith says whether Stogas serves the record with a customer's own credential, or with its
+// own account when byok is false.
+func (s Serving) ServesWith(byok bool) bool {
+	if byok {
+		return s.StogasByok
+	}
+	return s.StogasManaged
+}
+
 // Deployment is a deployment as it serves one route.
 type Deployment struct {
 	ID        string
@@ -84,6 +105,7 @@ type Deployment struct {
 	Locations        *location.Places
 	ApprovalRequired bool
 	WeightPrecision  string
+	Serving
 	// snapshot is the catalog state in effect when the request started, so the hold and the
 	// charge use the same facts.
 	snapshot  *snapshot
@@ -168,12 +190,13 @@ type compiledGraph struct {
 }
 
 // The root holds each author and provider whole. The gateway tells when records retire, and
-// whether Stogas serves them, from their deployments, so it skips both.
+// how Stogas serves them, from their deployments, so it skips both.
 type compiledAuthor struct {
-	Notes           shown    `json:"notes"`
-	RetirementDate  shown    `json:"retirementDate"`
-	StogasSupported shown    `json:"stogasSupported"`
-	Aliases         []string `json:"aliases"`
+	Notes          shown    `json:"notes"`
+	RetirementDate shown    `json:"retirementDate"`
+	StogasByok     shown    `json:"stogasByok"`
+	StogasManaged  shown    `json:"stogasManaged"`
+	Aliases        []string `json:"aliases"`
 	// CompanyID names the author's company, whose headquarters HeadquarteredCountry repeats.
 	CompanyID            string `json:"companyId"`
 	HeadquarteredCountry string `json:"headquarteredCountry"`
@@ -201,9 +224,9 @@ type compiledDeployment struct {
 	ReasoningMaxTokens       *ReasoningMaxTokens                `json:"reasoningMaxTokens"`
 	RetirementDate           *string                            `json:"retirementDate"`
 	Routes                   map[string]compiledDeploymentRoute `json:"routes"`
-	StogasSupported          shown                              `json:"stogasSupported"`
-	Upstream                 compiledUpstream                   `json:"upstream"`
-	WeightPrecision          string                             `json:"weightPrecision"`
+	Serving
+	Upstream        compiledUpstream `json:"upstream"`
+	WeightPrecision string           `json:"weightPrecision"`
 }
 
 type compiledDeploymentRoute struct {
@@ -317,13 +340,13 @@ type compiledProvider struct {
 	AccountLocations shown    `json:"accountLocations"`
 	Notes            shown    `json:"notes"`
 	RetirementDate   shown    `json:"retirementDate"`
-	StogasSupported  shown    `json:"stogasSupported"`
+	StogasByok       shown    `json:"stogasByok"`
+	StogasManaged    shown    `json:"stogasManaged"`
 	Aliases          []string `json:"aliases"`
 	// CompanyID names the provider's company, whose headquarters HeadquarteredCountry repeats.
-	CompanyID            string   `json:"companyId"`
-	CredentialModes      []string `json:"credentialModes"`
-	HeadquarteredCountry string   `json:"headquarteredCountry"`
-	Name                 string   `json:"name"`
+	CompanyID            string `json:"companyId"`
+	HeadquarteredCountry string `json:"headquarteredCountry"`
+	Name                 string `json:"name"`
 }
 
 type compiledRoute struct {
@@ -337,8 +360,9 @@ type compiledRoute struct {
 	InputModalities shown `json:"inputModalities"`
 	Notes           shown `json:"notes"`
 	Sampling        shown `json:"sampling"`
-	// Stogas does not serve a route, so none of its deployments either.
-	StogasSupported shown `json:"stogasSupported"`
+	// Each deployment states how Stogas serves it, which its routes' answers decide.
+	StogasByok    shown `json:"stogasByok"`
+	StogasManaged shown `json:"stogasManaged"`
 
 	ID              string          `json:"-"`
 	DeploymentIDs   []string        `json:"-"`

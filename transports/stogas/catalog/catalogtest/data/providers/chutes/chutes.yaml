@@ -1,6 +1,7 @@
 providers:
   name: Chutes
-  credentialModes: [managed, byok]
+  stogasByok: true
+  stogasManaged: true
   companyId: chutes
   dataHandling:
     processingLocation: world

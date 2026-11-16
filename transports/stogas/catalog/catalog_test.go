@@ -84,13 +84,11 @@ func TestFallbackLoadsEveryRecordThatItsRootLists(t *testing.T) {
 	unserved := 0
 	for _, summaries := range listed.Summaries {
 		for id, summary := range summaries {
-			var fields struct {
-				StogasSupported bool `json:"stogasSupported"`
-			}
+			var fields Serving
 			if err := json.Unmarshal(summary, &fields); err != nil {
 				t.Fatal(err)
 			}
-			if !fields.StogasSupported {
+			if !fields.Serves() {
 				delete(summaries, id)
 				unserved++
 			}

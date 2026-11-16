@@ -163,13 +163,13 @@ func loadSnapshot() (*snapshot, error) {
 }
 
 // PartFile names a part by the SHA-256, in hex, and size of its bytes, with the latest date
-// that one of its records retires, or none while one of them never does, and whether Stogas
-// serves its records; the gateway never reads a part of records that Stogas does not serve.
+// that one of its records retires, or none while one of them never does, and how Stogas serves
+// its records; the gateway never reads a part of records that Stogas does not serve.
 type PartFile struct {
-	SHA256          string  `json:"sha256"`
-	Size            int64   `json:"size"`
-	Through         *string `json:"through"`
-	StogasSupported bool    `json:"stogasSupported"`
+	SHA256  string  `json:"sha256"`
+	Size    int64   `json:"size"`
+	Through *string `json:"through"`
+	Serving
 }
 
 // partFiles reads the parts that a root names, after checking the root's size and schema, each
@@ -218,7 +218,7 @@ func PartsInEffect(root []byte, at time.Time) ([]PartFile, error) {
 
 // inEffect says whether the gateway reads a part at an instant.
 func inEffect(file PartFile, at time.Time) bool {
-	return file.StogasSupported && !retiredAt(file.Through, at)
+	return file.Serves() && !retiredAt(file.Through, at)
 }
 
 // retiredAt says whether a record that retires on a date, or never when there is none, has
@@ -302,7 +302,7 @@ func assemble(rootData []byte, files []PartFile, parts map[string][]byte, at tim
 				return compiledCatalog{}, fmt.Errorf("%s %s retires after its part", kind.name, id)
 			}
 			// A record that Stogas does not serve sits in a part that the gateway never reads.
-			if summary.StogasSupported != files[summary.Part].StogasSupported {
+			if summary.Serves() != files[summary.Part].Serves() {
 				return compiledCatalog{}, fmt.Errorf("%s %s and its part differ on whether Stogas serves it", kind.name, id)
 			}
 			records[summary.Part]++
@@ -433,18 +433,18 @@ func assemble(rootData []byte, files []PartFile, parts map[string][]byte, at tim
 		}
 	}
 	for id, summary := range summaries.Deployments {
-		unserved(id, summary.StogasSupported)
+		unserved(id, summary.Serves())
 	}
 	for id, summary := range summaries.Routes {
-		unserved(routeSelector(id), summary.StogasSupported)
+		unserved(routeSelector(id), summary.Serves())
 	}
 	for id, summary := range summaries.Models {
 		for _, selector := range append([]string{id}, summary.Aliases...) {
-			unserved(selector, summary.StogasSupported)
+			unserved(selector, summary.Serves())
 		}
 	}
 	for id, group := range summaries.Groups {
-		unserved(groupSelector(id), group.StogasSupported)
+		unserved(groupSelector(id), group.Serves())
 	}
 	paths, err := servedPaths(summaries)
 	if err != nil {
@@ -511,7 +511,7 @@ func servedPaths(summaries rootSummaries) ([]servedPath, error) {
 			paths = append(paths, servedPath{
 				author: model.AuthorID, provider: route.ProviderID, route: routeID, model: deployment.ModelID,
 				deployment: deploymentID, groups: groups[deployment.ModelID], retirementDate: date,
-				unsupported: !deployment.StogasSupported,
+				unsupported: !deployment.Serves(),
 			})
 		}
 	}
@@ -808,11 +808,6 @@ func scheduledGraph(base, entry compiledGraph) (compiledGraph, error) {
 // validateScheduledNodes checks a dated state's changed nodes and each deployment that reads a
 // changed model or route.
 func validateScheduledNodes(graph, entry compiledGraph) error {
-	for providerID, provider := range entry.Providers {
-		if err := validateCompiledProvider(providerID, provider); err != nil {
-			return err
-		}
-	}
 	for modelID, model := range entry.Models {
 		if err := validateCompiledModel(modelID, model); err != nil {
 			return err
@@ -910,16 +905,6 @@ func validateCompiledProviders(graph compiledGraph) error {
 		if err := validateQualifierAliases(providerQualifiers, "provider", providerID, provider.Aliases); err != nil {
 			return err
 		}
-		if err := validateCompiledProvider(providerID, provider); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func validateCompiledProvider(providerID string, provider compiledProvider) error {
-	if !uniqueNonEmpty(provider.CredentialModes) {
-		return fmt.Errorf("provider %s has invalid credential modes", providerID)
 	}
 	return nil
 }
@@ -1029,6 +1014,10 @@ func validateCompiledDeployment(graph compiledGraph, selectors selectorRegistry,
 	providerID, err := validateDeploymentRoutes(graph, deploymentID, deployment)
 	if err != nil {
 		return err
+	}
+	// The gateway holds Stogas's own account only with Chutes.
+	if deployment.StogasManaged && providerID != string(ProviderChutes) {
+		return fmt.Errorf("deployment %s is served with Stogas's own %s account, which the gateway does not hold", deploymentID, providerID)
 	}
 	for _, routeID := range sortedRouteIDs(deployment) {
 		route := deployment.Routes[routeID]

@@ -138,7 +138,6 @@ var fieldDomains = map[string]fieldDomain{
 	"route.documentFormats.extensions":  patternDomain(`^\.[a-z0-9][a-z0-9._+-]*$`, "a lowercase extension with its dot, such as '.pdf'"),
 	"route.documentFormats.mediaTypes":  patternDomain(`^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$`, "a lowercase media type, such as 'application/pdf'"),
 	"provider.id":                       catalogID,
-	"provider.credentialModes":          oneOf("managed", "byok"),
 	"provider.headquarteredCountry":     country,
 	"request.hostedTools":               oneOf("web_search", "web_fetch"),
 	"request.interface":                 interfaces,

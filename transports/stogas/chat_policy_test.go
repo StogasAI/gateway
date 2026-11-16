@@ -1681,66 +1681,6 @@ func TestSanitizeRequestForcesChatStreamUsage(t *testing.T) {
 	}
 }
 
-func TestApplyUpstreamCredentialsRejectsManagedCredentialsForBYOKOnlyProviders(t *testing.T) {
-	for _, item := range []struct {
-		name string
-		path string
-		body string
-	}{
-		{
-			name: "chat",
-			path: "/v1/chat/completions",
-			body: `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}]}`,
-		},
-		{
-			name: "responses",
-			path: "/v1/responses",
-			body: `{"model":"provider:openai gpt-5.5","input":"hi"}`,
-		},
-		{
-			name: "anthropic chat",
-			path: "/v1/chat/completions",
-			body: `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}]}`,
-		},
-		{
-			name: "anthropic responses",
-			path: "/v1/responses",
-			body: `{"model":"anthropic-claude-sonnet-4-6","input":"hi"}`,
-		},
-	} {
-		t.Run(item.name, func(t *testing.T) {
-			resolution, err := catalog.ResolveRequest(catalog.RequestInput{
-				Method: "POST",
-				Path:   item.path,
-				Body:   []byte(item.body),
-			})
-			if err != nil {
-				t.Fatalf("ResolveRequest returned error: %v", err)
-			}
-			state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
-			state.Authorization = &billing.Authorization{UpstreamByok: "stogas"}
-			if err := state.Adapter.ValidateRequest(state); err != nil {
-				t.Fatalf("ValidateRequest returned error: %v", err)
-			}
-			if err := state.Adapter.SanitizeRequest(state); err != nil {
-				t.Fatalf("SanitizeRequest returned error: %v", err)
-			}
-			bifrostCtx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
-			bifrostCtx.SetValue(schemas.BifrostContextKeyHTTPRequestType, resolution.RequestType)
-			bifrostReq, err := resolution.ToBifrost(bifrostCtx)
-			if err != nil {
-				t.Fatalf("ToBifrost returned error: %v", err)
-			}
-			if err := PrepareProviderRequest(bifrostCtx, state, bifrostReq); err != nil {
-				t.Fatalf("PrepareProviderRequest returned error: %v", err)
-			}
-			if err := applyUpstreamCredentials(bifrostCtx, state, nil, cloudSignIns{}, nil); !errors.Is(err, billing.ErrByokRequired) {
-				t.Fatalf("ApplyUpstreamCredentials error = %v, want BYOK required", err)
-			}
-		})
-	}
-}
-
 func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 	cases := []struct {
 		name string

@@ -1,6 +1,6 @@
 providers:
   name: Anthropic
-  credentialModes: [byok]
+  stogasByok: true
   companyId: anthropic
   dataHandling:
     processingLocation: world

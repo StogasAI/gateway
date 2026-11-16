@@ -50,6 +50,8 @@ func TestRoutingSimulationNamesWhatRemovedEachCandidate(t *testing.T) {
 		code               string
 		// client sends the request that the simulation is compared with.
 		client string
+		// managed lists Stogas's own credentials by provider. The others are the customer's.
+		managed map[string][]int
 	}{
 		{name: "every pair beyond the fallbacks", model: "gpt-5.6-sol", credentials: map[string][]int{"azure": {0}, "openai": {0}}, pairs: 6, tried: 3},
 		{name: "another interface", route: RouteResponses, model: "openai-gpt-5-search-api-2025-10-14", credentials: map[string][]int{"openai": {0}},
@@ -100,6 +102,15 @@ func TestRoutingSimulationNamesWhatRemovedEachCandidate(t *testing.T) {
 				"credential_target azure/azure-gpt-5.6-sol#0", "credential_target azure/azure-gpt-5.6-sol-apac#0",
 				"credential_target azure/azure-gpt-5.6-sol-eu#0", "credential_target azure/azure-gpt-5.6-sol-instant#0", "no_credential openai",
 			}, pairs: 6, tried: 3},
+		// Stogas serves OpenAI only with your own credentials, and this Chutes deployment too.
+		{name: "Stogas's account beside your own", model: "gpt-5.6-sol", credentials: map[string][]int{"azure": {0}, "openai": {0, 1}},
+			managed: map[string][]int{"openai": {0}}, removed: []string{"credential_kind openai/openai-gpt-5.6-sol#0"}, pairs: 6, tried: 3},
+		{name: "only Stogas's account", model: "openai-gpt-5.6-sol", credentials: map[string][]int{"openai": {0}},
+			managed: map[string][]int{"openai": {0}}, removed: []string{"credential_kind openai/openai-gpt-5.6-sol#0"}, code: "model_unavailable"},
+		{name: "a deployment that Stogas serves both ways", model: "chutes-kimi-k3", credentials: map[string][]int{"chutes": {0, 1}},
+			managed: map[string][]int{"chutes": {0}}, pairs: 2, tried: 2},
+		{name: "a deployment that withdraws Stogas's account", model: "chutes-deepseek-v3.2", credentials: map[string][]int{"chutes": {0, 1}},
+			managed: map[string][]int{"chutes": {0}}, removed: []string{"credential_kind chutes/chutes-deepseek-v3.2#0"}, pairs: 1, tried: 1},
 		{name: "unusable credential", model: "openai-gpt-5.6-sol", credentials: map[string][]int{"openai": {0, 1}},
 			credential: func(index int) (RequestPolicy, error) {
 				if index == 0 {
@@ -162,6 +173,11 @@ func TestRoutingSimulationNamesWhatRemovedEachCandidate(t *testing.T) {
 			}
 			if test.credential != nil {
 				input.CredentialPolicy = func(_ schemas.ModelProvider, index int) (RequestPolicy, error) { return test.credential(index) }
+			}
+			if test.managed != nil {
+				input.CredentialBYOK = func(provider schemas.ModelProvider, index int) bool {
+					return !slices.Contains(test.managed[string(provider)], index)
+				}
 			}
 			if test.eligible != nil {
 				input.DeploymentEligible = func(_ schemas.ModelProvider, index int, _ Route, deployment Deployment) bool {

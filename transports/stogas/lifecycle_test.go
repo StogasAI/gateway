@@ -198,39 +198,6 @@ func TestAuthorizeStateForwardsThePairAndReleasesItsCredential(t *testing.T) {
 }
 
 func TestApplyUpstreamCredentialsAllowsManagedAndByokChutes(t *testing.T) {
-	// The gateway has our own credentials only for the providers whose catalog record offers
-	// managed credentials; Control's contracts and the hold refuse the others too.
-	root, ok := catalog.ActiveCatalog()
-	if !ok {
-		t.Fatal("the active catalog is unavailable")
-	}
-	var record struct {
-		Summaries struct {
-			Providers map[string]struct {
-				CredentialModes []string `json:"credentialModes"`
-			} `json:"providers"`
-		} `json:"summaries"`
-	}
-	if err := json.Unmarshal(root, &record); err != nil || len(record.Summaries.Providers) == 0 {
-		t.Fatalf("decode the catalog's providers: %v", err)
-	}
-	for id, provider := range record.Summaries.Providers {
-		t.Run(id, func(t *testing.T) {
-			ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
-			state := &State{
-				Pair: Pair{
-					Authorization: &billing.Authorization{UpstreamByok: "stogas", UserID: "user-123"},
-					Resolution:    &catalog.ResolvedRequest{Provider: schemas.ModelProvider(id)},
-				},
-			}
-			err := applyUpstreamCredentials(ctx, state, nil, cloudSignIns{}, nil)
-			if offered := slices.Contains(provider.CredentialModes, "managed"); offered != (err == nil) ||
-				!offered && !errors.Is(err, billing.ErrByokRequired) {
-				t.Fatalf("managed credential error = %v, but the catalog offers managed: %v", err, offered)
-			}
-		})
-	}
-
 	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 	state := &State{
 		Pair: Pair{

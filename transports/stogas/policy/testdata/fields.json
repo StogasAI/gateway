@@ -85,7 +85,6 @@
 	"model.reasoningMaxTokens.minimum": "integer",
 	"model.releaseDate": "string",
 	"provider.companyId": "string",
-	"provider.credentialModes": "string_list",
 	"provider.headquarteredCountry": "string",
 	"provider.id": "string",
 	"provider.name": "string",

@@ -133,8 +133,9 @@ type RequestInput struct {
 	// route on which the gateway calls the provider, since a provider's replies can report more
 	// on one route than another.
 	DeploymentEligible func(schemas.ModelProvider, int, Route, Deployment) bool
-	// CredentialBYOK reports a customer's own credential. Only one reads provider file IDs, so
-	// routing skips the other pairs of a request that sends one. Nil counts every credential as
+	// CredentialBYOK reports a customer's own credential. Routing pairs each credential only with
+	// the deployments that Stogas serves with its kind, and only a customer's own reads provider
+	// file IDs, so a request that sends one skips the other pairs. Nil counts every credential as
 	// the customer's own.
 	CredentialBYOK       func(schemas.ModelProvider, int) bool
 	CompileRequestPolicy func([]byte) (*policy.Request, error)

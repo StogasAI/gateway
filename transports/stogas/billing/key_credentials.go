@@ -188,9 +188,6 @@ func (s *Service) PrepareCredential(snapshot *KeyConfigSnapshot, provider string
 	prepared := &PreparedCredential{snapshot: snapshot, selection: selection, provider: provider, index: index}
 	switch selection.Mode {
 	case "managed":
-		if provider != "chutes" {
-			return nil, ErrByokRequired
-		}
 		return prepared, nil
 	case "stored", "encrypted":
 		credential := selection.Credential

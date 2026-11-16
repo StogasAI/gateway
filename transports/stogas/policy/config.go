@@ -899,7 +899,7 @@ var exactFieldTypes = map[string]string{
 	"model.maxOutputTokens": "integer", "model.name": "string", "model.reasoning": "string",
 	"model.reasoningEfforts": "string_list", "model.reasoningMaxTokens.maximum": "integer",
 	"model.reasoningMaxTokens.minimum": "integer", "model.releaseDate": "string", "model.id": "string",
-	"provider.companyId": "string", "provider.credentialModes": "string_list", "provider.headquarteredCountry": "string",
+	"provider.companyId": "string", "provider.headquarteredCountry": "string",
 	"provider.name": "string", "provider.id": "string",
 	"request.bodyBytes": "integer", "request.clientTools": "string_list", "request.hostedTools": "string_list",
 	"request.interface": "string", "request.model": "string", "request.systemMessages": "boolean",

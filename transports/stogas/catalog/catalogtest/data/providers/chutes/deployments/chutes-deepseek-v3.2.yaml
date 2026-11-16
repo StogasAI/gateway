@@ -1,6 +1,8 @@
 deployments:
   modelId: deepseek-v3.2
   routeIds: [chutes-chat-completions]
+  # Stogas serves this deployment only with your own Chutes key.
+  stogasManaged: false
   upstream:
     model: deepseek-ai/DeepSeek-V3.2-TEE
     chuteId: 398651e1-5f85-5e50-a513-7c5324e8e839

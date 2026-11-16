@@ -1,7 +1,7 @@
 providers:
   name: OpenAI
   aliases: [open-ai]
-  credentialModes: [byok]
+  stogasByok: true
   companyId: openai
   dataHandling:
     processingLocation: world

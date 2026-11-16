@@ -79,8 +79,7 @@ type summary struct {
 	ProviderID     string   `json:"providerId"`
 	RetirementDate *string  `json:"retirementDate"`
 	RouteIDs       []string `json:"routeIds"`
-	// Whether Stogas serves the record.
-	StogasSupported bool `json:"stogasSupported"`
+	Serving
 }
 
 // groupSummary is what the gateway reads of a group: the groups that contain it, and the date on
@@ -91,9 +90,9 @@ type groupSummary struct {
 	Name     shown `json:"name"`
 	Notes    shown `json:"notes"`
 
-	ParentIDs       []string `json:"parentIds"`
-	RetirementDate  *string  `json:"retirementDate"`
-	StogasSupported bool     `json:"stogasSupported"`
+	ParentIDs      []string `json:"parentIds"`
+	RetirementDate *string  `json:"retirementDate"`
+	Serving
 }
 
 // locationNode is what the gateway reads of a location: the places that directly contain it.

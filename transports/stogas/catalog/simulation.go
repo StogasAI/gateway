@@ -23,6 +23,9 @@ const (
 	RemovedApproval = "approval"
 	// routing.allowedCatalogNodes excludes the deployment.
 	RemovedAllowedNodes = "allowed_nodes"
+	// Stogas does not serve the deployment with the credential's kind: a customer's own, or
+	// Stogas's account.
+	RemovedCredentialKind = "credential_kind"
 	// The credential's provider account has no matching deployment.
 	RemovedCredentialTarget = "credential_target"
 	// The credential cannot serve requests; Code says why.

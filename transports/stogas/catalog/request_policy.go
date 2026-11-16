@@ -200,13 +200,18 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 				break
 			}
 			ranks[credentialCandidate{selection.provider, index}] = rank
+			byok := input.CredentialBYOK == nil || input.CredentialBYOK(selection.provider, index)
+			if !selection.deployment.ServesWith(byok) {
+				trace.removePair(selection, index, nil, RemovedCandidate{Reason: RemovedCredentialKind})
+				continue
+			}
 			if input.DeploymentEligible != nil && !input.DeploymentEligible(selection.provider, index, selection.deployment.WireRoute(route), selection.deployment) {
 				targetRemoved = true
 				trace.removePair(selection, index, nil, RemovedCandidate{Reason: RemovedCredentialTarget})
 				continue
 			}
 			targetPassed = true
-			if fileID != nil && input.CredentialBYOK != nil && !input.CredentialBYOK(selection.provider, index) {
+			if fileID != nil && !byok {
 				fileIDManaged = true
 				continue
 			}

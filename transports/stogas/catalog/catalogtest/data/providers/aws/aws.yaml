@@ -1,7 +1,7 @@
 providers:
   name: AWS
   aliases: [amazon-bedrock, bedrock, claude-platform-on-aws]
-  credentialModes: [byok]
+  stogasByok: true
   companyId: amazon
   # Bedrock neither stores nor logs prompts and completions unless the account turns on invocation logging.
   # Reviewed 2026-10-31: https://docs.aws.amazon.com/bedrock/latest/userguide/data-protection.html

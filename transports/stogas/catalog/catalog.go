@@ -290,6 +290,7 @@ func (s *snapshot) deploymentFromCompiledAt(deploymentID string, route compiledR
 		Locations:           s.places,
 		ApprovalRequired:    deployment.ApprovalRequired,
 		WeightPrecision:     deployment.WeightPrecision,
+		Serving:             deployment.Serving,
 		snapshot:            s,
 		startedAt:           at,
 	}, true

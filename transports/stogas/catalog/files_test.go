@@ -183,8 +183,8 @@ func TestReleaseLeavesRecordsOutOnceTheyRetire(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Parts of what Stogas does not serve come last and are never in effect.
-	served := slices.DeleteFunc(slices.Clone(files), func(file PartFile) bool { return !file.StogasSupported })
-	if len(served) == len(files) || files[len(files)-1].StogasSupported {
+	served := slices.DeleteFunc(slices.Clone(files), func(file PartFile) bool { return !file.Serves() })
+	if len(served) == len(files) || files[len(files)-1].Serves() {
 		t.Fatal("the test catalog's last part does not list what Stogas does not serve")
 	}
 	dated := served[len(served)-1]
@@ -370,7 +370,7 @@ func TestUnservedSelectionsAreRefused(t *testing.T) {
 	}
 	held := maps.Clone(parts)
 	for _, file := range files {
-		if !file.StogasSupported {
+		if !file.Serves() {
 			delete(held, file.SHA256)
 		}
 	}
@@ -573,7 +573,7 @@ func TestPartFilesCheckWhatARootNames(t *testing.T) {
 		return []byte(`{"schema":"` + catalogSchema + `","parts":[` + parts + `]}`)
 	}
 	listed, err := partFiles(root(part(1, 1, "null") + "," + part(2, 3, `"2028-02-29"`)))
-	if want := []PartFile{{name(1), 1, nil, false}, {name(2), 3, stringPointer("2028-02-29"), false}}; err != nil || !reflect.DeepEqual(listed, want) {
+	if want := []PartFile{{name(1), 1, nil, Serving{}}, {name(2), 3, stringPointer("2028-02-29"), Serving{}}}; err != nil || !reflect.DeepEqual(listed, want) {
 		t.Fatalf("listed %v, want %v: %v", listed, want, err)
 	}
 	const mebibyte = 1024 * 1024
@@ -625,14 +625,19 @@ func TestReleaseRefusesFilesThatDifferFromTheRoot(t *testing.T) {
 			r.record("deployments", deployment)["retirementDate"] = "2128-03-10"
 		}, "another date than its summary"},
 		"a summary that says Stogas does not serve a record in a part of served records": {func(r testRelease) {
-			r.summary("models", "deepseek-v4-flash-0423")["stogasSupported"] = false
+			summary := r.summary("models", "deepseek-v4-flash-0423")
+			summary["stogasByok"], summary["stogasManaged"] = false, false
 		}, "differ on whether Stogas serves it"},
 		"a summary that says Stogas serves a record in a part of unserved records": {func(r testRelease) {
-			r.summary("deployments", unsupportedDeployment)["stogasSupported"] = true
+			r.summary("deployments", unsupportedDeployment)["stogasManaged"] = true
 		}, "differ on whether Stogas serves it"},
 		"a group in the graph that Stogas does not serve": {func(r testRelease) {
-			r.summary("groups", "gpt-5.5")["stogasSupported"] = false
+			group := r.summary("groups", "gpt-5.5")
+			group["stogasByok"], group["stogasManaged"] = false, false
 		}, "but Stogas does not serve it"},
+		"a deployment served with Stogas's own account where the gateway holds none": {func(r testRelease) {
+			r.record("deployments", deployment)["stogasManaged"] = true
+		}, "which the gateway does not hold"},
 		"a change that the root does not list": {func(r testRelease) {
 			r.parts[0]["schedule"] = []any{map[string]any{"start": "2027-01-01T00:00:00Z", "graph": map[string]any{}}}
 		}, "does not list"},

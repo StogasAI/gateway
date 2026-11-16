@@ -178,11 +178,8 @@ func applyUpstreamCredentials(
 		return gatewaybilling.ErrByok
 	}
 	authorization := state.Authorization
-	managed := authorization.UpstreamByok == gatewaybilling.ManagedUpstreamByok
-	if managed && state.Resolution.Provider != catalog.ProviderChutes {
-		return gatewaybilling.ErrByokRequired
-	}
-	if !managed {
+	// Routing sends Stogas's own account only to deployments that the catalog serves with it.
+	if authorization.UpstreamByok != gatewaybilling.ManagedUpstreamByok {
 		if authorization.UpstreamByok == "" || authorization.UpstreamByokSecret == "" {
 			return gatewaybilling.ErrByok
 		}
