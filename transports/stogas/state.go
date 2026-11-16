@@ -103,6 +103,11 @@ type State struct {
 	textMaterial            textMaterial
 	textMaterialObserved    bool
 	responsesTextMaterial   map[int]textMaterial
+	// clientStopText is the text material when the first text after a client stopped arrived,
+	// which is what the client had received; clientStopTextTaken is set once it is kept.
+	clientStopText         textMaterial
+	clientStopTextObserved bool
+	clientStopTextTaken    bool
 
 	// toolCalls are the response's first tool calls in output order, for the request log, and
 	// toolCallPositions find a Responses item's call among them. answeredCallIDs are the IDs

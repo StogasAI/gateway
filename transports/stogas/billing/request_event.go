@@ -361,11 +361,14 @@ type RequestUsage struct {
 }
 
 // StandardTextTokens counts four visible UTF-8 bytes per unit. Unknown material,
-// including opaque reasoning, is omitted; observed empty text is exactly zero.
+// including opaque reasoning, is omitted; observed empty text is exactly zero. The client stop
+// counts are what a client that stopped early had received.
 type StandardTextTokens struct {
-	Input     *string `json:"input,omitempty"`
-	Reasoning *string `json:"reasoning,omitempty"`
-	Output    *string `json:"output,omitempty"`
+	Input               *string `json:"input,omitempty"`
+	Reasoning           *string `json:"reasoning,omitempty"`
+	Output              *string `json:"output,omitempty"`
+	ClientStopReasoning *string `json:"client_stop_reasoning,omitempty"`
+	ClientStopOutput    *string `json:"client_stop_output,omitempty"`
 }
 
 func standardTextTokens(meters EventMeters) StandardTextTokens {
@@ -381,7 +384,10 @@ func standardTextTokens(meters EventMeters) StandardTextTokens {
 		value := strconv.FormatUint(bytes/4, 10) + [4]string{"", ".25", ".5", ".75"}[bytes%4]
 		return &value
 	}
-	return StandardTextTokens{Input: tokens(MeterInputTextBytes), Reasoning: tokens(MeterReasoningTextBytes), Output: tokens(MeterOutputTextBytes)}
+	return StandardTextTokens{
+		Input: tokens(MeterInputTextBytes), Reasoning: tokens(MeterReasoningTextBytes), Output: tokens(MeterOutputTextBytes),
+		ClientStopReasoning: tokens(MeterClientStopReasoningTextBytes), ClientStopOutput: tokens(MeterClientStopOutputTextBytes),
+	}
 }
 
 type EventMeter struct {
@@ -393,9 +399,9 @@ type EventMeter struct {
 
 type EventMeters map[string]EventMeter
 
-// The largest log the contract allows is about 72 KiB. Postgres stores its
-// text up to half as long again, within its 128 KiB check.
-const requestLogMaxEventBytes = 80 * 1024
+// The largest log the contract allows is about 81 KiB. Postgres stores its
+// text up to half as long again, so 84 KiB stays within its 128 KiB check.
+const requestLogMaxEventBytes = 84 * 1024
 
 // encodeRequestRow encodes a row as analytics stores it. It writes missing meters into the
 // event as the empty object that the row holds, so an export of the event matches the row.

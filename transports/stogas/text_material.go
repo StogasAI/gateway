@@ -23,10 +23,32 @@ func textBytes(text *string) int {
 	return len(*text)
 }
 
+// keepClientStopText keeps the text material that a stopped client had received, before text
+// that arrives after it stopped counts. Only the goroutine that observes text calls it.
+func (s *State) keepClientStopText() {
+	if s.clientStopTextTaken {
+		return
+	}
+	if _, stoppedAt := s.ClientStatus(); stoppedAt.IsZero() {
+		return
+	}
+	s.clientStopText, s.clientStopTextObserved, s.clientStopTextTaken = s.textMaterial, s.textMaterialObserved, true
+}
+
+// clientStopTextMaterial is the text material that a client which stopped early had received:
+// everything observed when no text arrived after it stopped.
+func (s *State) clientStopTextMaterial() (textMaterial, bool) {
+	if s.clientStopTextTaken {
+		return s.clientStopText, s.clientStopTextObserved
+	}
+	return s.textMaterial, s.textMaterialObserved
+}
+
 func (s *State) observeChatTextMaterial(response *schemas.BifrostChatResponse) {
 	if response == nil || len(response.Choices) == 0 {
 		return
 	}
+	s.keepClientStopText()
 	var material textMaterial
 	for _, choice := range response.Choices {
 		var details []schemas.ChatReasoningDetails
@@ -124,6 +146,7 @@ func (s *State) observeResponsesTextMaterial(response *schemas.BifrostResponsesR
 	if response == nil {
 		return
 	}
+	s.keepClientStopText()
 	s.textMaterial = textMaterial{}
 	for i := range response.Output {
 		s.textMaterial.add(responsesItemTextMaterial(&response.Output[i]), 1)
@@ -136,6 +159,7 @@ func (s *State) observeResponsesStreamTextMaterial(event *schemas.BifrostRespons
 	if event == nil {
 		return
 	}
+	s.keepClientStopText()
 	if event.Type == schemas.ResponsesStreamResponseTypeCompleted || event.Type == schemas.ResponsesStreamResponseTypeIncomplete {
 		// The validated terminal snapshot replaces accumulated deltas, so echoes
 		// and item-done snapshots never count the same text twice.
@@ -182,15 +206,19 @@ func (s *State) observeResponsesStreamTextMaterial(event *schemas.BifrostRespons
 }
 
 func (s *State) reasoningTextBytes() (int, bool) {
-	if !s.textMaterialObserved || s.textMaterial.opaque > 0 {
+	return s.reasoningBytes(s.textMaterial, s.textMaterialObserved)
+}
+
+func (s *State) reasoningBytes(material textMaterial, observed bool) (int, bool) {
+	if !observed || material.opaque > 0 {
 		return 0, false
 	}
 	// Native Claude thinking is summarized even when core labels it text.
-	if responsesUsesAnthropicWire(s) && (s.textMaterial.visible > 0 || s.Resolution.Deployment.ReasoningSupported) {
+	if responsesUsesAnthropicWire(s) && (material.visible > 0 || s.Resolution.Deployment.ReasoningSupported) {
 		return 0, false
 	}
-	if s.textMaterial.visible > 0 {
-		return s.textMaterial.reasoning, true
+	if material.visible > 0 {
+		return material.reasoning, true
 	}
 	if s.Resolution != nil && !s.Resolution.Deployment.ReasoningSupported {
 		return 0, true

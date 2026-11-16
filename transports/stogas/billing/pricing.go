@@ -9,19 +9,23 @@ import (
 )
 
 const (
-	MeterInputTextBytes        = "input_text_bytes"
-	MeterInputFileCount        = "input_file_count"
-	MeterInputFileURLCount     = "input_file_url_count"
-	MeterInputInlineFileBytes  = "input_inline_file_bytes"
-	MeterOutputTextBytes       = "output_text_bytes"
-	MeterReasoningTextBytes    = "reasoning_text_bytes"
-	MeterEstimatedInputTokens  = "estimated_input_tokens"
-	MeterTotalInputTokens      = "total_input_tokens"
-	MeterTotalOutputTokens     = "total_output_tokens"
-	MeterTotalTokens           = "total_tokens"
-	MeterTotalCacheWriteTokens = "total_cache_write_tokens"
-	MeterHostedToolCalls       = "hosted_tool_calls"
-	MeterClientToolCalls       = "client_tool_calls"
+	MeterInputTextBytes       = "input_text_bytes"
+	MeterInputFileCount       = "input_file_count"
+	MeterInputFileURLCount    = "input_file_url_count"
+	MeterInputInlineFileBytes = "input_inline_file_bytes"
+	MeterOutputTextBytes      = "output_text_bytes"
+	MeterReasoningTextBytes   = "reasoning_text_bytes"
+	// The output and reasoning text that a client which disconnected or timed out had received
+	// when it stopped. The call still runs to its end, and its usage settles in full.
+	MeterClientStopOutputTextBytes    = "client_stop_output_text_bytes"
+	MeterClientStopReasoningTextBytes = "client_stop_reasoning_text_bytes"
+	MeterEstimatedInputTokens         = "estimated_input_tokens"
+	MeterTotalInputTokens             = "total_input_tokens"
+	MeterTotalOutputTokens            = "total_output_tokens"
+	MeterTotalTokens                  = "total_tokens"
+	MeterTotalCacheWriteTokens        = "total_cache_write_tokens"
+	MeterHostedToolCalls              = "hosted_tool_calls"
+	MeterClientToolCalls              = "client_tool_calls"
 
 	// Checks of returned client tool calls and JSON outputs against the request.
 	MeterCheckedClientToolCalls   = "checked_client_tool_calls"

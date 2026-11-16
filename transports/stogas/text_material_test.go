@@ -191,3 +191,55 @@ func TestChatStreamingTextMaterialRetainsPrefixAfterError(t *testing.T) {
 		t.Fatal("stream error lost observed UTF-8 text")
 	}
 }
+
+func TestClientStopKeepsTheTextThatTheClientReceived(t *testing.T) {
+	stream := func(state *State, texts ...string) {
+		t.Helper()
+		adapter := DefaultAdapter{}
+		for _, text := range texts {
+			chunk := validChatProviderChunk("chat_stream", false)
+			if state.textMaterialObserved {
+				chunk.Choices[0].Delta.Role = nil
+			}
+			chunk.Choices[0].Delta.Content = &text
+			if err := adapter.IngestChunk(state, &schemas.BifrostStreamChunk{BifrostChatResponse: chunk}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	state := chatResponseValidationState()
+	stream(state, "caf", "é")
+	state.MarkClientStopped()
+	stream(state, " au lait")
+	meters := metersForState(state)
+	if meters[billing.MeterOutputTextBytes].Quantity != "13" || meters[billing.MeterClientStopOutputTextBytes].Quantity != "5" ||
+		meters[billing.MeterClientStopReasoningTextBytes].Quantity != "0" {
+		t.Fatalf("the call's whole output and what the client received must both count: %#v", meters)
+	}
+
+	// A client that stopped after the last text received all of it.
+	state = chatResponseValidationState()
+	stream(state, "café")
+	state.MarkClientStopped()
+	if got := metersForState(state)[billing.MeterClientStopOutputTextBytes].Quantity; got != "5" {
+		t.Fatalf("client stop output = %s, want 5", got)
+	}
+
+	// A client that stopped before any text received none, whatever the call later returned.
+	state = chatResponseValidationState()
+	state.Resolution.Deployment.ReasoningSupported = true
+	state.MarkClientStopped()
+	stream(state, "café")
+	meters = metersForState(state)
+	if meters[billing.MeterClientStopOutputTextBytes].Quantity != "0" || meters[billing.MeterClientStopReasoningTextBytes].Quantity != "0" {
+		t.Fatalf("a client that received nothing must count zero: %#v", meters)
+	}
+
+	// A client that never stopped has no client stop counts.
+	state = chatResponseValidationState()
+	stream(state, "café")
+	if _, exists := metersForState(state)[billing.MeterClientStopOutputTextBytes]; exists {
+		t.Fatal("a completed delivery recorded a client stop")
+	}
+}

@@ -553,6 +553,14 @@ func metersForState(state *State) gatewaybilling.EventMeters {
 	if textBytes, known := state.reasoningTextBytes(); known {
 		addCount(billing.MeterReasoningTextBytes, textBytes)
 	}
+	if _, stoppedAt := state.ClientStatus(); !stoppedAt.IsZero() {
+		// A client that received no text before it stopped received none of either kind.
+		material, observed := state.clientStopTextMaterial()
+		addCount(billing.MeterClientStopOutputTextBytes, material.output)
+		if textBytes, known := state.reasoningBytes(material, true); known || !observed {
+			addCount(billing.MeterClientStopReasoningTextBytes, textBytes)
+		}
+	}
 	if observed != nil {
 		if observed.inputKnown {
 			addCount(billing.MeterTotalInputTokens, observed.Prompt)

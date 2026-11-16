@@ -608,7 +608,7 @@ func TestLargestRequestLogFitsTheLimit(t *testing.T) {
 		PolicyVersions: &LoggedPolicyVersions{}, NodeID: strings.Repeat("f", 64), GatewayVersion: "v" + strings.Repeat("9", 31),
 		Performance: RequestPerformance{TotalMS: count, ProviderMS: count, ProviderStartMS: &count, FirstOutputMS: &count, TTFTMS: &count},
 		Usage: RequestUsage{UpstreamCostUSD: usd, BilledCostUSD: usd, CacheReadSavingsUSD: &usd, CacheWriteOverheadUSD: &usd, Meters: EventMeters{},
-			StandardTextTokens: StandardTextTokens{Input: &usd, Reasoning: &usd, Output: &usd}},
+			StandardTextTokens: StandardTextTokens{Input: &usd, Reasoning: &usd, Output: &usd, ClientStopReasoning: &usd, ClientStopOutput: &usd}},
 		Plugins: plugins.Metrics{Redaction: &plugins.RedactionMetrics{ItemsRedacted: count, DurationUS: count},
 			Export: &plugins.ExportMetrics{DurationUS: count}},
 	}
