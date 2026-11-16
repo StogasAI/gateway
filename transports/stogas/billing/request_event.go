@@ -33,21 +33,6 @@ type ProviderAttempt struct {
 	ProviderInstanceID       string  `json:"provider_instance_id,omitempty"`
 	FinishReason             string  `json:"finish_reason"`
 	Byok                     *string `json:"byok"`
-	// DataHandling is set where the hosted tools that the request let the model call change the
-	// data handling of the chain that CatalogChainHash names, and holds the result.
-	DataHandling *DataHandling `json:"data_handling,omitempty"`
-}
-
-// DataHandling is the data handling of one provider call, as the catalog's deployments state it.
-type DataHandling struct {
-	ProcessingLocation string `json:"processing_location"`
-	StorageLocation    string `json:"storage_location"`
-	RetentionDays      *int   `json:"retention_days"`
-	TrainingUse        *bool  `json:"training_use"`
-	ZeroDataRetention  bool   `json:"zero_data_retention"`
-	EndToEndEncrypted  bool   `json:"end_to_end_encrypted"`
-	TEE                bool   `json:"tee"`
-	TEEVerified        bool   `json:"tee_verified"`
 }
 
 // RequestPerformance records elapsed request and provider time.
@@ -399,9 +384,9 @@ type EventMeter struct {
 
 type EventMeters map[string]EventMeter
 
-// The largest log the contract allows is about 81 KiB. Postgres stores its
-// text up to half as long again, so 84 KiB stays within its 128 KiB check.
-const requestLogMaxEventBytes = 84 * 1024
+// The largest log the contract allows is about 77 KiB. Postgres stores its
+// text up to half as long again, so 80 KiB stays within its 128 KiB check.
+const requestLogMaxEventBytes = 80 * 1024
 
 // encodeRequestRow encodes a row as analytics stores it. It writes missing meters into the
 // event as the empty object that the row holds, so an export of the event matches the row.

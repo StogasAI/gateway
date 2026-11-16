@@ -88,18 +88,6 @@ func TestEffectiveDataHandlingOnlyWorsens(t *testing.T) {
 	if got := offered.EffectiveDataHandling([]HostedTool{HostedToolWebFetch}); !reflect.DeepEqual(got, deployment.DataHandling) {
 		t.Fatalf("a tool that the deployment does not run changed data handling: %+v", got)
 	}
-	// A request states its own data handling only where its tools change the deployment's.
-	searching := &ResolvedRequest{hostedTools: []HostedTool{HostedToolWebSearch}}
-	if got := searching.ToolDataHandling(deployment); got == nil || !reflect.DeepEqual(*got, search) {
-		t.Fatalf("a request with web search: %+v", got)
-	}
-	fetching := &ResolvedRequest{hostedTools: []HostedTool{HostedToolWebFetch}}
-	if got := fetching.ToolDataHandling(offered); got != nil {
-		t.Fatalf("a tool without an effect stated data handling: %+v", got)
-	}
-	if got := (&ResolvedRequest{}).ToolDataHandling(deployment); got != nil {
-		t.Fatalf("a request without hosted tools stated data handling: %+v", got)
-	}
 }
 
 func TestRoutingKeepsDeploymentsThatRunListedHostedTools(t *testing.T) {

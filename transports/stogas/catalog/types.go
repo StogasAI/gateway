@@ -1,7 +1,6 @@
 package catalog
 
 import (
-	"slices"
 	"strings"
 	"time"
 
@@ -104,15 +103,6 @@ type DataHandling struct {
 	// SharedWith lists, in order, each company other than the provider's and the hosting that
 	// receives requests, or HostingUnknown for companies that the provider does not name.
 	SharedWith []string `json:"sharedWith"`
-}
-
-func (d DataHandling) equal(other DataHandling) bool {
-	same := func(a, b *int) bool { return a == nil && b == nil || a != nil && b != nil && *a == *b }
-	known := func(a, b *bool) bool { return a == nil && b == nil || a != nil && b != nil && *a == *b }
-	return d.ProcessingLocation == other.ProcessingLocation && d.StorageLocation == other.StorageLocation &&
-		d.EndToEndEncrypted == other.EndToEndEncrypted && same(d.RetentionDays, other.RetentionDays) &&
-		known(d.TrainingUse, other.TrainingUse) && d.ZeroDataRetention == other.ZeroDataRetention &&
-		d.TEE == other.TEE && d.TEEVerified == other.TEEVerified && slices.Equal(d.SharedWith, other.SharedWith)
 }
 
 // CompanyAnthropic is Anthropic's company, which runs Claude on its own API and behind the sign-in
