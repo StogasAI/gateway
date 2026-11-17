@@ -202,7 +202,7 @@ func TestConditionalRulesExcludeOnlyTheirCandidates(t *testing.T) {
 	}
 	// The request states no client address, which no network holds.
 	networks := func(when string) string {
-		return `{"office":{"when":"` + when + `","access":{"networks":["198.51.100.0/24"]}}}`
+		return `{"office":{"when":"` + when + `","access":{"networks":{"allow":["198.51.100.0/24"]}}}}`
 	}
 	// The catalog states an Azure deployment type and no OpenAI deployment type.
 	undecided := `{"typed":{"when":"deployment.upstream.deploymentType == 'global_standard'","input":{"asciiOnly":true}}}`

@@ -86,8 +86,9 @@ func (e APIError) Error() string {
 	return e.Message
 }
 
-// NetworkDenied refuses a client outside the networks that a policy lists. It
-// names the address that the gateway saw, which is the one to allow.
+// NetworkDenied refuses a client that the networks of a policy do not admit. It
+// names the address that the gateway saw, which is the one to allow or to
+// take off a deny list.
 func NetworkDenied(client netip.Addr) APIError {
 	message := "Request is not allowed from this network"
 	if client.IsValid() {

@@ -279,15 +279,24 @@ type AllowedCatalogNodes struct {
 }
 
 type Access struct {
-	Deny []DenyWindow `json:"deny,omitzero"`
-	// Networks lists the client networks that may send requests. A composed
-	// config holds the networks that every policy allows, so an empty list
-	// allows none.
-	Networks []string `json:"networks,omitzero"`
+	Deny     []DenyWindow `json:"deny,omitzero"`
+	Networks *Networks    `json:"networks,omitempty"`
+}
 
-	// networks are the parsed entries, sorted and without one inside another,
-	// so at most one can hold an address: the last that starts at or before it.
-	networks []netip.Prefix
+// Networks limits requests by the client's address. An entry is an address or
+// a CIDR range.
+type Networks struct {
+	// Allow, when present, admits only clients in its networks. A composed
+	// config holds the networks that every policy allows, so an empty list
+	// admits none.
+	Allow []string `json:"allow,omitzero"`
+	// Deny refuses clients in its networks.
+	Deny []string `json:"deny,omitzero"`
+
+	// allow and deny are the parsed entries, sorted and without one inside
+	// another, so at most one can hold an address: the last that starts at or
+	// before it.
+	allow, deny []netip.Prefix
 }
 
 type DenyWindow struct {
@@ -554,12 +563,8 @@ func (a *Access) validate() error {
 	if a.Deny == nil && a.Networks == nil {
 		return configError("access requires deny or networks")
 	}
-	if a.Networks != nil {
-		networks, err := parseNetworks(a.Networks)
-		if err != nil {
-			return err
-		}
-		a.networks = networks
+	if err := a.Networks.validate(); err != nil {
+		return err
 	}
 	locations := make(map[string]*time.Location)
 	for index := range a.Deny {
@@ -657,37 +662,59 @@ func (p *Plugins) validate() error {
 	return nil
 }
 
+func (n *Networks) validate() error {
+	if n == nil {
+		return nil
+	}
+	if n.Allow == nil && n.Deny == nil {
+		return configError("access.networks requires allow or deny")
+	}
+	// An empty deny list replaces a default and refuses nobody. An empty
+	// allow list would refuse every client, which enabled already says.
+	if n.Allow != nil && len(n.Allow) == 0 {
+		return configError("access.networks.allow requires at least one address or range")
+	}
+	var err error
+	if n.allow, err = parseNetworks("allow", n.Allow); err != nil {
+		return err
+	}
+	if n.deny, err = parseNetworks("deny", n.Deny); err != nil {
+		return err
+	}
+	if n.Allow != nil && len(subtractNetworks(n.allow, n.deny)) == 0 {
+		return configError("access.networks.deny holds every network that allow lists")
+	}
+	return nil
+}
+
 // parseNetworks reads addresses and CIDR ranges. A range must name its first
 // address, and an IPv4 network takes its IPv4 form, because the gateway reads
 // an IPv4 client in that form.
-func parseNetworks(entries []string) ([]netip.Prefix, error) {
-	if len(entries) == 0 {
-		return nil, configError("networks require at least one address or range")
-	}
+func parseNetworks(list string, entries []string) ([]netip.Prefix, error) {
 	networks := make([]netip.Prefix, 0, len(entries))
 	for _, entry := range entries {
 		var network netip.Prefix
 		if strings.Contains(entry, "/") {
 			parsed, err := netip.ParsePrefix(entry)
 			if err != nil {
-				return nil, configError("network %q is not an IP address or CIDR range", entry)
+				return nil, configError("access.networks.%s has %q, which is not an IP address or CIDR range", list, entry)
 			}
 			network = parsed
 		} else {
 			address, err := netip.ParseAddr(entry)
 			if err != nil || address.Zone() != "" {
-				return nil, configError("network %q is not an IP address or CIDR range", entry)
+				return nil, configError("access.networks.%s has %q, which is not an IP address or CIDR range", list, entry)
 			}
 			network = netip.PrefixFrom(address, address.BitLen())
 		}
 		if network.Addr().Is4In6() {
-			return nil, configError("network %q must use its IPv4 form", entry)
+			return nil, configError("access.networks.%s has %q, which must use its IPv4 form", list, entry)
 		}
 		if network != network.Masked() {
-			return nil, configError("network %q must start at %s", entry, network.Masked())
+			return nil, configError("access.networks.%s has %q, which must start at %s", list, entry, network.Masked())
 		}
 		if slices.Contains(networks, network) {
-			return nil, configError("network %s is repeated", network)
+			return nil, configError("access.networks.%s lists %s twice", list, network)
 		}
 		networks = append(networks, network)
 	}
@@ -741,20 +768,73 @@ func intersectNetworks(a, b []netip.Prefix) []netip.Prefix {
 	return disjointNetworks(out)
 }
 
-// NetworkDenied reports whether the client address is outside the networks
-// that every policy allows. The gateway reads an IPv4 client in its IPv4 form.
-// A client without a known address, such as one of the onion service, is
-// certainly inside only a list that holds 0.0.0.0/0 and ::/0.
+// subtractNetworks returns the ranges of a that no range of b holds. A range
+// of b inside one of a leaves that one, since part of it stays.
+func subtractNetworks(a, b []netip.Prefix) []netip.Prefix {
+	out := []netip.Prefix{}
+	for _, network := range a {
+		if outer, ok := networkHolding(b, network.Addr()); !ok || outer.Bits() > network.Bits() {
+			out = append(out, network)
+		}
+	}
+	return out
+}
+
+// combine returns the networks of both lists: the addresses that both allow
+// and the addresses that either denies.
+func (n *Networks) combine(other *Networks) *Networks {
+	if n == nil {
+		return other
+	}
+	out := &Networks{allow: n.allow, deny: disjointNetworks(slices.Concat(n.deny, other.deny))}
+	switch {
+	case n.Allow == nil:
+		out.allow = other.allow
+	case other.Allow != nil:
+		out.allow = intersectNetworks(n.allow, other.allow)
+	}
+	// Allow and Deny stay nil where no policy set them, because an empty
+	// allow list admits no client.
+	if n.Allow != nil || other.Allow != nil {
+		out.Allow = networkStrings(out.allow)
+	}
+	if n.Deny != nil || other.Deny != nil {
+		out.Deny = networkStrings(out.deny)
+	}
+	return out
+}
+
+func networkStrings(networks []netip.Prefix) []string {
+	out := make([]string, len(networks))
+	for index, network := range networks {
+		out[index] = network.String()
+	}
+	return out
+}
+
+// NetworkDenied reports whether the networks of the policies refuse the client
+// address: one outside the networks that every policy allows, or inside one
+// that a policy denies. The gateway reads an IPv4 client in its IPv4 form. A
+// client without a known address, such as one of the onion service, could have
+// any address: it is certainly inside only an allow list that holds 0.0.0.0/0
+// and ::/0, and certainly outside only an empty deny list.
 func (c *Config) NetworkDenied(client netip.Addr) bool {
 	if c == nil || c.Access == nil || c.Access.Networks == nil {
 		return false
 	}
-	networks := c.Access.networks
+	networks := c.Access.Networks
 	if !client.IsValid() {
-		return len(networks) != 2 || networks[0].Bits() != 0 || networks[1].Bits() != 0
+		everyAddress := len(networks.allow) == 2 && networks.allow[0].Bits() == 0 && networks.allow[1].Bits() == 0
+		return networks.Allow != nil && !everyAddress || len(networks.deny) > 0
 	}
-	_, ok := networkHolding(networks, client.Unmap())
-	return !ok
+	client = client.Unmap()
+	if networks.Allow != nil {
+		if _, ok := networkHolding(networks.allow, client); !ok {
+			return true
+		}
+	}
+	_, denied := networkHolding(networks.deny, client)
+	return denied
 }
 
 func (c *Config) DeniedAt(now time.Time) bool {

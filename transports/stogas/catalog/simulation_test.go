@@ -137,7 +137,7 @@ func TestRoutingSimulationNamesWhatRemovedEachCandidate(t *testing.T) {
 		// The simulation has no client address, which no network holds, yet it
 		// routes as a request from inside every network does.
 		{name: "networks", model: "openai-gpt-5.6-sol", credentials: map[string][]int{"openai": {0}}, client: "198.51.100.9",
-			base:  compose(`{"access":{"networks":["198.51.100.0/24"]}}`, `{"rules":{"office":{"when":"provider.id == 'openai'","access":{"networks":["198.51.100.0/28"]}}}}`),
+			base:  compose(`{"access":{"networks":{"allow":["198.51.100.0/24"]}}}`, `{"rules":{"office":{"when":"provider.id == 'openai'","access":{"networks":{"allow":["198.51.100.0/28"]}}}}}`),
 			pairs: 1, tried: 1},
 		{name: "false and undecided filters", model: "gpt-5.6-sol", credentials: map[string][]int{"azure": {0}, "openai": {0}},
 			base: compose(`{"routing":{"filter":"deployment.upstream.deploymentType == 'global_standard'"}}`),

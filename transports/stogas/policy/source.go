@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"net/netip"
 	"reflect"
 	"regexp"
 	"slices"
@@ -1221,7 +1220,7 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 	missingKeys := ""
 	seenPlugins := map[*Plugins]bool{}
 	seenWindows := map[string]bool{}
-	var networks []netip.Prefix
+	var networks *Networks
 	for index, entry := range sources {
 		scope, source := entry.Scope, entry.Value
 		if !scope.Valid() && scope != RequestScope || source == nil {
@@ -1284,13 +1283,10 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 				}
 			}
 		}
-		// A client must be in a network of every policy that lists networks.
+		// A client must be in an allowed network of every policy that lists
+		// them, and in no denied network of any policy.
 		if allowed&permissionNetworks != 0 && config.Access != nil && config.Access.Networks != nil {
-			if networks == nil {
-				networks = config.Access.networks
-			} else {
-				networks = intersectNetworks(networks, config.Access.networks)
-			}
+			networks = networks.combine(config.Access.Networks)
 		}
 		if allowed&permissionNodes != 0 {
 			out.Routing.AllowedCatalogNodes = intersectAllowedNodes(out.Routing.AllowedCatalogNodes, config.Routing.AllowedCatalogNodes)
@@ -1321,11 +1317,7 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 		if out.Access == nil {
 			out.Access = &Access{}
 		}
-		out.Access.networks = networks
-		out.Access.Networks = make([]string, len(networks))
-		for index, network := range networks {
-			out.Access.Networks[index] = network.String()
-		}
+		out.Access.Networks = networks
 	}
 	if retries != nil {
 		out.Routing.Retries = *retries
