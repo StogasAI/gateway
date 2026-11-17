@@ -12,6 +12,7 @@ import (
 	"crypto/x509"
 	_ "embed"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -383,9 +384,26 @@ func verifyAttestedEvidenceBody(body []byte, evidence instanceEvidence) error {
 	return nil
 }
 
+// TD attribute bits that the quote reports in little-endian order (Intel TDX module ABI).
+const (
+	tdAttributeDebug         = 1 << 0
+	tdAttributeSEPTVEDisable = 1 << 28
+	tdAttributeMigratable    = 1 << 29
+)
+
+// validateTDAttributes requires a production TD. Debug lets the host read and change the TD's
+// memory and registers. Without SEPT_VE_DISABLE the host can raise #VE exceptions in the TD as it
+// touches private memory, which the Linux guest kernel refuses to run with. A migratable TD hands
+// its keys to a migration service that the quote does not identify. The other bits enable CPU
+// features that keep the host out of the TD. On November 17, 2026 all 137 instances of the 11 TEE
+// chutes reported SEPT_VE_DISABLE and no other bit.
 func validateTDAttributes(attributes []byte) error {
-	if len(attributes) != 8 || attributes[0]&1 != 0 {
-		return fmt.Errorf("%w: TDX debug mode is enabled or attributes are invalid", ErrAttestationFailed)
+	if len(attributes) != 8 {
+		return fmt.Errorf("%w: TDX attributes are invalid", ErrAttestationFailed)
+	}
+	value := binary.LittleEndian.Uint64(attributes)
+	if value&tdAttributeDebug != 0 || value&tdAttributeSEPTVEDisable == 0 || value&tdAttributeMigratable != 0 {
+		return fmt.Errorf("%w: TDX attributes allow debugging, #VE on private memory or migration", ErrAttestationFailed)
 	}
 	return nil
 }

@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
@@ -152,14 +153,23 @@ func TestMeasurementPolicySkipsMalformedRecordsAndRejectsAmbiguousMatches(t *tes
 	}
 }
 
-func TestTDXAttributesRejectDebugMode(t *testing.T) {
-	if err := validateTDAttributes(make([]byte, 8)); err != nil {
-		t.Fatalf("safe attributes rejected: %v", err)
+// A TD passes only without debug and migration and with SEPT_VE_DISABLE, which every Chutes
+// instance reported, and any CPU feature bit leaves it a production TD.
+func TestTDXAttributesRequireAProductionTD(t *testing.T) {
+	attributes := func(bits uint64) []byte { return binary.LittleEndian.AppendUint64(nil, bits) }
+	for _, bits := range []uint64{tdAttributeSEPTVEDisable, tdAttributeSEPTVEDisable | 1<<30 | 1<<31 | 1<<63} {
+		if err := validateTDAttributes(attributes(bits)); err != nil {
+			t.Fatalf("attributes %#x rejected: %v", bits, err)
+		}
 	}
-	debug := make([]byte, 8)
-	debug[0] = 1
-	if err := validateTDAttributes(debug); err == nil {
-		t.Fatal("expected TDX debug mode to be rejected")
+	for name, bits := range map[string]uint64{
+		"debug":                   tdAttributeSEPTVEDisable | tdAttributeDebug,
+		"without SEPT_VE_DISABLE": 0,
+		"migratable":              tdAttributeSEPTVEDisable | tdAttributeMigratable,
+	} {
+		if err := validateTDAttributes(attributes(bits)); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
 	}
 	if err := validateTDAttributes(make([]byte, 7)); err == nil {
 		t.Fatal("expected malformed TDX attributes to be rejected")
