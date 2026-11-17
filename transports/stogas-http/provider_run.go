@@ -525,7 +525,6 @@ func startProviderCall[T any](r *providerRun, wait time.Duration, call providerC
 		if !resumed {
 			return
 		}
-		state.MarkProviderStarted()
 		result.called = true
 		if server != nil {
 			defer server.providerCalls.begin(provider, time.Now())()

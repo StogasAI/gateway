@@ -82,7 +82,6 @@ func TestBifrostRetryFeedsProviderAttemptsIntoFinalEvent(t *testing.T) {
 	}
 	ctx := schemas.NewBifrostContext(context.Background(), time.Now().Add(10*time.Second))
 	SetState(ctx, state)
-	state.MarkProviderStarted()
 	response, bifrostErr := client.ChatCompletionRequest(ctx, &schemas.BifrostChatRequest{
 		Provider: schemas.OpenAI,
 		Model:    "gpt-5",
@@ -117,7 +116,7 @@ func TestBifrostRetryFeedsProviderAttemptsIntoFinalEvent(t *testing.T) {
 		t.Fatalf("provider attempt timing was not captured: %#v", event.ProviderAttempts)
 	}
 	wantProviderMS := event.ProviderAttempts[0].LatencyMS + event.ProviderAttempts[1].LatencyMS
-	if providerMS := event.Performance.ProviderMS; providerMS < wantProviderMS {
+	if providerMS := event.ProviderMS(); providerMS < wantProviderMS {
 		t.Fatalf("provider stage = %d, want at least %d", providerMS, wantProviderMS)
 	}
 }
@@ -163,7 +162,6 @@ func TestProviderAttemptTracerFeedsRetrySequenceIntoFinalEvent(t *testing.T) {
 		},
 		StartedAt:           base,
 		RequestType:         string(schemas.ChatCompletionRequest),
-		ProviderStartedAt:   base.Add(5 * time.Millisecond),
 		ProviderCompletedAt: base.Add(150 * time.Millisecond),
 		Response:            finalResponse,
 		UpstreamCostUSD:     "0",
@@ -201,8 +199,9 @@ func TestProviderAttemptTracerFeedsRetrySequenceIntoFinalEvent(t *testing.T) {
 	if retryAttempt.ProviderResponseID != "provider-request" {
 		t.Fatalf("final provider response ID = %q", retryAttempt.ProviderResponseID)
 	}
-	if providerMS := event.Performance.ProviderMS; providerMS != 145 {
-		t.Fatalf("provider stage = %d, want 145", providerMS)
+	// Provider time runs from the first call's start at 10 ms to the retry's end at 145 ms.
+	if providerMS := event.ProviderMS(); providerMS != 135 {
+		t.Fatalf("provider time = %d, want 135", providerMS)
 	}
 }
 
@@ -265,7 +264,6 @@ func TestBifrostRetriesRecordEachCallsProviderRequestID(t *testing.T) {
 	}
 	ctx := schemas.NewBifrostContext(context.Background(), time.Now().Add(10*time.Second))
 	SetState(ctx, state)
-	state.MarkProviderStarted()
 	response, bifrostErr := client.ChatCompletionRequest(ctx, &schemas.BifrostChatRequest{
 		Provider: schemas.OpenAI,
 		Model:    "gpt-5",
@@ -381,7 +379,6 @@ func TestStreamedCallRecordsProviderIDsWithoutATrace(t *testing.T) {
 	}
 	ctx := schemas.NewBifrostContext(context.Background(), time.Now().Add(10*time.Second))
 	SetState(ctx, state)
-	state.MarkProviderStarted()
 	stream, bifrostErr := client.ChatCompletionStreamRequest(ctx, &schemas.BifrostChatRequest{
 		Provider: schemas.OpenAI,
 		Model:    "gpt-5",

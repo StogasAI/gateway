@@ -32,8 +32,6 @@ type EventInput struct {
 	Meters                EventMeters
 	Plugins               plugins.Metrics
 	ProviderAttempts      []ProviderAttemptInput
-	ProviderCompletedAt   time.Time
-	ProviderStartedAt     time.Time
 	RateLimitWait         time.Duration
 	TTFTMS                *uint32
 	FirstOutputAt         time.Time
@@ -146,8 +144,6 @@ func NewRequestEvent(input EventInput) (RequestEvent, error) {
 		// meters without an attempt, including request-side counts.
 		pricing = EventMeters{}
 	}
-	providerStartMS, providerMS := requestProviderTiming(input, startedAt, finishedAt, totalTimeMS)
-
 	return RequestEvent{
 		SchemaVersion:    RequestLogSchemaVersion,
 		PolicyVersions:   input.PolicyVersions,
@@ -176,10 +172,8 @@ func NewRequestEvent(input EventInput) (RequestEvent, error) {
 		NodeID:           strings.ToLower(strings.TrimSpace(input.NodeID)),
 		Performance: RequestPerformance{
 			TotalMS:         totalTimeMS,
-			ProviderMS:      providerMS,
-			ProviderStartMS: providerStartMS,
-			RateLimitWaitMS: min(uint32Duration(input.RateLimitWait), totalTimeMS),
-			FirstOutputMS:   requestFirstOutput(input, startedAt, providerStartMS, providerMS),
+			RateLimitWaitMS: requestRateLimitWait(input.RateLimitWait, providerAttempts, totalTimeMS),
+			FirstOutputMS:   requestFirstOutput(input, startedAt, providerAttempts),
 			TTFTMS:          ttftMS,
 			ToolCalls:       requestToolCalls(input.ToolCalls, startedAt, totalTimeMS),
 			AnsweredCalls:   requestAnsweredCalls(input.AnsweredCallIDs),
@@ -214,12 +208,34 @@ func encryptionKeyIDs(ids []string) []string {
 	return ids
 }
 
-func requestFirstOutput(input EventInput, startedAt time.Time, providerStartMS *uint32, providerMS uint32) *uint32 {
-	if input.FirstOutputAt.IsZero() || providerStartMS == nil || input.FirstOutputAt.Before(input.ProviderStartedAt) {
+// requestFirstOutput places the provider's first output on the request clock, within the provider
+// calls.
+func requestFirstOutput(input EventInput, startedAt time.Time, attempts []ProviderAttempt) *uint32 {
+	if input.FirstOutputAt.IsZero() || len(attempts) == 0 || input.FirstOutputAt.Before(input.ProviderAttempts[0].StartedAt) {
 		return nil
 	}
-	value := min(uint32Duration(input.FirstOutputAt.Sub(startedAt)), *providerStartMS+providerMS)
+	last := attempts[len(attempts)-1]
+	value := min(uint32Duration(input.FirstOutputAt.Sub(startedAt)), last.StartMS+last.LatencyMS)
 	return &value
+}
+
+// ProviderMS is the time from the start of the first provider call to the end of the last, so it
+// includes the waits between calls. It is 0 without a call.
+func (event *RequestEvent) ProviderMS() uint32 {
+	attempts := event.ProviderAttempts
+	if len(attempts) == 0 {
+		return 0
+	}
+	last := attempts[len(attempts)-1]
+	return last.StartMS + last.LatencyMS - attempts[0].StartMS
+}
+
+// requestRateLimitWait ends by the start of the first provider call, which the wait held.
+func requestRateLimitWait(wait time.Duration, attempts []ProviderAttempt, totalTimeMS uint32) uint32 {
+	if len(attempts) > 0 {
+		totalTimeMS = attempts[0].StartMS
+	}
+	return min(uint32Duration(wait), totalTimeMS)
 }
 
 func catalogVersion(value uint64) *uint64 {
@@ -229,26 +245,13 @@ func catalogVersion(value uint64) *uint64 {
 	return &value
 }
 
-func requestProviderTiming(input EventInput, startedAt time.Time, finishedAt time.Time, totalTimeMS uint32) (*uint32, uint32) {
-	if input.ProviderStartedAt.IsZero() || input.ProviderStartedAt.Before(startedAt) {
-		return nil, 0
-	}
-
-	admissionMS := min(uint32Duration(input.ProviderStartedAt.Sub(startedAt)), totalTimeMS)
-	providerCompletedAt := input.ProviderCompletedAt
-	if providerCompletedAt.IsZero() || providerCompletedAt.Before(input.ProviderStartedAt) {
-		providerCompletedAt = finishedAt
-	}
-	return &admissionMS, min(
-		uint32Duration(providerCompletedAt.Sub(input.ProviderStartedAt)),
-		totalTimeMS-admissionMS,
-	)
-}
-
 func requestProviderAttempts(input EventInput, startedAt time.Time, totalTimeMS uint32) []ProviderAttempt {
 	attempts := make([]ProviderAttempt, len(input.ProviderAttempts))
+	// Calls follow each other, so a start never precedes the previous call's start.
+	var previousStartMS uint32
 	for index, observed := range input.ProviderAttempts {
-		startMS := min(uint32Duration(observed.StartedAt.Sub(startedAt)), totalTimeMS)
+		startMS := max(min(uint32Duration(observed.StartedAt.Sub(startedAt)), totalTimeMS), previousStartMS)
+		previousStartMS = startMS
 		attempts[index] = ProviderAttempt{
 			Provider:                 boundedTelemetryValue(observed.Provider, maxProviderNameBytes),
 			CatalogChainHash:         observed.CatalogChainHash,

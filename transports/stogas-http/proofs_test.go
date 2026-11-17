@@ -16,18 +16,20 @@ func TestFinalMetadataKeepsCanonicalRequestTiming(t *testing.T) {
 	ttftMS := uint32(150)
 	credentialID := "0198f4cc-6c25-7000-8000-000000000001"
 	event := &billing.RequestEvent{
-		Performance: billing.RequestPerformance{TotalMS: 180, ProviderMS: 140, TTFTMS: &ttftMS},
-
+		Performance: billing.RequestPerformance{TotalMS: 180, TTFTMS: &ttftMS},
+		// Provider time runs from the first call's start at 10 ms to the last call's end at 150 ms.
 		ProviderAttempts: []billing.ProviderAttempt{
 			{
 				Provider:  "openai",
 				Status:    "provider_error",
+				StartMS:   10,
 				LatencyMS: 30,
 				Byok:      nil,
 			},
 			{
 				Provider:  "anthropic",
 				Status:    "success",
+				StartMS:   60,
 				LatencyMS: 90,
 				Byok:      &credentialID,
 			},

@@ -40,7 +40,7 @@ func recordMetadata(metadata *proof.Metadata, event *billing.RequestEvent) {
 	if event.PolicyVersions != nil {
 		metadata.PolicyVersionsSHA512 = event.PolicyVersions.SHA512()
 	}
-	metadata.Timing = proof.Timing{TotalMS: event.Performance.TotalMS, ProviderMS: event.Performance.ProviderMS, TTFTMS: event.Performance.TTFTMS}
+	metadata.Timing = proof.Timing{TotalMS: event.Performance.TotalMS, ProviderMS: event.ProviderMS(), TTFTMS: event.Performance.TTFTMS}
 	metadata.Meters = event.Usage.Meters
 	metadata.UpstreamCostUSD, metadata.BilledCostUSD = event.Usage.UpstreamCostUSD, event.Usage.BilledCostUSD
 	metadata.CacheReadSavingsUSD, metadata.CacheWriteOverheadUSD = event.Usage.CacheReadSavingsUSD, event.Usage.CacheWriteOverheadUSD

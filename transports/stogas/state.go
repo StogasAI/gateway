@@ -68,7 +68,6 @@ type State struct {
 	FinalEvent              *billing.RequestEvent
 	UpstreamCostUSD         string
 	FinalMeters             []catalog.MeterEstimate
-	ProviderStartedAt       time.Time
 	ProviderCompletedAt     time.Time
 	RateLimitWait           time.Duration
 	TTFTMS                  *uint32
@@ -242,13 +241,6 @@ func (s *State) SetDashboardCredential(credential *billing.DashboardCredential) 
 	s.DashboardCredential = credential
 }
 
-func (s *State) MarkProviderStarted() {
-	if s == nil || !s.ProviderStartedAt.IsZero() {
-		return
-	}
-	s.ProviderStartedAt = time.Now()
-}
-
 func (s *State) MarkProviderCompleted() {
 	if s == nil {
 		return
@@ -275,7 +267,7 @@ func (s *State) MarkProviderNotSent() {
 		s.providerAttempts = s.providerAttempts[:count-1]
 	}
 	if len(s.providerAttempts) == 0 {
-		s.ProviderStartedAt, s.ProviderCompletedAt = time.Time{}, time.Time{}
+		s.ProviderCompletedAt = time.Time{}
 	}
 }
 

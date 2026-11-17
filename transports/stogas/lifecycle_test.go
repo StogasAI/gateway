@@ -1135,7 +1135,6 @@ func TestOpenAIFastDowngradeUsesActualDeploymentForBillingAndEvidence(t *testing
 			}
 			state.RequestType = string(schemas.ChatCompletionRequest)
 			state.StartedAt = time.Now().UTC()
-			state.ProviderStartedAt = state.StartedAt
 			if attemptCount == 2 {
 				first := state.beginProviderAttempt(state.StartedAt)
 				state.finishProviderAttempt(first, state.StartedAt.Add(time.Millisecond), nil, &schemas.BifrostError{Error: &schemas.ErrorField{Message: "retry"}})
@@ -2032,11 +2031,10 @@ func TestFinalizeStateLogsPricingMeters(t *testing.T) {
 				},
 			},
 		},
-		RequestType:       string(schemas.ChatCompletionRequest),
-		GatewayVersion:    "v1.5.13",
-		StartedAt:         time.Now().UTC(),
-		ProviderStartedAt: time.Now().UTC(),
-		UpstreamCostUSD:   "1000",
+		RequestType:     string(schemas.ChatCompletionRequest),
+		GatewayVersion:  "v1.5.13",
+		StartedAt:       time.Now().UTC(),
+		UpstreamCostUSD: "1000",
 		FinalMeters: []catalog.MeterEstimate{{
 			MeterKey:     billing.MeterInputTokens,
 			RateKey:      billing.RatePerMillionTokens,
@@ -2047,7 +2045,7 @@ func TestFinalizeStateLogsPricingMeters(t *testing.T) {
 		}},
 		Signals: &StandardSignals{Prompt: 1000, Cached: 100},
 	}
-	state.beginProviderAttempt(state.ProviderStartedAt)
+	state.beginProviderAttempt(time.Now().UTC())
 
 	FinalizeState(context.Background(), authorizer, state)
 
@@ -2093,8 +2091,7 @@ func TestTokenSettlementCountsCacheAndReasoningOnceAndKeepsUnknownUsageDistinct(
 				RequestType:     string(schemas.ChatCompletionRequest),
 			}
 			if item.dispatched {
-				state.ProviderStartedAt = now
-				state.beginProviderAttempt(state.ProviderStartedAt)
+				state.beginProviderAttempt(now)
 			}
 			event := PrepareFinalState(state)
 			if event == nil {
@@ -2131,8 +2128,7 @@ func TestFinalizationDistinguishesPostHoldSetupFailureFromProviderFailure(t *tes
 				StartedAt:       now.Add(-time.Second),
 			}
 			if dispatched {
-				state.ProviderStartedAt = now.Add(-time.Millisecond)
-				state.beginProviderAttempt(state.ProviderStartedAt)
+				state.beginProviderAttempt(now.Add(-time.Millisecond))
 			} else {
 				state.ProcessingError, state.BifrostError = state.BifrostError, nil
 			}
@@ -2180,14 +2176,13 @@ func TestProcessingFailurePreservesCompletedAndUnknownProviderOutcomes(t *testin
 				Pair: Pair{
 					Authorization: &billing.Authorization{AuthorizedBilledCostUSD: mustMoney("0")},
 				},
-				UpstreamCostUSD:   "0",
-				RequestType:       string(item.requestType),
-				StartedAt:         time.Now().Add(-time.Second),
-				ProviderStartedAt: time.Now().Add(-time.Millisecond),
-				ProcessingError:   &schemas.BifrostError{StatusCode: schemas.Ptr(500), Error: &schemas.ErrorField{Code: schemas.Ptr("response_encoding_failed")}},
-				Response:          &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{ID: "response"}},
+				UpstreamCostUSD: "0",
+				RequestType:     string(item.requestType),
+				StartedAt:       time.Now().Add(-time.Second),
+				ProcessingError: &schemas.BifrostError{StatusCode: schemas.Ptr(500), Error: &schemas.ErrorField{Code: schemas.Ptr("response_encoding_failed")}},
+				Response:        &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{ID: "response"}},
 			}
-			state.beginProviderAttempt(state.ProviderStartedAt)
+			state.beginProviderAttempt(time.Now().Add(-time.Millisecond))
 			state.chatStreamFinished = item.completed && item.requestType == schemas.ChatCompletionStreamRequest
 			state.responsesStreamEnded = item.completed && item.requestType == schemas.ResponsesStreamRequest
 			wantCode := 200
@@ -2229,10 +2224,9 @@ func TestUnaryProviderLatencyDoesNotFabricateTTFT(t *testing.T) {
 			ExtraFields: schemas.BifrostResponseExtraFields{Latency: 81},
 		}},
 		ProviderCompletedAt: now.Add(-9 * time.Millisecond),
-		ProviderStartedAt:   now.Add(-90 * time.Millisecond),
 		StartedAt:           now.Add(-100 * time.Millisecond),
 	}
-	state.beginProviderAttempt(state.ProviderStartedAt)
+	state.beginProviderAttempt(now.Add(-90 * time.Millisecond))
 	authorizer := &fakeBillingAuthorizer{}
 	FinalizeState(context.Background(), authorizer, state)
 
@@ -2251,8 +2245,7 @@ func TestUnaryProviderLatencyDoesNotFabricateTTFT(t *testing.T) {
 
 func TestTTFTUsesRequestClockAndRemainsFirstObservation(t *testing.T) {
 	state := &State{
-		StartedAt:         time.Now().UTC().Add(-30 * time.Millisecond),
-		ProviderStartedAt: time.Now().UTC().Add(-10 * time.Millisecond),
+		StartedAt: time.Now().UTC().Add(-30 * time.Millisecond),
 	}
 	state.observeTTFT()
 	if state.TTFTMS == nil || *state.TTFTMS < 25 || *state.TTFTMS > 100 {
@@ -3395,12 +3388,11 @@ func TestPrepareFinalStatePersistsBothCacheEconomics(t *testing.T) {
 			{MeterKey: billing.MeterCacheWrite5mInputTokens, RateKey: billing.RatePerMillionTokens, RateUSD: "1250000", Quantity: "200", AmountUSD: "250"},
 			{MeterKey: billing.MeterCacheWrite1hInputTokens, RateKey: billing.RatePerMillionTokens, RateUSD: "2000000", Quantity: "300", AmountUSD: "600"},
 		},
-		RequestType:       string(schemas.ChatCompletionRequest),
-		Signals:           &StandardSignals{Prompt: 600, Cached: 100, CacheWrite5m: 200, CacheWrite1h: 300},
-		StartedAt:         time.Now().UTC(),
-		ProviderStartedAt: time.Now().UTC(),
+		RequestType: string(schemas.ChatCompletionRequest),
+		Signals:     &StandardSignals{Prompt: 600, Cached: 100, CacheWrite5m: 200, CacheWrite1h: 300},
+		StartedAt:   time.Now().UTC(),
 	}
-	state.beginProviderAttempt(state.ProviderStartedAt)
+	state.beginProviderAttempt(time.Now().UTC())
 
 	event := PrepareFinalState(state)
 	if event == nil {
@@ -3482,8 +3474,7 @@ func TestRequestLogPricingBagCompactsDuplicateMetersBeforeRounding(t *testing.T)
 	}}
 	state.UpstreamCostUSD = total
 	state.StartedAt = time.Now().UTC()
-	state.ProviderStartedAt = state.StartedAt
-	state.beginProviderAttempt(state.ProviderStartedAt)
+	state.beginProviderAttempt(state.StartedAt)
 	FinalizeState(context.Background(), authorizer, state)
 	if len(authorizer.finalEvents) != 1 {
 		t.Fatalf("expected one final event, got %d", len(authorizer.finalEvents))
@@ -3637,15 +3628,14 @@ func TestPrepareFinalStateSettlesActualCostAndRejectsInvalidPricing(t *testing.T
 						}},
 					},
 				},
-				UpstreamCostUSD:   tc.final,
-				BifrostError:      providerErr,
-				FinalMeters:       finalMeters,
-				Signals:           &StandardSignals{Prompt: 1},
-				StartedAt:         time.Now().UTC().Add(-time.Second),
-				ProviderStartedAt: time.Now().UTC().Add(-time.Millisecond),
-				Response:          &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{ID: "response"}},
+				UpstreamCostUSD: tc.final,
+				BifrostError:    providerErr,
+				FinalMeters:     finalMeters,
+				Signals:         &StandardSignals{Prompt: 1},
+				StartedAt:       time.Now().UTC().Add(-time.Second),
+				Response:        &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{ID: "response"}},
 			}
-			state.beginProviderAttempt(state.ProviderStartedAt)
+			state.beginProviderAttempt(time.Now().UTC().Add(-time.Millisecond))
 			event := PrepareFinalState(state)
 			if event == nil {
 				t.Fatal("PrepareFinalState returned nil")

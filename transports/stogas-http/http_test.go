@@ -842,11 +842,10 @@ func TestWriteInferenceJSONFailsClosedWhenProofCannotBeBuilt(t *testing.T) {
 			Resolution:    testResolution(),
 			Authorization: &billing.Authorization{AuthorizedBilledCostUSD: new(money.USD)},
 		},
-		FinalEvent:        &billing.RequestEvent{CreatedAt: "2026-08-24T12:34:56.789Z"},
-		StartedAt:         time.Now().Add(-time.Second),
-		ProviderStartedAt: time.Now().Add(-time.Millisecond),
-		UpstreamCostUSD:   "0",
-		Response:          &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{ID: "response"}},
+		FinalEvent:      &billing.RequestEvent{CreatedAt: "2026-08-24T12:34:56.789Z"},
+		StartedAt:       time.Now().Add(-time.Second),
+		UpstreamCostUSD: "0",
+		Response:        &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{ID: "response"}},
 	}
 
 	server.writeInferenceJSON(ctx, bifrostCtx, state, http.StatusOK, map[string]any{"ok": true})

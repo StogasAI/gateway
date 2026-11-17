@@ -35,12 +35,10 @@ type ProviderAttempt struct {
 	Byok                     *string `json:"byok"`
 }
 
-// RequestPerformance records elapsed request and provider time.
-// Provider attempts retain their own durations and outcomes.
+// RequestPerformance records the request's own times on the request clock.
+// Provider attempts hold the provider calls' starts and durations.
 type RequestPerformance struct {
-	TotalMS         uint32  `json:"total_ms"`
-	ProviderMS      uint32  `json:"provider_ms"`
-	ProviderStartMS *uint32 `json:"provider_start_ms"`
+	TotalMS uint32 `json:"total_ms"`
 	// RateLimitWaitMS is how long the platform request rate held the first
 	// provider call, which starts when the wait ends.
 	RateLimitWaitMS uint32  `json:"rate_limit_wait_ms"`
