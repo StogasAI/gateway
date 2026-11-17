@@ -43,7 +43,7 @@ const (
 	// An application without a client secret signs in with the organization's token.
 	azureFederationRejected = "Azure did not accept this organization's token for this tenant and client ID. Add a federated credential with the issuer, subject and audience to the application."
 	azureAppUnavailable     = "Could not authenticate with Azure. Try again."
-	azureTooManyTargets     = "These accounts have more deployments than one credential can hold. Connect fewer accounts to this credential."
+	azureTooManyTargets     = "This account has more targets than one credential can hold. Remove deployments or Foundry projects that you don't use."
 )
 
 var (
