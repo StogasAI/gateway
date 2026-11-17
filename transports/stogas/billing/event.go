@@ -511,6 +511,9 @@ func messageRefusal(bifrostErr *schemas.BifrostError) string {
 		strings.HasPrefix(message, "this model's maximum context length is "),
 		strings.HasPrefix(message, "the input (") && strings.Contains(message, " is longer than the model's context length"):
 		return "context_length_exceeded"
+	// Claude's filter of its own output answers with a generic 400 invalid_request_error.
+	case strings.HasPrefix(message, "output blocked by content filtering policy"):
+		return "content_filter"
 	}
 	return ""
 }
