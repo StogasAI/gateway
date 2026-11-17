@@ -31,9 +31,17 @@ jobs:
             transports/go.sum
       - id: verifier
         uses: $/.github/actions/setup-verifier
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: stogas/pdftext
       # The gateway starts this program for each PDF that it reads, and the tests start it too.
+      # Link-time optimization behaves the same and costs minutes on every run, so only the
+      # reproducible release build applies it.
       - name: Build and test the PDF reader
         working-directory: stogas/pdftext
+        env:
+          CARGO_PROFILE_RELEASE_LTO: 'false'
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16'
         run: |
           cmp Cargo.lock ../release/locks/pdftext.Cargo.lock
           cargo test --quiet --locked --release
@@ -42,7 +50,7 @@ jobs:
         working-directory: transports
         env:
           CGO_LDFLAGS: ${{ steps.verifier.outputs.cgo-ldflags }}
-        run: GOWORK=off go test -tags=stogas_gateway -race -shuffle=on -count=1 ./...
+        run: GOWORK=off go test -tags=stogas_gateway -race -shuffle=on -count=1 -coverprofile="$RUNNER_TEMP/transports.cover" ./...
       # The race detector changes allocation; stop-the-world collection exposes short heap peaks.
       - name: Measure request preparation memory
         working-directory: transports
@@ -51,7 +59,21 @@ jobs:
         run: GOWORK=off GODEBUG=gcstoptheworld=1 go test -tags=stogas_gateway -count=1 -run '^TestRequestPreparationFitsItsMemoryCharges$' ./stogas-http
       - name: Test deterministic retained core packages
         working-directory: core
-        run: GOWORK=off go test -shuffle=on -count=1 . ./internal/llmtests ./internal/memtest ./keyselectors ./mcp/... ./network ./providers/... ./schemas
+        run: GOWORK=off go test -shuffle=on -count=1 -coverprofile="$RUNNER_TEMP/core.cover" . ./internal/llmtests ./internal/memtest ./keyselectors ./mcp/... ./network ./providers/... ./schemas
+      # Coverage shows which statements the tests run, not what they check, so it gates nothing.
+      - name: Report coverage
+        if: ${{ !cancelled() }}
+        run: |
+          {
+            echo '| Module | Statements that the tests run |'
+            echo '| --- | --- |'
+            for module in transports core; do
+              if [ -f "$RUNNER_TEMP/$module.cover" ]; then
+                total=$(cd "$module" && GOWORK=off go tool cover -func="$RUNNER_TEMP/$module.cover" | awk 'END { print $NF }')
+                echo "| $module | $total |"
+              fi
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.22.1
