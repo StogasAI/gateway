@@ -294,6 +294,9 @@ type Capabilities struct {
 	StructuredOutputs       bool `json:"structuredOutputs"`
 	SystemMessages          bool `json:"systemMessages"`
 	ToolChoice              bool `json:"toolChoice"`
+	// ToolResultAttachments says that a tool result takes the images and documents that a user
+	// message takes.
+	ToolResultAttachments bool `json:"toolResultAttachments"`
 }
 
 type compiledUpstream struct {

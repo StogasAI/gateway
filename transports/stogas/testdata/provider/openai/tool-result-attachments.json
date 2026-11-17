@@ -1,0 +1,936 @@
+{
+	"shows": "A tool result carries an image and a PDF on Responses at OpenAI and Azure and on Claude at Amazon Bedrock, and the model reads both. Chat Completions at OpenAI and Azure refuses a file in a tool message, and answers 200 for an image there that the model never sees.",
+	"recorded": "2026-11-17",
+	"exchanges": [
+		{
+			"name": "openai Responses",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-5.4-mini",
+					"store": false,
+					"max_output_tokens": 200,
+					"reasoning": {
+						"effort": "low"
+					},
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_evidence",
+							"description": "Returns a file and an image.",
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Call get_evidence, then reply with the secret word in its file and the color of its image, as two words."
+						},
+						{
+							"type": "function_call",
+							"call_id": "call_evidence",
+							"name": "get_evidence",
+							"arguments": "{}"
+						},
+						{
+							"type": "function_call_output",
+							"call_id": "call_evidence",
+							"output": [
+								{
+									"type": "input_text",
+									"text": "The file and the image follow."
+								},
+								{
+									"type": "input_file",
+									"filename": "evidence.pdf",
+									"file_data": "data:application/pdf;base64,JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCAzMDAgMTAwXSAvQ29udGVudHMgNCAwIFIgL1Jlc291cmNlcyA8PCAvRm9udCA8PCAvRjEgNSAwIFIgPj4gPj4gPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCA1NiA+PgpzdHJlYW0KQlQgL0YxIDEyIFRmIDIwIDUwIFRkIChUaGUgc2VjcmV0IHdvcmQgaXMgSEFSQk9SLikgVGogRVQKZW5kc3RyZWFtCmVuZG9iago1IDAgb2JqCjw8IC9UeXBlIC9Gb250IC9TdWJ0eXBlIC9UeXBlMSAvQmFzZUZvbnQgL0hlbHZldGljYSA+PgplbmRvYmoKeHJlZgowIDYKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwNTggMDAwMDAgbiAKMDAwMDAwMDExNSAwMDAwMCBuIAowMDAwMDAwMjQxIDAwMDAwIG4gCjAwMDAwMDAzNDcgMDAwMDAgbiAKdHJhaWxlcgo8PCAvU2l6ZSA2IC9Sb290IDEgMCBSID4+CnN0YXJ0eHJlZgo0MTcKJSVFT0YK"
+								},
+								{
+									"type": "input_image",
+									"image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAgElEQVR4nO3RwQkAMAwDMe+/dDtEH6Jw4AES3c729fwFPaAJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJKzCv+LILqdzw4i4ZAl4AAAAASUVORK5CYII="
+								}
+							]
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_0f7a370562446223016afbdec2610487d2a00c0ddc9a38e85b",
+					"object": "response",
+					"created_at": 1794891458,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1794891460,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 200,
+					"max_tool_calls": null,
+					"model": "gpt-5.4-mini-2026-03-17",
+					"moderation": null,
+					"output": [
+						{
+							"id": "rs_0f7a370562446223016afbdec4188087d2936838f1fd5ab2fa",
+							"type": "reasoning",
+							"content": [],
+							"encrypted_content": "gAAAAABq-97Ex-QOQsVP66balS39_srHwG1NWZ3UnjjvW9buIlPM8AtvXjgi3VO7UJLQ7wnSueMRsk6DPIlRrA9xWuF1qd_sF-64V8SsT99ZPjetNYISgxl1xLhbbJkNH45YdOFZ4li27W2fGJXlzFFlHYJ7PS1F6Hc_LSrEDnAnB2TAZ9b7NBlW3Xg8qf1lXXBquScRHo1qBfZAh7dcdtZudawHaGJmJD3bBl4BD4JYRfImFGw0Q360xNrNL2-QOO5ytTRQMQUzzgcsRHIdQ-dNFctCDz4hbieKhxhbU0aXs8DCzuoovz83wX3WI8lQMYPP-uvRnM2KCcvTmIsAtb06ckHwhiqy27jSxkk2K8HVRMNo_LthoQFNjNkMOLWZsq6s2U4VAEPwYsvwI-DDiQ1ow6P6_9Q4VkNRUgnRhTSlqpt0lt-9noVZd0ucJqx8sOQYhHa1RS1-Y4KX3Zt7Mq2rRVPbFJkvTSp9AiRbcxK02DwyU30TpudptbPhbFhyljOugs8ulOBBdeww7Ucr2gRDy01AkO_QT3228Nlaxm9RzCJI9xSmfMGkiTFJGKPhPbiA14r4_JKY4dTVF3JFVJtghW0z3BN73chEkemhGKoKGOUmpOdkDRgV3qptpvOcMn7rRybdEiFKptE4duV29fr8Vys-YwQ1AwrgO7Gc4V0JG0LI86UcPKmapJ2AtmPwaaHQvKFZQmpWHALA7eYAF6dSitSAlzSIxX4r3efaqlZY20AO5aSpBuQRsBR5AUPRZb_TLzAHzEPsuUp1a5F9sZreSNHFoR3OmVfqLtB1pfSnXG0MtrPEEOKvadWuPtOFqiyQrevG9lzoqAIQ9P1dxVwX-Znbfrjyp_6EwH7GxX-9K4aNgKlfTiJbfnawHmt616Kk4ft139ngUshymgN0iItpITEdQvxS99zPotw1gi4dgo6vHbca84llXTFi0gvQhZ4tEWydDu95w4UVH17IdIUrhSO8DTVjQMrqY2WCA8Q2Xc8YeIJYB0Hb4FsxLttOW9a_4Aw6TaSbzKkEGhIJBrOyCE73MXf-5suR9-X6LdXWhn6UvRYS60-U9mFrgTx1ErzuBebp71rrBOxh5Xb9LSKBHbqNJgXE26DgFq2fA2PFYHq9CkWEHnfhFJ0-0Q8Nxr-oOb9a7QckVT-KxcyTLbMLBetJclE6u3V7ewSBxu8qjFYdVVj-ouuJ1EKSBldC1aVjWcL42Wkjg1tpEmsSDY4BQEwb6lbRtuK-NxEauRh5T-p5i3zuUJ676K5Ed86a0dw02Nhoyf0xLY028gmR_QAwWjPTKXA3pBdC677kFiRslGX3Mxu2WXLBXhuY60BcFlvBD7WiLekxuN1-BFI03JjhRgtkMmTcoJ8p7On6GGWhXtn_Td5DgRBMswYm-idEn14h4oTHdd8BT4xXZgOrVwg6UtNxLwnmmOBRWJa2WxF4AHYeSZKl8MLeAQEoIMH_nqDbe8iWdlv_LOYGBvnO1GqFze7xaTV47guAhIXbfX6qCacszmEXKf2TgmPZT7mOmB0kYkL32650Kgt_EPNYkTzkkjzBpxAmOktKvl47njNwlZzYCnVBcdptmyizT2USFJuDnPRC_1iunWNwBMT2DQcJ1gGZ-PhV0nnXy7GaIg7u5oFty-HtV3FuxoVQmncW5SBgzGcws6y9OKwYeTlDW1L-mAaQMCJd4pQznVshOa1EmRZbMk38Vtsg_a0U09SxHwsbwVUVe8CGSrSIPewKGOtpl4_HQwMSeOoXVftWHDEKPQG1vd3DcKmWOAyjZVf7zGeh9pSLDE_ru-debWjl2enGA6LEh7EUk_iqsmeCgdPwVpGeHmREYFSvWsGMn4FEs4UIKrOak0feFoMVdfnZp4qwmaPFTOwOcg==",
+							"summary": []
+						},
+						{
+							"id": "msg_0f7a370562446223016afbdec4227887d28e27c3c5e630db06",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "HARBOR red"
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "current_turn",
+						"effort": "low",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "function",
+							"description": "Returns a file and an image.",
+							"name": "get_evidence",
+							"output_schema": null,
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 146,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 28,
+						"output_tokens_details": {
+							"reasoning_tokens": 18
+						},
+						"total_tokens": 174
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "azure Responses",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/responses",
+				"body": {
+					"model": "gpt-5.6-sol",
+					"store": false,
+					"max_output_tokens": 200,
+					"reasoning": {
+						"effort": "low"
+					},
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_evidence",
+							"description": "Returns a file and an image.",
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Call get_evidence, then reply with the secret word in its file and the color of its image, as two words."
+						},
+						{
+							"type": "function_call",
+							"call_id": "call_evidence",
+							"name": "get_evidence",
+							"arguments": "{}"
+						},
+						{
+							"type": "function_call_output",
+							"call_id": "call_evidence",
+							"output": [
+								{
+									"type": "input_text",
+									"text": "The file and the image follow."
+								},
+								{
+									"type": "input_file",
+									"filename": "evidence.pdf",
+									"file_data": "data:application/pdf;base64,JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCAzMDAgMTAwXSAvQ29udGVudHMgNCAwIFIgL1Jlc291cmNlcyA8PCAvRm9udCA8PCAvRjEgNSAwIFIgPj4gPj4gPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCA1NiA+PgpzdHJlYW0KQlQgL0YxIDEyIFRmIDIwIDUwIFRkIChUaGUgc2VjcmV0IHdvcmQgaXMgSEFSQk9SLikgVGogRVQKZW5kc3RyZWFtCmVuZG9iago1IDAgb2JqCjw8IC9UeXBlIC9Gb250IC9TdWJ0eXBlIC9UeXBlMSAvQmFzZUZvbnQgL0hlbHZldGljYSA+PgplbmRvYmoKeHJlZgowIDYKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwNTggMDAwMDAgbiAKMDAwMDAwMDExNSAwMDAwMCBuIAowMDAwMDAwMjQxIDAwMDAwIG4gCjAwMDAwMDAzNDcgMDAwMDAgbiAKdHJhaWxlcgo8PCAvU2l6ZSA2IC9Sb290IDEgMCBSID4+CnN0YXJ0eHJlZgo0MTcKJSVFT0YK"
+								},
+								{
+									"type": "input_image",
+									"image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAgElEQVR4nO3RwQkAMAwDMe+/dDtEH6Jw4AES3c729fwFPaAJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJKzCv+LILqdzw4i4ZAl4AAAAASUVORK5CYII="
+								}
+							]
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_0e8f2ccc2b678ffa016afbdec482e0819585b8cff842d6f55e",
+					"object": "response",
+					"created_at": 1794891460,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"completed_at": 1794891461,
+					"content_filters": [
+						{
+							"blocked": false,
+							"source_type": "prompt",
+							"content_filter_raw": [],
+							"content_filter_results": {
+								"hate": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"sexual": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"violence": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"self_harm": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"jailbreak": {
+									"detected": false,
+									"filtered": false
+								}
+							},
+							"content_filter_offsets": {
+								"start_offset": 0,
+								"end_offset": 363,
+								"check_offset": 0
+							}
+						},
+						{
+							"blocked": false,
+							"source_type": "completion",
+							"content_filter_raw": [],
+							"content_filter_results": {
+								"protected_material_text": {
+									"detected": false,
+									"filtered": false
+								},
+								"protected_material_code": {
+									"detected": false,
+									"filtered": false
+								},
+								"hate": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"sexual": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"violence": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"self_harm": {
+									"filtered": false,
+									"severity": "safe"
+								}
+							},
+							"content_filter_offsets": {
+								"start_offset": 0,
+								"end_offset": 10,
+								"check_offset": 0
+							}
+						}
+					],
+					"error": null,
+					"frequency_penalty": 0,
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 200,
+					"max_tool_calls": null,
+					"model": "gpt-5.6-sol",
+					"moderation": null,
+					"output": [
+						{
+							"id": "msg_0e8f2ccc2b678ffa016afbdec5a11c8195b6ddfd4af30d9247",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "HARBOR red"
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "low",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "function",
+							"description": "Returns a file and an image.",
+							"name": "get_evidence",
+							"output_schema": null,
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 148,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"output_tokens": 8,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 156
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "openai Chat Completions, image",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/chat/completions",
+				"body": {
+					"model": "gpt-5.4-mini",
+					"max_completion_tokens": 3000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_evidence",
+								"description": "Returns a file and an image.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "Call get_evidence, then say what color its image is, or say NONE if you got no image."
+						},
+						{
+							"role": "assistant",
+							"tool_calls": [
+								{
+									"id": "call_evidence",
+									"type": "function",
+									"function": {
+										"name": "get_evidence",
+										"arguments": "{}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "call_evidence",
+							"content": [
+								{
+									"type": "text",
+									"text": "Attached."
+								},
+								{
+									"type": "image_url",
+									"image_url": {
+										"url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAgElEQVR4nO3RwQkAMAwDMe+/dDtEH6Jw4AES3c729fwFPaAJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJKzCv+LILqdzw4i4ZAl4AAAAASUVORK5CYII="
+									}
+								}
+							]
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "chatcmpl-El5YEr34H31MxAq3ppCkZ7rxHdErC",
+					"object": "chat.completion",
+					"created": 1794891462,
+					"model": "gpt-5.4-mini-2026-03-17",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "The image is mostly blue.",
+								"refusal": null,
+								"annotations": []
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 171,
+						"completion_tokens": 9,
+						"total_tokens": 180,
+						"prompt_tokens_details": {
+							"cached_tokens": 0,
+							"audio_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 0,
+							"audio_tokens": 0,
+							"accepted_prediction_tokens": 0,
+							"rejected_prediction_tokens": 0
+						}
+					},
+					"service_tier": "default",
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "openai Chat Completions, file",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/chat/completions",
+				"body": {
+					"model": "gpt-5.4-mini",
+					"max_completion_tokens": 3000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_evidence",
+								"description": "Returns a file and an image.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "Call get_evidence, then say what color its image is, or say NONE if you got no image."
+						},
+						{
+							"role": "assistant",
+							"tool_calls": [
+								{
+									"id": "call_evidence",
+									"type": "function",
+									"function": {
+										"name": "get_evidence",
+										"arguments": "{}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "call_evidence",
+							"content": [
+								{
+									"type": "text",
+									"text": "Attached."
+								},
+								{
+									"type": "file",
+									"file": {
+										"filename": "evidence.pdf",
+										"file_data": "data:application/pdf;base64,JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCAzMDAgMTAwXSAvQ29udGVudHMgNCAwIFIgL1Jlc291cmNlcyA8PCAvRm9udCA8PCAvRjEgNSAwIFIgPj4gPj4gPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCA1NiA+PgpzdHJlYW0KQlQgL0YxIDEyIFRmIDIwIDUwIFRkIChUaGUgc2VjcmV0IHdvcmQgaXMgSEFSQk9SLikgVGogRVQKZW5kc3RyZWFtCmVuZG9iago1IDAgb2JqCjw8IC9UeXBlIC9Gb250IC9TdWJ0eXBlIC9UeXBlMSAvQmFzZUZvbnQgL0hlbHZldGljYSA+PgplbmRvYmoKeHJlZgowIDYKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwNTggMDAwMDAgbiAKMDAwMDAwMDExNSAwMDAwMCBuIAowMDAwMDAwMjQxIDAwMDAwIG4gCjAwMDAwMDAzNDcgMDAwMDAgbiAKdHJhaWxlcgo8PCAvU2l6ZSA2IC9Sb290IDEgMCBSID4+CnN0YXJ0eHJlZgo0MTcKJSVFT0YK"
+									}
+								}
+							]
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Invalid value: 'file'. Supported values are: 'text', 'refusal', 'image_url', and 'input_audio'.",
+						"type": "invalid_request_error",
+						"param": "messages[2].content[1]",
+						"code": "invalid_value"
+					}
+				}
+			}
+		},
+		{
+			"name": "azure Chat Completions, image",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "gpt-5.6-sol",
+					"max_completion_tokens": 3000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_evidence",
+								"description": "Returns a file and an image.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "Call get_evidence, then say what color its image is, or say NONE if you got no image."
+						},
+						{
+							"role": "assistant",
+							"tool_calls": [
+								{
+									"id": "call_evidence",
+									"type": "function",
+									"function": {
+										"name": "get_evidence",
+										"arguments": "{}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "call_evidence",
+							"content": [
+								{
+									"type": "text",
+									"text": "Attached."
+								},
+								{
+									"type": "image_url",
+									"image_url": {
+										"url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAgElEQVR4nO3RwQkAMAwDMe+/dDtEH6Jw4AES3c729fwFPaAJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJKzCv+LILqdzw4i4ZAl4AAAAASUVORK5CYII="
+									}
+								}
+							]
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"content_filter_results": {
+								"hate": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"protected_material_code": {
+									"detected": false,
+									"filtered": false
+								},
+								"protected_material_text": {
+									"detected": false,
+									"filtered": false
+								},
+								"self_harm": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"sexual": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"violence": {
+									"filtered": false,
+									"severity": "safe"
+								}
+							},
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"annotations": [],
+								"content": "Blue.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1794891463,
+					"id": "chatcmpl-El5YFJNMzB4kTweEVymMH2CBg5FDt",
+					"model": "gpt-5.6-sol-2026-07-09",
+					"object": "chat.completion",
+					"prompt_filter_results": [
+						{
+							"prompt_index": 0,
+							"content_filter_results": {
+								"hate": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"jailbreak": {
+									"detected": false,
+									"filtered": false
+								},
+								"self_harm": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"sexual": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"violence": {
+									"filtered": false,
+									"severity": "safe"
+								}
+							}
+						}
+					],
+					"routing": {
+						"serving_pipereplica": "d20261111205953-532b6a56-prefill-r9-dp0-prefill"
+					},
+					"service_tier": "default",
+					"system_fingerprint": null,
+					"usage": {
+						"completion_tokens": 297,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 286,
+							"rejected_prediction_tokens": 0
+						},
+						"latency_checkpoint": {
+							"engine_tbt_ms": 11,
+							"engine_ttft_ms": 110,
+							"engine_ttlt_ms": 3355,
+							"pre_inference_ms": 93,
+							"service_tbt_ms": 11,
+							"service_ttft_ms": 351,
+							"service_ttlt_ms": 3591,
+							"user_visible_ttft_ms": 257
+						},
+						"prompt_tokens": 171,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 468
+					}
+				}
+			}
+		},
+		{
+			"name": "azure Chat Completions, file",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "gpt-5.6-sol",
+					"max_completion_tokens": 3000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_evidence",
+								"description": "Returns a file and an image.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "Call get_evidence, then say what color its image is, or say NONE if you got no image."
+						},
+						{
+							"role": "assistant",
+							"tool_calls": [
+								{
+									"id": "call_evidence",
+									"type": "function",
+									"function": {
+										"name": "get_evidence",
+										"arguments": "{}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "call_evidence",
+							"content": [
+								{
+									"type": "text",
+									"text": "Attached."
+								},
+								{
+									"type": "file",
+									"file": {
+										"filename": "evidence.pdf",
+										"file_data": "data:application/pdf;base64,JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCAzMDAgMTAwXSAvQ29udGVudHMgNCAwIFIgL1Jlc291cmNlcyA8PCAvRm9udCA8PCAvRjEgNSAwIFIgPj4gPj4gPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCA1NiA+PgpzdHJlYW0KQlQgL0YxIDEyIFRmIDIwIDUwIFRkIChUaGUgc2VjcmV0IHdvcmQgaXMgSEFSQk9SLikgVGogRVQKZW5kc3RyZWFtCmVuZG9iago1IDAgb2JqCjw8IC9UeXBlIC9Gb250IC9TdWJ0eXBlIC9UeXBlMSAvQmFzZUZvbnQgL0hlbHZldGljYSA+PgplbmRvYmoKeHJlZgowIDYKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwNTggMDAwMDAgbiAKMDAwMDAwMDExNSAwMDAwMCBuIAowMDAwMDAwMjQxIDAwMDAwIG4gCjAwMDAwMDAzNDcgMDAwMDAgbiAKdHJhaWxlcgo8PCAvU2l6ZSA2IC9Sb290IDEgMCBSID4+CnN0YXJ0eHJlZgo0MTcKJSVFT0YK"
+									}
+								}
+							]
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Invalid value: 'file'. Supported values are: 'text', 'refusal', 'image_url', and 'input_audio'.",
+						"type": "invalid_request_error",
+						"param": "messages[2].content[1]",
+						"code": "invalid_value"
+					}
+				}
+			}
+		},
+		{
+			"name": "Claude on Amazon Bedrock",
+			"provider": "aws",
+			"request": {
+				"path": "/anthropic/v1/messages",
+				"body": {
+					"model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+					"max_tokens": 50,
+					"tools": [
+						{
+							"name": "get_evidence",
+							"description": "Returns a file and an image.",
+							"input_schema": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "Call get_evidence, then reply with the secret word in its file and the color of its image, as two words."
+						},
+						{
+							"role": "assistant",
+							"content": [
+								{
+									"type": "tool_use",
+									"id": "toolu_evidence",
+									"name": "get_evidence",
+									"input": {}
+								}
+							]
+						},
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "tool_result",
+									"tool_use_id": "toolu_evidence",
+									"content": [
+										{
+											"type": "text",
+											"text": "The file and the image follow."
+										},
+										{
+											"type": "document",
+											"source": {
+												"type": "base64",
+												"media_type": "application/pdf",
+												"data": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCAzMDAgMTAwXSAvQ29udGVudHMgNCAwIFIgL1Jlc291cmNlcyA8PCAvRm9udCA8PCAvRjEgNSAwIFIgPj4gPj4gPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCA1NiA+PgpzdHJlYW0KQlQgL0YxIDEyIFRmIDIwIDUwIFRkIChUaGUgc2VjcmV0IHdvcmQgaXMgSEFSQk9SLikgVGogRVQKZW5kc3RyZWFtCmVuZG9iago1IDAgb2JqCjw8IC9UeXBlIC9Gb250IC9TdWJ0eXBlIC9UeXBlMSAvQmFzZUZvbnQgL0hlbHZldGljYSA+PgplbmRvYmoKeHJlZgowIDYKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwNTggMDAwMDAgbiAKMDAwMDAwMDExNSAwMDAwMCBuIAowMDAwMDAwMjQxIDAwMDAwIG4gCjAwMDAwMDAzNDcgMDAwMDAgbiAKdHJhaWxlcgo8PCAvU2l6ZSA2IC9Sb290IDEgMCBSID4+CnN0YXJ0eHJlZgo0MTcKJSVFT0YK"
+											}
+										},
+										{
+											"type": "image",
+											"source": {
+												"type": "base64",
+												"media_type": "image/png",
+												"data": "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAgElEQVR4nO3RwQkAMAwDMe+/dDtEH6Jw4AES3c729fwFPaAJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJK6AJKzCv+LILqdzw4i4ZAl4AAAAASUVORK5CYII="
+											}
+										}
+									]
+								}
+							]
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"model": "anthropic.claude-haiku-4-5-20251001-v1:0",
+					"id": "msg_bdrk_szeklq4pmt532l45yjxo7pagaqco7ioq46jkembc6dr2k745jtzq",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "HARBOR red"
+						}
+					],
+					"container": null,
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"stop_details": null,
+					"usage": {
+						"input_tokens": 1784,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"cache_creation": {
+							"ephemeral_5m_input_tokens": 0,
+							"ephemeral_1h_input_tokens": 0
+						},
+						"output_tokens": 6,
+						"service_tier": "standard"
+					}
+				}
+			}
+		}
+	]
+}

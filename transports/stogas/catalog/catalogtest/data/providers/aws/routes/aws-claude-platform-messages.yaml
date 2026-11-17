@@ -20,6 +20,7 @@ routes:
     structuredOutputs: true
     systemMessages: true
     toolChoice: true
+    toolResultAttachments: true
   sampling:
     temperature: true
     topP: true

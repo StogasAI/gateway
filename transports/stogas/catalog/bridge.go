@@ -334,20 +334,22 @@ func responsesBridgeGap(chat *schemas.BifrostChatRequest) error {
 	return nil
 }
 
-// textToolOutputs gives each tool output in parts as the text of its parts in order, because the
-// gateway takes a Responses tool output only as text. The checks of Chat Completions leave text as
-// the only part of a tool's output.
+// textToolOutputs gives each tool output whose parts are all text as their text in order, which
+// every Responses deployment takes. An output with an image or a file keeps its parts, and only a
+// deployment that takes them in a tool result gets it (Capabilities.ToolResultAttachments).
 func textToolOutputs(input []schemas.ResponsesMessage) {
 	for _, item := range input {
 		tool := item.ResponsesToolMessage
 		if tool == nil || tool.Output == nil || tool.Output.ResponsesFunctionToolCallOutputBlocks == nil {
 			continue
 		}
+		blocks := tool.Output.ResponsesFunctionToolCallOutputBlocks
+		if slices.ContainsFunc(blocks, func(block schemas.ResponsesMessageContentBlock) bool { return block.Text == nil }) {
+			continue
+		}
 		var text strings.Builder
-		for _, block := range tool.Output.ResponsesFunctionToolCallOutputBlocks {
-			if block.Text != nil {
-				text.WriteString(*block.Text)
-			}
+		for _, block := range blocks {
+			text.WriteString(*block.Text)
 		}
 		tool.Output.ResponsesToolCallOutputStr = schemas.Ptr(text.String())
 		tool.Output.ResponsesFunctionToolCallOutputBlocks = nil

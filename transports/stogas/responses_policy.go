@@ -1355,7 +1355,7 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 			}
 			turn.call()
 		case "function_call_output":
-			if err := validateResponsesToolCallOutputInput(item, path, "function", &validation); err != nil {
+			if err := validateResponsesToolCallOutputInput(state, item, path, "function", &validation); err != nil {
 				return err
 			}
 			turn.result(rawString(item["call_id"]))
@@ -1371,7 +1371,7 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 			if !responsesCustomCallInputSupported(state) {
 				return invalidRequest("custom_tool_call_output input items are supported only for OpenAI-format deployments")
 			}
-			if err := validateResponsesToolCallOutputInput(item, path, "custom", &validation); err != nil {
+			if err := validateResponsesToolCallOutputInput(state, item, path, "custom", &validation); err != nil {
 				return err
 			}
 			turn.result(rawString(item["call_id"]))
@@ -1565,7 +1565,7 @@ func validateResponsesMessageContent(state *State, raw json.RawMessage, path str
 			meaningful = meaningful || hasNonWhitespace(text)
 		case "input_file", "input_image":
 			if role != "user" {
-				return false, invalidRequest(blockPath + " attachments require a user message")
+				return false, invalidRequest(blockPath + " attachments require a user message or a tool result")
 			}
 			if err := validateNativeAttachment(state, block, blockPath, true); err != nil {
 				return false, err
@@ -2020,7 +2020,7 @@ func responsesNamespaceDeclares(state *State, namespace, name string) bool {
 	return false
 }
 
-func validateResponsesToolCallOutputInput(item map[string]json.RawMessage, path string, kind string, validation *responsesInputValidation) error {
+func validateResponsesToolCallOutputInput(state *State, item map[string]json.RawMessage, path string, kind string, validation *responsesInputValidation) error {
 	if err := rejectUnsupportedInputKeys(item, path, "type", "id", "status", "call_id", "output"); err != nil {
 		return err
 	}
@@ -2041,12 +2041,59 @@ func validateResponsesToolCallOutputInput(item map[string]json.RawMessage, path 
 	if validation.outputs[callID] {
 		return invalidRequest(path + ".call_id duplicates a client tool output")
 	}
-	if _, err := requiredInputString(item, "output", path, true); err != nil {
+	if err := validateResponsesToolOutput(state, item["output"], path+".output"); err != nil {
 		return err
 	}
 	validation.outputs[callID] = true
 	validation.pendingCalls--
 	validation.meaningful = true
+	return nil
+}
+
+// validateResponsesToolOutput checks a tool's output: a string, which may be empty, or the parts
+// that OpenAI's Responses API takes there, input_text, input_image and input_file. An attachment
+// gets the checks of one in a user message.
+func validateResponsesToolOutput(state *State, raw json.RawMessage, path string) error {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return invalidRequest(path + " is required")
+	}
+	if trimmed[0] != '[' {
+		if _, ok := rawStringValue(raw); !ok {
+			return invalidRequest(path + " must be a string or an array of input_text, input_image and input_file parts")
+		}
+		return nil
+	}
+	parts, err := rawjson.Array(raw)
+	if err != nil || len(parts) == 0 {
+		return invalidRequest(path + " must be a string or a non-empty array of input_text, input_image and input_file parts")
+	}
+	for index, partRaw := range parts {
+		partPath := fmt.Sprintf("%s[%d]", path, index)
+		part, err := rawjson.Object(partRaw)
+		if err != nil {
+			return invalidRequest(partPath + " must be an object")
+		}
+		// Claude refuses a cache marker inside a tool result.
+		if rawJSONValueSet(part["cache_control"]) {
+			return invalidRequest(partPath + ".cache_control is not supported in a tool output")
+		}
+		switch rawString(part["type"]) {
+		case "input_text":
+			if err := rejectUnsupportedInputKeys(part, partPath, "type", "text", "prompt_cache_breakpoint"); err != nil {
+				return err
+			}
+			if _, ok := rawStringValue(part["text"]); !ok {
+				return invalidRequest(partPath + ".text must be a string")
+			}
+		case "input_image", "input_file":
+			if err := validateNativeAttachment(state, part, partPath, true); err != nil {
+				return err
+			}
+		default:
+			return invalidRequest(partPath + ".type must be input_text, input_image or input_file")
+		}
+	}
 	return nil
 }
 

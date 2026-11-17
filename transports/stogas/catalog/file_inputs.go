@@ -45,14 +45,17 @@ func validateDocumentFormats(value DocumentFormats) error {
 	return nil
 }
 
-// Attachment is an image, audio or document part of a user message, with what a deployment
-// needs to read it.
+// Attachment is an image, audio or document part of a user message or of a tool result, with
+// what a deployment needs to read it.
 type Attachment struct {
-	// Path names the part in errors, such as messages[0].content[1].
+	// Path names the part in errors, such as messages[0].content[1] or input[2].output[0].
 	Path string
 	// Kind is the part's type: image_url, input_image, input_audio, file or input_file.
 	Kind      string
 	Responses bool
+	// ToolResult says that the part is in a tool result, which only some deployments read
+	// attachments from (Capabilities.ToolResultAttachments).
+	ToolResult bool
 	// URL, Data and ID are the part's sources: a URL, data URLs included, an inline payload and
 	// a provider file ID. The checks read no more of a source than a data URL's header.
 	URL, Data, ID string
@@ -80,6 +83,9 @@ const routingSubject = "any deployment that this request can use"
 
 // attachmentError names the deployments that cannot read the attachment as subject.
 func attachmentError(provider schemas.ModelProvider, deployment Deployment, attachment Attachment, subject string) error {
+	if attachment.ToolResult && !deployment.Capabilities.ToolResultAttachments {
+		return attachmentRefusal(attachment.Path, " attachments in tool results are not supported by "+subject)
+	}
 	claude := UsesClaudeWire(provider, deployment.ModelID)
 	// Chat Completions, which a bridged deployment gets, has no image file IDs or file URLs.
 	bridged := attachment.Responses && deployment.bridges(RouteResponses)
@@ -406,9 +412,9 @@ func unreadAttachment(attachment Attachment, reasons []attachmentReason) error {
 	return refusal
 }
 
-// requestAttachments lists the attachments of the request's user messages, so that routing can
-// skip the candidates that cannot read them. A part that fails its checks on any deployment,
-// such as one with two sources, is left to those checks.
+// requestAttachments lists the attachments of the request's user messages and tool results, so
+// that routing can skip the candidates that cannot read them. A part that fails its checks on
+// any deployment, such as one with two sources, is left to those checks.
 func requestAttachments(raw map[string]json.RawMessage, route Route) []Attachment {
 	field, responses := "messages", route == RouteResponses
 	if responses {
@@ -425,13 +431,14 @@ func requestAttachments(raw map[string]json.RawMessage, route Route) []Attachmen
 	var attachments []Attachment
 	for i, itemRaw := range items {
 		item, err := rawjson.Object(itemRaw)
-		if err != nil || rawStringValue(item["role"]) != "user" {
+		if err != nil {
 			continue
 		}
-		if kind := rawStringValue(item["type"]); responses && kind != "" && kind != "message" {
+		key, toolResult, ok := inputfiles.Parts(item, responses)
+		if !ok {
 			continue
 		}
-		content := bytes.TrimSpace(item["content"])
+		content := bytes.TrimSpace(item[key])
 		if len(content) == 0 || content[0] != '[' {
 			continue
 		}
@@ -444,7 +451,8 @@ func requestAttachments(raw map[string]json.RawMessage, route Route) []Attachmen
 			if err != nil {
 				continue
 			}
-			if attachment, ok := readAttachment(block, fmt.Sprintf("%s[%d].content[%d]", field, i, j), responses); ok {
+			if attachment, ok := readAttachment(block, fmt.Sprintf("%s[%d].%s[%d]", field, i, key, j), responses); ok {
+				attachment.ToolResult = toolResult
 				attachments = append(attachments, attachment)
 			}
 		}

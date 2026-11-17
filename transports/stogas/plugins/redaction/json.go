@@ -259,7 +259,9 @@ func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, repla
 		}
 		valueAllowed := allow
 		valueContext := jsonContextGeneral
-		if (context == jsonContextChatMessage || context == jsonContextResponsesInputItem) && key == jsonKeyContent {
+		// A tool output in parts holds text and attachments as a message's content does.
+		if (context == jsonContextChatMessage || context == jsonContextResponsesInputItem) && key == jsonKeyContent ||
+			context == jsonContextResponsesInputItem && key == jsonKeyOutput {
 			valueContext = jsonContextContent
 		}
 		if context == jsonContextContentBlock {
@@ -605,6 +607,7 @@ const (
 	jsonKeyReasoning
 	jsonKeyReasoningDetails
 	jsonKeyContent
+	jsonKeyOutput
 	jsonKeyFile
 	jsonKeyOpaqueMedia
 	jsonKeyAction
@@ -625,6 +628,8 @@ func classifyJSONKey(encoded []byte, escaped bool) (jsonKeyKind, error) {
 	switch key {
 	case "content":
 		return jsonKeyContent, nil
+	case "output":
+		return jsonKeyOutput, nil
 	case "file":
 		return jsonKeyFile, nil
 	case "file_data", "file_url", "image_url", "input_audio":

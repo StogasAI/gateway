@@ -142,11 +142,32 @@ func Describe(fields map[string]json.RawMessage, responses bool) (map[string]jso
 	return described, nil
 }
 
-// replaceBlocks visits the content blocks of each user message and re-encodes
-// only the containers whose blocks were replaced. It names each block by its
-// path, as messages[0].content[1]. Other messages stay as sent: routing reads
-// attachments only from user messages, and the request checks refuse an
-// attachment anywhere else.
+// Parts names the member of a message or input item that holds the parts that can be attachments,
+// and whether they are a tool result's: the content of a user message, the content of a Chat
+// Completions tool message and the output of a Responses tool output. It reports false for any
+// other item, where the request checks refuse an attachment.
+func Parts(item map[string]json.RawMessage, responses bool) (key string, toolResult, ok bool) {
+	if responses {
+		switch stringField(item, "type") {
+		case "", "message":
+			return "content", false, stringField(item, "role") == "user"
+		case "function_call_output", "custom_tool_call_output":
+			return "output", true, true
+		}
+		return "", false, false
+	}
+	switch stringField(item, "role") {
+	case "user":
+		return "content", false, true
+	case "tool":
+		return "content", true, true
+	}
+	return "", false, false
+}
+
+// replaceBlocks visits the parts of each user message and tool result and re-encodes only the
+// containers whose parts were replaced. It names each part by its path, as
+// messages[0].content[1] or input[2].output[0]. Other messages stay as sent.
 func replaceBlocks(fields map[string]json.RawMessage, responses bool, replace func(string, map[string]json.RawMessage) (json.RawMessage, error)) error {
 	field := "messages"
 	if responses {
@@ -163,14 +184,14 @@ func replaceBlocks(fields map[string]json.RawMessage, responses bool, replace fu
 	changed := false
 	for i, itemRaw := range items {
 		item, err := rawjson.Object(itemRaw)
-		if err != nil || stringField(item, "role") != "user" {
+		if err != nil {
 			continue
 		}
-		// Tool results and reasoning replay are separate protocol values.
-		if responses && stringField(item, "type") != "" && stringField(item, "type") != "message" {
+		key, _, ok := Parts(item, responses)
+		if !ok {
 			continue
 		}
-		content := bytes.TrimSpace(item["content"])
+		content := bytes.TrimSpace(item[key])
 		if len(content) == 0 || content[0] != '[' {
 			continue
 		}
@@ -184,7 +205,7 @@ func replaceBlocks(fields map[string]json.RawMessage, responses bool, replace fu
 			if err != nil {
 				continue
 			}
-			replacement, err := replace(fmt.Sprintf("%s[%d].content[%d]", field, i, j), block)
+			replacement, err := replace(fmt.Sprintf("%s[%d].%s[%d]", field, i, key, j), block)
 			if err != nil {
 				return err
 			}
@@ -193,7 +214,7 @@ func replaceBlocks(fields map[string]json.RawMessage, responses bool, replace fu
 			}
 		}
 		if itemChanged {
-			if item["content"], err = sonic.Marshal(blocks); err != nil {
+			if item[key], err = sonic.Marshal(blocks); err != nil {
 				return err
 			}
 			if items[i], err = sonic.Marshal(item); err != nil {

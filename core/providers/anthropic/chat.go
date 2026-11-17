@@ -1022,8 +1022,9 @@ func ToAnthropicChatRequest(ctx *schemas.BifrostContext, bifrostReq *schemas.Bif
 						IsError:   toolMsg.ChatToolMessage.IsError,
 					}
 
-					// Convert tool result content; images are sent as images.
-					if content := schemas.FlattenToolResultMedia(toolMsg.Content, schemas.IsImageBlock); content != nil {
+					// Convert tool result content; images are sent as images and files as documents.
+					keep := func(block schemas.ChatContentBlock) bool { return schemas.IsImageBlock(block) || block.File != nil }
+					if content := schemas.FlattenToolResultMedia(toolMsg.Content, keep); content != nil {
 						if content.ContentStr != nil && *content.ContentStr != "" {
 							toolResult.Content = &AnthropicContent{ContentStr: content.ContentStr}
 						} else if content.ContentBlocks != nil {
@@ -1054,6 +1055,10 @@ func ToAnthropicChatRequest(ctx *schemas.BifrostContext, bifrostReq *schemas.Bif
 									// block, but not here -- it's already hoisted above).
 									imageBlock.CacheControl = nil
 									blocks = append(blocks, imageBlock)
+								} else if block.File != nil {
+									documentBlock := ConvertToAnthropicDocumentBlock(block)
+									documentBlock.CacheControl = nil
+									blocks = append(blocks, documentBlock)
 								}
 							}
 							if len(blocks) > 0 {
