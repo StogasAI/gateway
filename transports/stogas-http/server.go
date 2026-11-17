@@ -435,13 +435,16 @@ func (c *ingressTLSConn) evict() {
 	c.releaseMemory()
 }
 
+// releaseMemory returns the socket's memory once. The lock stays held while it
+// does, so eviction, which counts the memory as free as soon as it returns,
+// waits for a release that net/http's own close started.
 func (c *ingressTLSConn) releaseMemory() {
 	c.mu.Lock()
-	release := c.release
-	c.closed, c.release = true, nil
-	c.mu.Unlock()
-	if release != nil {
-		release()
+	defer c.mu.Unlock()
+	c.closed = true
+	if c.release != nil {
+		c.release()
+		c.release = nil
 	}
 }
 
