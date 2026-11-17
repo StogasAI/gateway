@@ -279,8 +279,15 @@ type AllowedCatalogNodes struct {
 }
 
 type Access struct {
-	Deny     []DenyWindow `json:"deny,omitzero"`
-	Networks *Networks    `json:"networks,omitempty"`
+	Schedule *Schedule `json:"schedule,omitempty"`
+	Networks *Networks `json:"networks,omitempty"`
+}
+
+// Schedule refuses requests during weekly periods. It has no allow list,
+// because periods in several time zones have no common form to intersect in,
+// so the allow lists of several policies could not combine into one.
+type Schedule struct {
+	Deny []DenyWindow `json:"deny,omitzero"`
 }
 
 // Networks limits requests by the client's address. An entry is an address or
@@ -560,20 +567,34 @@ func (a *Access) validate() error {
 	if a == nil {
 		return nil
 	}
-	if a.Deny == nil && a.Networks == nil {
-		return configError("access requires deny or networks")
+	if a.Schedule == nil && a.Networks == nil {
+		return configError("access requires schedule or networks")
 	}
 	if err := a.Networks.validate(); err != nil {
 		return err
 	}
+	if a.Schedule == nil {
+		return nil
+	}
+	// An empty list is the neutral value that replaces a default.
+	if a.Schedule.Deny == nil {
+		return configError("access.schedule requires deny")
+	}
 	locations := make(map[string]*time.Location)
-	for index := range a.Deny {
-		window := &a.Deny[index]
-		if err := window.validate(locations); err != nil {
+	for index := range a.Schedule.Deny {
+		if err := a.Schedule.Deny[index].validate(locations); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// denyPeriods returns the periods of the schedule, if any.
+func (a *Access) denyPeriods() []DenyWindow {
+	if a == nil || a.Schedule == nil {
+		return nil
+	}
+	return a.Schedule.Deny
 }
 
 func (w *DenyWindow) validate(locations map[string]*time.Location) error {
@@ -838,11 +859,12 @@ func (c *Config) NetworkDenied(client netip.Addr) bool {
 }
 
 func (c *Config) DeniedAt(now time.Time) bool {
-	if c == nil || c.Access == nil {
+	if c == nil {
 		return false
 	}
-	for index := range c.Access.Deny {
-		if c.Access.Deny[index].covers(now) {
+	periods := c.Access.denyPeriods()
+	for index := range periods {
+		if periods[index].covers(now) {
 			return true
 		}
 	}

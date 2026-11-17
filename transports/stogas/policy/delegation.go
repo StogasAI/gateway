@@ -13,7 +13,7 @@ import (
 type Permission uint32
 
 const (
-	permissionDeny Permission = 1 << iota
+	permissionSchedule Permission = 1 << iota
 	permissionInput
 	permissionLimits
 	permissionRedaction
@@ -37,8 +37,8 @@ const (
 )
 
 var permissionSections = map[string]Permission{
-	"access":          permissionDeny | permissionNetworks,
-	"access.deny":     permissionDeny,
+	"access":          permissionSchedule | permissionNetworks,
+	"access.schedule": permissionSchedule,
 	"access.networks": permissionNetworks,
 	"input":           permissionInput, "limits": permissionLimits,
 	"timeouts":                      permissionTotalTimeout | permissionOutputIdleTimeout,

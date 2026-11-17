@@ -15,12 +15,12 @@ func TestDenyPeriodsUseTheSourceBudgetAndShareTimeZones(t *testing.T) {
 		windows[i] = DenyWindow{Days: []string{"mon"}, TimeZone: "America/New_York",
 			Start: fmt.Sprintf("%02d:%02d", i/60, i%60), End: fmt.Sprintf("%02d:%02d", (i+1)/60, (i+1)%60)}
 	}
-	raw := mustRawJSON(map[string]any{"access": &Access{Deny: windows}})
+	raw := mustRawJSON(map[string]any{"access": &Access{Schedule: &Schedule{Deny: windows}}})
 	source, err := CompileSource(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if source.Config.Access.Deny[0].location != source.Config.Access.Deny[999].location {
+	if source.Config.Access.Schedule.Deny[0].location != source.Config.Access.Schedule.Deny[999].location {
 		t.Fatal("repeated time zones were parsed repeatedly")
 	}
 	lastMinute := time.Date(2026, 6, 1, 20, 39, 0, 0, time.UTC)
@@ -61,12 +61,12 @@ func (v testValues) PolicyTokenPrice(meter string, promptTokens int64) (Value, b
 
 func TestDenyWindowsAreTimeZoneAwareAndHalfOpen(t *testing.T) {
 	config := validCompiledConfig()
-	config.Access = &Access{Deny: []DenyWindow{{
+	config.Access = &Access{Schedule: &Schedule{Deny: []DenyWindow{{
 		Days:     []string{"mon"},
 		Start:    "09:00",
 		End:      "10:00",
 		TimeZone: "America/New_York",
-	}}}
+	}}}}
 	parsed := parseCompiledConfig(t, config)
 	for _, test := range []struct {
 		at   string
@@ -93,12 +93,12 @@ func TestDenyWindowsAreTimeZoneAwareAndHalfOpen(t *testing.T) {
 
 func TestDenyWindowCanEndAtMidnight(t *testing.T) {
 	config := validCompiledConfig()
-	config.Access = &Access{Deny: []DenyWindow{{
+	config.Access = &Access{Schedule: &Schedule{Deny: []DenyWindow{{
 		Days:     []string{"mon"},
 		Start:    "20:00",
 		End:      "24:00",
 		TimeZone: "UTC",
-	}}}
+	}}}}
 	parsed := parseCompiledConfig(t, config)
 	for _, test := range []struct {
 		at   string
@@ -136,9 +136,9 @@ func TestDenyWindowsTakeOnlyTheContractsTimeZones(t *testing.T) {
 		"Mars/Olympus":     false,
 	} {
 		config := validCompiledConfig()
-		config.Access = &Access{Deny: []DenyWindow{{
+		config.Access = &Access{Schedule: &Schedule{Deny: []DenyWindow{{
 			Days: []string{"mon"}, Start: "09:00", End: "17:00", TimeZone: zone,
-		}}}
+		}}}}
 		if err := config.validate(); (err == nil) != valid {
 			t.Errorf("time zone %q: validate() = %v, want valid %t", zone, err, valid)
 		}

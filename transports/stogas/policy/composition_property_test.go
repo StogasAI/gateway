@@ -255,7 +255,7 @@ func TestEverySettingDeclaresItsScopeAndCombination(t *testing.T) {
 		combine string
 	}
 	settings := map[string]declared{
-		"access.deny":                   {"candidate", "union of deny periods"},
+		"access.schedule":               {"candidate", "union of deny periods"},
 		"access.networks":               {"candidate", "allowed networks intersect and denied networks join"},
 		"input":                         {"candidate", "any true requires ASCII; allowed types intersect and denied types join"},
 		"limits":                        {"saved", "every limit applies"},

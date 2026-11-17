@@ -32,8 +32,8 @@ const (
 	RemovedCredential = "credential"
 	// A rule's condition reads a fact the deployment does not state.
 	RemovedCondition = "condition"
-	// An access deny period covers the current time.
-	RemovedDeny = "deny"
+	// A deny period of an access schedule covers the current time.
+	RemovedSchedule = "schedule"
 	// A routing filter is false, or reads a fact the deployment does not state.
 	RemovedFilter = "filter"
 	// A request tries at most 1 + policy.MaxFallbacks credentials of a deployment.

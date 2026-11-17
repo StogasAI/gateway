@@ -240,7 +240,7 @@ func (v *Inspector) Finish() (*Inspection, error) {
 	if compiled.Timeouts != nil {
 		effective["timeouts"] = compiled.Timeouts
 	}
-	if compiled.Access != nil && (len(compiled.Access.Deny) > 0 || compiled.Access.Networks != nil) {
+	if compiled.Access != nil && (compiled.Access.Schedule != nil || compiled.Access.Networks != nil) {
 		effective["access"] = compiled.Access
 	}
 	routing := map[string]any{}
@@ -468,8 +468,8 @@ func inspectionSetBy(entries []InspectionSource, sources []ScopedSource, compile
 	}
 	equal := func(value *int, other *int) bool { return value != nil && other != nil && *value == *other }
 	always := func(*Config) bool { return true }
-	if compiled.Access != nil && len(compiled.Access.Deny) > 0 {
-		add("access.deny", permissionDeny, true, func(c *Config) bool { return c.Access != nil && len(c.Access.Deny) > 0 })
+	if compiled.Access != nil && compiled.Access.Schedule != nil {
+		add("access.schedule", permissionSchedule, true, func(c *Config) bool { return len(c.Access.denyPeriods()) > 0 })
 	}
 	if compiled.Access != nil && compiled.Access.Networks != nil {
 		add("access.networks", permissionNetworks, true, func(c *Config) bool { return c.Access != nil && c.Access.Networks != nil })

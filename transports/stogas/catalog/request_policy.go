@@ -296,7 +296,7 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 				keep(selection, ErrScheduleDenied)
 				if trace != nil {
 					origin, _ := value.Config.DenyOrigin(input.now)
-					trace.removePair(selection, index, original, RemovedCandidate{Reason: RemovedDeny, Origin: &origin})
+					trace.removePair(selection, index, original, RemovedCandidate{Reason: RemovedSchedule, Origin: &origin})
 				}
 				continue
 			}

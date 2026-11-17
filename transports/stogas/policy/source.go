@@ -1032,12 +1032,12 @@ func (c *Config) FilterOrigin(index int) (Origin, bool) {
 // DenyOrigin locates the first deny period that covers now.
 func (c *Config) DenyOrigin(now time.Time) (Origin, bool) {
 	for i, entry := range c.sources {
-		access := entry.Value.Config.Access
-		if access == nil || c.allowedSettings(entry.Value)&permissionDeny == 0 {
+		if c.allowedSettings(entry.Value)&permissionSchedule == 0 {
 			continue
 		}
-		for index := range access.Deny {
-			if access.Deny[index].covers(now) {
+		periods := entry.Value.Config.Access.denyPeriods()
+		for index := range periods {
+			if periods[index].covers(now) {
 				return c.origin(i), true
 			}
 		}
@@ -1271,14 +1271,17 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 				out.Timeouts.OutputIdleSeconds = value
 			}
 		}
-		if allowed&permissionDeny != 0 && config.Access != nil && config.Access.Deny != nil {
+		if allowed&permissionSchedule != 0 && config.Access != nil && config.Access.Schedule != nil {
 			if out.Access == nil {
 				out.Access = &Access{}
 			}
-			for _, window := range config.Access.Deny {
+			for _, window := range config.Access.Schedule.Deny {
 				raw, _ := json.Marshal(window)
 				if !seenWindows[string(raw)] {
-					out.Access.Deny = append(out.Access.Deny, window)
+					if out.Access.Schedule == nil {
+						out.Access.Schedule = &Schedule{}
+					}
+					out.Access.Schedule.Deny = append(out.Access.Schedule.Deny, window)
 					seenWindows[string(raw)] = true
 				}
 			}

@@ -198,7 +198,7 @@ func TestConditionalRulesExcludeOnlyTheirCandidates(t *testing.T) {
 		return config
 	}
 	denied := func(when string) string {
-		return `{"closed":{"when":"` + when + `","access":{"deny":[{"days":["mon","tue","wed","thu","fri","sat","sun"],"start":"00:00","end":"24:00","timeZone":"UTC"}]}}}`
+		return `{"closed":{"when":"` + when + `","access":{"schedule":{"deny":[{"days":["mon","tue","wed","thu","fri","sat","sun"],"start":"00:00","end":"24:00","timeZone":"UTC"}]}}}}`
 	}
 	// The request states no client address, which no network holds.
 	networks := func(when string) string {

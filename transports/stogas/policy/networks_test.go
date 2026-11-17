@@ -37,7 +37,8 @@ func TestNetworksTakeAddressesAndRangesThatStartAtTheirFirstAddress(t *testing.T
 	}
 
 	for raw, message := range map[string]string{
-		`{"access":{}}`:                                            "deny or networks",
+		`{"access":{}}`:                                            "schedule or networks",
+		`{"access":{"schedule":{}}}`:                               "access.schedule requires deny",
 		`{"access":{"networks":{}}}`:                               "allow or deny",
 		`{"access":{"networks":["10.0.0.0/8"]}}`:                   "cannot unmarshal",
 		`{"access":{"networks":{"deny":["10.0.0.1/8"]}}}`:          "access.networks.deny has \"10.0.0.1/8\", which must start at 10.0.0.0/8",
@@ -93,8 +94,8 @@ func TestDefaultNetworksYieldOnlyToRequiredNetworks(t *testing.T) {
 	org := ruleSource(t, `{"rules":{"office":{"mode":"default","access":{"networks":{"allow":["10.0.0.0/8"]}}}}}`)
 	for key, allowed := range map[string][3]bool{
 		// A deny period is another setting, so the default networks still apply.
-		`{"access":{"deny":[{"days":["sun"],"start":"00:00","end":"01:00","timeZone":"UTC"}]}}`: {true, false, false},
-		`{"access":{"networks":{"allow":["192.0.2.0/24"]}}}`:                                    {false, true, false},
+		`{"access":{"schedule":{"deny":[{"days":["sun"],"start":"00:00","end":"01:00","timeZone":"UTC"}]}}}`: {true, false, false},
+		`{"access":{"networks":{"allow":["192.0.2.0/24"]}}}`:                                                 {false, true, false},
 		// Every address, or an empty deny list, replaces the default without a restriction of its own.
 		`{"access":{"networks":{"allow":["0.0.0.0/0","::/0"]}}}`: {true, true, true},
 		`{"access":{"networks":{"deny":[]}}}`:                    {true, true, true},
@@ -119,11 +120,11 @@ func TestDefaultNetworksYieldOnlyToRequiredNetworks(t *testing.T) {
 }
 
 func TestNetworksAndDenyPeriodsAreDelegatedApart(t *testing.T) {
-	parent := json.RawMessage(`{"delegation":{"keys":["access.deny"]}}`)
+	parent := json.RawMessage(`{"delegation":{"keys":["access.schedule"]}}`)
 	edit := &InspectionEdit{Scope: KeyScope, Previous: json.RawMessage(`{}`)}
 	for key, allowed := range map[string]bool{
-		`{"access":{"deny":[{"days":["sun"],"start":"00:00","end":"01:00","timeZone":"UTC"}]}}`: true,
-		`{"access":{"networks":{"allow":["10.0.0.0/8"]}}}`:                                      false,
+		`{"access":{"schedule":{"deny":[{"days":["sun"],"start":"00:00","end":"01:00","timeZone":"UTC"}]}}}`: true,
+		`{"access":{"networks":{"allow":["10.0.0.0/8"]}}}`:                                                   false,
 	} {
 		_, err := InspectSources([]InspectionSource{{Scope: OrganizationScope, Config: parent}, {Scope: KeyScope, Config: json.RawMessage(key)}}, edit)
 		if allowed != (err == nil) || !allowed && !errors.Is(err, ErrPolicyEditForbidden) {
@@ -132,10 +133,10 @@ func TestNetworksAndDenyPeriodsAreDelegatedApart(t *testing.T) {
 	}
 	// The whole section still names both settings.
 	var permission Permission
-	if err := json.Unmarshal([]byte(`["access"]`), &permission); err != nil || permission != permissionDeny|permissionNetworks {
+	if err := json.Unmarshal([]byte(`["access"]`), &permission); err != nil || permission != permissionSchedule|permissionNetworks {
 		t.Fatalf("access section %b %v", permission, err)
 	}
-	if raw, _ := json.Marshal(permission | permissionInput); string(raw) != `["access.deny","access.networks","input"]` {
+	if raw, _ := json.Marshal(permission | permissionInput); string(raw) != `["access.networks","access.schedule","input"]` {
 		t.Fatalf("access permission names %s", raw)
 	}
 }

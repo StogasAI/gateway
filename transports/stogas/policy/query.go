@@ -114,7 +114,7 @@ func (c *Config) CompositionBytes() int64 {
 	total += int64(cap(c.PluginSources))*8 + int64(cap(c.ActiveEncryptedPlugins))*int64(unsafe.Sizeof(EncryptedPlugins{})) + int64(cap(c.RequiredEncryptionKeys))*16
 	total += int64(cap(c.ActiveRules)) * int64(unsafe.Sizeof(RuleMatch{}))
 	if c.Access != nil {
-		total += int64(unsafe.Sizeof(*c.Access)) + int64(cap(c.Access.Deny))*int64(unsafe.Sizeof(DenyWindow{}))
+		total += int64(unsafe.Sizeof(*c.Access)) + int64(cap(c.Access.denyPeriods()))*int64(unsafe.Sizeof(DenyWindow{}))
 	}
 	if c.Routing.Query != nil {
 		total += int64(unsafe.Sizeof(*c.Routing.Query)) + int64(cap(c.Routing.Query.Filters))*8

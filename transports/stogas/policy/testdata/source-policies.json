@@ -398,55 +398,61 @@
     "sources": [
       {
         "access": {
-          "deny": [
-            {
-              "days": [
-                "mon"
-              ],
-              "start": "09:00",
-              "end": "10:00",
-              "timeZone": "UTC"
-            }
-          ]
+          "schedule": {
+            "deny": [
+              {
+                "days": [
+                  "mon"
+                ],
+                "start": "09:00",
+                "end": "10:00",
+                "timeZone": "UTC"
+              }
+            ]
+          }
         }
       },
       null,
       {
         "access": {
+          "schedule": {
+            "deny": [
+              {
+                "days": [
+                  "tue"
+                ],
+                "start": "00:00",
+                "end": "24:00",
+                "timeZone": "America/New_York"
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "digest": "2c815d8a190889a43fc898c93af95f3a9260ddfac095944d1d0133c85699ddc7",
+    "compiled": {
+      "access": {
+        "schedule": {
           "deny": [
+            {
+              "days": [
+                "mon"
+              ],
+              "end": "10:00",
+              "start": "09:00",
+              "timeZone": "UTC"
+            },
             {
               "days": [
                 "tue"
               ],
-              "start": "00:00",
               "end": "24:00",
+              "start": "00:00",
               "timeZone": "America/New_York"
             }
           ]
         }
-      }
-    ],
-    "digest": "4cea56c67dec8d7277e16cb52182109f2d0a348b0c44ad8fec48e968ff4d64b4",
-    "compiled": {
-      "access": {
-        "deny": [
-          {
-            "days": [
-              "mon"
-            ],
-            "end": "10:00",
-            "start": "09:00",
-            "timeZone": "UTC"
-          },
-          {
-            "days": [
-              "tue"
-            ],
-            "end": "24:00",
-            "start": "00:00",
-            "timeZone": "America/New_York"
-          }
-        ]
       },
       "compilerVersion": 1,
       "plugins": null,

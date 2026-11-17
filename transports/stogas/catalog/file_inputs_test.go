@@ -227,7 +227,7 @@ func TestRoutingDeniesOnlyPairsThatReadTheAttachments(t *testing.T) {
 		{"a pair whose policy cannot check the attachment", `{"asciiOnly":true}`, AttachmentUnsupported},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			source, err := policy.CompileSource([]byte(`{"input":` + tc.input + `,"rules":{"closed":{"when":"provider.id == 'openai'","access":{"deny":` + week + `}}}}`))
+			source, err := policy.CompileSource([]byte(`{"input":` + tc.input + `,"rules":{"closed":{"when":"provider.id == 'openai'","access":{"schedule":{"deny":` + week + `}}}}}`))
 			if err != nil {
 				t.Fatal(err)
 			}

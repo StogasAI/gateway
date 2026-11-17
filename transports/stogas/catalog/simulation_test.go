@@ -125,15 +125,15 @@ func TestRoutingSimulationNamesWhatRemovedEachCandidate(t *testing.T) {
 		// A deny period removes only a pair that the filters keep, so a client that waits for the
 		// period to end is not refused for another reason then.
 		{name: "deny period of a rule", model: "gpt-5.6-sol", credentials: map[string][]int{"azure": {0}, "openai": {0}},
-			base: compose(`{"routing":{"filter":"deployment.id != 'azure-gpt-5.6-sol-eu'"}}`, `{"rules":{"closed":{"when":"provider.id == 'azure'","access":{"deny":`+week+`}}}}`),
+			base: compose(`{"routing":{"filter":"deployment.id != 'azure-gpt-5.6-sol-eu'"}}`, `{"rules":{"closed":{"when":"provider.id == 'azure'","access":{"schedule":{"deny":`+week+`}}}}}`),
 			removed: []string{
-				"deny azure/azure-gpt-5.6-sol#0 @1closed", "deny azure/azure-gpt-5.6-sol-apac#0 @1closed",
-				"deny azure/azure-gpt-5.6-sol-instant#0 @1closed", "deny azure/azure-gpt-5.6-sol-us#0 @1closed",
 				"filter azure/azure-gpt-5.6-sol-eu#0 @0 deployment.id != 'azure-gpt-5.6-sol-eu'",
+				"schedule azure/azure-gpt-5.6-sol#0 @1closed", "schedule azure/azure-gpt-5.6-sol-apac#0 @1closed",
+				"schedule azure/azure-gpt-5.6-sol-instant#0 @1closed", "schedule azure/azure-gpt-5.6-sol-us#0 @1closed",
 			}, pairs: 1, tried: 1},
 		{name: "deny period of the key", model: "openai-gpt-5.6-sol", credentials: map[string][]int{"openai": {0}},
-			base:    compose(`{}`, `{"access":{"deny":`+week+`}}`),
-			removed: []string{"deny openai/openai-gpt-5.6-sol#0 @1"}, code: "schedule_denied"},
+			base:    compose(`{}`, `{"access":{"schedule":{"deny":`+week+`}}}`),
+			removed: []string{"schedule openai/openai-gpt-5.6-sol#0 @1"}, code: "schedule_denied"},
 		// The simulation has no client address, which no network holds, yet it
 		// routes as a request from inside every network does.
 		{name: "networks", model: "openai-gpt-5.6-sol", credentials: map[string][]int{"openai": {0}}, client: "198.51.100.9",

@@ -292,9 +292,9 @@ func TestTimeoutRulesComposeIndependentlyWithoutMutatingSavedPolicies(t *testing
 }
 
 func TestRulesExplicitEmptySettingsReplaceDefaultsWithoutWeakeningRequirements(t *testing.T) {
-	settings := `"access":{"deny":[{"days":["mon"],"start":"09:00","end":"17:00","timeZone":"UTC"}]},"input":{"asciiOnly":true},"plugins":{"redaction":{"presets":["email_address"]}},"routing":{"allowedCatalogNodes":{"providers":["openai"]},"filter":"provider.id == 'openai'","sort":[{"by":"provider.id","direction":"asc"}],"retries":1,"fallbacks":0}`
+	settings := `"access":{"schedule":{"deny":[{"days":["mon"],"start":"09:00","end":"17:00","timeZone":"UTC"}]}},"input":{"asciiOnly":true},"plugins":{"redaction":{"presets":["email_address"]}},"routing":{"allowedCatalogNodes":{"providers":["openai"]},"filter":"provider.id == 'openai'","sort":[{"by":"provider.id","direction":"asc"}],"retries":1,"fallbacks":0}`
 	org := ruleSource(t, `{"rules":{"baseline":{"mode":"default",`+settings+`}}}`)
-	empty := ruleSource(t, `{"access":{"deny":[]},"input":{"asciiOnly":false},"plugins":{"redaction":{}},"routing":{"allowedCatalogNodes":{},"filter":"true","sort":[],"retries":3,"fallbacks":2}}`)
+	empty := ruleSource(t, `{"access":{"schedule":{"deny":[]}},"input":{"asciiOnly":false},"plugins":{"redaction":{}},"routing":{"allowedCatalogNodes":{},"filter":"true","sort":[],"retries":3,"fallbacks":2}}`)
 	required := ruleSource(t, `{`+settings+`}`)
 	for _, withRequired := range []bool{false, true} {
 		for _, reverse := range []bool{false, true} {
@@ -315,7 +315,7 @@ func TestRulesExplicitEmptySettingsReplaceDefaultsWithoutWeakeningRequirements(t
 				t.Fatal(err)
 			}
 			// Orderings stack, so the default sort applies beside an empty one.
-			if (active.Input != nil && active.Input.ASCIIOnly) != withRequired || (len(active.Access.Deny) > 0) != withRequired || len(active.Routing.Query.OrderBy) != 1 {
+			if (active.Input != nil && active.Input.ASCIIOnly) != withRequired || (len(active.Access.denyPeriods()) > 0) != withRequired || len(active.Routing.Query.OrderBy) != 1 {
 				t.Fatalf("required=%v: wrong active restrictions: %+v", withRequired, active)
 			}
 			// The smallest required value applies; the default rule's never does.
@@ -444,8 +444,8 @@ func TestRuleOrderingsAreUnconditionalDefaults(t *testing.T) {
 // A routing simulation names the policy, and the rule, behind each decision.
 func TestOriginsLocateTheDecidingPolicyAndRule(t *testing.T) {
 	org := ruleSource(t, `{"routing":{"allowedCatalogNodes":{"providers":["openai","anthropic"]},"filter":"provider.id != 'blocked'","fallbacks":2},"rules":{"order":{"mode":"default","routing":{"sort":[{"by":"provider.id"}]}}}}`)
-	folder := ruleSource(t, `{"access":{"deny":[{"days":["mon"],"start":"09:00","end":"17:00","timeZone":"UTC"}]},"routing":{"fallbacks":1},"rules":{"loose":{"mode":"default","routing":{"filter":"provider.id == 'never'"}}}}`)
-	key := ruleSource(t, `{"rules":{"chat":{"when":"request.interface == 'chat_completions'","access":{"deny":[{"days":["tue"],"start":"00:00","end":"23:59","timeZone":"UTC"}]},"routing":{"allowedCatalogNodes":{"deployments":["openai-a"]},"filter":"deployment.id != 'openai-b'"}}}}`)
+	folder := ruleSource(t, `{"access":{"schedule":{"deny":[{"days":["mon"],"start":"09:00","end":"17:00","timeZone":"UTC"}]}},"routing":{"fallbacks":1},"rules":{"loose":{"mode":"default","routing":{"filter":"provider.id == 'never'"}}}}`)
+	key := ruleSource(t, `{"rules":{"chat":{"when":"request.interface == 'chat_completions'","access":{"schedule":{"deny":[{"days":["tue"],"start":"00:00","end":"23:59","timeZone":"UTC"}]}},"routing":{"allowedCatalogNodes":{"deployments":["openai-a"]},"filter":"deployment.id != 'openai-b'"}}}}`)
 	base, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: org}, {Scope: FolderScope, Value: folder}, {Scope: KeyScope, Value: key}})
 	if err != nil {
 		t.Fatal(err)
@@ -591,7 +591,7 @@ func TestEveryReplaceableKindHasOneName(t *testing.T) {
 		t.Fatalf("named kinds %b, want %b", kinds, want)
 	}
 	if want := []string{
-		"access.deny", "access.networks", "input", "plugins.export", "plugins.redaction",
+		"access.networks", "access.schedule", "input", "plugins.export", "plugins.redaction",
 		"plugins.textExtraction.office", "plugins.textExtraction.pdf", "plugins.textExtraction.text",
 		"routing.allowedCatalogNodes", "routing.fallbacks", "routing.filter", "routing.missingEncryptionKeys",
 		"routing.retries", "timeouts.outputIdleSeconds", "timeouts.totalSeconds",
