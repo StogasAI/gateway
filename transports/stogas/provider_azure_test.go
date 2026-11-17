@@ -340,31 +340,13 @@ func TestAzureClaudeWithCustomDeploymentNameUsesAnthropicEndpoint(t *testing.T) 
 	}
 }
 
-func TestAzureClaudeRejectsOpenAIOnlyFields(t *testing.T) {
-	tests := []struct {
-		name string
-		body string
-	}{
-		{
-			name: "prompt cache options",
-			body: `{"model":"azure-claude-opus-4-8-anthropic-hosted","input":"hi","prompt_cache_options":{"mode":"explicit"},"max_output_tokens":64}`,
-		},
-		{
-			name: "task budget",
-			body: `{"model":"azure-claude-opus-4-8-anthropic-hosted","input":"hi","task_budget":{"type":"tokens","total":20000},"max_output_tokens":64}`,
-		},
-	}
-
-	// The request passes without the field, so each refusal is the field's.
+func TestAzureClaudeRejectsPromptCacheOptions(t *testing.T) {
+	// The request passes without the field, so the refusal is the field's.
 	if err := validateResolvedResponses(t, `{"model":"azure-claude-opus-4-8-anthropic-hosted","input":"hi","max_output_tokens":64}`); err != nil {
-		t.Fatalf("the Azure Claude request without a field was refused: %v", err)
+		t.Fatalf("the Azure Claude request without the field was refused: %v", err)
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if validateResolvedResponses(t, tc.body) == nil {
-				t.Fatal("Azure Claude accepted a field that the Anthropic wire translation cannot preserve")
-			}
-		})
+	if validateResolvedResponses(t, `{"model":"azure-claude-opus-4-8-anthropic-hosted","input":"hi","prompt_cache_options":{"mode":"explicit"},"max_output_tokens":64}`) == nil {
+		t.Fatal("Azure Claude accepted prompt_cache_options, which the Anthropic wire translation cannot preserve")
 	}
 }
 

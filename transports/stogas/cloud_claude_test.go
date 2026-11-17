@@ -840,3 +840,68 @@ func TestCloudClaudeKeepsStrictToolsOnEveryHosting(t *testing.T) {
 		}
 	}
 }
+
+// Claude's own fields reach every hosting as the client sent them, on both routes: a top-level
+// cache_control, which Bedrock's Messages API took and cached in the capture, context_management,
+// and task_budget with its beta, which Anthropic documents everywhere but on Bedrock, whose
+// validation refuses it.
+func TestClaudeFieldsReachEveryHosting(t *testing.T) {
+	var taken bytes.Buffer
+	if err := json.Compact(&taken, []byte(providerutils.GetJSONField(exchange(t, providerCapture(t, "aws/automatic-prompt-caching"), "first request").Request.Body, "cache_control").Raw)); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"cache_control":             taken.String(),
+		"context_management":        `{"edits":[{"type":"clear_tool_uses_20250919"}]}`,
+		"output_config.task_budget": `{"type":"tokens","total":20000}`,
+	}
+	for _, deployment := range []string{
+		"aws-claude-fable-5-1", "aws-claude-fable-5-1-anthropic-hosted",
+		"google-cloud-claude-fable-5-1", "google-cloud-claude-fable-5-1-anthropic-hosted",
+		"azure-claude-haiku-5-5", "azure-claude-haiku-5-5-anthropic-hosted",
+	} {
+		budget := deployment != "aws-claude-fable-5-1"
+		fields := `"cache_control":` + want["cache_control"] + `,"context_management":` + want["context_management"] + `,`
+		if budget {
+			fields += `"task_budget":` + want["output_config.task_budget"] + `,`
+		}
+		for path, input := range map[string]string{
+			"/v1/chat/completions": `"messages":[{"role":"user","content":"hi"}],`,
+			"/v1/responses":        `"input":"hi",`,
+		} {
+			state := resolveCloudState(t, path, deployment, input+fields)
+			if err := state.Adapter.ValidateRequest(state); err != nil {
+				t.Fatalf("%s %s: %v", path, deployment, err)
+			}
+			if err := state.Adapter.SanitizeRequest(state); err != nil {
+				t.Fatalf("%s %s: %v", path, deployment, err)
+			}
+			ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+			ctx.SetValue(schemas.BifrostContextKeyHTTPRequestType, state.Resolution.RequestType)
+			request, err := state.Resolution.ToBifrost(ctx)
+			if err != nil {
+				t.Fatalf("%s %s: %v", path, deployment, err)
+			}
+			if err := PrepareProviderRequest(ctx, state, request); err != nil {
+				t.Fatalf("%s %s: %v", path, deployment, err)
+			}
+			var wire []byte
+			if request.ChatRequest != nil {
+				wire = preparedProviderBody(t, ctx, request.ChatRequest)
+			} else {
+				wire = preparedProviderBody(t, ctx, request.ResponsesRequest)
+			}
+			for field, value := range want {
+				if sent := providerutils.GetJSONField(wire, field).Raw; sent != value && (budget || field != "output_config.task_budget") {
+					t.Errorf("%s %s: %s %s, want %s: %s", path, deployment, field, sent, value, wire)
+				}
+			}
+			// Google takes betas in the body, the other hostings in a header.
+			headers, _ := ctx.Value(schemas.BifrostContextKeyExtraHeaders).(map[string][]string)
+			betas := append(headers["anthropic-beta"], providerutils.GetJSONField(wire, "anthropic_beta").String())
+			if budget && !strings.Contains(strings.Join(betas, ","), "task-budgets-2026-03-13") {
+				t.Errorf("%s %s: no task budget beta in %v", path, deployment, betas)
+			}
+		}
+	}
+}

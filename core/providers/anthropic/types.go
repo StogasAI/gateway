@@ -254,7 +254,7 @@ var ProviderFeatures = map[schemas.ModelProvider]ProviderFeatureSupport{
 	},
 	// Google Vertex AI — cite: A (overview table) and V-platform.
 	// Notably NOT supported: MCP (MCP-excl), Skills/container.skills,
-	// InferenceGeo, FastMode, TaskBudgets, AdvisorTool, StructuredOutputs,
+	// InferenceGeo, FastMode, AdvisorTool, StructuredOutputs,
 	// PromptCachingScope (per A overview "Automatic prompt caching" row =
 	//     claudeApi + azureAiBeta only; not yet rolled out to Vertex),
 	// FilesAPI, WebFetch, CodeExecution, AdvancedToolUse, RedactThinking.
@@ -280,6 +280,7 @@ var ProviderFeatures = map[schemas.ModelProvider]ProviderFeatureSupport{
 		Context1M:              true,
 		EagerInputStreaming:    true, // fine-grained-tool-streaming GA per A
 		FallbackCredit:         true, // fallback credit is documented on Google Cloud
+		TaskBudgets:            true, // task-budgets-2026-03-13 — beta on Claude Models on Google Cloud (Google managed) per https://platform.claude.com/docs/en/build-with-claude/task-budgets
 		ThinkingDisplayUpdates: true, // thinking-display-updates-2026-08-18 — accepted on Vertex (verified live with the beta forwarded; without it display:"updates" 400s).
 		Safeguards:             true, // Claude Code auto-mode classifier — Vertex shares Anthropic's native request shape via BuildAnthropicResponsesRequestBody, so this is model-gated the same way as Anthropic direct's own model list (Sonnet 5 / Opus 4.7+ / Fable) via SupportsSafeguards.
 	},
@@ -361,9 +362,6 @@ var ProviderFeatures = map[schemas.ModelProvider]ProviderFeatureSupport{
 	// Microsoft Azure AI Foundry — cite: A (most features azureAiBeta) +
 	// Az-platform ("supports most of Claude's features"). Excluded per
 	// Az-platform: Admin API, Models API, Message Batch API (not in scope).
-	// TaskBudgets: not documented for Azure on the task-budgets feature page
-	//     or the A overview matrix; flipped to false to match Bedrock/Vertex
-	//     fail-closed treatment (override via BetaHeaderOverrides if needed).
 	schemas.Azure: {
 		WebSearch: true, WebSearchDynamic: true, WebFetch: true, CodeExecution: true,
 		ComputerUse: true, Bash: true, Memory: true, TextEditor: true, ToolSearch: true,
@@ -372,7 +370,8 @@ var ProviderFeatures = map[schemas.ModelProvider]ProviderFeatureSupport{
 		InterleavedThinking: true, Skills: true, ContainerBasic: true, Context1M: true,
 		RedactThinking:      true,
 		EagerInputStreaming: true,
-		// FastMode, InferenceGeo, AdvisorTool, TaskBudgets — not documented on Az-platform; leave off.
+		TaskBudgets:         true, // task-budgets-2026-03-13 — beta on Microsoft Foundry per https://platform.claude.com/docs/en/build-with-claude/task-budgets
+		// FastMode, InferenceGeo, AdvisorTool — not documented on Az-platform; leave off.
 		ServiceTier:    true,
 		FallbackCredit: true, // fallback credit is documented on Microsoft Foundry
 		Safeguards:     true, // Claude Code auto-mode classifier — Azure shares Anthropic's native request shape via BuildAnthropicResponsesRequestBody, model-gated via SupportsSafeguards (Sonnet 5 / Opus 4.7+ / Fable), same as Vertex above.

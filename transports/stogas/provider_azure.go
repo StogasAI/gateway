@@ -19,9 +19,6 @@ func (a AzureAdapter) format(state *State) Adapter {
 }
 
 func (a AzureAdapter) ValidateRequest(state *State) error {
-	if azureDeploymentUsesAnthropicWire(state) && rawJSONValueSet(state.Resolution.RawBody()["task_budget"]) {
-		return invalidRequest("task_budget is not supported for Azure Claude deployments")
-	}
 	return a.format(state).ValidateRequest(state)
 }
 

@@ -3698,8 +3698,18 @@ func TestAddMissingBetaHeadersToContext_TaskBudgets(t *testing.T) {
 			expectHeaders: []string{AnthropicTaskBudgetsBetaHeader},
 		},
 		{
-			name:     "Vertex does not get task-budgets header when task_budget set",
+			name:     "Vertex gets task-budgets header when task_budget set",
 			provider: schemas.Vertex,
+			req: &AnthropicMessageRequest{
+				OutputConfig: &AnthropicOutputConfig{
+					TaskBudget: &AnthropicTaskBudget{Type: "tokens", Total: 50000},
+				},
+			},
+			expectHeaders: []string{AnthropicTaskBudgetsBetaHeader},
+		},
+		{
+			name:     "Bedrock does not get task-budgets header when task_budget set",
+			provider: schemas.Bedrock,
 			req: &AnthropicMessageRequest{
 				OutputConfig: &AnthropicOutputConfig{
 					TaskBudget: &AnthropicTaskBudget{Type: "tokens", Total: 50000},

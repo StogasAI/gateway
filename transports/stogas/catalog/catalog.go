@@ -180,22 +180,16 @@ func FilterExtraParams(provider schemas.ModelProvider, route Route, params map[s
 	return filtered
 }
 
+// allowedClientExtraParams names the client's fields that core's typed request lacks. On Responses,
+// those are Claude's own fields for every provider that serves Claude; the provider's validation
+// refuses each one that a model's format or hosting lacks.
 func allowedClientExtraParams(provider schemas.ModelProvider, route Route) map[string]bool {
-	if provider == ProviderChutes && route == RouteChat {
+	switch {
+	case provider == ProviderChutes && route == RouteChat:
 		return map[string]bool{"repetition_penalty": true}
-	}
-	if provider == schemas.Anthropic && route == RouteResponses {
-		return map[string]bool{
-			"cache_control":      true,
-			"context_management": true,
-			"task_budget":        true,
-		}
-	}
-	if provider == schemas.Azure && route == RouteResponses {
-		return map[string]bool{
-			"cache_control":      true,
-			"context_management": true,
-		}
+	case route == RouteResponses && (provider == schemas.Anthropic || provider == schemas.Azure ||
+		provider == ProviderAWS || provider == ProviderGoogleCloud):
+		return map[string]bool{"cache_control": true, "context_management": true, "task_budget": true}
 	}
 	return nil
 }
