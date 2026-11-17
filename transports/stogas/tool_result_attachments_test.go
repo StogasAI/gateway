@@ -158,13 +158,26 @@ func TestToolResultAttachmentsNeedADeploymentThatReadsThem(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "messages[2].content[1] attachments in tool results are not supported by") {
 		t.Fatalf("a Chat Completions deployment took an attachment in a tool result: %v", err)
 	}
-	for name, body := range map[string]string{
-		"audio": strings.Replace(body, `{"type":"image_url","image_url":{"url":"`, `{"type":"input_audio","input_audio":{"format":"wav","data":"`, 1),
-	} {
-		_, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/chat/completions", Body: []byte(strings.Replace(body, "provider:openai gpt-5.5", "provider:anthropic anthropic-claude-sonnet-4-6", 1))})
-		if err == nil {
-			t.Fatalf("%s in a tool result was accepted", name)
-		}
+	// Audio in a tool result is an attachment like the others: no check of the request names it,
+	// and the catalog decides. Neither model reads audio, so each refusal is the catalog's.
+	audio := strings.Replace(body, `{"type":"image_url","image_url":{"url":"`, `{"type":"input_audio","input_audio":{"format":"wav","data":"`, 1)
+	var messages struct {
+		Messages []map[string]json.RawMessage `json:"messages"`
+	}
+	if err := json.Unmarshal([]byte(audio), &messages); err != nil {
+		t.Fatal(err)
+	}
+	plain, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/chat/completions", Body: []byte(`{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"Read the evidence."}]}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const noAudio = "messages[2].content[2] audio input is not supported by"
+	if _, err := validateChatMessageContent(&State{Resolution: plain}, messages.Messages[2]["content"], "messages[2].content", false, true); err == nil || !strings.Contains(err.Error(), noAudio) {
+		t.Fatalf("the request's checks gave their own reason for audio in a tool result: %v", err)
+	}
+	_, err = catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/chat/completions", Body: []byte(strings.Replace(audio, "provider:openai gpt-5.5", "provider:anthropic anthropic-claude-sonnet-4-6", 1))})
+	if err == nil || !strings.Contains(err.Error(), noAudio) {
+		t.Fatalf("a deployment without audio input took audio in a tool result: %v", err)
 	}
 }
 

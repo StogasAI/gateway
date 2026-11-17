@@ -690,11 +690,7 @@ func validateChatMessagesTextOnly(state *State, raw json.RawMessage) error {
 			if !ok {
 				return invalidRequest(path + ".content is required")
 			}
-			attachments := noAttachments
-			if role == string(schemas.ChatMessageRoleUser) {
-				attachments = userAttachments
-			}
-			meaningful, err := validateChatMessageContent(state, content, path+".content", true, attachments)
+			meaningful, err := validateChatMessageContent(state, content, path+".content", true, role == string(schemas.ChatMessageRoleUser))
 			if err != nil {
 				return err
 			}
@@ -779,7 +775,7 @@ func validateChatAssistantInput(state *State, message map[string]json.RawMessage
 	}
 	hasPayload := false
 	if content, ok := message["content"]; ok && strings.TrimSpace(string(content)) != "null" {
-		meaningful, err := validateChatMessageContent(state, content, path+".content", false, noAttachments)
+		meaningful, err := validateChatMessageContent(state, content, path+".content", false, false)
 		if err != nil {
 			return err
 		}
@@ -870,7 +866,7 @@ func validateChatToolResultInput(state *State, message map[string]json.RawMessag
 	if !ok {
 		return invalidRequest(path + ".content is required")
 	}
-	if _, err := validateChatMessageContent(state, content, path+".content", false, toolResultAttachments); err != nil {
+	if _, err := validateChatMessageContent(state, content, path+".content", false, true); err != nil {
 		return err
 	}
 	delete(validation.pending, callID)
@@ -955,17 +951,9 @@ func hasNonWhitespace(text string) bool {
 	return strings.TrimLeftFunc(strings.TrimLeft(text, " \t\n\r\v\f"), unicode.IsSpace) != ""
 }
 
-// contentAttachments says which attachments a message's content takes: none, those of a user
-// message, or those of a tool result, which no provider takes audio in.
-type contentAttachments uint8
-
-const (
-	noAttachments contentAttachments = iota
-	userAttachments
-	toolResultAttachments
-)
-
-func validateChatMessageContent(state *State, raw json.RawMessage, path string, requireNonEmpty bool, attachments contentAttachments) (bool, error) {
+// validateChatMessageContent checks a message's content. Only a user message and a tool result
+// take attachments, and the catalog says which of them each deployment reads there.
+func validateChatMessageContent(state *State, raw json.RawMessage, path string, requireNonEmpty bool, attachments bool) (bool, error) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 		if requireNonEmpty {
@@ -996,11 +984,8 @@ func validateChatMessageContent(state *State, raw json.RawMessage, path string, 
 			return false, invalidRequest(blockPath + " must be an object")
 		}
 		if kind := rawString(block["type"]); kind == "file" || kind == "image_url" || kind == "input_audio" {
-			if attachments == noAttachments {
+			if !attachments {
 				return false, invalidRequest(blockPath + " attachments require a user message or a tool result")
-			}
-			if attachments == toolResultAttachments && kind == "input_audio" {
-				return false, invalidRequest(blockPath + " audio is not supported in a tool result")
 			}
 			if err := validateNativeAttachment(state, block, blockPath, false); err != nil {
 				return false, err
