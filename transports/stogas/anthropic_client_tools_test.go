@@ -23,7 +23,7 @@ const (
 func TestAnthropicClientToolsReachClaudeAsNamed(t *testing.T) {
 	const tools = `"tools":[` + anthropicBashTool + `,{"type":"text_editor_20250728","name":"str_replace_based_edit_tool","max_characters":10000,"cache_control":{"type":"ephemeral"}},{"type":"function","name":"lookup"}],`
 	const forcedTools = tools + `"tool_choice":{"type":"function","name":"str_replace_based_edit_tool"},`
-	const wantTools = `[{"name":"bash","type":"bash_20250124"},{"name":"str_replace_based_edit_tool","type":"text_editor_20250728","cache_control":{"type":"ephemeral"},"max_characters":10000},{"name":"lookup","input_schema":{"type":"object","properties":{}}}]`
+	const wantTools = `[{"name":"bash","type":"bash_20250124"},{"name":"str_replace_based_edit_tool","type":"text_editor_20250728","cache_control":{"type":"ephemeral"},"max_characters":10000},{"name":"lookup","input_schema":{"type":"object","properties":{}},"eager_input_streaming":true}]`
 	check := func(t *testing.T, wire []byte, forced bool) {
 		t.Helper()
 		var sent struct {
@@ -33,7 +33,7 @@ func TestAnthropicClientToolsReachClaudeAsNamed(t *testing.T) {
 		if err := json.Unmarshal(wire, &sent); err != nil {
 			t.Fatalf("decode %s: %v", wire, err)
 		}
-		// Streaming to some hostings marks function tools; nothing may mark Anthropic's own.
+		// The gateway marks function tools for input streaming; nothing may mark Anthropic's own.
 		for _, tool := range sent.Tools[:min(2, len(sent.Tools))] {
 			delete(tool, "cache_control")
 			delete(tool, "max_characters")

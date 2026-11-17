@@ -825,9 +825,10 @@ func TestCloudClaudeKeepsStrictToolsOnEveryHosting(t *testing.T) {
 				if lookup.Get("name").String() != "lookup" || !lookup.Get("strict").Bool() || loose.Get("strict").Bool() {
 					t.Errorf("%s %s: strict lost or added: %s", path, deployment, wire)
 				}
-				// Claude sends each tool's input of a stream as it writes it, and ignores the field on a whole request.
+				// A whole request carries the same tools as a stream, because Claude compares them before it
+				// accepts earlier reasoning.
 				for _, tool := range tools {
-					if tool.Get("eager_input_streaming").Exists() != streaming || streaming && !tool.Get("eager_input_streaming").Bool() {
+					if !tool.Get("eager_input_streaming").Bool() {
 						t.Errorf("%s %s streaming %v: eager_input_streaming: %s", path, deployment, streaming, wire)
 					}
 				}

@@ -220,7 +220,7 @@ func prepareChatProviderBody(ctx *schemas.BifrostContext, request *schemas.Bifro
 	if bifrostErr != nil || !usesAnthropicWireFormat(ctx, request.Provider, request.Model) {
 		return body, bifrostErr
 	}
-	return streamToolInput(body, streaming)
+	return streamToolInput(body)
 }
 
 func chatProviderBody(ctx *schemas.BifrostContext, request *schemas.BifrostChatRequest, streaming bool, hosting string) ([]byte, *schemas.BifrostError) {
@@ -268,7 +268,7 @@ func prepareResponsesProviderBody(ctx *schemas.BifrostContext, request *schemas.
 	if bifrostErr != nil || !usesAnthropicWireFormat(ctx, request.Provider, request.Model) {
 		return body, bifrostErr
 	}
-	return streamToolInput(body, streaming)
+	return streamToolInput(body)
 }
 
 func responsesProviderBody(ctx *schemas.BifrostContext, request *schemas.BifrostResponsesRequest, streaming bool, hosting string) ([]byte, *schemas.BifrostError) {
@@ -400,18 +400,17 @@ func restoreStrictTools(body []byte, hosting string, strict map[string]bool) ([]
 	})
 }
 
-// streamToolInput has Claude send the input of each function tool of a streamed request as it
-// writes it (`eager_input_streaming`). Claude otherwise holds each parameter back until it is
+// streamToolInput has Claude send the input of each function tool as it writes it
+// (`eager_input_streaming`). Claude otherwise holds each parameter of a stream back until it is
 // complete, so a long one, such as a file's content, arrives in one piece after a silence that can
 // outlast the request's output idle limit. Every Claude hosting takes the field without a beta
-// header, only on the tools that the client defines, and ignores it on a whole request, which
-// therefore goes without it, as Anthropic advises. The input is then not checked before it
+// header, only on the tools that the client defines. A whole request carries it too, although
+// Claude ignores it there: Claude compares each tool, this field included, with the tools that
+// came before its earlier reasoning, so a conversation that mixes streamed and whole requests
+// would otherwise lose that reasoning or get 400. The input is then not checked before it
 // streams; a finished call that holds no JSON object fails the reply, as it does from every
 // provider.
-func streamToolInput(body []byte, streaming bool) ([]byte, *schemas.BifrostError) {
-	if !streaming {
-		return body, nil
-	}
+func streamToolInput(body []byte) ([]byte, *schemas.BifrostError) {
 	return setToolFlag(body, "eager_input_streaming", claudeFunctionTool)
 }
 

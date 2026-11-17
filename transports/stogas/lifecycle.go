@@ -281,8 +281,8 @@ func literalSecret(value string) schemas.SecretVar {
 //
 // Fine-grained tool streaming: core opts Claude's tools into it by hosting and model name, and
 // adds a beta header that no hosting needs. Claude checks that `tools` is unchanged before it
-// accepts earlier reasoning, so a conversation that moves between hostings must send the same
-// tools everywhere. The gateway sets the field itself on every hosting (streamToolInput).
+// accepts earlier reasoning, so a conversation must send the same tools on every hosting and in
+// every request. The gateway sets the field itself on every Claude request (streamToolInput).
 var modelCapabilities = schemas.ModelCapabilities{
 	SupportsFastMode:            schemas.Ptr(true),
 	SupportsEagerInputStreaming: schemas.Ptr(false),
