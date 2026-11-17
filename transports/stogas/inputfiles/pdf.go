@@ -190,7 +190,9 @@ func pdfPagesText(out io.Reader) (string, error) {
 			text.WriteString("\n\n")
 		}
 		text.WriteString("## Page " + strconv.Itoa(pages) + "\n\n")
-		if content := bytes.TrimSpace(page); len(content) > 0 {
+		// A broken font can map a glyph to NUL, which is no text: a text file with one is refused
+		// as binary, and here the character is left out.
+		if content := bytes.TrimSpace(bytes.ReplaceAll(page, []byte{0}, nil)); len(content) > 0 {
 			empty = false
 			text.Write(content)
 		} else {

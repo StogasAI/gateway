@@ -22,6 +22,11 @@ fn pdf(pages: &[&str]) -> Vec<u8> {
         ));
         objects.push(format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len()));
     }
+    file_of(&objects)
+}
+
+/// A PDF file of these objects, the first of which is the catalog.
+fn file_of(objects: &[String]) -> Vec<u8> {
     let mut file = b"%PDF-1.4\n".to_vec();
     let mut offsets = Vec::new();
     for (index, object) in objects.iter().enumerate() {
@@ -82,4 +87,35 @@ fn ends_when_memory_runs_out() {
     // 48 MiB of address space hold the program but not a 64 MiB file.
     let file = [pdf(&["a"]), vec![b' '; 64 << 20]].concat();
     assert_eq!(read(&["2000", "8388608", "50331648", "20"], &file).0, 5);
+}
+
+#[test]
+fn ends_at_the_processor_limit_with_its_own_signal() {
+    use std::os::unix::process::ExitStatusExt;
+    // 500 pages share one page program of a million strings without text, which takes far more
+    // than the one second of processor time that this reader gets.
+    let program = format!("BT /F1 12 Tf {}ET", "() Tj ".repeat(1_000_000));
+    let mut objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        format!(
+            "<< /Type /Pages /Count 500 /Kids [{}] >>",
+            (0..500).map(|page| format!("{} 0 R", 5 + page)).collect::<Vec<_>>().join(" ")
+        ),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string(),
+        format!("<< /Length {} >>\nstream\n{program}\nendstream", program.len()),
+    ];
+    for _ in 0..500 {
+        objects.push(
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 4 0 R >>".to_string(),
+        );
+    }
+    let mut reader = Command::new(env!("CARGO_BIN_EXE_stogas-pdftext"))
+        .args(["2000", "8388608", "1073741824", "1"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let _ = reader.stdin.take().unwrap().write_all(&file_of(&objects));
+    assert_eq!(reader.wait().unwrap().signal(), Some(libc::SIGXCPU));
 }

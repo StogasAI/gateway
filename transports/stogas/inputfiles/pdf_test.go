@@ -176,7 +176,7 @@ func TestPDFReaderConfinesItselfBeforeItReadsTheFile(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Max address space " + strconv.Itoa(pdfMemoryBytes) + " " + strconv.Itoa(pdfMemoryBytes),
-		"Max cpu time " + strconv.Itoa(pdfSeconds) + " " + strconv.Itoa(pdfSeconds),
+		"Max cpu time " + strconv.Itoa(pdfSeconds) + " " + strconv.Itoa(pdfSeconds+1),
 		"Max core file size 0 0",
 	} {
 		if !strings.Contains(strings.Join(strings.Fields(string(limits)), " "), want) {
@@ -191,6 +191,16 @@ func TestPDFReaderConfinesItselfBeforeItReadsTheFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	if text, err := pdfPagesText(&out); err != nil || text != "## Page 1\n\nRead under the filter" {
+		t.Fatalf("got %q, %v", text, err)
+	}
+}
+
+// Extracted text holds no NUL, as a text file that becomes text holds none.
+func TestPDFTextLeavesOutNUL(t *testing.T) {
+	frame := func(text string) string {
+		return string(binary.LittleEndian.AppendUint32(nil, uint32(len(text)))) + text
+	}
+	if text, err := pdfPagesText(strings.NewReader(frame("To\x00tal") + frame("\x00"))); err != nil || text != "## Page 1\n\nTotal\n\n## Page 2\n\n[This page has no text]" {
 		t.Fatalf("got %q, %v", text, err)
 	}
 }

@@ -58,7 +58,13 @@ fn main() {
         eprintln!("usage: stogas-pdftext <pages> <text bytes> <memory bytes> <processor seconds>");
         exit(NOT_CONFINED);
     };
-    if !limit(libc::RLIMIT_AS, max_memory) || !limit(libc::RLIMIT_CPU, max_seconds) || !limit(libc::RLIMIT_CORE, 0) {
+    // The kernel ends the process with SIGXCPU at the soft limit of processor time and with
+    // SIGKILL at the hard one, and with SIGKILL alone where the two are equal. The hard limit is
+    // a second later, so that the gateway can tell this end from any other kill.
+    if !limit(libc::RLIMIT_AS, max_memory, max_memory)
+        || !limit(libc::RLIMIT_CPU, max_seconds, max_seconds + 1)
+        || !limit(libc::RLIMIT_CORE, 0, 0)
+    {
         exit(NOT_CONFINED);
     }
     if !confine() {
@@ -74,8 +80,8 @@ fn main() {
     });
 }
 
-fn limit(resource: libc::__rlimit_resource_t, value: u64) -> bool {
-    let limit = libc::rlimit { rlim_cur: value, rlim_max: value };
+fn limit(resource: libc::__rlimit_resource_t, soft: u64, hard: u64) -> bool {
+    let limit = libc::rlimit { rlim_cur: soft, rlim_max: hard };
     unsafe { libc::setrlimit(resource, &limit) == 0 }
 }
 
