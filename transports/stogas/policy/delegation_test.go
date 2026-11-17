@@ -66,6 +66,17 @@ func TestDelegationPermitsTextExtractionByFamily(t *testing.T) {
 	if err := inspect(`["plugins.textExtraction"]`, both); err != nil {
 		t.Fatalf("every family: %v", err)
 	}
+	// A media type is a setting of its family, so the family's permission covers it.
+	const sheet, csv = `{"plugins":{"textExtraction":{"application/vnd.oasis.opendocument.spreadsheet":"always"}}}`, `{"plugins":{"textExtraction":{"text/csv":"always"}}}`
+	if err := inspect(`["plugins.textExtraction.office"]`, sheet); err != nil {
+		t.Fatalf("media type of the permitted family: %v", err)
+	}
+	if err := inspect(`["plugins.textExtraction.office"]`, csv); !errors.Is(err, ErrPolicyEditForbidden) || !strings.HasSuffix(err.Error(), "set plugins.textExtraction.text") {
+		t.Fatalf("media type of the other family: %v", err)
+	}
+	if err := inspect(`["plugins.textExtraction.text/csv"]`, csv); err == nil {
+		t.Fatal("a delegation named a media type")
+	}
 	var sections Permission
 	if err := json.Unmarshal([]byte(`["plugins.textExtraction"]`), &sections); err != nil {
 		t.Fatal(err)

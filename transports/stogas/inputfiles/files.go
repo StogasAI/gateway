@@ -20,6 +20,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/bytedance/sonic"
+	"github.com/maximhq/bifrost/transports/stogas/inputfiles/filetype"
 	"github.com/maximhq/bifrost/transports/stogas/rawjson"
 )
 
@@ -48,8 +49,9 @@ func (e *PartError) Error() string { return e.Path + " " + e.Reason }
 
 // Options say what Process does with a request's attachments.
 type Options struct {
-	// Extract names the families of inline files that become prompt text.
-	Extract Families
+	// Extract reports whether an inline file of the type becomes prompt text where it does not
+	// stay a file. Nil extracts none.
+	Extract func(filetype.Type) bool
 	// File reports whether the text or Office file at a path, such as messages[0].content[1],
 	// stays a file, because the deployment reads it and nothing requires its text, and the media
 	// type that a text file must declare for the deployment, or "" for its own. Nil keeps no
@@ -295,20 +297,21 @@ func (p *processor) block(path string, block map[string]json.RawMessage, respons
 		p.opaque(path)
 		return nil, nil
 	}
-	if family := Family(""); document && data != "" {
-		family = FileFamily(mediaType, payload, stringField(file, "filename"))
-		fileType, kept := "", false
-		if family != "" && p.File != nil {
-			fileType, kept = p.File(path)
+	if document && data != "" {
+		fileType := Extractable(mediaType, payload, stringField(file, "filename"))
+		declares, kept := "", false
+		if fileType.Family != "" && p.File != nil {
+			declares, kept = p.File(path)
 		}
+		extract := fileType.Family != "" && p.Extract != nil && p.Extract(fileType)
 		switch {
-		case family == FamilyText && (kept || p.Extract.Text):
-			replacement, text, err := p.text(path, block, file, responses, mediaType, payload, fileType, kept)
+		case fileType.Family == filetype.Text && (kept || extract):
+			replacement, text, err := p.text(path, block, file, responses, mediaType, payload, declares, kept)
 			if text || err != nil {
 				return replacement, err
 			}
-		case family == FamilyOffice && !kept && p.Extract.Office:
-			return p.office(path, block, file, responses, mediaType, payload)
+		case fileType.Family == filetype.Office && !kept && extract:
+			return p.office(path, block, file, responses, mediaType, payload, fileType.MediaType)
 		}
 	}
 	// A bounded decoder validates and counts binary input without retaining a
@@ -353,7 +356,7 @@ func (p *processor) text(path string, block, file map[string]json.RawMessage, re
 	}
 	valid := utf8.Valid(decoded) && bytes.IndexByte(decoded, 0) < 0
 	if !valid && !kept {
-		if TextMediaType(mediaType) {
+		if filetype.IsText(mediaType) {
 			return refuse("is not UTF-8 text without NUL bytes, which text extraction requires")
 		}
 		return nil, false, nil
@@ -385,7 +388,7 @@ func (p *processor) text(path string, block, file map[string]json.RawMessage, re
 		return encoded, true, err
 	}
 	// Only a text type says more of the file than its name.
-	if !TextMediaType(mediaType) {
+	if !filetype.IsText(mediaType) {
 		mediaType = ""
 	}
 	replacement, err := textBlock(path, block, file, responses, mediaType, string(decoded))
@@ -399,8 +402,9 @@ func (p *processor) extracted(started time.Time) {
 	p.stats.ExtractionTime += time.Since(started)
 }
 
-// office reads the inline Office file of a block and returns the text block that replaces it.
-func (p *processor) office(path string, block, file map[string]json.RawMessage, responses bool, mediaType, payload string) (json.RawMessage, error) {
+// office reads the inline Office file of a block, whose format officeType names, and returns the
+// text block that replaces it.
+func (p *processor) office(path string, block, file map[string]json.RawMessage, responses bool, mediaType, payload, officeType string) (json.RawMessage, error) {
 	refuse := func(reason string) (json.RawMessage, error) { return nil, &PartError{Path: path, Reason: reason} }
 	started := time.Now()
 	// The request lease covers the decoded archive, and then what the extraction keeps.
@@ -418,7 +422,7 @@ func (p *processor) office(path string, block, file map[string]json.RawMessage, 
 	if err != nil {
 		return refuse("has invalid base64")
 	}
-	text, err := extractOffice(decoded, officeFile(mediaType, payload, stringField(file, "filename")), retain)
+	text, err := extractOffice(decoded, officeMediaTypes[officeType], retain)
 	var capacity capacityError
 	var reason officeError
 	switch {
@@ -431,7 +435,7 @@ func (p *processor) office(path string, block, file map[string]json.RawMessage, 
 	}
 	p.stats.InlineBytes += len(decoded)
 	// Only a type that names the Office format says more than the filename.
-	if officeMediaTypes[strings.ToLower(mediaType)] == 0 {
+	if !strings.EqualFold(mediaType, officeType) {
 		mediaType = ""
 	}
 	replacement, err := textBlock(path, block, file, responses, mediaType, text)

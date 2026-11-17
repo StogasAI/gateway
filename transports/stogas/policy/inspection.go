@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/maximhq/bifrost/transports/stogas/inputfiles/filetype"
 	"github.com/maximhq/bifrost/transports/stogas/plugins/exporter/exportconfig"
 	"github.com/maximhq/bifrost/transports/stogas/plugins/redaction"
 )
@@ -489,16 +490,28 @@ func inspectionSetBy(entries []InspectionSource, sources []ScopedSource, compile
 			}
 		}
 	}
-	// The strongest text extraction mode of a family wins, so each family names the first
-	// policy that sets that mode.
-	if set := compiled.textExtractionSet(); set != nil {
-		for i, family := range set.families() {
-			if mode := *family.mode; mode != nil {
-				add("plugins.textExtraction."+textExtractionFamilies[i], family.unit, false, func(c *Config) bool {
-					own := c.textExtractionSet()
-					return own != nil && *own.families()[i].mode != nil && **own.families()[i].mode == *mode
-				})
+	// The strongest text extraction mode of a file wins, so each family names the first policy
+	// that gives its files, or the files of one of its media types, their mode.
+	extraction := compiled.TextExtraction()
+	for _, family := range filetype.Families {
+		unit := textExtractionFamilyUnits[family]
+		var first []int
+		for _, key := range slices.Sorted(maps.Keys(extraction)) {
+			if textExtractionFamily(key) != family {
+				continue
 			}
+			for i, entry := range sources {
+				if own, ok := entry.Value.Config.TextExtraction().set(key); entry.Value.settings&unit != 0 && ok && own == extraction[key] {
+					if !slices.Contains(first, i) {
+						first = append(first, i)
+					}
+					break
+				}
+			}
+		}
+		slices.Sort(first)
+		for _, i := range first {
+			out = append(out, map[string]any{"setting": "plugins.textExtraction." + string(family), "policy": inspectionReference(entries[i])})
 		}
 	}
 	if compiled.Routing.AllowedCatalogNodes != nil {
@@ -593,7 +606,7 @@ func replacedDefaults(documents []*SourceDocument, sources []ScopedSource, requi
 			}
 			key := ruleKey{i, rule.Name}
 			for _, setting := range ruleSettings(documents[i].rules[rule.Name].fields) {
-				kind := settingsMask(permissionSections[setting])
+				kind := settingsMask(sectionPermission(setting))
 				if kind&permissionSort != 0 {
 					continue
 				}
@@ -646,14 +659,18 @@ func withoutOrdering(fields map[string]json.RawMessage) map[string]json.RawMessa
 	return out
 }
 
-// ruleSettings names a rule's settings as its fields hold them, sorted. Each
-// plugin is its own setting, encrypted or not.
+// ruleSettings names a rule's settings, sorted. Each plugin is its own setting,
+// encrypted or not, and each file family of text extraction with its media types.
 func ruleSettings(fields map[string]json.RawMessage) []string {
 	var settings []string
 	for name, raw := range fields {
 		switch name {
 		case "input", "access", "plugins", "routing", "timeouts":
-			eachSetting(name, raw, func(setting string, _ json.RawMessage) { settings = append(settings, setting) })
+			eachSetting(name, raw, func(setting string, _ json.RawMessage) {
+				if setting = settingSection(setting); !slices.Contains(settings, setting) {
+					settings = append(settings, setting)
+				}
+			})
 		}
 	}
 	sort.Strings(settings)
@@ -678,7 +695,7 @@ func replacedNotes(entries []InspectionSource, documents []*SourceDocument, sour
 				continue
 			}
 			for _, setting := range ruleSettings(documents[i].rules[rule.Name].fields) {
-				kind := settingsMask(permissionSections[setting])
+				kind := settingsMask(sectionPermission(setting))
 				if kind&permissionSort == 0 && !slices.Contains(kinds[kind], setting) {
 					kinds[kind] = append(kinds[kind], setting)
 				}

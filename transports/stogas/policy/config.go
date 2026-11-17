@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math/big"
 	"mime"
 	"net/netip"
@@ -18,6 +19,7 @@ import (
 	"time"
 	_ "time/tzdata"
 
+	"github.com/maximhq/bifrost/transports/stogas/inputfiles/filetype"
 	"github.com/maximhq/bifrost/transports/stogas/plugins/exporter/exportconfig"
 	"github.com/maximhq/bifrost/transports/stogas/plugins/redaction"
 )
@@ -303,29 +305,24 @@ type DenyWindow struct {
 type Plugins struct {
 	Export         *exportconfig.Config `json:"export,omitempty"`
 	Redaction      *Redaction           `json:"redaction,omitempty"`
-	TextExtraction *TextExtraction      `json:"textExtraction,omitempty"`
+	TextExtraction TextExtraction       `json:"textExtraction,omitempty"`
 }
 
-// TextExtraction holds the mode of each family of files that text extraction turns into prompt
-// text. A family that it leaves out is not set, so a later family never applies to a policy that
-// does not name it.
-type TextExtraction struct {
-	// Text is the mode of text files, such as CSV, JSON and source code.
-	Text *string `json:"text,omitempty"`
-	// Office is the mode of Word, Excel, PowerPoint and OpenDocument files.
-	Office *string `json:"office,omitempty"`
-}
+// TextExtraction maps a kind of file to its text extraction mode. A key is a family of files,
+// text or office, or one media type that a family holds, such as text/csv, whose mode then
+// decides for its files in place of the family's. A file that no key takes is not set, so a
+// later family never applies to a policy that does not name it.
+type TextExtraction map[string]string
 
 // Text extraction modes, from the weakest to the strongest: a policy that sets a stronger one
-// for a family overrides a weaker one, and off applies to a family that no policy sets.
+// for a file overrides a weaker one, and off applies to a file that no policy sets.
 const (
-	// TextExtractionOff sends every file of the family as a file, which only a deployment that
-	// reads it takes.
+	// TextExtractionOff sends the file as a file, which only a deployment that reads it takes.
 	TextExtractionOff = "off"
 	// TextExtractionAuto turns a file into prompt text where the deployment does not read it,
 	// or where input checks or redaction must read it.
 	TextExtractionAuto = "auto"
-	// TextExtractionAlways turns every file of the family into prompt text.
+	// TextExtractionAlways turns the file into prompt text.
 	TextExtractionAlways = "always"
 )
 
@@ -339,27 +336,83 @@ func strongerTextExtraction(a, b string) string {
 	return a
 }
 
-// TextExtractionModes are the modes that apply to a request, one for each family of files.
-type TextExtractionModes struct {
-	Text, Office string
-}
-
 // textExtractionUnits are the families of text extraction. Each combines on its own, so a
-// requirement for one family leaves the default of another in place.
+// requirement for one family leaves the default of another in place. A media type is a setting
+// of its family.
 const textExtractionUnits = permissionTextExtraction | permissionOfficeExtraction
 
-// textExtractionFamilies names the families in the order of families.
-var textExtractionFamilies = [2]string{"text", "office"}
+var textExtractionFamilyUnits = map[filetype.Family]Permission{
+	filetype.Text:   permissionTextExtraction,
+	filetype.Office: permissionOfficeExtraction,
+}
 
-// families lists each family's mode with its unit.
-func (t *TextExtraction) families() [2]struct {
-	mode **string
-	unit Permission
-} {
-	return [2]struct {
-		mode **string
-		unit Permission
-	}{{&t.Text, permissionTextExtraction}, {&t.Office, permissionOfficeExtraction}}
+// textExtractionFamily names the family that a key is or belongs to, or "" for a key that text
+// extraction does not read.
+func textExtractionFamily(key string) filetype.Family {
+	if family := filetype.Family(key); textExtractionFamilyUnits[family] != 0 {
+		return family
+	}
+	if !validMediaTypePattern(key) || strings.HasSuffix(key, "/*") {
+		return ""
+	}
+	return filetype.FamilyOf(key)
+}
+
+// textExtractionUnit returns the unit of a key's family.
+func textExtractionUnit(key string) Permission {
+	return textExtractionFamilyUnits[textExtractionFamily(key)]
+}
+
+// set returns the mode that these settings alone give the files of a key: the key's own mode,
+// or for a media type the mode of its family.
+func (t TextExtraction) set(key string) (string, bool) {
+	mode, ok := t[key]
+	if !ok {
+		if family := string(textExtractionFamily(key)); family != key {
+			mode, ok = t[family]
+		}
+	}
+	return mode, ok
+}
+
+// Mode returns the mode of a file, or TextExtractionOff where nothing sets one: the gateway
+// changes no file unless a policy says so.
+func (t TextExtraction) Mode(file filetype.Type) string {
+	if mode, ok := t[file.MediaType]; ok {
+		return mode
+	}
+	if mode, ok := t[string(file.Family)]; ok {
+		return mode
+	}
+	return TextExtractionOff
+}
+
+// Extracts reports whether a file becomes prompt text wherever its deployment does not read it.
+func (t TextExtraction) Extracts(file filetype.Type) bool {
+	return file.Family != "" && t.Mode(file) != TextExtractionOff
+}
+
+func (t TextExtraction) units() Permission {
+	var units Permission
+	for key := range t {
+		units |= textExtractionUnit(key)
+	}
+	return units
+}
+
+func (t TextExtraction) validate() error {
+	if len(t) == 0 {
+		return configError("plugins.textExtraction must set the mode of text, office or a media type")
+	}
+	for _, key := range slices.Sorted(maps.Keys(t)) {
+		if textExtractionFamily(key) == "" {
+			return configError("plugins.textExtraction has %q, which is not text, office or a media type that text extraction reads, such as text/csv", key)
+		}
+		if !slices.Contains(textExtractionModes, t[key]) {
+			return configError("plugins.textExtraction.%s must be off, auto or always", key)
+		}
+	}
+	return nil
 }
 
 type Redaction struct {
@@ -379,12 +432,8 @@ func (p *Plugins) units() Permission {
 	if p != nil && p.Redaction != nil {
 		units |= permissionRedaction
 	}
-	if p != nil && p.TextExtraction != nil {
-		for _, family := range p.TextExtraction.families() {
-			if *family.mode != nil {
-				units |= family.unit
-			}
-		}
+	if p != nil {
+		units |= p.TextExtraction.units()
 	}
 	if p != nil && p.Export != nil {
 		units |= permissionExport
@@ -407,11 +456,10 @@ func (p *Plugins) only(units Permission) *Plugins {
 		part.Redaction = p.Redaction
 	}
 	if units&set&textExtractionUnits != 0 {
-		part.TextExtraction = &TextExtraction{}
-		from := p.TextExtraction.families()
-		for i, family := range part.TextExtraction.families() {
-			if units&family.unit != 0 {
-				*family.mode = *from[i].mode
+		part.TextExtraction = TextExtraction{}
+		for key, mode := range p.TextExtraction {
+			if units&textExtractionUnit(key) != 0 {
+				part.TextExtraction[key] = mode
 			}
 		}
 	}
@@ -567,13 +615,8 @@ func (p *Plugins) validate() error {
 			return configError("invalid export configuration")
 		}
 		if p.TextExtraction != nil {
-			if p.units()&textExtractionUnits == 0 {
-				return configError("plugins.textExtraction must set text or office")
-			}
-			for _, family := range p.TextExtraction.families() {
-				if mode := *family.mode; mode != nil && !slices.Contains(textExtractionModes, *mode) {
-					return configError("a plugins.textExtraction mode must be off, auto or always")
-				}
+			if err := p.TextExtraction.validate(); err != nil {
+				return err
 			}
 		}
 	}

@@ -13,6 +13,7 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/customerkey"
 	"github.com/maximhq/bifrost/transports/stogas/inputfiles"
+	"github.com/maximhq/bifrost/transports/stogas/inputfiles/filetype"
 	"github.com/maximhq/bifrost/transports/stogas/plugins/exporter/exportconfig"
 	"github.com/maximhq/bifrost/transports/stogas/plugins/redaction"
 	"github.com/maximhq/bifrost/transports/stogas/policy"
@@ -53,7 +54,7 @@ type requestVariants struct {
 	// attachments are the request's attachments, where they can narrow the candidates.
 	attachments []Attachment
 	// files are its inline text and Office files, which stay files where a pair's deployment
-	// reads them, unless the pair's policy extracts every file of their family.
+	// reads them, unless the pair's policy always extracts them.
 	files []Attachment
 	// hostedTools are the hosted tools that the request lets the model call, whose data
 	// handling joins each candidate's.
@@ -338,7 +339,7 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 	}
 	// Later pairs are prepared with their own checks, which read the attachments in full.
 	for _, attachment := range variants.attachments {
-		if attachment.family != "" {
+		if attachment.extractable.Family != "" {
 			variants.files = append(variants.files, attachment)
 		}
 	}
@@ -639,9 +640,9 @@ func (v *requestVariants) prepareBody(selection routingSelection, value RequestP
 		check = "plugins.redaction"
 	}
 	options := inputfiles.Options{Reserve: reserveExpansion}
-	options.Extract = inputfiles.Families{Text: extraction.Text != policy.TextExtractionOff, Office: extraction.Office != policy.TextExtractionOff}
-	// A text or Office file that the deployment reads stays a file, unless the policy extracts
-	// every file of its family or the check must read it. fileTexts are the texts of the text
+	options.Extract = extraction.Extracts
+	// A text or Office file that the deployment reads stays a file, unless the policy always
+	// extracts it or the check must read it. fileTexts are the texts of the text
 	// files that stay, for the token hold.
 	var fileTexts []string
 	if check == "" {
@@ -649,9 +650,9 @@ func (v *requestVariants) prepareBody(selection routingSelection, value RequestP
 			for _, attachment := range v.files {
 				switch {
 				case attachment.Path != path:
-				case extractionMode(extraction, attachment.family) == policy.TextExtractionAlways:
+				case extraction.Mode(attachment.extractable) == policy.TextExtractionAlways:
 					return "", false
-				case attachment.family == inputfiles.FamilyText:
+				case attachment.extractable.Family == filetype.Text:
 					return textFileDeclaration(selection.provider, selection.deployment, attachment)
 				default:
 					return "", attachmentError(selection.provider, selection.deployment, attachment, routingSubject) == nil
@@ -678,7 +679,7 @@ func (v *requestVariants) prepareBody(selection routingSelection, value RequestP
 	if files.Opaque != "" && check != "" {
 		refusal := PublicError(inputCheckRefusal(files.Opaque, check))
 		if i := slices.IndexFunc(v.files, func(file Attachment) bool { return file.Path == files.Opaque }); i >= 0 {
-			refusal.Message += textExtractionHint(v.files[i].family)
+			refusal.Message += textExtractionHint(v.files[i].extractable, extraction)
 		}
 		return nil, refusal
 	}

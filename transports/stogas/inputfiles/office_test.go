@@ -10,8 +10,11 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/maximhq/bifrost/transports/stogas/inputfiles/filetype"
 )
 
 // The files in testdata/office were written by python-docx, python-pptx and openpyxl, whose
@@ -36,7 +39,7 @@ func TestOfficeFilesGiveTheirText(t *testing.T) {
 				t.Fatal(err)
 			}
 			retained := 0
-			got, err := extractOffice(data, officeExtensions[filepath.Ext(name)], func(bytes int) error {
+			got, err := extractOffice(data, officeMediaTypes[officeExtensions[filepath.Ext(name)]], func(bytes int) error {
 				retained += bytes
 				return nil
 			})
@@ -271,6 +274,25 @@ func TestOfficeArchivesStayWithinBounds(t *testing.T) {
 			t.Fatalf("got %v", err)
 		}
 	})
+	// Cells copy a shared string, so a small sheet can ask for far more text than its XML holds.
+	// The reader stops at the bound instead of building what it will refuse.
+	for name, rows := range map[string]string{
+		"one shared string in many rows": strings.Repeat(`<row><c t="s"><v>0</v></c></row>`, 20000),
+		"one shared string across a row": `<row>` + strings.Repeat(`<c t="s"><v>0</v></c>`, 16000) + `</row>`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			data := workbook(t, "", rows, "xl/sharedStrings.xml", `<sst><si><t>`+strings.Repeat("a", 1<<20)+`</t></si></sst>`)
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			if _, err := extractOffice(data, officeSpreadsheet, nil); err != errOfficeTooLarge {
+				t.Fatalf("got %v", err)
+			}
+			runtime.ReadMemStats(&after)
+			if allocated := after.TotalAlloc - before.TotalAlloc; allocated > 8*officeTextBytes {
+				t.Fatalf("allocated %d MiB before the refusal", allocated>>20)
+			}
+		})
+	}
 	t.Run("a part longer than it states", func(t *testing.T) {
 		data := word(t, `<w:p><w:r><w:t>`+strings.Repeat("a", 4096)+`</w:t></w:r></w:p>`)
 		// The directory entry of word/document.xml states its inflated size 24 bytes in.
@@ -287,6 +309,14 @@ func TestOfficeArchivesStayWithinBounds(t *testing.T) {
 			t.Fatalf("got %v", err)
 		}
 	})
+}
+
+// Part names compare without case, and some Windows libraries write them with backslashes.
+func TestOfficePartNamesMatchAsOfficeReadsThem(t *testing.T) {
+	data := archive(t, `_RELS\.rels`, rels("word/document.xml"), `Word\Document.XML`, wordOpen+`<w:p><w:r><w:t>Hello</w:t></w:r></w:p>`+wordClose)
+	if got, err := extractOffice(data, officeDocument, nil); err != nil || got != "Hello" {
+		t.Fatalf("got %q, %v", got, err)
+	}
 }
 
 // zip64 puts a zip64 end locator before the end record.
@@ -326,19 +356,19 @@ func TestProcessTurnsOfficeFilesIntoText(t *testing.T) {
 		responses           bool
 		mediaType, filename string
 		data                []byte
-		extract             Families
+		extract             func(filetype.Type) bool
 		kept                bool
 		want                string
 	}{
-		{"declared type", false, docx, "note.docx", file, Families{Office: true}, false, `{"text":"note.docx (` + docx + `)\nHello","type":"text"}`},
-		{"Responses", true, docx, "", file, Families{Office: true}, false, `{"text":"(` + docx + `)\nHello","type":"input_text"}`},
-		{"no type, by its extension", true, "", "Note.DOCX", file, Families{Office: true}, false, `{"text":"Note.DOCX\nHello","type":"input_text"}`},
-		{"a zip type, by its extension", false, "application/zip", "note.docx", file, Families{Office: true}, false, `{"text":"note.docx\nHello","type":"text"}`},
-		{"the family is off", true, docx, "note.docx", file, Families{Text: true}, false, ""},
-		{"the deployment reads it", true, docx, "note.docx", file, Families{Office: true}, true, ""},
-		{"no type and no extension", true, "", "note", file, Families{Office: true}, false, ""},
-		{"another type with the extension", true, "application/pdf", "note.docx", file, Families{Office: true}, false, ""},
-		{"not an archive", true, docx, "note.docx", []byte("Hello"), Families{Office: true}, false, ""},
+		{"declared type", false, docx, "note.docx", file, families(filetype.Office), false, `{"text":"note.docx (` + docx + `)\nHello","type":"text"}`},
+		{"Responses", true, docx, "", file, families(filetype.Office), false, `{"text":"(` + docx + `)\nHello","type":"input_text"}`},
+		{"no type, by its extension", true, "", "Note.DOCX", file, families(filetype.Office), false, `{"text":"Note.DOCX\nHello","type":"input_text"}`},
+		{"a zip type, by its extension", false, "application/zip", "note.docx", file, families(filetype.Office), false, `{"text":"note.docx\nHello","type":"text"}`},
+		{"the family is off", true, docx, "note.docx", file, families(filetype.Text), false, ""},
+		{"the deployment reads it", true, docx, "note.docx", file, families(filetype.Office), true, ""},
+		{"no type and no extension", true, "", "note", file, families(filetype.Office), false, ""},
+		{"another type with the extension", true, "application/pdf", "note.docx", file, families(filetype.Office), false, ""},
+		{"not an archive", true, docx, "note.docx", []byte("Hello"), families(filetype.Office), false, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fields := officeRequest(tc.responses, tc.mediaType, tc.filename, tc.data, "")
@@ -384,7 +414,7 @@ func TestProcessRefusesOfficeFilesItCannotRead(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fields := officeRequest(true, tc.mediaType, "book.xlsx", file, tc.extra)
 			before := string(fields["input"])
-			_, err := Process(fields, true, Options{Extract: Families{Office: true}})
+			_, err := Process(fields, true, Options{Extract: families(filetype.Office)})
 			var part *PartError
 			if !errors.As(err, &part) || err.Error() != tc.want || string(fields["input"]) != before {
 				t.Fatalf("got %v", err)
@@ -394,7 +424,7 @@ func TestProcessRefusesOfficeFilesItCannotRead(t *testing.T) {
 	t.Run("capacity", func(t *testing.T) {
 		capacity := errors.New("capacity")
 		reserved := 0
-		_, err := Process(officeRequest(true, xlsx, "", file, ""), true, Options{Extract: Families{Office: true}, Reserve: func(bytes int) error {
+		_, err := Process(officeRequest(true, xlsx, "", file, ""), true, Options{Extract: families(filetype.Office), Reserve: func(bytes int) error {
 			if reserved = bytes; bytes > len(file)+3 {
 				return capacity
 			}
@@ -410,7 +440,7 @@ func FuzzExtractOffice(f *testing.F) {
 	files, _ := filepath.Glob("testdata/office/*")
 	for _, name := range files {
 		if data, err := os.ReadFile(name); err == nil && !strings.HasSuffix(name, ".txt") {
-			f.Add(data, uint8(officeExtensions[filepath.Ext(name)]))
+			f.Add(data, uint8(officeMediaTypes[officeExtensions[filepath.Ext(name)]]))
 		}
 	}
 	f.Add(word(f, `<w:tbl><w:tr><w:tc><w:p><w:r><w:t>a</w:t></w:r></w:p></w:tc></w:tr></w:tbl>`), uint8(officeDocument))

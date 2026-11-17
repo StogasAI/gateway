@@ -578,6 +578,10 @@ func TestAutoTextExtractionFollowsTheDeployment(t *testing.T) {
 		{"input checks read the text", "openai-gpt-5.6-luna", "responses", "text/csv", `{"plugins":{"textExtraction":{"text":"auto"}},"input":{"asciiOnly":true}}`, true},
 		{"redaction reads the text", "anthropic-claude-opus-4-8", "responses", "text/plain", `{"plugins":{"textExtraction":{"text":"auto"},"redaction":{"presets":["email_address"]}}}`, true},
 		{"always", "anthropic-claude-opus-4-8", "responses", "text/plain", `{"plugins":{"textExtraction":{"text":"always"}}}`, true},
+		{"a media type that is always extracted", "anthropic-claude-opus-4-8", "responses", "text/csv", `{"plugins":{"textExtraction":{"text":"auto","text/csv":"always"}}}`, true},
+		{"another media type of the same policy", "anthropic-claude-opus-4-8", "responses", "text/plain", `{"plugins":{"textExtraction":{"text":"auto","text/csv":"always"}}}`, false},
+		{"a media type alone", "openai-gpt-5.6-luna", "chat/completions", "text/csv", `{"plugins":{"textExtraction":{"text/csv":"auto"}}}`, true},
+		{"a media type that stays a file in an extracted family", "openai-gpt-5.6-luna", "responses", "text/csv", `{"plugins":{"textExtraction":{"text":"always","text/csv":"auto"}}}`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			source, err := policy.CompileSource([]byte(tc.policy))

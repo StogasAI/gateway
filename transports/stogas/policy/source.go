@@ -720,7 +720,7 @@ func compileSourcePlugins(raw []byte) (*Plugins, error) {
 	var doc struct {
 		Export         *exportconfig.Config `json:"export"`
 		Redaction      *sourceRedaction     `json:"redaction"`
-		TextExtraction *TextExtraction      `json:"textExtraction"`
+		TextExtraction TextExtraction       `json:"textExtraction"`
 	}
 	if err := decodeStrict(raw, &doc); err != nil {
 		return nil, configError("invalid plugins: %v", err)

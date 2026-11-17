@@ -197,7 +197,7 @@ func TestOpenedSourceKeepsTheSavedCiphertextBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	plugins := opened.Config.Plugins
-	if !reflect.DeepEqual(opened.size, document.size) || plugins == nil || plugins.Redaction == nil || plugins.TextExtraction == nil || plugins.TextExtraction.Text == nil || *plugins.TextExtraction.Text != TextExtractionAlways {
+	if !reflect.DeepEqual(opened.size, document.size) || plugins == nil || plugins.Redaction == nil || plugins.TextExtraction["text"] != TextExtractionAlways {
 		t.Fatal("opening changed the saved budget or lost a readable or decrypted plugin")
 	}
 }

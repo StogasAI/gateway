@@ -44,7 +44,7 @@ func TestRoutingSkipsDeploymentsThatCannotReadTheAttachments(t *testing.T) {
 		// textOnly leaves the first deployment text only, and audio gives the second audio.
 		textOnly, audio bool
 		// extraction is the policy's text extraction, or nil for a policy that sets none.
-		extraction *policy.TextExtraction
+		extraction policy.TextExtraction
 	}{
 		{name: "chat text", part: `{"type":"text","text":"hello"}`, want: gpt[0]},
 		{name: "chat PDF", part: chatFile(pdf), want: gpt[1]},
@@ -55,15 +55,19 @@ func TestRoutingSkipsDeploymentsThatCannotReadTheAttachments(t *testing.T) {
 		{name: "chat file URL", part: `{"type":"file","file":{"file_url":"https://example.com/a.pdf"}}`, wantErr: "messages[0].content[1] file URLs on Chat Completions are not supported by any deployment that this request can use; send the file in file_data or use Responses"},
 		{name: "responses PDF", path: "/v1/responses", part: responsesFile(pdf), want: gpt[0]},
 		{name: "responses text file", path: "/v1/responses", part: responsesFile(text), want: gpt[1]},
-		{name: "responses text file with extraction off", path: "/v1/responses", part: responsesFile(text), want: gpt[1], extraction: &policy.TextExtraction{Text: &off}},
-		{name: "responses text file with extraction where needed", path: "/v1/responses", part: responsesFile(text), want: gpt[0], extraction: &policy.TextExtraction{Text: &auto}},
-		{name: "responses text file with extraction", path: "/v1/responses", part: responsesFile(text), want: gpt[0], extraction: &policy.TextExtraction{Text: &always}},
+		{name: "responses text file with extraction off", path: "/v1/responses", part: responsesFile(text), want: gpt[1], extraction: policy.TextExtraction{"text": off}},
+		{name: "responses text file with extraction where needed", path: "/v1/responses", part: responsesFile(text), want: gpt[0], extraction: policy.TextExtraction{"text": auto}},
+		{name: "responses text file with extraction", path: "/v1/responses", part: responsesFile(text), want: gpt[0], extraction: policy.TextExtraction{"text": always}},
 		{name: "responses Word file", path: "/v1/responses", part: responsesFile(word), want: gpt[1]},
-		{name: "responses Word file with extraction where needed", path: "/v1/responses", part: responsesFile(word), want: gpt[0], extraction: &policy.TextExtraction{Office: &auto}},
+		{name: "responses Word file with extraction where needed", path: "/v1/responses", part: responsesFile(word), want: gpt[0], extraction: policy.TextExtraction{"office": auto}},
 		{name: "chat Word file", part: chatFile(word), wantErr: "messages[0].content[1] is " + wordType + ", which is not supported by openai-gpt-5.6-sol. Set plugins.textExtraction.office to auto to send it as text"},
-		{name: "chat Word file with text extraction alone", part: chatFile(word), wantErr: "Set plugins.textExtraction.office to auto", extraction: &policy.TextExtraction{Text: &always}},
-		{name: "chat Word file with extraction where needed", part: chatFile(word), want: gpt[0], extraction: &policy.TextExtraction{Office: &auto}},
-		{name: "chat Word file named by its extension", part: `{"type":"file","file":{"filename":"a.docx","file_data":"data:application/octet-stream;base64,` + encoded + `"}}`, want: gpt[0], extraction: &policy.TextExtraction{Office: &auto}},
+		{name: "chat Word file with text extraction alone", part: chatFile(word), wantErr: "Set plugins.textExtraction.office to auto", extraction: policy.TextExtraction{"text": always}},
+		{name: "chat Word file with extraction where needed", part: chatFile(word), want: gpt[0], extraction: policy.TextExtraction{"office": auto}},
+		{name: "chat Word file with its media type extracted", part: chatFile(word), want: gpt[0], extraction: policy.TextExtraction{wordType: auto}},
+		{name: "chat Word file whose media type is off in its family", part: chatFile(word), wantErr: "Set plugins.textExtraction." + wordType + " to auto", extraction: policy.TextExtraction{"office": always, wordType: off}},
+		{name: "chat Word file with another media type extracted", part: chatFile(word), wantErr: "Set plugins.textExtraction.office to auto", extraction: policy.TextExtraction{"application/vnd.oasis.opendocument.text": always}},
+		{name: "chat Word file named by its extension, with its media type extracted", part: `{"type":"file","file":{"filename":"a.docx","file_data":"data:application/octet-stream;base64,` + encoded + `"}}`, want: gpt[0], extraction: policy.TextExtraction{wordType: auto}},
+		{name: "chat Word file named by its extension", part: `{"type":"file","file":{"filename":"a.docx","file_data":"data:application/octet-stream;base64,` + encoded + `"}}`, want: gpt[0], extraction: policy.TextExtraction{"office": auto}},
 		{name: "responses image without the modality", path: "/v1/responses", part: `{"type":"input_image","image_url":` + image + `}`, want: gpt[1], textOnly: true},
 		{name: "two sources go to the checks", path: "/v1/responses", part: `{"type":"input_file","file_data":` + text + `,"file_url":"https://example.com/a.txt"}`, wantErr: "exactly one"},
 		{name: "image URL where AWS runs Claude", model: "claude-fable-5-1", order: claude, part: `{"type":"image_url","image_url":{"url":"https://example.com/a.png"}}`, want: claude[1]},
@@ -259,12 +263,12 @@ func TestRoutingSkipsPairsWhosePolicyRefusesOpaqueAttachments(t *testing.T) {
 			if config.Plugins == nil {
 				config.Plugins = &policy.Plugins{}
 			}
-			config.Plugins.TextExtraction = &policy.TextExtraction{}
+			config.Plugins.TextExtraction = policy.TextExtraction{}
 			if text != "" {
-				config.Plugins.TextExtraction.Text = &text
+				config.Plugins.TextExtraction["text"] = text
 			}
 			if office != "" {
-				config.Plugins.TextExtraction.Office = &office
+				config.Plugins.TextExtraction["office"] = office
 			}
 		}
 	}

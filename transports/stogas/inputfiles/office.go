@@ -12,29 +12,9 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/maximhq/bifrost/transports/stogas/inputfiles/filetype"
 )
-
-// Family is a family of files that text extraction turns into prompt text. Each has its own
-// mode in a policy.
-type Family string
-
-const (
-	// FamilyText is a text file, such as CSV, JSON or source code, whose bytes are its text.
-	FamilyText Family = "text"
-	// FamilyOffice is a Word, Excel, PowerPoint or OpenDocument file: a zip archive of XML parts,
-	// whose text the gateway reads from the parts.
-	FamilyOffice Family = "office"
-)
-
-// Families says which families of files become prompt text.
-type Families struct {
-	Text, Office bool
-}
-
-// Has reports whether files of the family become prompt text.
-func (f Families) Has(family Family) bool {
-	return family == FamilyText && f.Text || family == FamilyOffice && f.Office
-}
 
 // officeKind is what an Office file holds.
 type officeKind uint8
@@ -57,61 +37,67 @@ func (k officeKind) String() string {
 	return "an unknown file"
 }
 
-// officeMediaTypes are the Office Open XML and OpenDocument types that text extraction reads.
-// The binary formats of Office 97 to 2003 and encrypted files are not zip archives and stay
-// opaque.
-var officeMediaTypes = map[string]officeKind{
-	"application/vnd.openxmlformats-officedocument.wordprocessingml.document":   officeDocument,
-	"application/vnd.ms-word.document.macroenabled.12":                          officeDocument,
-	"application/vnd.oasis.opendocument.text":                                   officeDocument,
-	"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":         officeSpreadsheet,
-	"application/vnd.ms-excel.sheet.macroenabled.12":                            officeSpreadsheet,
-	"application/vnd.oasis.opendocument.spreadsheet":                            officeSpreadsheet,
-	"application/vnd.openxmlformats-officedocument.presentationml.presentation": officePresentation,
-	"application/vnd.ms-powerpoint.presentation.macroenabled.12":                officePresentation,
-	"application/vnd.oasis.opendocument.presentation":                           officePresentation,
-}
-
-// officeExtensions name the kind of an archive that declares no Office type, as providers read
-// it from the filename. The content then has to be of that kind.
-var officeExtensions = map[string]officeKind{
-	".docx": officeDocument, ".docm": officeDocument, ".odt": officeDocument,
-	".xlsx": officeSpreadsheet, ".xlsm": officeSpreadsheet, ".ods": officeSpreadsheet,
-	".pptx": officePresentation, ".pptm": officePresentation, ".odp": officePresentation,
-}
-
-// officeFile reports the kind of an inline document that is an Office file: a zip archive that
-// declares an Office type, or that declares no type, only application/octet-stream or only that
-// it is a zip archive, and whose filename has an Office extension.
-func officeFile(declared, payload, filename string) officeKind {
-	declared = strings.ToLower(declared)
-	kind := officeMediaTypes[declared]
-	if kind == 0 {
-		switch declared {
-		case "", "application/octet-stream", "application/zip", "application/x-zip-compressed":
-			kind = officeExtensions[strings.ToLower(path.Ext(filename))]
+// officeMediaTypes name what a file of each Office type holds.
+var officeMediaTypes = func() map[string]officeKind {
+	kinds := map[string]officeKind{}
+	for kind, mediaTypes := range map[officeKind][]string{
+		officeDocument: filetype.Documents, officeSpreadsheet: filetype.Spreadsheets, officePresentation: filetype.Presentations,
+	} {
+		for _, mediaType := range mediaTypes {
+			kinds[mediaType] = kind
 		}
 	}
-	if kind == 0 {
-		return 0
-	}
-	if data := head(payload); !bytes.HasPrefix(data, []byte("PK\x03\x04")) {
-		return 0
-	}
-	return kind
+	return kinds
+}()
+
+// officeExtensions name the type of an archive that declares no Office type, as providers read
+// it from the filename. The content then has to be of that type's kind.
+var officeExtensions = map[string]string{
+	".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	".docm": "application/vnd.ms-word.document.macroenabled.12",
+	".odt":  "application/vnd.oasis.opendocument.text",
+	".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+	".xlsm": "application/vnd.ms-excel.sheet.macroenabled.12",
+	".ods":  "application/vnd.oasis.opendocument.spreadsheet",
+	".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+	".pptm": "application/vnd.ms-powerpoint.presentation.macroenabled.12",
+	".odp":  "application/vnd.oasis.opendocument.presentation",
 }
 
-// FileFamily names the family of an inline document that text extraction can turn into prompt
-// text, or "" for any other file. declared is its declared media type and payload its base64
-// data, of which it reads only the start.
-func FileFamily(declared, payload, filename string) Family {
-	switch {
-	case TextFile(declared, payload):
-		return FamilyText
-	case officeFile(declared, payload, filename) != 0:
-		return FamilyOffice
+// officeFile names the Office type of an inline document, or "": a zip archive that declares an
+// Office type, or that declares no type, only application/octet-stream or only that it is a zip
+// archive, and whose filename has an Office extension.
+func officeFile(declared, payload, filename string) string {
+	mediaType := strings.ToLower(declared)
+	if officeMediaTypes[mediaType] == 0 {
+		switch mediaType {
+		case "", "application/octet-stream", "application/zip", "application/x-zip-compressed":
+			mediaType = officeExtensions[strings.ToLower(path.Ext(filename))]
+		default:
+			return ""
+		}
 	}
-	return ""
+	if data := head(payload); mediaType == "" || !bytes.HasPrefix(data, []byte("PK\x03\x04")) {
+		return ""
+	}
+	return mediaType
+}
+
+// Extractable names an inline document that text extraction can turn into prompt text, or
+// returns the zero Type for any other file. declared is its declared media type and payload its
+// base64 data, of which it reads only the start.
+func Extractable(declared, payload, filename string) filetype.Type {
+	if TextFile(declared, payload) {
+		mediaType := strings.ToLower(declared)
+		if !filetype.IsText(mediaType) {
+			mediaType = "text/plain"
+		}
+		return filetype.Type{Family: filetype.Text, MediaType: mediaType}
+	}
+	if mediaType := officeFile(declared, payload, filename); mediaType != "" {
+		return filetype.Type{Family: filetype.Office, MediaType: mediaType}
+	}
+	return filetype.Type{}
 }
 
 // Bounds of the work that one Office file may cause. Its parts are untrusted XML in an
@@ -220,7 +206,8 @@ func openOfficeArchive(data []byte, retain func(int) error) (map[string]*zip.Fil
 	}
 	parts := make(map[string]*zip.File, len(archive.File))
 	for _, file := range archive.File {
-		name := strings.ToLower(strings.TrimPrefix(file.Name, "/"))
+		// Some Windows libraries write part names with backslashes, which Office reads.
+		name := strings.ToLower(strings.TrimPrefix(strings.ReplaceAll(file.Name, `\`, "/"), "/"))
 		if _, exists := parts[name]; !exists {
 			parts[name] = file
 		}
@@ -1151,14 +1138,19 @@ func (r *csvRow) set(column int, value string) {
 }
 
 // write writes the row as a line of CSV (RFC 4180) and empties it. An empty row writes nothing.
+// Cells can share one long string, so the line stops at the text bound before it is built.
 func (r *csvRow) write(out *officeText) {
 	cells := r.cells
 	r.cells, r.next = r.cells[:0], 0
-	if len(cells) == 0 {
+	if len(cells) == 0 || out.err != nil {
 		return
 	}
 	var line strings.Builder
 	for i, cell := range cells {
+		if line.Len()+len(cell) > officeTextBytes {
+			out.err = errOfficeTooLarge
+			return
+		}
 		if i > 0 {
 			line.WriteByte(',')
 		}
@@ -1256,7 +1248,10 @@ func (r *officeReader) worksheet(part *officeXML, shared []string, dates []bool,
 				}
 				row.set(at, text)
 			case "row":
+				// The text bound stops the sheet at once: every further row could copy a
+				// shared string again.
 				row.write(&r.out)
+				return r.out.err
 			}
 		}
 		return nil

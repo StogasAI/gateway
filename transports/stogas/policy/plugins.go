@@ -8,30 +8,14 @@ import (
 // ActivePlugins contains the request's selected and decrypted plugin settings.
 type ActivePlugins struct {
 	Redaction *redaction.Policy
-	// TextExtraction is the text extraction mode of each family of files.
-	TextExtraction TextExtractionModes
+	// TextExtraction gives each file its text extraction mode.
+	TextExtraction TextExtraction
 	Export         *exportconfig.Config
 }
 
-// TextExtraction returns, for each family of files, the strongest text extraction mode that the
-// policy's plugins set, or TextExtractionOff when none sets one: the gateway changes no file
-// unless a policy says so.
-func (c *Config) TextExtraction() TextExtractionModes {
-	modes := TextExtractionModes{Text: TextExtractionOff, Office: TextExtractionOff}
-	if set := c.textExtractionSet(); set != nil {
-		if set.Text != nil {
-			modes.Text = *set.Text
-		}
-		if set.Office != nil {
-			modes.Office = *set.Office
-		}
-	}
-	return modes
-}
-
-// textExtractionSet returns the strongest text extraction mode that the policy's plugins set for
-// each family, or nil when they set none.
-func (c *Config) textExtractionSet() *TextExtraction {
+// TextExtraction returns the text extraction settings of the policy's plugins as one set, which
+// gives each file the strongest mode that any of them sets for it, or nil when they set none.
+func (c *Config) TextExtraction() TextExtraction {
 	if c == nil {
 		return nil
 	}
@@ -42,28 +26,36 @@ func (c *Config) textExtractionSet() *TextExtraction {
 	return combineTextExtraction(parts)
 }
 
-// combineTextExtraction returns the strongest mode that the parts set for each family, or nil
-// when they set none.
-func combineTextExtraction(parts []*Plugins) *TextExtraction {
-	var combined *TextExtraction
+// combineTextExtraction returns one set that gives each file the strongest mode that the parts
+// set for it, or nil when they set none. A part's media type decides for its files in place of
+// that part's family, so a key combines what each part gives the key's files, and the set shares
+// a single part's settings.
+func combineTextExtraction(parts []*Plugins) TextExtraction {
+	var sets []TextExtraction
 	for _, part := range parts {
-		if part == nil || part.TextExtraction == nil {
-			continue
+		if part != nil && part.TextExtraction != nil {
+			sets = append(sets, part.TextExtraction)
 		}
-		if combined == nil {
-			combined = &TextExtraction{}
-		}
-		into := combined.families()
-		for i, family := range part.TextExtraction.families() {
-			set := *family.mode
-			if set == nil {
+	}
+	switch len(sets) {
+	case 0:
+		return nil
+	case 1:
+		return sets[0]
+	}
+	combined := TextExtraction{}
+	for _, keys := range sets {
+		for key := range keys {
+			if _, done := combined[key]; done {
 				continue
 			}
-			mode := *set
-			if current := *into[i].mode; current != nil {
-				mode = strongerTextExtraction(*current, mode)
+			mode := ""
+			for _, set := range sets {
+				if own, ok := set.set(key); ok {
+					mode = strongerTextExtraction(mode, own)
+				}
 			}
-			*into[i].mode = &mode
+			combined[key] = mode
 		}
 	}
 	return combined

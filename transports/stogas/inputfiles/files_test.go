@@ -5,9 +5,17 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/maximhq/bifrost/transports/stogas/inputfiles/filetype"
 )
+
+// families extracts every file of the families.
+func families(extracted ...filetype.Family) func(filetype.Type) bool {
+	return func(file filetype.Type) bool { return slices.Contains(extracted, file.Family) }
+}
 
 func TestInlineExtractionRejectsMalformedOrUninspectableText(t *testing.T) {
 	for _, tc := range []struct{ name, data, extra string }{
@@ -22,7 +30,7 @@ func TestInlineExtractionRejectsMalformedOrUninspectableText(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fields := map[string]json.RawMessage{"input": json.RawMessage(`[{"role":"user","content":[{"type":"input_file","file_data":"data:text/plain;base64,` + tc.data + `"` + tc.extra + `}]}]`)}
 			before := string(fields["input"])
-			if _, err := Process(fields, true, Options{Extract: Families{Text: true}}); err == nil {
+			if _, err := Process(fields, true, Options{Extract: families(filetype.Text)}); err == nil {
 				t.Fatal("invalid text attachment accepted")
 			}
 			if string(fields["input"]) != before {
@@ -36,7 +44,7 @@ func TestExtractionReservesMemoryBeforeReplacement(t *testing.T) {
 	fields := map[string]json.RawMessage{"messages": json.RawMessage(`[{"role":"user","content":[{"type":"file","file":{"file_data":"data:text/plain;base64,aGk="}}]}]`)}
 	before := string(fields["messages"])
 	capacity := errors.New("capacity")
-	_, err := Process(fields, false, Options{Extract: Families{Text: true}, Reserve: func(bytes int) error {
+	_, err := Process(fields, false, Options{Extract: families(filetype.Text), Reserve: func(bytes int) error {
 		if bytes < 2 {
 			t.Fatal("decoded expansion was not admitted")
 		}
@@ -49,7 +57,7 @@ func TestExtractionReservesMemoryBeforeReplacement(t *testing.T) {
 
 func TestExtractionPreservesOrderAndLeavesDocumentsOpaque(t *testing.T) {
 	fields := map[string]json.RawMessage{"input": json.RawMessage(`[{"role":"user","content":[{"type":"input_text","text":"before"},{"type":"input_file","file_data":"data:text/plain;base64,aGk=","filename":"note.txt"},{"type":"input_file","file_data":"data:application/pdf;base64,JVBERg=="},{"type":"input_text","text":"after"}]}]`)}
-	stats, err := Process(fields, true, Options{Extract: Families{Text: true}})
+	stats, err := Process(fields, true, Options{Extract: families(filetype.Text)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +138,7 @@ func TestExtractionKeepsTheFilesMetadataAndOnlyTextTypes(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fields := map[string]json.RawMessage{"messages": json.RawMessage(`[{"role":"user","content":[` + tc.block + `]}]`)}
-			if _, err := Process(fields, false, Options{Extract: Families{Text: true}}); err != nil {
+			if _, err := Process(fields, false, Options{Extract: families(filetype.Text)}); err != nil {
 				t.Fatal(err)
 			}
 			var got, want any
@@ -149,7 +157,7 @@ func TestKeptTextFilesStayFilesAndGiveTheirText(t *testing.T) {
 		`{"type":"input_file","file_data":"data:text/plain;base64,aGk=","filename":"b.txt"},` +
 		`{"type":"input_file","file_data":"aGk=","filename":"c.zig","prompt_cache_breakpoint":{"mode":"explicit"}}]}]`)}
 	var asked, texts []string
-	stats, err := Process(fields, true, Options{Extract: Families{Text: true}, File: func(path string) (string, bool) {
+	stats, err := Process(fields, true, Options{Extract: families(filetype.Text), File: func(path string) (string, bool) {
 		asked = append(asked, path)
 		if path == "input[0].content[2]" {
 			return "text/plain", true
@@ -273,7 +281,7 @@ func TestProcessLeavesFilesOutsideUserMessagesToTheRequestChecks(t *testing.T) {
 		{"input", true, `{"type":"message","role":"developer","content":[{"type":"input_file","file_data":"data:text/plain;base64,aGk="}]}`},
 	} {
 		fields := map[string]json.RawMessage{tc.field: json.RawMessage("[" + tc.item + "]")}
-		stats, err := Process(fields, tc.responses, Options{Extract: Families{Text: true}, Check: func(string, MediaType) error {
+		stats, err := Process(fields, tc.responses, Options{Extract: families(filetype.Text), Check: func(string, MediaType) error {
 			t.Fatal("checked a file outside a user message")
 			return nil
 		}})

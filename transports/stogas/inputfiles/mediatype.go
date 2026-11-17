@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+
+	"github.com/maximhq/bifrost/transports/stogas/inputfiles/filetype"
 )
 
 // MediaType is what the gateway knows of an attachment's media type: the class that its part
@@ -116,9 +118,9 @@ func sniffedMatches(declared, sniffed string, data []byte) bool {
 	switch {
 	case sniffed == "application/octet-stream":
 		matches, known := signature(declared, data)
-		return !TextMediaType(declared) && (matches || !known)
+		return !filetype.IsText(declared) && (matches || !known)
 	case strings.HasPrefix(sniffed, "text/"):
-		return TextMediaType(declared) || slices.Contains(textEncodedTypes, declared)
+		return filetype.IsText(declared) || slices.Contains(textEncodedTypes, declared)
 	case declared == sniffed || slices.Contains(sniffedAliases[sniffed], declared):
 		return true
 	case sniffed == "application/zip":
@@ -247,15 +249,6 @@ var zipFormats = []string{
 	"application/x-zip-compressed",
 }
 
-// TextMediaType reports whether text extraction reads a file of the media type as text: text/*,
-// JSON, XML and their suffixes, and the types in use for scripts, data and configuration that
-// are plain text.
-func TextMediaType(value string) bool {
-	value = strings.ToLower(value)
-	return strings.HasPrefix(value, "text/") || strings.HasSuffix(value, "+json") || strings.HasSuffix(value, "+xml") ||
-		slices.Contains(textApplicationTypes, value)
-}
-
 // TextFile reports whether an inline document is a text file: one that declares a text type,
 // or that declares no type, or only application/octet-stream, as browsers do for source files,
 // and whose base64 payload starts as text.
@@ -263,48 +256,5 @@ func TextFile(declared, payload string) bool {
 	if declared == "" || strings.EqualFold(declared, "application/octet-stream") {
 		return strings.HasPrefix(Sniff(payload), "text/")
 	}
-	return TextMediaType(declared)
-}
-
-// textApplicationTypes are the application types of plain text formats. Formats that hold
-// binary data or other encoded parts, such as RTF, Protocol Buffers and email messages, are left
-// out.
-var textApplicationTypes = []string{
-	"application/csv",
-	"application/ecmascript",
-	"application/graphql",
-	"application/javascript",
-	"application/json",
-	"application/json5",
-	"application/jsonl",
-	"application/sql",
-	"application/toml",
-	"application/typescript",
-	"application/x-awk",
-	"application/x-bash",
-	"application/x-diff",
-	"application/x-graphql",
-	"application/x-httpd-php",
-	"application/x-httpd-php-source",
-	"application/x-javascript",
-	"application/x-json5",
-	"application/x-latex",
-	"application/x-ndjson",
-	"application/x-patch",
-	"application/x-perl",
-	"application/x-php",
-	"application/x-powershell",
-	"application/x-ruby",
-	"application/x-rust",
-	"application/x-scala",
-	"application/x-sh",
-	"application/x-shellscript",
-	"application/x-sql",
-	"application/x-subrip",
-	"application/x-terraform",
-	"application/x-tex",
-	"application/x-toml",
-	"application/x-yaml",
-	"application/xml",
-	"application/yaml",
+	return filetype.IsText(declared)
 }

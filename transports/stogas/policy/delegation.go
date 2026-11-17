@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"regexp"
 	"sort"
+	"strings"
 )
 
 // Permission is a set of policy sections. Groups and their children resolve to
@@ -54,6 +55,22 @@ var permissionSections = map[string]Permission{
 	"routing.fallbacks":             permissionFallbacks,
 	"routing.missingEncryptionKeys": permissionMissingKeys,
 	"delegation":                    permissionDelegation,
+}
+
+// settingSection names the section that a setting belongs to. A media type of text extraction
+// is part of its family's setting, which combines, is replaced and is delegated as one.
+func settingSection(setting string) string {
+	if key, ok := strings.CutPrefix(setting, "plugins.textExtraction."); ok {
+		if family := textExtractionFamily(key); family != "" {
+			return "plugins.textExtraction." + string(family)
+		}
+	}
+	return setting
+}
+
+// sectionPermission returns the permission that a setting needs.
+func sectionPermission(setting string) Permission {
+	return permissionSections[settingSection(setting)]
 }
 
 // sectionGroups name several settings. Text extraction is a group of its
@@ -247,7 +264,7 @@ func (d *SourceDocument) ownSections() Permission {
 func (d *SourceDocument) eachSection(visit func(name string, value json.RawMessage, section Permission)) {
 	for name, raw := range d.fields {
 		eachSetting(name, raw, func(setting string, value json.RawMessage) {
-			section := permissionSections[setting]
+			section := sectionPermission(setting)
 			// Ciphertext also needs permission to hide a plugin's settings.
 			if name == "plugins" && d.EncryptedUnits()&section != 0 {
 				section |= permissionEncryptedPlugins

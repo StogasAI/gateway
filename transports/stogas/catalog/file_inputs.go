@@ -14,6 +14,7 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/inputfiles"
+	"github.com/maximhq/bifrost/transports/stogas/inputfiles/filetype"
 	"github.com/maximhq/bifrost/transports/stogas/policy"
 	"github.com/maximhq/bifrost/transports/stogas/rawjson"
 )
@@ -57,10 +58,10 @@ type Attachment struct {
 	URL, Data, ID string
 	Filename      string
 	FileType      string
-	// family names the family of an inline text or Office file, which a deployment that reads
-	// it gets as a file, and which text extraction turns into prompt text. It is "" for any
-	// other attachment.
-	family inputfiles.Family
+	// extractable names an inline text or Office file, which a deployment that reads it gets as
+	// a file, and which text extraction turns into prompt text. It is zero for any other
+	// attachment.
+	extractable filetype.Type
 	// mediaType is what the part and the start of its content say of its type, for the
 	// policy's input.mediaTypes, and mediaTypeErr why the two disagree.
 	mediaType    inputfiles.MediaType
@@ -133,7 +134,7 @@ func documentError(claude bool, formats DocumentFormats, attachment Attachment, 
 	if err != nil {
 		return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: path + " " + err.Error(), Param: path}
 	}
-	if attachment.family == inputfiles.FamilyText {
+	if attachment.extractable.Family == filetype.Text {
 		if _, ok := textDeclaration(claude, formats, mediaType, extension, strings.HasPrefix(attachment.Data, "data:")); ok {
 			return nil
 		}
@@ -242,18 +243,15 @@ func inputCheckRefusal(path, setting string) error {
 }
 
 // textExtractionHint ends the refusal of an inline text or Office file that a pair whose policy
-// does not extract its family cannot read. Text extraction turns the file into text, which every
-// deployment and input check reads.
-func textExtractionHint(family inputfiles.Family) string {
-	return ". Set plugins.textExtraction." + string(family) + " to auto to send it as text"
-}
-
-// extractionMode returns the text extraction mode of a family.
-func extractionMode(modes policy.TextExtractionModes, family inputfiles.Family) string {
-	if family == inputfiles.FamilyOffice {
-		return modes.Office
+// does not extract it cannot read. Text extraction turns the file into text, which every
+// deployment and input check reads. It names the setting that decides for the file: its media
+// type where the pair's policy sets one, and otherwise its family.
+func textExtractionHint(file filetype.Type, extraction policy.TextExtraction) string {
+	key := string(file.Family)
+	if _, ok := extraction[file.MediaType]; ok {
+		key = file.MediaType
 	}
-	return modes.Text
+	return ". Set plugins.textExtraction." + key + " to auto to send it as text"
 }
 
 // CloudRunsClaude reports whether AWS or Google runs a Claude deployment itself, rather than
@@ -284,18 +282,17 @@ type attachmentPair struct {
 	selection routingSelection
 	// mediaTypes are the policy's input.mediaTypes.
 	mediaTypes *policy.MediaTypes
-	// extracts names the families of inline files that the pair reads whatever its deployment
-	// reads, as a file or as text depending on the mode. Text extraction is never encrypted.
-	extracts inputfiles.Families
+	// extraction gives the mode of each inline file. The pair reads a file whose mode is not
+	// off whatever its deployment reads, as a file or as text. Text extraction is never
+	// encrypted.
+	extraction policy.TextExtraction
 	// check names the setting that refuses an attachment that stays opaque, input.asciiOnly or
 	// plugins.redaction, or is "".
 	check string
 }
 
 func newAttachmentPair(selection routingSelection, config *policy.Config) attachmentPair {
-	modes := config.TextExtraction()
-	extracts := inputfiles.Families{Text: modes.Text != policy.TextExtractionOff, Office: modes.Office != policy.TextExtractionOff}
-	return attachmentPair{selection: selection, mediaTypes: config.MediaTypes(), extracts: extracts, check: config.InputCheck()}
+	return attachmentPair{selection: selection, mediaTypes: config.MediaTypes(), extraction: config.TextExtraction(), check: config.InputCheck()}
 }
 
 // typeRefusal reports why the pair's policy refuses an attachment's media type, or nil.
@@ -309,7 +306,7 @@ func (p attachmentPair) refusal(attachment Attachment, subject string) error {
 	if err := p.typeRefusal(attachment); err != nil {
 		return err
 	}
-	if p.extracts.Has(attachment.family) {
+	if p.extraction.Extracts(attachment.extractable) {
 		return nil
 	}
 	if err := attachmentError(p.selection.provider, p.selection.deployment, attachment, subject); err != nil {
@@ -335,7 +332,7 @@ func (p attachmentPair) reads(attachments []Attachment) bool {
 // readable. An inline text or Office file counts as read, since a policy can extract it.
 func deploymentReads(attachments []Attachment, selection routingSelection) bool {
 	for _, attachment := range attachments {
-		if attachment.family == "" && attachmentError(selection.provider, selection.deployment, attachment, routingSubject) != nil {
+		if attachment.extractable.Family == "" && attachmentError(selection.provider, selection.deployment, attachment, routingSubject) != nil {
 			return false
 		}
 	}
@@ -403,8 +400,8 @@ func unreadAttachment(attachment Attachment, reasons []attachmentReason) error {
 	}
 	// Text extraction makes an inline text or Office file readable to every pair whose policy
 	// allows its type, and a pair that extracts it reads it.
-	if attachment.family != "" && slices.ContainsFunc(reasons, func(reason attachmentReason) bool { return reason.pair.typeRefusal(attachment) == nil }) {
-		refusal.Message += textExtractionHint(attachment.family)
+	if i := slices.IndexFunc(reasons, func(reason attachmentReason) bool { return reason.pair.typeRefusal(attachment) == nil }); i >= 0 && attachment.extractable.Family != "" {
+		refusal.Message += textExtractionHint(attachment.extractable, reasons[i].pair.extraction)
 	}
 	return refusal
 }
@@ -531,7 +528,7 @@ func readAttachment(block map[string]json.RawMessage, path string, responses boo
 			return Attachment{}, false
 		}
 		if document {
-			attachment.family = inputfiles.FileFamily(declared, payload, attachment.Filename)
+			attachment.extractable = inputfiles.Extractable(declared, payload, attachment.Filename)
 		}
 	}
 	if format != "" {
