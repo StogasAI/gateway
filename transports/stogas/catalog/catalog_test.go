@@ -1745,6 +1745,22 @@ func TestSnapshotValidationChecksTheCompanies(t *testing.T) {
 			route := graph["deployments"].(map[string]any)["anthropic-claude-opus-5"].(map[string]any)["routes"].(map[string]any)["anthropic-messages"].(map[string]any)
 			route["hostedTools"].(map[string]any)["web_fetch"].(map[string]any)["dataHandling"].(map[string]any)["sharedWith"] = []any{"example"}
 		}, "has an invalid list of companies that web_fetch shares content with"},
+		{"certifications out of the catalog's order", func(_, graph map[string]any) {
+			route := graph["deployments"].(map[string]any)["anthropic-claude-opus-5"].(map[string]any)["routes"].(map[string]any)["anthropic-messages"].(map[string]any)
+			route["dataHandling"].(map[string]any)["certifications"] = []any{"iso-27001", "soc2-type2"}
+		}, "has an invalid list of certifications"},
+		{"a certification that the gateway does not know", func(_, graph map[string]any) {
+			route := graph["deployments"].(map[string]any)["anthropic-claude-opus-5"].(map[string]any)["routes"].(map[string]any)["anthropic-messages"].(map[string]any)
+			route["dataHandling"].(map[string]any)["certifications"] = []any{"soc-2"}
+		}, "certifications"},
+		{"a deployment without its list of certifications", func(_, graph map[string]any) {
+			route := graph["deployments"].(map[string]any)["anthropic-claude-opus-5"].(map[string]any)["routes"].(map[string]any)["anthropic-messages"].(map[string]any)
+			delete(route["dataHandling"].(map[string]any), "certifications")
+		}, "certifications"},
+		{"a hosted tool that removes a certification twice", func(_, graph map[string]any) {
+			route := graph["deployments"].(map[string]any)["anthropic-claude-opus-5"].(map[string]any)["routes"].(map[string]any)["anthropic-messages"].(map[string]any)
+			route["hostedTools"].(map[string]any)["web_fetch"].(map[string]any)["dataHandling"].(map[string]any)["withoutCertifications"] = []any{"hipaa-eligible", "hipaa-eligible"}
+		}, "has an invalid list of certifications that do not cover web_fetch"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var whole map[string]any

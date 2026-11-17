@@ -42,3 +42,4 @@ routes:
         retentionDays: null
         zeroDataRetention: false
         sharedWith: [unknown]
+        withoutCertifications: [hipaa-eligible]

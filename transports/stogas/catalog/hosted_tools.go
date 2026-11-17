@@ -49,6 +49,8 @@ type HostedToolDataHandling struct {
 	TEEVerified        *bool           `json:"teeVerified,omitzero"`
 	// SharedWith lists the companies that the tool sends request content to.
 	SharedWith []string `json:"sharedWith,omitzero"`
+	// WithoutCertifications lists the deployment's certifications that do not cover the tool.
+	WithoutCertifications []string `json:"withoutCertifications,omitzero"`
 }
 
 // RetentionEffect is a tool's retention. Unset leaves the deployment's; a nil Days is unknown.
@@ -115,6 +117,11 @@ func (d Deployment) EffectiveDataHandling(tools []HostedTool) DataHandling {
 		if len(effect.SharedWith) > 0 {
 			handling.SharedWith = slices.Compact(slices.Sorted(slices.Values(slices.Concat(handling.SharedWith, effect.SharedWith))))
 		}
+		if len(effect.WithoutCertifications) > 0 {
+			handling.Certifications = slices.DeleteFunc(slices.Clone(handling.Certifications), func(id string) bool {
+				return slices.Contains(effect.WithoutCertifications, id)
+			})
+		}
 	}
 	return handling
 }
@@ -132,6 +139,9 @@ func validateHostedTools(owner string, claudeWire bool, tools map[HostedTool]Hos
 			return fmt.Errorf("%s offers unknown hosted tool %q", owner, tool)
 		}
 		effect := offer.DataHandling
+		if !certificationsInOrder(effect.WithoutCertifications) {
+			return fmt.Errorf("%s has an invalid list of certifications that do not cover %s", owner, tool)
+		}
 		if effect.RetentionDays.Set && effect.RetentionDays.Days != nil && *effect.RetentionDays.Days < 0 ||
 			isFalse(effect.TrainingUse) || isTrue(effect.ZeroDataRetention) || isTrue(effect.EndToEndEncrypted) ||
 			isTrue(effect.TEE) || isTrue(effect.TEEVerified) {

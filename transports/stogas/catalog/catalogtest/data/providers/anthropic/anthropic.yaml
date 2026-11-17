@@ -7,3 +7,4 @@ providers:
     storageLocation: none
     retentionDays: 0
     trainingUse: false
+    certifications: [soc2-type2, iso-27001, iso-42001, hipaa-eligible]

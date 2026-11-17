@@ -70,6 +70,26 @@ func TestSavedCompaniesAreCatalogCompanies(t *testing.T) {
 	}
 }
 
+func TestSavedCertificationsAreKnown(t *testing.T) {
+	for _, source := range []string{
+		`"soc-2" in deployment.dataHandling.certifications`,
+		`deployment.dataHandling.certifications.exists(c, c == "SOC2-TYPE2")`,
+	} {
+		if _, err := CompileCEL(source); err == nil || !strings.Contains(err.Error(), "'soc2-type2'") {
+			t.Errorf("%s: error = %v", source, err)
+		}
+	}
+	for _, source := range []string{
+		`"soc2-type2" in deployment.dataHandling.certifications && "iso-27001" in deployment.dataHandling.certifications`,
+		`["fedramp-high", "dod-il5"].all(c, c in deployment.dataHandling.certifications)`,
+		`deployment.dataHandling.certifications.size() > 0`,
+	} {
+		if _, err := CompileCEL(source); err != nil {
+			t.Errorf("%s: %v", source, err)
+		}
+	}
+}
+
 func TestSavedLocationsAreCatalogPlaces(t *testing.T) {
 	for source, message := range map[string]string{
 		`deployment.dataHandling.processingLocation == "EU"`:             "processingLocation cannot be 'EU'; use 'eu'",

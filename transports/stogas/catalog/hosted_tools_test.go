@@ -57,13 +57,14 @@ func TestEffectiveDataHandlingOnlyWorsens(t *testing.T) {
 	yes, no := true, false
 	deployment := Deployment{
 		DataHandling: DataHandling{ProcessingLocation: "US", StorageLocation: "none", RetentionDays: days(0),
-			ZeroDataRetention: true, EndToEndEncrypted: true, TEE: true, TEEVerified: true, SharedWith: []string{"openai"}},
+			ZeroDataRetention: true, EndToEndEncrypted: true, TEE: true, TEEVerified: true, SharedWith: []string{"openai"},
+			Certifications: []string{"soc2-type2", "iso-27001", "hipaa-eligible"}},
 		Locations: places,
 		HostedTools: map[HostedTool]HostedToolOffer{
 			HostedToolWebSearch: {DataHandling: HostedToolDataHandling{ProcessingLocation: "DE", RetentionDays: RetentionEffect{Set: true, Days: days(30)}}},
 			HostedToolWebFetch: {DataHandling: HostedToolDataHandling{ProcessingLocation: "unknown", StorageLocation: "unknown",
 				RetentionDays: RetentionEffect{Set: true}, ZeroDataRetention: &no, TrainingUse: &yes, EndToEndEncrypted: &no, TEE: &no, TEEVerified: &no,
-				SharedWith: []string{"anthropic", "openai", "unknown"}}},
+				SharedWith: []string{"anthropic", "openai", "unknown"}, WithoutCertifications: []string{"hipaa-eligible", "fedramp-high"}}},
 		},
 	}
 	if got := deployment.EffectiveDataHandling(nil); !reflect.DeepEqual(got, deployment.DataHandling) {
@@ -79,6 +80,11 @@ func TestEffectiveDataHandlingOnlyWorsens(t *testing.T) {
 		fetch.TrainingUse == nil || !*fetch.TrainingUse || fetch.EndToEndEncrypted || fetch.TEE || fetch.TEEVerified ||
 		!slices.Equal(fetch.SharedWith, []string{"anthropic", "openai", "unknown"}) || !slices.Equal(search.SharedWith, []string{"openai"}) {
 		t.Fatalf("web fetch: %+v", fetch)
+	}
+	// A tool that an audit or agreement does not cover takes it from the request, and from no other.
+	if !slices.Equal(fetch.Certifications, []string{"soc2-type2", "iso-27001"}) ||
+		!slices.Equal(search.Certifications, deployment.DataHandling.Certifications) || len(deployment.DataHandling.Certifications) != 3 {
+		t.Fatalf("certifications: web fetch %v, web search %v, deployment %v", fetch.Certifications, search.Certifications, deployment.DataHandling.Certifications)
 	}
 	if *deployment.DataHandling.RetentionDays != 0 {
 		t.Fatal("the join changed the deployment's own retention")

@@ -19,6 +19,7 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/location"
+	"github.com/maximhq/bifrost/transports/stogas/policy"
 )
 
 const (
@@ -1302,7 +1303,23 @@ func validateLocations(graph compiledGraph, places *location.Places) error {
 	return nil
 }
 
+// certificationsInOrder accepts a list of known certifications in the catalog's order, each once.
+func certificationsInOrder(ids []string) bool {
+	previous := -1
+	for _, id := range ids {
+		rank := slices.Index(policy.Certifications, id)
+		if rank <= previous {
+			return false
+		}
+		previous = rank
+	}
+	return true
+}
+
 func validateDeploymentDataHandling(owner string, handling DataHandling) error {
+	if handling.Certifications == nil || !certificationsInOrder(handling.Certifications) {
+		return fmt.Errorf("%s has an invalid list of certifications", owner)
+	}
 	if handling.TEEVerified && !handling.TEE {
 		return fmt.Errorf("%s verifies a TEE that is not enabled", owner)
 	}

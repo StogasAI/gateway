@@ -17,6 +17,14 @@ import (
 // ReasoningEfforts is the effort scale from least to most reasoning.
 var ReasoningEfforts = []string{"minimal", "low", "medium", "high", "xhigh", "max"}
 
+// Certifications lists, in the catalog's order, the audits and authorizations that a deployment's
+// service can hold, and hipaa-eligible for a service whose company signs a business associate
+// agreement for it.
+var Certifications = []string{
+	"soc2-type2", "iso-27001", "iso-27017", "iso-27018", "iso-27701", "iso-42001", "pci-dss", "csa-star-level-2",
+	"hipaa-eligible", "fedramp-moderate", "fedramp-high", "dod-il2", "dod-il4", "dod-il5",
+}
+
 // fieldDomain describes the strings that a field, or an item of a list field, can hold when they
 // form a closed set or have a fixed form. A comparison with any other string could never match, so
 // it fails at save, and the catalog loader rejects a catalog value outside the domain.
@@ -111,6 +119,7 @@ var fieldDomains = map[string]fieldDomain{
 	"deployment.hosting":                         company,
 	"deployment.companies":                       company,
 	"deployment.dataHandling.sharedWith":         company,
+	"deployment.dataHandling.certifications":     oneOf(Certifications...),
 	"author.companyId":                           company,
 	"provider.companyId":                         company,
 	"deployment.inputModalities":                 modalities,

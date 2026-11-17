@@ -125,6 +125,9 @@ type DataHandling struct {
 	// SharedWith lists, in order, each company other than the provider's and the hosting that
 	// receives requests, or HostingUnknown for companies that the provider does not name.
 	SharedWith []string `json:"sharedWith"`
+	// Certifications lists, in the order of policy.Certifications, the audits and authorizations
+	// that the company which runs the service names it in. An empty list means that none is known.
+	Certifications []string `json:"certifications"`
 }
 
 // CompanyAnthropic is Anthropic's company, which runs Claude on its own API and behind the sign-in

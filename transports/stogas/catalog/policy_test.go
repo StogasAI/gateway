@@ -547,20 +547,23 @@ func TestResolvedPolicyValuesExposeTypedRegisteredCatalogAndRequestData(t *testi
 }
 
 // Policies read every company that receives a request: the provider's, the hosting, and each one
-// that the deployment or a hosted tool that the request enables shares it with.
+// that the deployment or a hosted tool that the request enables shares it with. They read the
+// certifications that cover the whole request, so a tool outside an agreement removes it.
 func TestPoliciesReadTheCompaniesThatReceiveARequest(t *testing.T) {
 	loadTestCatalog(t)
 	for _, test := range []struct {
 		name, deployment, tools string
 		hosting                 string
 		sharedWith, receive     []string
+		certifications          []string
 	}{
-		{"a provider that runs the model", "anthropic-claude-opus-5", "", "anthropic", []string{}, []string{"anthropic"}},
+		{"a provider that runs the model", "anthropic-claude-opus-5", "", "anthropic", []string{}, []string{"anthropic"},
+			[]string{"soc2-type2", "iso-27001", "iso-42001", "hipaa-eligible"}},
 		{"a tool that sends content to website publishers", "anthropic-claude-opus-5", `,"tools":[{"type":"web_fetch"}]`,
-			"anthropic", []string{"unknown"}, []string{"anthropic", "unknown"}},
-		{"a model that its developer monitors", "google-cloud-claude-fable-5-1-eu", "", "google", []string{"anthropic"}, []string{"google", "anthropic"}},
-		{"a provider that sells its own service", "aws-claude-fable-5-1", "", "amazon", []string{}, []string{"amazon"}},
-		{"a provider that sells another company's service", "aws-claude-fable-5-1-anthropic-hosted", "", "anthropic", []string{}, []string{"amazon", "anthropic"}},
+			"anthropic", []string{"unknown"}, []string{"anthropic", "unknown"}, []string{"soc2-type2", "iso-27001", "iso-42001"}},
+		{"a model that its developer monitors", "google-cloud-claude-fable-5-1-eu", "", "google", []string{"anthropic"}, []string{"google", "anthropic"}, []string{}},
+		{"a provider that sells its own service", "aws-claude-fable-5-1", "", "amazon", []string{}, []string{"amazon"}, []string{}},
+		{"a provider that sells another company's service", "aws-claude-fable-5-1-anthropic-hosted", "", "anthropic", []string{}, []string{"amazon", "anthropic"}, []string{}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			provider, _, _ := strings.Cut(test.deployment, "-claude")
@@ -580,6 +583,9 @@ func TestPoliciesReadTheCompaniesThatReceiveARequest(t *testing.T) {
 			companies, _ := values.PolicyValue("deployment.companies")
 			if hosting.String != test.hosting || !slices.Equal(shared.Strings, test.sharedWith) || !slices.Equal(companies.Strings, test.receive) {
 				t.Fatalf("hosting %q, shared with %v, received by %v", hosting.String, shared.Strings, companies.Strings)
+			}
+			if certifications, _ := values.PolicyValue("deployment.dataHandling.certifications"); !slices.Equal(certifications.Strings, test.certifications) {
+				t.Fatalf("certifications %v, want %v", certifications.Strings, test.certifications)
 			}
 		})
 	}
