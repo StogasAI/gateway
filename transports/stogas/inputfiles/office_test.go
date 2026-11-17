@@ -248,7 +248,7 @@ func TestOfficeArchivesStayWithinBounds(t *testing.T) {
 		{"unclosed", archive(t, "_rels/.rels", rels("word/document.xml"), "word/document.xml", wordOpen), officeDocument, errOfficeUnreadable},
 		{"entity", word(t, `<w:p><w:r><w:t>&bomb;</w:t></w:r></w:p>`), officeDocument, errOfficeUnreadable},
 		{"UTF-16", archive(t, "_rels/.rels", rels("word/document.xml"), "word/document.xml", `<?xml version="1.0" encoding="UTF-16"?>`+wordOpen+wordClose), officeDocument, errOfficeUnreadable},
-		{"another kind", word(t, ""), officeSpreadsheet, officeError("declares a spreadsheet, but its content is a text document")},
+		{"another kind", word(t, ""), officeSpreadsheet, readError("declares a spreadsheet, but its content is a text document")},
 		{"zip64 locator", zip64(word(t, "")), officeDocument, errOfficeTooLarge},
 		{"directory away from the end record", directoryOffset(word(t, ""), -1), officeDocument, errOfficeUnreadable},
 		{"more text than the bound", word(t, `<w:p><w:r><w:t>`+strings.Repeat("a", officeTextBytes+1)+`</w:t></w:r></w:p>`), officeDocument, errOfficeTooLarge},

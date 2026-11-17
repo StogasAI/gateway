@@ -1,6 +1,7 @@
 // Package inputfiles inspects declared attachments without fetching remote
-// resources. Only opted-in files are expanded: UTF-8 text, and the XML of Office
-// files. Content sniffing reads no more than a payload's first 512 bytes.
+// resources. Only opted-in files are expanded: UTF-8 text, the XML of Office
+// files, and the pages of PDFs, which a separate program reads. Content
+// sniffing reads no more than a payload's first 512 bytes.
 package inputfiles
 
 import (
@@ -31,7 +32,7 @@ type Stats struct {
 	InlineBytes int
 	// Opaque names the first attachment whose content the gateway does not read, or is "" when
 	// there is none: a URL, a file ID, or a file that stays one, unless it is a text file, which
-	// Text reads. An Office file that stays a file is opaque.
+	// Text reads. An Office file or a PDF that stays a file is opaque.
 	Opaque string
 	// Extracted counts the files that became prompt text, and ExtractionTime is what reading
 	// them took.
@@ -52,10 +53,10 @@ type Options struct {
 	// Extract reports whether an inline file of the type becomes prompt text where it does not
 	// stay a file. Nil extracts none.
 	Extract func(filetype.Type) bool
-	// File reports whether the text or Office file at a path, such as messages[0].content[1],
-	// stays a file, because the deployment reads it and nothing requires its text, and the media
-	// type that a text file must declare for the deployment, or "" for its own. Nil keeps no
-	// such file.
+	// File reports whether the text file, Office file or PDF at a path, such as
+	// messages[0].content[1], stays a file, because the deployment reads it and nothing requires
+	// its text, and the media type that a text file must declare for the deployment, or "" for
+	// its own. Nil keeps no such file.
 	File func(path string) (mediaType string, ok bool)
 	// Text receives the text of each text file that stays a file, which the provider reads as
 	// prompt text, so that the caller can count it.
@@ -331,8 +332,8 @@ func (p *processor) block(path string, block map[string]json.RawMessage, respons
 			if text || err != nil {
 				return replacement, err
 			}
-		case fileType.Family == filetype.Office && !kept && extract:
-			return p.office(path, block, file, responses, mediaType, payload, fileType.MediaType)
+		case fileType.Family != filetype.Text && !kept && extract:
+			return p.document(path, block, file, responses, mediaType, payload, fileType)
 		}
 	}
 	// A bounded decoder validates and counts binary input without retaining a
@@ -423,12 +424,12 @@ func (p *processor) extracted(started time.Time) {
 	p.stats.ExtractionTime += time.Since(started)
 }
 
-// office reads the inline Office file of a block, whose format officeType names, and returns the
-// text block that replaces it.
-func (p *processor) office(path string, block, file map[string]json.RawMessage, responses bool, mediaType, payload, officeType string) (json.RawMessage, error) {
+// document reads the inline Office file or PDF of a block and returns the text block that
+// replaces it.
+func (p *processor) document(path string, block, file map[string]json.RawMessage, responses bool, mediaType, payload string, fileType filetype.Type) (json.RawMessage, error) {
 	refuse := func(reason string) (json.RawMessage, error) { return nil, &PartError{Path: path, Reason: reason} }
 	started := time.Now()
-	// The request lease covers the decoded archive, and then what the extraction keeps.
+	// The request lease covers the decoded file, and then what the extraction keeps.
 	retain := func(bytes int) error {
 		p.expansion += bytes
 		if p.Reserve != nil {
@@ -443,9 +444,16 @@ func (p *processor) office(path string, block, file map[string]json.RawMessage, 
 	if err != nil {
 		return refuse("has invalid base64")
 	}
-	text, err := extractOffice(decoded, officeMediaTypes[officeType], retain)
+	var text string
+	if fileType.Family == filetype.PDF {
+		if text, err = extractPDF(decoded); err == nil {
+			err = retain(len(text))
+		}
+	} else {
+		text, err = extractOffice(decoded, officeMediaTypes[fileType.MediaType], retain)
+	}
 	var capacity capacityError
-	var reason officeError
+	var reason readError
 	switch {
 	case errors.As(err, &capacity):
 		return nil, capacity.error
@@ -455,8 +463,8 @@ func (p *processor) office(path string, block, file map[string]json.RawMessage, 
 		return nil, err
 	}
 	p.stats.InlineBytes += len(decoded)
-	// Only a type that names the Office format says more than the filename.
-	if !strings.EqualFold(mediaType, officeType) {
+	// Only a type that names the format says more than the filename.
+	if !strings.EqualFold(mediaType, fileType.MediaType) {
 		mediaType = ""
 	}
 	replacement, err := textBlock(path, block, file, responses, mediaType, text)

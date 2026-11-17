@@ -99,9 +99,9 @@ func TestTextExtractionRequirementsAndDefaults(t *testing.T) {
 func TestTextExtractionTakesOnlyItsFilesAndModes(t *testing.T) {
 	for _, value := range []string{
 		`true`, `"auto"`, `null`, `{}`, `[]`, `{"text":"yes"}`, `{"text":"Always"}`, `{"text":""}`, `{"text":true}`, `{"text":null}`,
-		`{"pdf":"auto"}`, `{"text":"auto","pdf":"auto"}`, `{"Text":"auto"}`,
+		`{"PDF":"auto"}`, `{"text":"auto","pdfs":"auto"}`, `{"Text":"auto"}`,
 		// A media type must be one that a family holds, in full and in lowercase.
-		`{"application/pdf":"auto"}`, `{"image/png":"auto"}`, `{"application/zip":"auto"}`, `{"application/msword":"auto"}`,
+		`{"application/x-pdf":"auto"}`, `{"image/png":"auto"}`, `{"application/zip":"auto"}`, `{"application/msword":"auto"}`,
 		`{"text/*":"auto"}`, `{"*/*":"auto"}`, `{"Text/CSV":"auto"}`, `{"text/csv; charset=utf-8":"auto"}`, `{"csv":"auto"}`, `{".csv":"auto"}`,
 		`{"text/csv":"yes"}`, `{"text":"auto","text/csv":null}`,
 	} {
@@ -110,7 +110,7 @@ func TestTextExtractionTakesOnlyItsFilesAndModes(t *testing.T) {
 		}
 	}
 	for _, value := range []string{
-		`{"text":"auto"}`, `{"office":"off"}`, `{"text/csv":"always"}`, `{"text/x-python":"auto"}`, `{"application/json":"off"}`,
+		`{"text":"auto"}`, `{"office":"off"}`, `{"pdf":"auto"}`, `{"pdf":"always","application/pdf":"off"}`, `{"text/csv":"always"}`, `{"text/x-python":"auto"}`, `{"application/json":"off"}`,
 		`{"application/ld+json":"auto"}`, `{"image/svg+xml":"auto"}`, `{"application/vnd.oasis.opendocument.spreadsheet":"always"}`,
 		`{"text":"auto","text/csv":"always","office":"off","application/vnd.ms-excel.sheet.macroenabled.12":"auto"}`,
 	} {

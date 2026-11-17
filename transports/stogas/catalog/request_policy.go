@@ -53,8 +53,8 @@ type requestVariants struct {
 	budget        policy.SourceBudget
 	// attachments are the request's attachments, where they can narrow the candidates.
 	attachments []Attachment
-	// files are its inline text and Office files, which stay files where a pair's deployment
-	// reads them, unless the pair's policy always extracts them.
+	// files are its inline text files, Office files and PDFs, which stay files where a pair's
+	// deployment reads them, unless the pair's policy always extracts them.
 	files []Attachment
 	// hostedTools are the hosted tools that the request lets the model call, whose data
 	// handling joins each candidate's.
@@ -566,8 +566,8 @@ func (v *requestVariants) reserve(bytes int) error {
 	return nil
 }
 
-// bodyFor prepares the request's body for a pair: its deployment, which decides which text and
-// Office files stay files where extraction is auto, and its policy.
+// bodyFor prepares the request's body for a pair: its deployment, which decides which text files,
+// Office files and PDFs stay files where extraction is auto, and its policy.
 func (v *requestVariants) bodyFor(selection routingSelection, value RequestPolicy) (*requestBodyVariant, error) {
 	surface := redaction.SurfaceChat
 	if v.route == RouteResponses {
@@ -641,9 +641,9 @@ func (v *requestVariants) prepareBody(selection routingSelection, value RequestP
 	}
 	options := inputfiles.Options{Reserve: reserveExpansion}
 	options.Extract = extraction.Extracts
-	// A text or Office file that the deployment reads stays a file, unless the policy always
-	// extracts it or the check must read it. fileTexts are the texts of the text
-	// files that stay, for the token hold.
+	// A text file, Office file or PDF that the deployment reads stays a file, unless the policy
+	// always extracts it or the check must read it. fileTexts are the texts of the text files
+	// that stay, for the token hold.
 	var fileTexts []string
 	if check == "" {
 		options.File = func(path string) (string, bool) {
@@ -668,7 +668,13 @@ func (v *requestVariants) prepareBody(selection routingSelection, value RequestP
 		}
 	}
 	files, err := inputfiles.Process(fields, v.route == RouteResponses, options)
-	if err != nil {
+	switch {
+	// Another pair would wait for the same readers, or miss the same reader.
+	case errors.Is(err, inputfiles.ErrPDFBusy):
+		return nil, capacityError{APIError{Code: "gateway_capacity_exceeded", StatusCode: http.StatusServiceUnavailable, Type: "service_unavailable", Message: "PDF text extraction is busy. Try again."}}
+	case errors.Is(err, inputfiles.ErrPDFUnavailable):
+		return nil, capacityError{err}
+	case err != nil:
 		public := APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: err.Error()}
 		var part *inputfiles.PartError
 		if errors.As(err, &part) {

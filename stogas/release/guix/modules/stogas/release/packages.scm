@@ -24,6 +24,7 @@
             stogas-linux
             stogas-ntpd-rs
             stogas-ovmf
+            stogas-pdftext
             stogas-systemd-uki-tools
             stogas-verifier
             stogas-virt-firmware-rs))
@@ -442,6 +443,28 @@ OUTPUTS files that BUILD leaves in TARGET."
    "https://github.com/pendulum-project/ntpd-rs"
    "Static ntpd-rs NTS client daemon"
    (list license:asl2.0 license:expat)
+   #:target "target/x86_64-unknown-linux-gnu/release"))
+
+;; The gateway starts this program for each PDF whose text it needs.  Like
+;; every program in the guest rootfs it is a fixed-address static executable.
+;; Its tests run the built binary, so they also show that it can install its
+;; system call filter.
+(define stogas-pdftext
+  (cargo-package
+   "stogas-pdftext" "0"
+   (local-file (string-append (dirname %release-root) "/pdftext")
+               "stogas-pdftext-source" #:recursive? #t)
+   (release-path "locks/pdftext.Cargo.lock")
+   #~(begin
+       (setenv "CARGO_BUILD_TARGET" "x86_64-unknown-linux-gnu")
+       (setenv "CARGO_PROFILE_RELEASE_DEBUG" "false")
+       (setenv "RUSTFLAGS" "-C target-feature=+crt-static -C relocation-model=static")
+       (invoke "cargo" "build" "--release" "--locked" "--offline"))
+   #~(invoke "cargo" "test" "--release" "--locked" "--offline" "--tests")
+   '("stogas-pdftext")
+   "https://github.com/StogasAI/gateway"
+   "Static program that reads the text of one PDF under a system call filter"
+   license:asl2.0
    #:target "target/x86_64-unknown-linux-gnu/release"))
 
 ;; A staging build sets STOGAS_VERIFIER_SOURCE to a captured working tree.

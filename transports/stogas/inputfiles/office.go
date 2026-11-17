@@ -97,6 +97,9 @@ func Extractable(declared, payload, filename string) filetype.Type {
 	if mediaType := officeFile(declared, payload, filename); mediaType != "" {
 		return filetype.Type{Family: filetype.Office, MediaType: mediaType}
 	}
+	if pdfFile(declared, payload, filename) {
+		return filetype.Type{Family: filetype.PDF, MediaType: filetype.PDFMediaType}
+	}
 	return filetype.Type{}
 }
 
@@ -118,14 +121,15 @@ const (
 	officeColumns = 16384
 )
 
-// officeError is a reason that follows the attachment's path in a refusal.
-type officeError string
+// readError is a reason that follows the attachment's path in a refusal of a file that text
+// extraction cannot read.
+type readError string
 
-func (e officeError) Error() string { return string(e) }
+func (e readError) Error() string { return string(e) }
 
 const (
-	errOfficeUnreadable = officeError("is not a readable Office file")
-	errOfficeTooLarge   = officeError("holds more than text extraction reads: 32 MiB of XML or 8 MiB of text")
+	errOfficeUnreadable = readError("is not a readable Office file")
+	errOfficeTooLarge   = readError("holds more than text extraction reads: 32 MiB of XML or 8 MiB of text")
 )
 
 // extractOffice returns the text of an Office file of the declared kind. retain admits bytes
@@ -147,7 +151,7 @@ func extractOffice(data []byte, kind officeKind, retain func(int) error) (string
 		err = reader.out.err
 	}
 	if err != nil {
-		var refusal officeError
+		var refusal readError
 		var capacity capacityError
 		if errors.As(err, &refusal) || errors.As(err, &capacity) {
 			return "", err
@@ -156,7 +160,7 @@ func extractOffice(data []byte, kind officeKind, retain func(int) error) (string
 		return "", errOfficeUnreadable
 	}
 	if found != kind {
-		return "", officeError("declares " + kind.String() + ", but its content is " + found.String())
+		return "", readError("declares " + kind.String() + ", but its content is " + found.String())
 	}
 	text := strings.TrimRight(reader.out.b.String(), "\n")
 	// The same rule as for a text file: the text is UTF-8 and has no NUL.

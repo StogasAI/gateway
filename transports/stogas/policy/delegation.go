@@ -26,6 +26,7 @@ const (
 	permissionDelegation
 	permissionTextExtraction
 	permissionOfficeExtraction
+	permissionPDFExtraction
 	permissionExport
 	permissionTotalTimeout
 	permissionOutputIdleTimeout
@@ -48,6 +49,7 @@ var permissionSections = map[string]Permission{
 	"plugins.textExtraction":        textExtractionUnits,
 	"plugins.textExtraction.text":   permissionTextExtraction,
 	"plugins.textExtraction.office": permissionOfficeExtraction,
+	"plugins.textExtraction.pdf":    permissionPDFExtraction,
 	"plugins.redaction":             permissionRedaction, "plugins.encrypted": permissionEncryptedPlugins,
 	"routing":        permissionFilter | permissionSort | permissionNodes | permissionRetries | permissionFallbacks | permissionMissingKeys,
 	"routing.filter": permissionFilter, "routing.sort": permissionSort,

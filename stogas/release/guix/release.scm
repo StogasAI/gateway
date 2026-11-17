@@ -145,6 +145,8 @@
             (copy-file ntp-config (string-append rootfs "/etc/ntpd-rs/ntp.toml"))
             (copy-file #$(file-append stogas-ntpd-rs "/bin/ntp-daemon")
                        (string-append rootfs "/stogas/ntp-daemon"))
+            (copy-file #$(file-append stogas-pdftext "/bin/stogas-pdftext")
+                       (string-append rootfs "/stogas/pdftext"))
 
             (with-directory-excursion (string-append source "/transports")
               (setenv "CGO_ENABLED" "1")
@@ -170,7 +172,8 @@
                       '(("/etc/ntpd-rs/ntp.toml" #o444)
                         ("/init" #o555)
                         ("/stogas/gateway.init" #o555)
-                        ("/stogas/ntp-daemon" #o555)))
+                        ("/stogas/ntp-daemon" #o555)
+                        ("/stogas/pdftext" #o555)))
             (invoke "find" rootfs "-exec" "touch" "--no-dereference"
                     "--date=@1" "{}" "+")
             (with-directory-excursion rootfs

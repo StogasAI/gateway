@@ -592,7 +592,7 @@ func TestEveryReplaceableKindHasOneName(t *testing.T) {
 	}
 	if want := []string{
 		"access.deny", "access.networks", "input", "plugins.export", "plugins.redaction",
-		"plugins.textExtraction.office", "plugins.textExtraction.text",
+		"plugins.textExtraction.office", "plugins.textExtraction.pdf", "plugins.textExtraction.text",
 		"routing.allowedCatalogNodes", "routing.fallbacks", "routing.filter", "routing.missingEncryptionKeys",
 		"routing.retries", "timeouts.outputIdleSeconds", "timeouts.totalSeconds",
 	}; !slices.Equal(names, want) {

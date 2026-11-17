@@ -31,6 +31,13 @@ jobs:
             transports/go.sum
       - id: verifier
         uses: $/.github/actions/setup-verifier
+      # The gateway starts this program for each PDF that it reads, and the tests start it too.
+      - name: Build and test the PDF reader
+        working-directory: stogas/pdftext
+        run: |
+          cmp Cargo.lock ../release/locks/pdftext.Cargo.lock
+          cargo test --quiet --locked --release
+          echo "STOGAS_PDFTEXT=$PWD/target/release/stogas-pdftext" >> "$GITHUB_ENV"
       - name: Test Stogas packages with race detection
         working-directory: transports
         env:

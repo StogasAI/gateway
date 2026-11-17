@@ -30,14 +30,14 @@ Everything that can change the image is in the tagged commit. Besides the files,
 
 A source digest identifies a directory with SHA-256 instead of Git's SHA-1. It is the SHA-256 of the canonical JSON array with one `{"mode","path","sha256"}` object per file, sorted by path: `mode` is `493` for an executable file and `420` otherwise, `path` is relative with `/` separators, and `sha256` is the file's SHA-256 in lowercase hex. `scripts/source-digest.mjs` computes it, and Stogas verifier and catalog releases use the same format.
 
-Guix builds each package without network access, and every download must match its pinned hash. Guix substitute servers do not carry the custom packages (Go, Linux, AmdSev OVMF, the systemd EFI stub and `ukify`, the IGVM tools, ntpd-rs, and the verifier), so Guix builds them from source. Unmodified Guix packages such as GCC and Rust can come from the Guix substitute servers, which build them through the Guix full-source bootstrap. To build them locally instead, run the Guix daemon with `--no-substitutes`.
+Guix builds each package without network access, and every download must match its pinned hash. Guix substitute servers do not carry the custom packages (Go, Linux, AmdSev OVMF, the systemd EFI stub and `ukify`, the IGVM tools, ntpd-rs, the verifier, and the PDF reader), so Guix builds them from source. Unmodified Guix packages such as GCC and Rust can come from the Guix substitute servers, which build them through the Guix full-source bootstrap. To build them locally instead, run the Guix daemon with `--no-substitutes`.
 
 Guix runs two build farms, `ci.guix.gnu.org` and `bordeaux.guix.gnu.org`, and each builds every package from source on its own. The build takes prebuilt packages from one farm only: `bordeaux.guix.gnu.org`, or the farm that `STOGAS_GUIX_SUBSTITUTE_URL` names. GitHub's release build names `ci.guix.gnu.org`. A package that the farms built differently therefore enters GitHub's build and a default rebuild as different bytes, and a package that only one farm publishes is built from source on the other side. Matching release bytes then show that no single farm's package changed the image. Guix checks each downloaded package against the farm's signing key.
 
 `guix/release.scm`:
 
 1. Builds the gateway with CGO, statically linked to the verifier library, and the init program in pure Go.
-2. Packs init, the gateway, `ntp-daemon`, and `guix/ntp.toml` into a reproducible zstd cpio initramfs. The guest trusts the TLS roots in the `golang.org/x/crypto/x509roots/fallback` module that `transports/go.sum` pins: the gateway compiles them in, and init writes them for `ntp-daemon` at boot.
+2. Packs init, the gateway, `ntp-daemon`, `pdftext`, and `guix/ntp.toml` into a reproducible zstd cpio initramfs. `pdftext` is the program in `stogas/pdftext` that the gateway starts to read the text of one PDF. The guest trusts the TLS roots in the `golang.org/x/crypto/x509roots/fallback` module that `transports/go.sum` pins: the gateway compiles them in, and init writes them for `ntp-daemon` at boot.
 3. Combines the kernel, the initramfs, `cmdline.txt`, and `os-release` into a unified kernel image (UKI) with the systemd EFI stub.
 4. Wraps AmdSev OVMF into an SNP IGVM file with four vCPUs and adds the UKI as measured pages. The build fails if any page is unmeasured or shared, because the host could change it without changing the launch measurement.
 5. Computes the launch measurement with `igvmmeasure --check-kvm` and writes `release-manifest.json`.
@@ -57,7 +57,7 @@ Guix applies each patch with zero fuzz.
 
 ## Checks During the Build
 
-- Go runs its full test suite. The patched IGVM tools, the ntpd-rs protocol and daemon libraries, and the verifier run their tests.
+- Go runs its full test suite. The patched IGVM tools, the ntpd-rs protocol and daemon libraries, and the verifier run their tests. The PDF reader's tests run the built program, which reads a file only after the kernel accepts its system call filter.
 - The kernel build fails if the final configuration differs from any line in `guix/linux.config`.
 - `igvmmeasure --check-kvm` fails if the IGVM file breaks the rules that QEMU/KVM measurement depends on.
 - The release fails if `snp-launch-policies.json` is not canonical JSON, because verifiers check the embedded policies against the hash of that file.

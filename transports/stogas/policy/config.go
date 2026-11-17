@@ -309,7 +309,7 @@ type Plugins struct {
 }
 
 // TextExtraction maps a kind of file to its text extraction mode. A key is a family of files,
-// text or office, or one media type that a family holds, such as text/csv, whose mode then
+// text, office or pdf, or one media type that a family holds, such as text/csv, whose mode then
 // decides for its files in place of the family's. A file that no key takes is not set, so a
 // later family never applies to a policy that does not name it.
 type TextExtraction map[string]string
@@ -339,11 +339,12 @@ func strongerTextExtraction(a, b string) string {
 // textExtractionUnits are the families of text extraction. Each combines on its own, so a
 // requirement for one family leaves the default of another in place. A media type is a setting
 // of its family.
-const textExtractionUnits = permissionTextExtraction | permissionOfficeExtraction
+const textExtractionUnits = permissionTextExtraction | permissionOfficeExtraction | permissionPDFExtraction
 
 var textExtractionFamilyUnits = map[filetype.Family]Permission{
 	filetype.Text:   permissionTextExtraction,
 	filetype.Office: permissionOfficeExtraction,
+	filetype.PDF:    permissionPDFExtraction,
 }
 
 // textExtractionFamily names the family that a key is or belongs to, or "" for a key that text
@@ -402,11 +403,11 @@ func (t TextExtraction) units() Permission {
 
 func (t TextExtraction) validate() error {
 	if len(t) == 0 {
-		return configError("plugins.textExtraction must set the mode of text, office or a media type")
+		return configError("plugins.textExtraction must set the mode of text, office, pdf or a media type")
 	}
 	for _, key := range slices.Sorted(maps.Keys(t)) {
 		if textExtractionFamily(key) == "" {
-			return configError("plugins.textExtraction has %q, which is not text, office or a media type that text extraction reads, such as text/csv", key)
+			return configError("plugins.textExtraction has %q, which is not text, office, pdf or a media type that text extraction reads, such as text/csv", key)
 		}
 		if !slices.Contains(textExtractionModes, t[key]) {
 			return configError("plugins.textExtraction.%s must be off, auto or always", key)

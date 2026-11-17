@@ -81,7 +81,7 @@ func TestDelegationPermitsTextExtractionByFamily(t *testing.T) {
 	if err := json.Unmarshal([]byte(`["plugins.textExtraction"]`), &sections); err != nil {
 		t.Fatal(err)
 	}
-	if raw, _ := json.Marshal(sections); string(raw) != `["plugins.textExtraction.office","plugins.textExtraction.text"]` {
+	if raw, _ := json.Marshal(sections); string(raw) != `["plugins.textExtraction.office","plugins.textExtraction.pdf","plugins.textExtraction.text"]` {
 		t.Fatalf("sections %s", raw)
 	}
 }

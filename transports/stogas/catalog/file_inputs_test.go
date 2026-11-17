@@ -29,6 +29,11 @@ func TestRoutingSkipsDeploymentsThatCannotReadTheAttachments(t *testing.T) {
 	}
 	encoded := base64.StdEncoding.EncodeToString(document)
 	word := `"data:` + wordType + `;base64,` + encoded + `"`
+	invoice, err := os.ReadFile("../inputfiles/testdata/pdf/invoice.pdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	readablePDF := `"data:application/pdf;base64,` + base64.StdEncoding.EncodeToString(invoice) + `"`
 	off, auto, always := policy.TextExtractionOff, policy.TextExtractionAuto, policy.TextExtractionAlways
 	chatFile := func(data string) string {
 		return `{"type":"file","file":{"filename":"a","file_data":` + data + `}}`
@@ -48,6 +53,9 @@ func TestRoutingSkipsDeploymentsThatCannotReadTheAttachments(t *testing.T) {
 	}{
 		{name: "chat text", part: `{"type":"text","text":"hello"}`, want: gpt[0]},
 		{name: "chat PDF", part: chatFile(pdf), want: gpt[1]},
+		{name: "chat PDF with extraction where needed", part: chatFile(readablePDF), want: gpt[0], extraction: policy.TextExtraction{"pdf": auto}},
+		{name: "chat PDF with Office extraction alone", part: chatFile(readablePDF), want: gpt[1], extraction: policy.TextExtraction{"office": always}},
+		{name: "chat PDF whose media type is off in its family", part: chatFile(readablePDF), want: gpt[1], extraction: policy.TextExtraction{"pdf": always, "application/pdf": off}},
 		{name: "chat image", part: `{"type":"image_url","image_url":{"url":` + image + `}}`, want: gpt[0]},
 		{name: "chat image without the modality", part: `{"type":"image_url","image_url":{"url":` + image + `}}`, want: gpt[1], textOnly: true},
 		{name: "chat audio", part: `{"type":"input_audio","input_audio":{"data":"AAAA","format":"wav"}}`, want: gpt[1], textOnly: true, audio: true},
@@ -142,7 +150,7 @@ func TestRoutingRefusesAnAttachmentThatNoCandidateCanRead(t *testing.T) {
 		CheckCandidate: func(schemas.ModelProvider, int, Deployment) error { checks++; return nil },
 	})
 	public := PublicError(err)
-	if public.StatusCode != 400 || checks != 0 || public.Message != "messages[0].content[1] documents are not supported by azure-gpt-5.6-sol. messages[0].content[1] is application/pdf, which is not supported by openai-gpt-5.6-sol" ||
+	if public.StatusCode != 400 || checks != 0 || public.Message != "messages[0].content[1] documents are not supported by azure-gpt-5.6-sol. messages[0].content[1] is application/pdf, which is not supported by openai-gpt-5.6-sol. Set plugins.textExtraction.pdf to auto to send it as text" ||
 		public.Code != AttachmentUnsupported || public.Param != "messages[0].content[1]" {
 		t.Fatalf("the request was not refused before credential preparation: %+v, %d", public, checks)
 	}
@@ -279,7 +287,7 @@ func TestRoutingSkipsPairsWhosePolicyRefusesOpaqueAttachments(t *testing.T) {
 		{name: "input limited to ASCII", part: pdf, azure: []setting{asciiOnly}, want: gpt[1]},
 		{name: "redaction", part: pdf, azure: []setting{redaction}, want: gpt[1]},
 		{name: "inspection on every pair", part: pdf, azure: []setting{asciiOnly}, openai: []setting{redaction},
-			wantErr: "input[0].content[1] is an attachment, which input.asciiOnly cannot check. input[0].content[1] is an attachment, which plugins.redaction cannot check"},
+			wantErr: "input[0].content[1] is an attachment, which input.asciiOnly cannot check. input[0].content[1] is an attachment, which plugins.redaction cannot check. Set plugins.textExtraction.pdf to auto to send it as text"},
 		{name: "an extracted text file", part: text, azure: []setting{asciiOnly, extraction("always", "")}, want: gpt[0]},
 		{name: "a text file extracted where inspection needs it", part: text, azure: []setting{asciiOnly, extraction("auto", "")}, openai: []setting{redaction}, want: gpt[0]},
 		{name: "a Word file extracted where inspection needs it", part: word, azure: []setting{asciiOnly}, openai: []setting{redaction, extraction("", "auto")}, want: gpt[1]},

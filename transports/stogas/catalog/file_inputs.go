@@ -61,8 +61,8 @@ type Attachment struct {
 	URL, Data, ID string
 	Filename      string
 	FileType      string
-	// extractable names an inline text or Office file, which a deployment that reads it gets as
-	// a file, and which text extraction turns into prompt text. It is zero for any other
+	// extractable names an inline text file, Office file or PDF, which a deployment that reads it
+	// gets as a file, and which text extraction turns into prompt text. It is zero for any other
 	// attachment.
 	extractable filetype.Type
 	// mediaType is what the part and the start of its content say of its type, for the
@@ -248,9 +248,9 @@ func inputCheckRefusal(path, setting string) error {
 	return attachmentRefusal(path, " is an attachment, which "+setting+" cannot check")
 }
 
-// textExtractionHint ends the refusal of an inline text or Office file that a pair whose policy
-// does not extract it cannot read. Text extraction turns the file into text, which every
-// deployment and input check reads. It names the setting that decides for the file: its media
+// textExtractionHint ends the refusal of an inline text file, Office file or PDF that a pair
+// whose policy does not extract it cannot read. Text extraction turns the file into text, which
+// every deployment and input check reads. It names the setting that decides for the file: its media
 // type where the pair's policy sets one, and otherwise its family.
 func textExtractionHint(file filetype.Type, extraction policy.TextExtraction) string {
 	key := string(file.Family)
@@ -335,7 +335,8 @@ func (p attachmentPair) reads(attachments []Attachment) bool {
 }
 
 // deploymentReads reports whether a deployment reads every attachment that no policy can make
-// readable. An inline text or Office file counts as read, since a policy can extract it.
+// readable. An inline text file, Office file or PDF counts as read, since a policy can extract
+// it.
 func deploymentReads(attachments []Attachment, selection routingSelection) bool {
 	for _, attachment := range attachments {
 		if attachment.extractable.Family == "" && attachmentError(selection.provider, selection.deployment, attachment, routingSubject) != nil {
@@ -404,8 +405,8 @@ func unreadAttachment(attachment Attachment, reasons []attachmentReason) error {
 		}
 		refusal.Message = strings.Join(messages, ". ")
 	}
-	// Text extraction makes an inline text or Office file readable to every pair whose policy
-	// allows its type, and a pair that extracts it reads it.
+	// Text extraction makes an inline text file, Office file or PDF readable to every pair whose
+	// policy allows its type, and a pair that extracts it reads it.
 	if i := slices.IndexFunc(reasons, func(reason attachmentReason) bool { return reason.pair.typeRefusal(attachment) == nil }); i >= 0 && attachment.extractable.Family != "" {
 		refusal.Message += textExtractionHint(attachment.extractable, reasons[i].pair.extraction)
 	}

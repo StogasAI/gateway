@@ -10,6 +10,9 @@
 		"application/vnd.ms-powerpoint.presentation.macroenabled.12",
 		"application/vnd.oasis.opendocument.presentation"
 	],
+	"pdf": [
+		"application/pdf"
+	],
 	"textApplication": [
 		"application/csv",
 		"application/ecmascript",

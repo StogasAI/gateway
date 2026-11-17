@@ -43,6 +43,7 @@ const SOURCES = {
 const LOCKS = {
 	'igvmmeasure.Cargo.lock': BUILD_TOOL,
 	'ntpd-rs.Cargo.lock': IMAGE,
+	'pdftext.Cargo.lock': IMAGE,
 	'stogas-verifier.Cargo.lock': IMAGE,
 	'virt-firmware-rs.Cargo.lock': BUILD_TOOL
 };

@@ -10,6 +10,7 @@ The OpenAI-compatible gateway that runs inside Stogas confidential VMs, with the
 | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `core/`           | The provider layer of [Bifrost](https://github.com/maximhq/bifrost), with our changes committed in place. `stogas/upstream-sync.lock` names the upstream commit. |
 | `transports/`     | The Stogas API, the signed catalog loader, routing, policies, and the entrypoint                                                                                 |
+| `stogas/pdftext/` | The program that reads the text of one PDF. The gateway starts it for each file, and it gives up every system call but input, output and memory before it reads. |
 | `stogas/release/` | The reproducible image build                                                                                                                                     |
 
 ## Build and test
@@ -22,7 +23,7 @@ bun run check
 bun run build
 ```
 
-`check` runs the Go tests. Both scripts first build the verifier library at the commit that `stogas/release/pins.lock.json` names.
+`check` runs the Go tests. Both scripts first build the verifier library at the commit that `stogas/release/pins.lock.json` names, and the PDF reader.
 
 ## Rebuild a release
 

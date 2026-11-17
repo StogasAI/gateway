@@ -1,0 +1,19 @@
+[package]
+name = "stogas-pdftext"
+version = "0.0.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+libc = "0.2"
+# Without the default features the library reads no color profile. legacy-crypto opens the
+# files that RC4 and MD5 protect, which most encrypted files are.
+pdf_oxide = { version = "=0.3.78", default-features = false, features = ["legacy-crypto"] }
+
+[profile.release]
+opt-level = 3
+panic = "abort"
+lto = true
+codegen-units = 1
+strip = true

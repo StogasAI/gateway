@@ -263,6 +263,7 @@ func TestEverySettingDeclaresItsScopeAndCombination(t *testing.T) {
 		"plugins.encrypted":             {"candidate", "hides an export or redaction, which then combines as readable"},
 		"plugins.textExtraction.text":   {"candidate", "the strongest mode: always, then auto, then off"},
 		"plugins.textExtraction.office": {"candidate", "the strongest mode: always, then auto, then off"},
+		"plugins.textExtraction.pdf":    {"candidate", "the strongest mode: always, then auto, then off"},
 		"plugins.export":                {"candidate", "union of destinations"},
 		"routing.filter":                {"candidate", "every filter must match"},
 		"routing.allowedCatalogNodes":   {"candidate", "intersection"},

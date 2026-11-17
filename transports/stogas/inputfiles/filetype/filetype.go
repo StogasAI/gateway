@@ -17,19 +17,24 @@ const (
 	// Office is a Word, Excel, PowerPoint or OpenDocument file: a zip archive of XML parts,
 	// whose text the gateway reads from the parts.
 	Office Family = "office"
+	// PDF is a PDF, whose text a separate program reads from its pages.
+	PDF Family = "pdf"
 )
 
 // Families lists every family.
-var Families = []Family{Text, Office}
+var Families = []Family{Text, Office, PDF}
 
 // Type is how a policy names an inline document that text extraction can turn into prompt text.
 // The zero value is any other file.
 type Type struct {
 	Family Family
 	// MediaType is the type that the file declares, or without one text/plain for text and the
-	// type of the filename's extension for an Office file.
+	// type of the filename's extension for an Office file. A PDF's is application/pdf.
 	MediaType string
 }
+
+// PDFMediaType is the one media type of the PDF family.
+const PDFMediaType = "application/pdf"
 
 // The Office Open XML and OpenDocument types that text extraction reads, by what a file holds.
 // The binary formats of Office 97 to 2003 and encrypted files are not zip archives and stay
@@ -58,6 +63,8 @@ func FamilyOf(mediaType string) Family {
 	switch {
 	case slices.Contains(Documents, mediaType), slices.Contains(Spreadsheets, mediaType), slices.Contains(Presentations, mediaType):
 		return Office
+	case mediaType == PDFMediaType:
+		return PDF
 	case IsText(mediaType):
 		return Text
 	}
