@@ -136,7 +136,7 @@ func TestBillingUpstreamTargetIncludesCatalogDataBoundaries(t *testing.T) {
 	europe := target("eu", "europe")
 	if europe == nil ||
 		!slices.Equal(europe.ProcessingLocations, []string{"SE", "eu"}) ||
-		!slices.Equal(europe.StorageLocations, []string{"CH", "SE", "eu", "europe"}) {
+		!slices.Equal(europe.StorageLocations, []string{"CH", "SE", "eu", "europe", "none"}) {
 		t.Fatalf("Azure billing target omitted data boundaries: %#v", europe)
 	}
 	// World and unknown bound nothing, and a catalog that stores nothing makes the account's

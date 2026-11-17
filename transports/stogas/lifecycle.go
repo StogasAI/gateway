@@ -150,11 +150,11 @@ func billingUpstreamTarget(resolution *catalog.ResolvedRequest) *gatewaybilling.
 		Model:               upstream.Model,
 		ModelFormat:         upstream.ModelFormat,
 		ModelVersion:        upstream.ModelVersion,
-		ProcessingLocations: places.Inside(dataHandling.ProcessingLocation),
+		ProcessingLocations: places.Inside(dataHandling.ProcessingLocation, false),
 	}
 	// A catalog no-storage guarantee makes the account's placement inapplicable.
 	if dataHandling.StorageLocation != "none" {
-		target.StorageLocations = places.Inside(dataHandling.StorageLocation)
+		target.StorageLocations = places.Inside(dataHandling.StorageLocation, true)
 	}
 	return target
 }

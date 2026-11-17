@@ -1,7 +1,9 @@
 // Package location reads a catalog's locations: world, the regions within it, and ISO 3166
 // countries and their subdivisions, each with the places that directly contain it. A data
 // handling location is a place, unknown when the provider does not say where, or, for storage
-// only, none when the provider keeps nothing.
+// only, none when the provider keeps nothing. Nothing kept is kept nowhere, so none lies within
+// every location: a deployment that keeps less is never refused where one that keeps more is
+// accepted.
 package location
 
 import (
@@ -42,6 +44,8 @@ type Places struct {
 	inside map[string][]string
 	// folded gives each place by its ID in lowercase, which no two places share.
 	folded map[string]string
+	// all lists none and every place, in order: the locations that contain none.
+	all []string
 }
 
 // Read checks a catalog's places, each with the places that directly contain it: world contains
@@ -115,7 +119,14 @@ func Read(parents map[string][]string) (*Places, error) {
 	for id, inside := range places.inside {
 		places.inside[id] = slices.Clip(inside)
 	}
+	places.all = insert(ids, None)
 	return places, nil
+}
+
+// insert adds a value to a sorted list that lacks it.
+func insert(sorted []string, value string) []string {
+	index, _ := slices.BinarySearch(sorted, value)
+	return slices.Insert(slices.Clone(sorted), index, value)
 }
 
 // Decode reads places as a catalog root lists them: each by its ID, with its name and the places
@@ -152,13 +163,13 @@ func (p *Places) Valid(value string, storage bool) bool {
 	return p.Place(value) || value == Unknown || storage && value == None
 }
 
-// Within reports whether a location lies within a boundary: it is the boundary or a place inside
-// it, or the boundary is world or unknown, which bound nothing.
+// Within reports whether a location lies within a boundary: it is the boundary, a place inside
+// it or none, or the boundary is world or unknown, which bound nothing.
 func (p *Places) Within(actual, boundary string) bool {
 	if !p.Valid(actual, true) || !p.Valid(boundary, true) {
 		return false
 	}
-	return actual == boundary || boundary == World || boundary == Unknown ||
+	return actual == boundary || actual == None || boundary == World || boundary == Unknown ||
 		slices.Contains(p.within[actual], boundary)
 }
 
@@ -202,34 +213,35 @@ func (p *Places) Join(a, b string) string {
 	return joined
 }
 
-var (
-	unknownOnly = []string{Unknown}
-	noneOnly    = []string{None}
-)
+var unknownOnly = []string{Unknown}
 
-// Containing lists a location and every place that contains it, in order. Unknown and none list
-// only themselves.
+// Containing lists a location and every place that contains it, in order. Unknown lists only
+// itself, and none every place.
 func (p *Places) Containing(value string) []string {
 	switch value {
 	case Unknown:
 		return unknownOnly
 	case None:
-		return noneOnly
+		return p.all
 	}
 	return p.within[value]
 }
 
-// Inside lists the locations within a boundary, in order, or returns nil when the boundary is
-// world or unknown, which bound nothing. Only none lies within none.
-func (p *Places) Inside(boundary string) []string {
-	switch boundary {
-	case World, Unknown:
+// Inside lists the locations within a boundary that a processing location, or with storage a
+// storage location, can be, in order. It returns nil when the boundary is world or unknown, which
+// bound nothing.
+func (p *Places) Inside(boundary string, storage bool) []string {
+	switch {
+	case boundary == World || boundary == Unknown:
 		return nil
-	case None:
-		return noneOnly
+	case !p.Valid(boundary, true):
+		return []string{}
+	case storage:
+		return insert(p.inside[boundary], None)
 	}
-	if inside, ok := p.inside[boundary]; ok {
+	if inside := p.inside[boundary]; inside != nil {
 		return inside
 	}
+	// None holds no place.
 	return []string{}
 }

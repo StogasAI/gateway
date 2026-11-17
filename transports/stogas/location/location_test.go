@@ -47,7 +47,11 @@ func TestWithin(t *testing.T) {
 		{"DE", "unknown", true},
 		{"none", "none", true},
 		{"DE", "none", false},
-		{"none", "eu", false},
+		{"unknown", "none", false},
+		// Nothing kept is kept within every place.
+		{"none", "eu", true},
+		{"none", "US-CA", true},
+		{"none", "unknown", true},
 		{"FR", "eu", false},
 		{"FR", "world", false},
 		{"DE", "FR", false},
@@ -65,11 +69,13 @@ func TestContainingAndInsideAgreeWithWithin(t *testing.T) {
 		values = append(values, id)
 	}
 	for _, boundary := range values {
-		inside := places.Inside(boundary)
 		for _, actual := range values {
 			within := places.Within(actual, boundary)
-			if got := inside == nil && places.Valid(actual, true) || slices.Contains(inside, actual); got != within {
-				t.Errorf("Inside(%q) has %q = %v, Within = %v", boundary, actual, got, within)
+			for _, storage := range []bool{false, true} {
+				inside := places.Inside(boundary, storage)
+				if got := (inside == nil || slices.Contains(inside, actual)) && places.Valid(actual, storage); got != (within && places.Valid(actual, storage)) {
+					t.Errorf("Inside(%q, %v) has %q = %v, Within = %v", boundary, storage, actual, got, within)
+				}
 			}
 			if boundary != World && boundary != Unknown && slices.Contains(places.Containing(actual), boundary) != within {
 				t.Errorf("Containing(%q) has %q, Within = %v", actual, boundary, within)
@@ -82,8 +88,17 @@ func TestContainingAndInsideAgreeWithWithin(t *testing.T) {
 	if got := places.Containing("unknown"); !slices.Equal(got, []string{"unknown"}) {
 		t.Errorf("Containing(unknown) = %v", got)
 	}
-	if got := places.Inside("eu"); !slices.Equal(got, []string{"CY", "DE", "eu"}) {
-		t.Errorf("Inside(eu) = %v", got)
+	if got := places.Containing("none"); !slices.Equal(got, []string{"CY", "DE", "NO", "US", "US-CA", "asia", "eu", "europe", "none", "world"}) {
+		t.Errorf("Containing(none) = %v", got)
+	}
+	if got := places.Inside("eu", false); !slices.Equal(got, []string{"CY", "DE", "eu"}) {
+		t.Errorf("Inside(eu, false) = %v", got)
+	}
+	if got := places.Inside("eu", true); !slices.Equal(got, []string{"CY", "DE", "eu", "none"}) {
+		t.Errorf("Inside(eu, true) = %v", got)
+	}
+	if got := places.Inside("none", false); got == nil || len(got) != 0 {
+		t.Errorf("Inside(none, false) = %#v", got)
 	}
 }
 
