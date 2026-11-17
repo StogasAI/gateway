@@ -110,6 +110,30 @@ type RequestEvent struct {
 	ReceiptCommitments *ReceiptCommitments `json:"receipt_commitments"`
 }
 
+// Outcome is how the request ended, as Analytics groups requests: the
+// gateway_request_hours rollup in ClickHouse derives the same value from the
+// same fields.
+func (e *RequestEvent) Outcome() string {
+	status := ""
+	if n := len(e.ProviderAttempts); n > 0 {
+		status = e.ProviderAttempts[n-1].Status
+	}
+	failed := e.GatewayError != nil && e.GatewayError.Code != ""
+	switch {
+	case failed && len(e.ProviderAttempts) == 0:
+		return "rejected"
+	case failed:
+		return "failed"
+	case e.Cancelled:
+		return "cancelled"
+	case status == "" || status == "unknown":
+		return "unknown"
+	case status == "success":
+		return "success"
+	}
+	return "failed"
+}
+
 // LogPosition is a row's place in its boot's signed log batches.
 type LogPosition struct {
 	Sequence uint32 `json:"sequence"`

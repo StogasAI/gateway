@@ -52,7 +52,7 @@ type rejectedExport struct {
 func (e *rejectedExport) Finish(row billing.RequestEvent) {
 	metadata := e.metadata
 	recordMetadata(&metadata, &row)
-	e.held.Finish(row.RequestID, &row, exportMetadata{metadata, row.NodeID})
+	e.held.Finish(row.RequestID, row.Outcome(), &row, exportMetadata{metadata, row.NodeID})
 }
 
 func (e *rejectedExport) Discard() { e.held.Discard() }
@@ -66,14 +66,17 @@ func finishExport(ctx context.Context, state *State) {
 	capture := state.Export
 	finalizeExportMetrics(state)
 	state.Export = nil
-	capture.Finish(state.RequestID, state.FinalEvent, exportMetadata{FinalMetadata(ctx, state), state.NodeID})
+	capture.Finish(state.RequestID, state.FinalEvent.Outcome(), state.FinalEvent, exportMetadata{FinalMetadata(ctx, state), state.NodeID})
 }
 
+// finalizeExportMetrics marks the record of a request whose record a
+// destination gets, so that a receiver can tell the records it should hold.
 func finalizeExportMetrics(state *State) {
 	if state == nil || state.FinalEvent == nil {
 		return
 	}
-	if duration := state.Export.Duration(); duration != nil {
-		state.FinalEvent.Plugins.Export = &plugins.ExportMetrics{DurationUS: *duration}
+	state.FinalEvent.Plugins.Export = nil
+	if state.Export.Due(state.FinalEvent.Outcome()) {
+		state.FinalEvent.Plugins.Export = &plugins.ExportMetrics{DurationUS: *state.Export.Duration()}
 	}
 }

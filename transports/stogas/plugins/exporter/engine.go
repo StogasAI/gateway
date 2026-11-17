@@ -76,8 +76,12 @@ func (r *reservation) release() {
 // Capture owns detached public JSON until Finish transfers it to delivery.
 // Its methods run on the request's single processing goroutine.
 type Capture struct {
-	engine                      *Engine
-	destinations                []exportconfig.Destination
+	engine       *Engine
+	destinations []exportconfig.Destination
+	// The request's sample position and, for each outcome, the highest rate of
+	// the destinations that Start kept. Both outlive a dropped capture.
+	position                    float64
+	reach                       exportconfig.Sample
 	content                     bool
 	request, response, metadata []byte
 	events                      [][]byte
@@ -151,45 +155,85 @@ func New(ctx context.Context, options Options) *Engine {
 	return e
 }
 
-// Start returns nil only when no export applies. A capture dropped here still
-// marks the request record as exported, so receivers can find the records that
-// never arrived.
-func (e *Engine) Start(config *exportconfig.Config) *Capture {
+// Start returns nil only when no export applies: no destination, or none whose
+// sample reaches this request however it ends. Such a request copies nothing. A
+// capture dropped here still marks the request record as exported, so receivers
+// can find the records that never arrived.
+func (e *Engine) Start(config *exportconfig.Config, requestID string) *Capture {
 	if e == nil || config == nil || len(config.Destinations) == 0 {
 		return nil
 	}
-	dropped := &Capture{engine: e}
-	e.mu.Lock()
-	closed := e.closed || e.ctx.Err() != nil
-	e.mu.Unlock()
-	if closed {
-		e.failed.Add(uint64(len(config.Destinations)))
-		return dropped
-	}
-	r := &reservation{engine: e, lease: e.options.NewLease()}
+	dropped := &Capture{engine: e, position: exportconfig.Position(requestID)}
 	// The measured per-destination state includes the capture and record.
-	size := 0
+	size, reached := 0, 0
 	for _, d := range config.Destinations {
+		if dropped.position >= d.Reach() {
+			continue
+		}
+		reached++
+		for i := range dropped.reach {
+			dropped.reach[i] = max(dropped.reach[i], d.Rate(exportconfig.Outcomes[i]))
+		}
 		size += len(d.URL) + deliveryStateBytes
 		for key, value := range d.Headers {
 			size += len(key) + len(value)
 		}
 	}
-	if !r.grow(size) {
-		r.release()
-		e.memoryDropped.Add(uint64(len(config.Destinations)))
+	if reached == 0 {
+		return nil
+	}
+	e.mu.Lock()
+	closed := e.closed || e.ctx.Err() != nil
+	e.mu.Unlock()
+	if closed {
+		e.failed.Add(uint64(reached))
 		return dropped
 	}
-	c := &Capture{engine: e, reservation: r}
+	r := &reservation{engine: e, lease: e.options.NewLease()}
+	if !r.grow(size) {
+		r.release()
+		e.memoryDropped.Add(uint64(reached))
+		return dropped
+	}
+	c := &Capture{engine: e, position: dropped.position, reach: dropped.reach, reservation: r}
 	for _, d := range config.Destinations {
+		if c.position >= d.Reach() {
+			continue
+		}
 		copy := exportconfig.Destination{URL: strings.Clone(d.URL), Headers: make(map[string]string, len(d.Headers)), Content: d.Content}
 		for key, value := range d.Headers {
 			copy.Headers[strings.Clone(key)] = strings.Clone(value)
+		}
+		if d.Sample != nil {
+			sample := *d.Sample
+			copy.Sample = &sample
 		}
 		c.destinations = append(c.destinations, copy)
 		c.content = c.content || d.SendsContent()
 	}
 	return c
+}
+
+// Due reports whether a destination gets the record of a request that ended
+// with this outcome. It holds for a dropped capture too, whose record was due
+// and did not leave.
+func (c *Capture) Due(outcome string) bool {
+	return c != nil && c.position < exportconfig.Destination{Sample: &c.reach}.Rate(outcome)
+}
+
+// take keeps the destinations that get this outcome's record, and reports
+// whether one is left. The capture's content stays as captured, and each
+// destination still decides whether it receives it.
+func (c *Capture) take(outcome string) bool {
+	due := c.destinations[:0]
+	for _, d := range c.destinations {
+		if c.position < d.Rate(outcome) {
+			due = append(due, d)
+		}
+	}
+	clear(c.destinations[len(due):])
+	c.destinations = due
+	return len(due) > 0
 }
 func (c *Capture) Discard() {
 	if !c.held() {
@@ -212,6 +256,7 @@ func (c *Capture) Discard() {
 type Held struct {
 	engine       *Engine
 	destinations []exportconfig.Destination
+	position     float64
 	content      bool
 	response     []byte
 	reservation  *reservation
@@ -223,7 +268,7 @@ func (c *Capture) Hold() *Held {
 	if !c.held() {
 		return nil
 	}
-	h := &Held{engine: c.engine, destinations: c.destinations, content: c.content, response: c.response}
+	h := &Held{engine: c.engine, destinations: c.destinations, position: c.position, content: c.content, response: c.response}
 	c.destinations, c.response = nil, nil
 	c.Discard()
 	size := len(h.response)
@@ -243,14 +288,18 @@ func (c *Capture) Hold() *Held {
 }
 
 // Finish sends the export with the record, as Capture.Finish does.
-func (h *Held) Finish(requestID string, event any, finalMetadata any) {
+func (h *Held) Finish(requestID, outcome string, event any, finalMetadata any) {
 	if h == nil || h.reservation == nil {
 		return
 	}
-	c := &Capture{engine: h.engine, destinations: h.destinations, content: h.content, response: h.response, reservation: h.reservation}
+	c := &Capture{engine: h.engine, destinations: h.destinations, position: h.position, content: h.content, response: h.response, reservation: h.reservation}
 	h.destinations, h.response, h.reservation = nil, nil, nil
+	if !c.take(outcome) {
+		c.Discard()
+		return
+	}
 	if c.grow(len(c.destinations) * deliveryStateBytes) {
-		c.Finish(requestID, event, finalMetadata)
+		c.finish(requestID, event, finalMetadata)
 	}
 }
 
@@ -276,12 +325,21 @@ func (c *Capture) grow(n int) bool {
 	return false
 }
 
-// Finish appends captured content to the canonical event. A captured signed
-// metadata object wins over the unsigned final metadata, preserving its signature.
-func (c *Capture) Finish(requestID string, event any, finalMetadata any) {
+// Finish sends the record to the destinations that get this outcome's, and
+// appends captured content to the canonical event. A captured signed metadata
+// object wins over the unsigned final metadata, preserving its signature.
+func (c *Capture) Finish(requestID, outcome string, event any, finalMetadata any) {
 	if !c.held() {
 		return
 	}
+	if !c.take(outcome) {
+		c.Discard()
+		return
+	}
+	c.finish(requestID, event, finalMetadata)
+}
+
+func (c *Capture) finish(requestID string, event any, finalMetadata any) {
 	encoded, err := json.Marshal(event)
 	if err != nil || len(encoded) < 2 || encoded[0] != '{' {
 		c.engine.failed.Add(uint64(len(c.destinations)))

@@ -124,7 +124,7 @@ func (r *providerRun) bind(resolution *catalog.ResolvedRequest) error {
 func (r *providerRun) prepare(pair *providerPair, resolution *catalog.ResolvedRequest) error {
 	state := r.state
 	if r.keyConfig.Claims != nil {
-		state.Export = r.server.exports.Start(resolution.ExportConfig)
+		state.Export = r.server.exports.Start(resolution.ExportConfig, state.RequestID)
 	}
 	resolution.ExportConfig = nil
 	selected, err := r.keyConfig.PolicyForCredential(string(resolution.Provider), resolution.CredentialIndex, r.credential.EncryptionKeys, r.startedAt, nil)

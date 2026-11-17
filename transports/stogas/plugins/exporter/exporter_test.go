@@ -119,7 +119,7 @@ func TestFullJSONDeliveryAndDetachedOwnership(t *testing.T) {
 			config := testConfig(receiver.URL + "/webhook")
 			config.Destinations[0].Headers = map[string]string{"Authorization": "Bearer destination-secret"}
 			config.Destinations = append(config.Destinations, config.Destinations[0])
-			c := e.Start(config)
+			c := e.Start(config, "id")
 			config.Destinations[0].Headers["Authorization"] = "changed"
 			message, _ := json.Marshal(strings.Repeat("large prompt 世界 ", 65536))
 			body := map[string]json.RawMessage{"input": message, "temperature": json.RawMessage(`0.25`), "tools": json.RawMessage(`[{"type":"custom","name":"freeform"}]`)}
@@ -136,7 +136,7 @@ func TestFullJSONDeliveryAndDetachedOwnership(t *testing.T) {
 				}
 				clear(raw)
 			}
-			c.Finish("record", testRecord("record"), testMetadata())
+			c.Finish("record", "success", testRecord("record"), testMetadata())
 			e.Close()
 			if d := e.Diagnostics(); d.Delivered != 2 || d.ReservedBytes != 0 || d.PendingDeliveries != 0 {
 				t.Fatalf("diagnostics: %+v", d)
@@ -205,7 +205,7 @@ func TestDestinationsWithoutContent(t *testing.T) {
 	for _, streaming := range []bool{false, true} {
 		clear(received)
 		e := New(context.Background(), testOptions(true, 16<<20))
-		c := e.Start(&exportconfig.Config{Destinations: []exportconfig.Destination{{URL: receiver.URL + "/content"}, withoutContent}})
+		c := e.Start(&exportconfig.Config{Destinations: []exportconfig.Destination{{URL: receiver.URL + "/content"}, withoutContent}}, "id")
 		c.Input(map[string]json.RawMessage{"input": json.RawMessage(`"prompt"`)}, true)
 		output, field := `{"output":"answer"}`, "response"
 		if streaming {
@@ -214,7 +214,7 @@ func TestDestinationsWithoutContent(t *testing.T) {
 		} else {
 			c.Response([]byte(output))
 		}
-		c.Finish("record", testRecord("record"), testMetadata())
+		c.Finish("record", "success", testRecord("record"), testMetadata())
 		e.Close()
 		if e.Diagnostics().Delivered != 2 {
 			t.Fatalf("diagnostics = %+v", e.Diagnostics())
@@ -227,14 +227,14 @@ func TestDestinationsWithoutContent(t *testing.T) {
 	}
 	clear(received)
 	e := New(context.Background(), testOptions(true, 16<<20))
-	c := e.Start(&exportconfig.Config{Destinations: []exportconfig.Destination{withoutContent}})
+	c := e.Start(&exportconfig.Config{Destinations: []exportconfig.Destination{withoutContent}}, "id")
 	reserved := e.Diagnostics().ReservedBytes
 	c.Input(map[string]json.RawMessage{"input": json.RawMessage(`"` + strings.Repeat("prompt ", 4096) + `"`)}, true)
 	c.Response([]byte(`{"output":"answer"}`))
 	if c.Active() || e.Diagnostics().ReservedBytes != reserved {
 		t.Fatalf("capture without content destinations copied content: %+v", e.Diagnostics())
 	}
-	c.Finish("record", testRecord("record"), testMetadata())
+	c.Finish("record", "success", testRecord("record"), testMetadata())
 	e.Close()
 	checkMetadataOnly()
 }
@@ -245,11 +245,11 @@ func TestMemoryPressureDropsWholeCapture(t *testing.T) {
 	defer receiver.Close()
 	e := New(context.Background(), testOptions(true, 8192+deliveryStateBytes))
 	defer e.Close()
-	c := e.Start(testConfig(receiver.URL))
+	c := e.Start(testConfig(receiver.URL), "id")
 	c.Input(map[string]json.RawMessage{"model": json.RawMessage(`"model"`)}, false)
 	c.Event([]byte(`{"delta":"hello"}`))
 	c.Event([]byte(`{"delta":"` + strings.Repeat("x", 8192) + `"}`))
-	c.Finish("dropped", testRecord("dropped"), testMetadata())
+	c.Finish("dropped", "success", testRecord("dropped"), testMetadata())
 	e.Close()
 	if d := e.Diagnostics(); received.Load() != 0 || d.MemoryDropped != 1 || d.ReservedBytes != 0 {
 		t.Fatalf("partial export or leak: %+v", d)
@@ -261,12 +261,12 @@ func TestMemoryPressureDropsWholeCapture(t *testing.T) {
 func TestMemoryPressureAtStartKeepsExportCoverage(t *testing.T) {
 	e := New(context.Background(), testOptions(true, deliveryStateBytes))
 	defer e.Close()
-	c := e.Start(testConfig("http://127.0.0.1:1"))
+	c := e.Start(testConfig("http://127.0.0.1:1"), "id")
 	if c == nil || c.Active() || *c.Duration() != 0 {
 		t.Fatalf("dropped capture = %+v, want an inactive capture with zero duration", c)
 	}
 	c.Input(map[string]json.RawMessage{"model": json.RawMessage(`"model"`)}, false)
-	c.Finish("dropped", testRecord("dropped"), testMetadata())
+	c.Finish("dropped", "success", testRecord("dropped"), testMetadata())
 	if d := e.Diagnostics(); d.MemoryDropped != 1 || d.ReservedBytes != 0 || d.PendingDeliveries != 0 {
 		t.Fatalf("diagnostics = %+v, want one memory drop and nothing retained", d)
 	}
@@ -282,7 +282,7 @@ func TestConnectionsSpendSharedMemoryUntilClosed(t *testing.T) {
 	var spent atomic.Int64
 	export := func(budget int64) Diagnostics {
 		e := New(context.Background(), Options{Local: true, NewLease: func() Lease { return &budgetLease{spent: &spent, budget: budget} }})
-		e.Start(testConfig(receiver.URL)).Finish("id", testRecord("id"), testMetadata())
+		e.Start(testConfig(receiver.URL), "id").Finish("id", "success", testRecord("id"), testMetadata())
 		await(t, func() bool { return e.Diagnostics().PendingDeliveries == 0 })
 		// The finished record is released; only the idle connection stays charged.
 		if budget > connectionBytes && spent.Load() != connectionBytes {
@@ -357,7 +357,7 @@ func retryCases(t *testing.T, target string) {
 			}))
 			defer receiver.Close()
 			e := New(context.Background(), testOptions(true, connectionBytes))
-			e.Start(testConfig(receiver.URL)).Finish("id", testRecord("id"), testMetadata())
+			e.Start(testConfig(receiver.URL), "id").Finish("id", "success", testRecord("id"), testMetadata())
 			await(t, func() bool { return e.Diagnostics().PendingDeliveries == 0 })
 			e.Close()
 			d := e.Diagnostics()
@@ -387,10 +387,10 @@ func TestSlowReceiverDoesNotDelayOtherDestinations(t *testing.T) {
 	defer e.Close()
 	defer close(release)
 	for i := range 4 * maxConnsPerHost {
-		e.Start(testConfig(slow.URL)).Finish(fmt.Sprint("slow", i), testRecord("slow"), testMetadata())
+		e.Start(testConfig(slow.URL), "id").Finish(fmt.Sprint("slow", i), "success", testRecord("slow"), testMetadata())
 	}
 	for i := range 20 {
-		e.Start(testConfig(fast.URL)).Finish(fmt.Sprint("fast", i), testRecord("fast"), testMetadata())
+		e.Start(testConfig(fast.URL), "id").Finish(fmt.Sprint("fast", i), "success", testRecord("fast"), testMetadata())
 	}
 	// Wait for the exporter's own count: the receiver sees a request before its response is recorded.
 	await(t, func() bool { return e.Diagnostics().Delivered == 20 })
@@ -415,9 +415,9 @@ func TestReclaimReleasesOldestRecordsFirst(t *testing.T) {
 	reserved := make([]int64, 3)
 	for i := range reserved {
 		before := e.Diagnostics().ReservedBytes
-		c := e.Start(testConfig(receiver.URL))
+		c := e.Start(testConfig(receiver.URL), "id")
 		c.Input(map[string]json.RawMessage{"input": json.RawMessage(`"` + strings.Repeat("x", 16<<20) + `"`)}, true)
-		c.Finish(fmt.Sprint(i), testRecord(fmt.Sprint(i)), testMetadata())
+		c.Finish(fmt.Sprint(i), "success", testRecord(fmt.Sprint(i)), testMetadata())
 		reserved[i] = e.Diagnostics().ReservedBytes - before
 		<-uploading
 	}
@@ -452,7 +452,7 @@ func TestConcurrentDeliveryAndShutdownRelease(t *testing.T) {
 		go func(w int) {
 			defer workers.Done()
 			for i := range 120 {
-				e.Start(config).Finish(fmt.Sprint(w, i), testRecord(fmt.Sprint(w, i)), testMetadata())
+				e.Start(config, "id").Finish(fmt.Sprint(w, i), "success", testRecord(fmt.Sprint(w, i)), testMetadata())
 			}
 		}(w)
 	}
@@ -463,7 +463,7 @@ func TestConcurrentDeliveryAndShutdownRelease(t *testing.T) {
 		go func() { defer workers.Done(); e.Close() }()
 	}
 	workers.Wait()
-	if d := e.Diagnostics(); d.PendingDeliveries != 0 || d.ReservedBytes != 0 || d.Failed != 720 || e.Start(config).Active() {
+	if d := e.Diagnostics(); d.PendingDeliveries != 0 || d.ReservedBytes != 0 || d.Failed != 720 || e.Start(config, "id").Active() {
 		t.Fatalf("shutdown leak: %+v", d)
 	}
 }
@@ -485,7 +485,7 @@ func TestHTTPSCertificateValidationAndPublicNetworkBoundary(t *testing.T) {
 				roots.AddCert(receiver.Certificate())
 				e.client.transport.TLSClientConfig.RootCAs = roots
 			}
-			e.Start(testConfig(receiver.URL)).Finish("id", testRecord("id"), testMetadata())
+			e.Start(testConfig(receiver.URL), "id").Finish("id", "success", testRecord("id"), testMetadata())
 			await(t, func() bool { return e.Diagnostics().PendingDeliveries == 0 })
 			if (e.Diagnostics().Delivered == 1) != tc.want {
 				t.Fatalf("TLS delivery %+v", e.Diagnostics())
@@ -572,7 +572,7 @@ func TestHostileReceiverResponsesStayBounded(t *testing.T) {
 			defer receiver.Close()
 			e := New(context.Background(), testOptions(true, connectionBytes))
 			defer e.Close()
-			e.Start(testConfig(receiver.URL)).Finish("id", testRecord("id"), testMetadata())
+			e.Start(testConfig(receiver.URL), "id").Finish("id", "success", testRecord("id"), testMetadata())
 			await(t, func() bool { return e.Diagnostics().PendingDeliveries == 0 })
 			if d := e.Diagnostics(); attempts.Load() != tc.attempts || (d.Delivered == 1) != tc.delivered || d.ReservedBytes != 0 {
 				t.Fatalf("attempts %d, diagnostics %+v", attempts.Load(), d)
@@ -591,7 +591,7 @@ func TestHostedDeliveryRejectsLoopbackHostnames(t *testing.T) {
 	roots.AddCert(receiver.Certificate())
 	e.client.transport.TLSClientConfig.RootCAs = roots
 	url := strings.Replace(receiver.URL, "127.0.0.1", "localhost", 1)
-	e.Start(testConfig(url)).Finish("id", testRecord("id"), testMetadata())
+	e.Start(testConfig(url), "id").Finish("id", "success", testRecord("id"), testMetadata())
 	await(t, func() bool { return e.Diagnostics().PendingDeliveries == 0 })
 	if received.Load() != 0 || e.Diagnostics().Delivered != 0 {
 		t.Fatal("hosted delivery reached a loopback receiver through its hostname")
@@ -635,7 +635,7 @@ func TestHeldExportKeepsOnlyWhatItSendsLater(t *testing.T) {
 	}
 	hold := func(e *Engine) *Held {
 		t.Helper()
-		c := e.Start(config)
+		c := e.Start(config, "id")
 		c.Response(response)
 		held := c.Hold()
 		if held == nil || c.Active() {
@@ -649,7 +649,7 @@ func TestHeldExportKeepsOnlyWhatItSendsLater(t *testing.T) {
 
 	e := New(context.Background(), budget(1<<30))
 	defer e.Close()
-	hold(e).Finish("first-repeat", map[string]any{"request_id": "first-repeat", "request_count": 6}, testMetadata())
+	hold(e).Finish("first-repeat", "success", map[string]any{"request_id": "first-repeat", "request_count": 6}, testMetadata())
 	record := <-received
 	if string(record["request_count"]) != "6" || string(record["request"]) != "null" || string(record["response"]) != string(response) || string(record["stogas"]) != string(testMetadata()) {
 		t.Fatalf("held record: %s", record)
@@ -659,7 +659,7 @@ func TestHeldExportKeepsOnlyWhatItSendsLater(t *testing.T) {
 	if d := e.Diagnostics(); d.ReservedBytes != 0 {
 		t.Fatalf("a discarded export kept memory: %+v", d)
 	}
-	if e.Start(&exportconfig.Config{}).Hold() != nil {
+	if e.Start(&exportconfig.Config{}, "id").Hold() != nil {
 		t.Fatal("a capture without destinations holds nothing")
 	}
 
@@ -668,8 +668,8 @@ func TestHeldExportKeepsOnlyWhatItSendsLater(t *testing.T) {
 	pressed := New(context.Background(), budget(kept+started+deliveryStateBytes/2))
 	defer pressed.Close()
 	held := hold(pressed)
-	other := pressed.Start(config)
-	held.Finish("first-repeat", testRecord("first-repeat"), testMetadata())
+	other := pressed.Start(config, "id")
+	held.Finish("first-repeat", "success", testRecord("first-repeat"), testMetadata())
 	if d := pressed.Diagnostics(); d.MemoryDropped != 1 || d.ReservedBytes != started || d.PendingDeliveries != 0 {
 		t.Fatalf("memory pressure: %+v", d)
 	}
@@ -678,8 +678,220 @@ func TestHeldExportKeepsOnlyWhatItSendsLater(t *testing.T) {
 	closed := New(context.Background(), testOptions(true, 1<<20))
 	held = hold(closed)
 	closed.Close()
-	held.Finish("first-repeat", testRecord("first-repeat"), testMetadata())
+	held.Finish("first-repeat", "success", testRecord("first-repeat"), testMetadata())
 	if d := closed.Diagnostics(); d.Failed != 1 || d.ReservedBytes != 0 {
 		t.Fatalf("closed exporter: %+v", d)
+	}
+}
+
+// requestAt finds a request ID whose sample position is inside [low, high).
+func requestAt(t *testing.T, low, high float64) string {
+	t.Helper()
+	for i := range 100_000 {
+		id := fmt.Sprintf("01a14a2c-7ee1-7ad7-bbf6-%012x", i)
+		if position := exportconfig.Position(id); position >= low && position < high {
+			return id
+		}
+	}
+	t.Fatalf("no request ID between %v and %v", low, high)
+	return ""
+}
+
+// Each destination gets the records that its sample chooses for the way the
+// request ended: all of them, a share, some outcomes, or a share per outcome.
+func TestSampleChoosesRecordsByRequestAndOutcome(t *testing.T) {
+	var mu sync.Mutex
+	received := map[string]map[string]bool{}
+	receiver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var record map[string]json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&record); err != nil {
+			t.Error(err)
+		}
+		_, content := record["request"]
+		if content != (r.URL.Path != "/mixed") {
+			t.Errorf("%s got content: %v", r.URL.Path, content)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if received[r.URL.Path] == nil {
+			received[r.URL.Path] = map[string]bool{}
+		}
+		key := r.Header.Get("Idempotency-Key")
+		if received[r.URL.Path][key] {
+			t.Errorf("%s got %s twice", r.URL.Path, key)
+		}
+		received[r.URL.Path][key] = true
+	}))
+	defer receiver.Close()
+	off := false
+	samples := map[string]*exportconfig.Sample{
+		"/every":    nil,
+		"/tenth":    {0.1, 0.1, 0.1, 0.1, 0.1},
+		"/failures": {0, 1, 0, 1, 0},
+		"/mixed":    {0.2, 1, 0, 0, 0.5},
+	}
+	config := &exportconfig.Config{}
+	for path, sample := range samples {
+		d := exportconfig.Destination{URL: receiver.URL + path, Sample: sample}
+		if path == "/mixed" {
+			d.Content = &off
+		}
+		config.Destinations = append(config.Destinations, d)
+	}
+	e := New(context.Background(), testOptions(true, 64<<20))
+	want := map[string]map[string]bool{}
+	deliveries := 0
+	for i := range 240 {
+		outcome := exportconfig.Outcomes[i%len(exportconfig.Outcomes)]
+		id := fmt.Sprintf("01a14a2c-7ee1-7ad7-bbf6-%012x", i)
+		position := exportconfig.Position(id)
+		for _, d := range config.Destinations {
+			path := strings.TrimPrefix(d.URL, receiver.URL)
+			if want[path] == nil {
+				want[path] = map[string]bool{}
+			}
+			if position < d.Rate(outcome) {
+				want[path][id], deliveries = true, deliveries+1
+			}
+		}
+		c := e.Start(config, id)
+		c.Input(map[string]json.RawMessage{"input": json.RawMessage(`"prompt"`)}, true)
+		c.Response([]byte(`{"output":"answer"}`))
+		if !c.Due(outcome) {
+			t.Fatalf("%s %s: the record is due, because one destination gets every record", id, outcome)
+		}
+		c.Finish(id, outcome, testRecord(id), testMetadata())
+	}
+	e.Close()
+	if !reflect.DeepEqual(received, want) {
+		for path := range samples {
+			t.Errorf("%s got %d records, want %d", path, len(received[path]), len(want[path]))
+		}
+		t.FailNow()
+	}
+	if len(want["/tenth"]) == 0 || len(want["/tenth"]) == 240 || len(want["/failures"]) != 96 || len(want["/every"]) != 240 {
+		t.Fatalf("the test's requests do not exercise the samples: %d, %d, %d", len(want["/tenth"]), len(want["/failures"]), len(want["/every"]))
+	}
+	if d := e.Diagnostics(); d.Delivered != uint64(deliveries) || d.Failed != 0 || d.MemoryDropped != 0 || d.ReservedBytes != 0 || d.PendingDeliveries != 0 {
+		t.Fatalf("diagnostics = %+v, want %d deliveries and nothing else", d, deliveries)
+	}
+}
+
+// A request whose position no destination's sample reaches has no capture, so
+// it copies nothing and its record says nothing of export. A capture that
+// started ends without a record when the request's outcome is not one that a
+// destination gets, and counts as neither a failure nor a drop.
+func TestRecordsThatNoDestinationGetsCostNothing(t *testing.T) {
+	var received atomic.Int32
+	receiver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { received.Add(1) }))
+	defer receiver.Close()
+	e := New(context.Background(), testOptions(true, 16<<20))
+	defer e.Close()
+	off := false
+	inside, outside := requestAt(t, 0, 0.1), requestAt(t, 0.3, 1)
+	tenth := &exportconfig.Config{Destinations: []exportconfig.Destination{{URL: receiver.URL, Sample: &exportconfig.Sample{0.1, 0.1, 0.1, 0.1, 0.1}}}}
+
+	c := e.Start(tenth, outside)
+	if c != nil || c.Active() || c.Duration() != nil || c.Hold() != nil || e.Diagnostics().ReservedBytes != 0 {
+		t.Fatalf("a request outside every sample started a capture: %+v", e.Diagnostics())
+	}
+	for _, outcome := range exportconfig.Outcomes {
+		if c.Due(outcome) {
+			t.Fatalf("a request outside every sample is due a %s record", outcome)
+		}
+	}
+	// The calls of a request's whole life are safe without a capture.
+	c.Input(map[string]json.RawMessage{"input": json.RawMessage(`"prompt"`)}, true)
+	c.Event([]byte(`{}`))
+	c.Finish(outside, "success", testRecord(outside), testMetadata())
+	c.Discard()
+
+	// The highest rate of any outcome decides whether the request starts a capture.
+	successes := &exportconfig.Config{Destinations: []exportconfig.Destination{{URL: receiver.URL, Sample: &exportconfig.Sample{0.3, 0, 0, 0, 0}}}}
+	if e.Start(successes, outside) != nil {
+		t.Fatal("a request outside the highest rate started a capture")
+	}
+	c = e.Start(successes, inside)
+	c.Input(map[string]json.RawMessage{"input": json.RawMessage(`"prompt"`)}, true)
+	c.Response([]byte(`{"error":{}}`))
+	if !c.Active() || !c.Due("success") || c.Due("failed") || c.Due("rejected") || c.Due("cancelled") || c.Due("unknown") || c.Due("") {
+		t.Fatal("the capture is due only the outcome that its destination gets")
+	}
+	c.Finish(inside, "failed", testRecord(inside), testMetadata())
+	if d := e.Diagnostics(); d.ReservedBytes != 0 || d.PendingDeliveries != 0 || d.Failed != 0 || d.MemoryDropped != 0 || c.Active() {
+		t.Fatalf("an outcome that no destination gets left something behind: %+v", d)
+	}
+
+	// Content is copied only for a destination that can get it. Here the one that sends
+	// content samples a tenth, and the request is outside it.
+	mixed := &exportconfig.Config{Destinations: []exportconfig.Destination{
+		{URL: receiver.URL + "/content", Sample: &exportconfig.Sample{0.1, 0.1, 0.1, 0.1, 0.1}},
+		{URL: receiver.URL + "/metadata", Content: &off},
+	}}
+	c = e.Start(mixed, outside)
+	reserved := e.Diagnostics().ReservedBytes
+	c.Input(map[string]json.RawMessage{"input": json.RawMessage(`"` + strings.Repeat("prompt ", 4096) + `"`)}, true)
+	if c == nil || c.Active() || e.Diagnostics().ReservedBytes != reserved || reserved >= 2*deliveryStateBytes {
+		t.Fatalf("a request outside the content destination's sample copied content or reserved its delivery: %+v", e.Diagnostics())
+	}
+	c.Finish(outside, "success", testRecord(outside), testMetadata())
+	if both := e.Start(mixed, inside); !both.Active() {
+		t.Fatal("a request inside the content destination's sample copies content")
+	} else {
+		both.Finish(inside, "success", testRecord(inside), testMetadata())
+	}
+	await(t, func() bool { return e.Diagnostics().Delivered == 3 })
+	if d := e.Diagnostics(); received.Load() != 3 || d.ReservedBytes != 0 || d.Failed != 0 {
+		t.Fatalf("diagnostics = %+v, received %d", d, received.Load())
+	}
+
+	// A capture that memory refused still says whether its record was due, so that the
+	// request record marks only records that a destination should hold.
+	pressed := New(context.Background(), testOptions(true, deliveryStateBytes))
+	defer pressed.Close()
+	failures := &exportconfig.Config{Destinations: []exportconfig.Destination{
+		{URL: receiver.URL, Sample: &exportconfig.Sample{0, 1, 0, 1, 0}},
+		{URL: receiver.URL + "/tenth", Sample: &exportconfig.Sample{0.1, 0.1, 0.1, 0.1, 0.1}},
+	}}
+	c = pressed.Start(failures, outside)
+	if c == nil || c.held() || !c.Due("failed") || !c.Due("rejected") || c.Due("success") || *c.Duration() != 0 {
+		t.Fatalf("dropped capture = %+v", c)
+	}
+	// Only the destination that the request reaches counts as dropped.
+	if d := pressed.Diagnostics(); d.MemoryDropped != 1 || d.ReservedBytes != 0 {
+		t.Fatalf("diagnostics = %+v", d)
+	}
+}
+
+// A rejection's export waits for the record that holds it, and leaves only for
+// the destinations that get rejections.
+func TestHeldExportFollowsTheSample(t *testing.T) {
+	var mu sync.Mutex
+	var paths []string
+	receiver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.URL.Path+" "+r.Header.Get("Idempotency-Key"))
+		mu.Unlock()
+	}))
+	defer receiver.Close()
+	inside, outside := requestAt(t, 0, 0.5), requestAt(t, 0.5, 1)
+	config := &exportconfig.Config{Destinations: []exportconfig.Destination{
+		{URL: receiver.URL + "/successes", Sample: &exportconfig.Sample{1, 0, 0, 0, 0}},
+		{URL: receiver.URL + "/rejections", Sample: &exportconfig.Sample{0, 0, 0, 0.5, 0}},
+	}}
+	e := New(context.Background(), testOptions(true, 16<<20))
+	for _, id := range []string{inside, outside} {
+		c := e.Start(config, id)
+		c.Response([]byte(`{"error":{}}`))
+		held := c.Hold()
+		if held == nil {
+			t.Fatal("the capture holds its export")
+		}
+		held.Finish(id, "rejected", testRecord(id), testMetadata())
+		held.Finish(id, "rejected", testRecord(id), testMetadata())
+	}
+	e.Close()
+	if d := e.Diagnostics(); !slices.Equal(paths, []string{"/rejections " + inside}) || d.Delivered != 1 || d.Failed != 0 || d.MemoryDropped != 0 || d.ReservedBytes != 0 {
+		t.Fatalf("deliveries = %v, diagnostics = %+v", paths, d)
 	}
 }
