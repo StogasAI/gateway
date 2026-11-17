@@ -352,10 +352,13 @@ type compiledProvider struct {
 type compiledRoute struct {
 	// Readers show these. A route's capabilities, data handling, modalities and hosted tools
 	// are defaults and offers that each deployment's route already holds.
-	Capabilities    shown `json:"capabilities"`
-	DataHandling    shown `json:"dataHandling"`
-	Batch           shown `json:"batch"`
-	HostedTools     shown `json:"hostedTools"`
+	Capabilities shown `json:"capabilities"`
+	DataHandling shown `json:"dataHandling"`
+	Batch        shown `json:"batch"`
+	HostedTools  shown `json:"hostedTools"`
+	// Endpoint is the URL that every account calls for the route. The gateway calls the hosts
+	// in its own code, so a catalog cannot send requests elsewhere.
+	Endpoint        shown `json:"endpoint"`
 	InputLimits     shown `json:"inputLimits"`
 	InputModalities shown `json:"inputModalities"`
 	Notes           shown `json:"notes"`
