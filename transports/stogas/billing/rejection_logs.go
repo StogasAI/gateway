@@ -19,7 +19,7 @@ const (
 	// A key's first group in a minute is always kept, so a key refused for one
 	// reason keeps an exact count however many other keys and organizations are
 	// refused. The gateway holds at most as many groups as it caches keys,
-	// about 77 MiB at 2.4 KB a group.
+	// about 88 MiB at 2.8 KB a group that lists 32 encryption keys.
 	rejectionLogCapacity = 32768
 	// A key's further groups, for another error or request shape, share less
 	// room: 32 groups a key, 256 an organization and 4,096 on the gateway. So
@@ -46,7 +46,8 @@ type RejectionInput struct {
 	NodeID         string
 	GatewayVersion string
 	Transport      string
-	// EncryptionKeyIDs are the registered roots that the request lacked.
+	// EncryptionKeyIDs are the roots the request needs, or, when it lacks one,
+	// those it lacks.
 	EncryptionKeyIDs []string
 	// TraceID goes only to the rejection's own row, never to a count, so
 	// groups never split by trace.

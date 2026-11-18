@@ -411,9 +411,13 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 			pairs[i] = PlannedPair{Provider: choice.candidate.Provider, Credential: choice.index, Policy: choice.candidate.policy}
 		}
 		if err := input.CheckRoots(pairs, true); err != nil {
-			// A simulation names the policy that keeps the first such pair.
+			// A simulation names the policy that keeps the first pair whose
+			// root the request lacks.
+			if trace == nil || !errors.As(err, new(*customerkey.MissingError)) {
+				return nil, err
+			}
 			for _, pair := range pairs {
-				if trace == nil || pair.Policy == nil || input.CheckRoots([]PlannedPair{pair}, false) == nil {
+				if pair.Policy == nil || input.CheckRoots([]PlannedPair{pair}, false) == nil {
 					continue
 				}
 				if origin, ok := pair.Policy.MissingKeysOrigin(); ok {

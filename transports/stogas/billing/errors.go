@@ -1,6 +1,11 @@
 package billing
 
-import "maps"
+import (
+	"maps"
+	"strconv"
+
+	"github.com/maximhq/bifrost/transports/stogas/customerkey"
+)
 
 // RequestError holds only reviewed public text. Wrapped errors can retain private
 // details, so HTTP responses must read Message instead of calling err.Error().
@@ -26,6 +31,7 @@ var (
 	ErrPlatformRateLimit   = &RequestError{"platform_rate_limited", "The organization's requests exceed its platform request rate. Wait before retrying.", 429}
 	ErrAPIKeyConfigStale   = &RequestError{"key_configuration_changed", "API key configuration changed. The gateway needs to refresh it. This request was not sent to a provider or charged. Retry shortly.", 503}
 	ErrAPIKeyConfigSize    = &RequestError{"key_configuration_too_large", "The API key's policies and credential metadata exceed the configuration size limit. Reduce its assigned credentials or policy content.", 400}
+	ErrRequestKeys         = &RequestError{"key_configuration_too_large", "A request can need at most " + strconv.Itoa(customerkey.MaxRequestKeys) + " encryption keys. Encrypt the credentials and policies that one request can try with fewer keys.", 400}
 	ErrByok                = &RequestError{"byok_unavailable", "BYOK key is unavailable", 503}
 	ErrByokRequired        = &RequestError{"byok_required", "A BYOK key is required for this provider", 400}
 	ErrByokTarget          = &RequestError{"byok_target_unavailable", "The assigned BYOK credential does not provide this deployment", 400}

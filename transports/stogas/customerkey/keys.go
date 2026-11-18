@@ -150,6 +150,10 @@ func missing(registered map[string]string, sent func(string) bool, ids []string)
 	return &MissingError{Labels: labels, Unregistered: unregistered, IDs: SortedIDs(lacking)}
 }
 
+// MaxRequestKeys bounds the distinct roots that one request can need, because
+// its log lists them. It is the number an organization registers by default.
+const MaxRequestKeys = 32
+
 // SortedIDs returns the distinct root IDs in ids, sorted, leaving out empty
 // ones.
 func SortedIDs(ids []string) []string {

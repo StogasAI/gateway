@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/transports/stogas/customerkey"
 	"github.com/maximhq/bifrost/transports/stogas/money"
 	"github.com/maximhq/bifrost/transports/stogas/plugins"
 )
@@ -511,9 +512,9 @@ func TestEncodeRequestLogRejectsOversizedPayload(t *testing.T) {
 }
 
 // A log that does not fit makes the gateway refuse new requests, so the
-// largest log that clients and providers can cause must fit. Their strings are
-// quotes, which JSON writes as two bytes each. A request records fewer than 25
-// meters with today's catalog.
+// largest log that clients and providers can cause must fit. Every field holds
+// its largest value, and strings are quotes, which JSON writes as two bytes
+// each. A request records fewer than 25 meters with today's catalog.
 func TestLargestRequestLogFitsTheLimit(t *testing.T) {
 	quotes := func(n int) string { return strings.Repeat(`"`, n) }
 	setting, usd, count := quotes(maxSettingBytes), "9"+strings.Repeat("9", money.Precision-money.Scale-1)+"."+strings.Repeat("9", money.Scale), uint32(1<<32-1)
@@ -524,21 +525,29 @@ func TestLargestRequestLogFitsTheLimit(t *testing.T) {
 	}
 	event := RequestEvent{
 		SchemaVersion: RequestLogSchemaVersion, RequestID: uuid.NewString(), CreatedAt: "2026-10-16T12:00:00.000Z", LastRequestAt: "2026-10-16T12:00:00.000Z",
-		RequestCount: 1, GatewayError: &EventError{Code: "upstream_configuration_error", Status: 599}, APIKeyID: uuid.NewString(),
+		RequestCount: count, GatewayError: &EventError{Code: "upstream_authentication_failed", Status: 599}, APIKeyID: uuid.NewString(),
 		GrantID: new(uuid.NewString()), MemberID: uuid.NewString(), OrganizationID: uuid.NewString(), Interface: "chat_completions", Stream: true,
 		RequestSettings: RequestSettings{
 			MaxOutputTokens: &integer, ReasoningEnabled: &flag, ReasoningEffort: setting, ReasoningMaxTokens: &integer, ReasoningSummary: setting,
 			ReasoningDisplay: setting, TaskBudgetTokens: &integer, Temperature: &number, TopP: &number, TopK: &integer, FrequencyPenalty: &number,
 			PresencePenalty: &number, RepetitionPenalty: &number, Seed: &integer, Logprobs: &flag, TopLogprobs: &integer, Verbosity: setting,
 			ResponseFormat: setting, Include: include, ToolChoice: setting, ParallelToolCalls: &flag, MaxToolCalls: &integer, Truncation: setting,
+			CyberAccessProgram: "daybreak_blue", HostedTools: []string{"web_search", "web_fetch"},
 		},
-		SessionID: quotes(MaxSessionIDBytes), Metadata: map[string]string{}, AppTitle: quotes(MaxMetadataValueBytes), AppURL: quotes(MaxMetadataValueBytes),
+		SessionID: quotes(MaxSessionIDBytes), TraceID: strings.Repeat("f", 32), Metadata: map[string]string{},
+		AppTitle: quotes(MaxMetadataValueBytes), AppURL: quotes(MaxMetadataValueBytes),
+		AgentID: quotes(MaxSessionIDBytes), ParentAgentID: quotes(MaxSessionIDBytes), AgentName: quotes(MaxSessionIDBytes),
 		Transport: TransportAttestedTLS, ClientStopMS: &count, CatalogVersion: new(uint64(1<<64 - 1)),
 		PolicyVersions: &LoggedPolicyVersions{}, NodeID: strings.Repeat("f", 64), GatewayVersion: "v" + strings.Repeat("9", 31),
-		Performance: RequestPerformance{TotalMS: count, FirstOutputMS: &count, TTFTMS: &count},
+		Performance: RequestPerformance{TotalMS: count, RateLimitWaitMS: count, FirstOutputMS: &count, TTFTMS: &count},
 		Usage:       RequestUsage{UpstreamCostUSD: usd, BilledCostUSD: usd, CacheReadSavingsUSD: &usd, CacheWriteOverheadUSD: &usd, Meters: EventMeters{}},
-		Plugins: plugins.Metrics{Redaction: &plugins.RedactionMetrics{ItemsRedacted: count, DurationUS: count},
-			Export: &plugins.ExportMetrics{DurationUS: count}},
+		Plugins: plugins.Metrics{TextExtraction: &plugins.TextExtractionMetrics{FilesExtracted: count, DurationUS: count},
+			Redaction: &plugins.RedactionMetrics{ItemsRedacted: count, DurationUS: count}, Export: &plugins.ExportMetrics{DurationUS: count}},
+		LogBatch:           &LogPosition{Sequence: count, Index: count},
+		ReceiptCommitments: &ReceiptCommitments{Request: strings.Repeat("f", 64), Response: strings.Repeat("f", 64)},
+	}
+	for i := range customerkey.MaxRequestKeys {
+		event.EncryptionKeyIDs = append(event.EncryptionKeyIDs, fmt.Sprintf("%064x", i))
 	}
 	for i := range MaxMetadataEntries {
 		event.Metadata[quotes(MaxMetadataKeyBytes-2)+fmt.Sprintf("%02d", i)] = quotes(MaxMetadataValueBytes)

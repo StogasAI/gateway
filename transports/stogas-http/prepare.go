@@ -14,6 +14,21 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/policy"
 )
 
+// neededRoots returns the distinct roots that pairs need, sorted. The log lists
+// the roots that a request needs or lacks, so pairs that need more than
+// customerkey.MaxRequestKeys fail the request.
+func neededRoots(keyConfig *billing.KeyConfigSnapshot, pairs []catalog.PlannedPair) ([]string, error) {
+	var ids []string
+	for _, pair := range pairs {
+		ids = append(ids, keyConfig.RequiredRoots(string(pair.Provider), pair.Credential, pair.Policy)...)
+	}
+	ids = customerkey.SortedIDs(ids)
+	if len(ids) > customerkey.MaxRequestKeys {
+		return nil, billing.ErrRequestKeys
+	}
+	return ids, nil
+}
+
 // startRun resolves the request's pairs and binds the first one that
 // prepares. It returns nil after it has written the response.
 func (s *Server) startRun(ctx *requestContext, startedAt time.Time, preparation *requestMemoryLease) *providerRun {
@@ -104,14 +119,14 @@ func (s *Server) startRun(ctx *requestContext, startedAt time.Time, preparation 
 			return policy.CompileRequest(raw, keyConfig.Claims.OrganizationID, credential.EncryptionKeys)
 		},
 		CheckRoots: func(pairs []catalog.PlannedPair, plan bool) error {
-			var ids []string
-			for _, pair := range pairs {
-				ids = append(ids, keyConfig.RequiredRoots(string(pair.Provider), pair.Credential, pair.Policy)...)
+			ids, err := neededRoots(keyConfig, pairs)
+			if err == nil {
+				if plan {
+					roots = ids
+				}
+				err = credential.EncryptionKeys.Missing(keyConfig.EncryptionKeys, ids...)
 			}
-			if plan {
-				roots = ids
-			}
-			if err := credential.EncryptionKeys.Missing(keyConfig.EncryptionKeys, ids...); err != nil {
+			if err != nil {
 				public := stogas.PublicBillingErrorFor(err)
 				return errors.Join(err, catalog.APIError{Code: public.Code, StatusCode: public.StatusCode, Type: public.Type, Message: public.Message})
 			}
@@ -168,7 +183,7 @@ func (s *Server) startRun(ctx *requestContext, startedAt time.Time, preparation 
 	// The log names the roots that the plan needs, also when the request
 	// fails after planning. Planning that fails earlier names none, and a
 	// request refused for missing roots names those.
-	ctx.encryptionKeyIDs = customerkey.SortedIDs(roots)
+	ctx.encryptionKeyIDs = roots
 	if missing := (*customerkey.MissingError)(nil); errors.As(err, &missing) {
 		ctx.encryptionKeyIDs = missing.IDs
 	}

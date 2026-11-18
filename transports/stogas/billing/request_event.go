@@ -379,9 +379,12 @@ type EventMeter struct {
 
 type EventMeters map[string]EventMeter
 
-// The largest log the contract allows is about 77 KiB. Postgres stores its
-// text up to half as long again, so 80 KiB stays within its 128 KiB check.
-const requestLogMaxEventBytes = 80 * 1024
+// The largest log the contract allows is about 80 KiB. Postgres checks its text,
+// with the hold binding, against 128 KiB. That text adds a space after each
+// colon and comma, which can make it half as long again, and writes a number
+// in exponent notation in full, up to 327 bytes for each decimal setting, so
+// 84 KiB is the most that stays within the check.
+const requestLogMaxEventBytes = 84 * 1024
 
 // encodeRequestRow encodes a row as analytics stores it. It writes missing meters into the
 // event as the empty object that the row holds, so an export of the event matches the row.

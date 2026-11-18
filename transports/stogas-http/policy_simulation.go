@@ -301,14 +301,11 @@ func (s *Server) simulatePolicy(ctx *requestContext) {
 			return catalog.RequestPolicy{Config: selected.Config}, nil
 		},
 		CheckRoots: func(pairs []catalog.PlannedPair, _ bool) error {
-			if input.EncryptionKeys == nil {
-				return nil
+			ids, err := neededRoots(config, pairs)
+			if err == nil && input.EncryptionKeys != nil {
+				err = customerkey.MissingLabels(config.EncryptionKeys, *input.EncryptionKeys, ids...)
 			}
-			var ids []string
-			for _, pair := range pairs {
-				ids = append(ids, config.RequiredRoots(string(pair.Provider), pair.Credential, pair.Policy)...)
-			}
-			if err := customerkey.MissingLabels(config.EncryptionKeys, *input.EncryptionKeys, ids...); err != nil {
+			if err != nil {
 				public := stogas.PublicBillingErrorFor(err)
 				return errors.Join(err, catalog.APIError{Code: public.Code, StatusCode: public.StatusCode, Type: public.Type, Message: public.Message})
 			}
