@@ -82,7 +82,8 @@ func HostedToolForType(kind string) (HostedTool, bool) { return hostedToolForTyp
 
 // EffectiveDataHandling joins the deployment's data handling with that of each hosted tool that
 // the request lets the model call, so a fact holds for everything the request can cause. Inference
-// itself stays where the deployment's own facts say.
+// itself stays where the deployment's own facts say. A name never makes a tool hosted: only a
+// tool's type does (hostedToolForType), so a client's function named web_search changes nothing.
 func (d Deployment) EffectiveDataHandling(tools []HostedTool) DataHandling {
 	handling := d.DataHandling
 	for _, tool := range tools {
@@ -123,6 +124,13 @@ func (d Deployment) EffectiveDataHandling(tools []HostedTool) DataHandling {
 			})
 		}
 	}
+	// The joined facts keep what a deployment's own must (validateDeploymentDataHandling): a tool
+	// that keeps or trains on content ends zero data retention whether or not its record says so,
+	// and one that leaves the TEE ends what rests on it.
+	handling.ZeroDataRetention = handling.ZeroDataRetention && handling.StorageLocation == "none" &&
+		handling.RetentionDays != nil && *handling.RetentionDays == 0 && isFalse(handling.TrainingUse)
+	handling.TEEVerified = handling.TEEVerified && handling.TEE
+	handling.EndToEndEncrypted = handling.EndToEndEncrypted && handling.TEE
 	return handling
 }
 

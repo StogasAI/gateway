@@ -34,6 +34,13 @@ func TestRequestHostedToolsFollowToolChoice(t *testing.T) {
 		{name: "a preview search, once", route: RouteResponses, body: `{"tools":[{"type":"web_search_preview"},{"type":"web_search"}]}`,
 			listed: []HostedTool{HostedToolWebSearch}, enabled: []HostedTool{HostedToolWebSearch}},
 		{name: "function tools alone", route: RouteResponses, body: `{"tools":[{"type":"function","name":"lookup","parameters":{}}]}`},
+		// A name states nothing: only a tool's type makes it hosted.
+		{name: "client tools named as hosted tools", route: RouteResponses,
+			body: `{"tools":[{"type":"function","name":"web_search","parameters":{}},{"type":"custom","name":"web_fetch"},` +
+				`{"type":"namespace","name":"web","description":"","tools":[{"type":"function","name":"web_search_preview"}]}]}`},
+		{name: "a forced function named as a hosted tool", route: RouteResponses,
+			body:   `{"tools":[{"type":"function","name":"web_search","parameters":{}},{"type":"web_search"}],"tool_choice":{"type":"function","name":"web_search"}}`,
+			listed: []HostedTool{HostedToolWebSearch}},
 		{name: "tools that do not parse", route: RouteResponses, body: `{"tools":{"type":"web_search"}}`},
 		{name: "Chat Completions", route: RouteChat, body: `{"tools":` + tools + `}`},
 	} {
@@ -56,7 +63,7 @@ func TestEffectiveDataHandlingOnlyWorsens(t *testing.T) {
 	days := func(value int) *int { return &value }
 	yes, no := true, false
 	deployment := Deployment{
-		DataHandling: DataHandling{ProcessingLocation: "US", StorageLocation: "none", RetentionDays: days(0),
+		DataHandling: DataHandling{ProcessingLocation: "US", StorageLocation: "none", RetentionDays: days(0), TrainingUse: &no,
 			ZeroDataRetention: true, EndToEndEncrypted: true, TEE: true, TEEVerified: true, SharedWith: []string{"openai"},
 			Certifications: []string{"soc2-type2", "iso-27001", "hipaa-eligible"}},
 		Locations: places,
@@ -71,9 +78,17 @@ func TestEffectiveDataHandlingOnlyWorsens(t *testing.T) {
 		t.Fatalf("no tools changed data handling: %+v", got)
 	}
 	search := deployment.EffectiveDataHandling([]HostedTool{HostedToolWebSearch})
+	// A tool that keeps content ends zero data retention although its record does not say so.
 	if search.ProcessingLocation != "world" || search.StorageLocation != "none" || search.RetentionDays == nil || *search.RetentionDays != 30 ||
-		!search.ZeroDataRetention || !search.TEEVerified {
+		search.ZeroDataRetention || !search.TEEVerified || !search.EndToEndEncrypted {
 		t.Fatalf("web search: %+v", search)
+	}
+	// A tool that leaves the TEE ends the encryption and the verification that rest on it.
+	outside := deployment
+	outside.HostedTools = map[HostedTool]HostedToolOffer{HostedToolWebSearch: {DataHandling: HostedToolDataHandling{TEE: &no}}}
+	if got := outside.EffectiveDataHandling([]HostedTool{HostedToolWebSearch}); got.TEE || got.TEEVerified || got.EndToEndEncrypted ||
+		!got.ZeroDataRetention {
+		t.Fatalf("a tool outside the TEE: %+v", got)
 	}
 	fetch := deployment.EffectiveDataHandling([]HostedTool{HostedToolWebSearch, HostedToolWebFetch})
 	if fetch.ProcessingLocation != "unknown" || fetch.StorageLocation != "unknown" || fetch.RetentionDays != nil || fetch.ZeroDataRetention ||
