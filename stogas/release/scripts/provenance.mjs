@@ -1,5 +1,5 @@
-// Writes the in-toto statement that GitLab's rebuild signs. It names the same files as GitHub's
-// build proof: the release manifest and the image.
+// Writes the in-toto statement that GitLab's rebuild signs: every file of the release that the
+// build writes.
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -15,10 +15,12 @@ const sha256 = (name) =>
 
 const statement = {
 	_type: 'https://in-toto.io/Statement/v1',
-	subject: ['release-manifest.json', 'gateway.igvm'].map((name) => ({
-		name,
-		digest: { sha256: sha256(name) }
-	})),
+	subject: ['release-manifest.json', 'gateway.igvm', 'LICENSE', 'NOTICE', 'sbom.cdx.json'].map(
+		(name) => ({
+			name,
+			digest: { sha256: sha256(name) }
+		})
+	),
 	predicateType: 'https://slsa.dev/provenance/v1',
 	predicate: {
 		buildDefinition: {
