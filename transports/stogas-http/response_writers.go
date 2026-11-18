@@ -38,6 +38,7 @@ func (s *Server) writeProviderError(ctx *requestContext, state *stogas.State, bi
 // retry, as the gateway's own refusals do (billingErrorResponse).
 func providerErrorResponse(state *stogas.State, bifrostErr *schemas.BifrostError, bifrostCtx *schemas.BifrostContext) errorResponse {
 	statusCode, payload := publicProviderError(bifrostErr, providerMessageUseFor(state, bifrostErr))
+	attributeProvider(payload, bifrostErr, callProvider(state))
 	response := errorResponse{status: statusCode, payload: payload}
 	if wait := providerErrorWait(statusCode, bifrostCtx); wait > 0 {
 		response.retryAfter, response.final = spreadRetryAfter(wait), wait > time.Minute
@@ -45,28 +46,66 @@ func providerErrorResponse(state *stogas.State, bifrostErr *schemas.BifrostError
 	return response
 }
 
+// callProvider is the catalog provider of the state's bound pair, or empty
+// without one.
+func callProvider(state *stogas.State) string {
+	if state == nil || state.Resolution == nil {
+		return ""
+	}
+	return string(state.Resolution.Provider)
+}
+
+// attributeProvider names the provider in an error that its call caused: the
+// provider's own error, or a failure of the call that an upstream_ code names.
+// A client then tells a provider's failure from the gateway's own, as
+// OpenRouter's provider metadata and Bifrost's is_bifrost_error do. The
+// gateway's own failures, such as a timeout policy or a price it cannot
+// calculate, name none.
+func attributeProvider(payload map[string]any, failure *schemas.BifrostError, provider string) {
+	detail, ok := payload["error"].(map[string]any)
+	if !ok || provider == "" {
+		return
+	}
+	code, _ := detail["code"].(string)
+	if strings.HasPrefix(code, "upstream_") || failure != nil && !failure.IsBifrostError {
+		detail["provider"] = provider
+	}
+}
+
 // unsentResponse answers a request whose provider call failed before the
-// provider received the request, which therefore cannot run twice.
-func unsentResponse(call int, deployment string) errorResponse {
+// provider received the request, which therefore cannot run twice. A call that
+// the request does not log as an attempt has no number.
+func unsentResponse(call int, deployment, provider string) errorResponse {
+	subject := "The call to deployment " + deployment
+	if call > 0 {
+		subject = "Provider attempt " + strconv.Itoa(call) + " (deployment " + deployment + ")"
+	}
 	return errorResponse{status: http.StatusServiceUnavailable, payload: map[string]any{"error": map[string]any{
-		"message": "Provider attempt " + strconv.Itoa(call) + " (deployment " + deployment +
-			") failed before the provider received the request, so you can safely send it again.",
-		"type": "gateway_error", "code": "upstream_unreachable", "param": nil,
+		"message": subject + " failed before the provider received the request, so you can safely send it again.",
+		"type":    "upstream_error", "code": "upstream_unreachable", "param": nil, "provider": provider,
 	}}}
 }
 
 // outcomeUnknownResponse answers a request whose provider call failed after the
 // gateway sent the request, without showing whether the provider ran it. It
 // tells clients not to retry by themselves, since a second run can bill twice.
-func outcomeUnknownResponse(failure *schemas.BifrostError, call int, deployment string) errorResponse {
-	status, errorType, failed := http.StatusBadGateway, "gateway_error", "failed"
-	if stogasbilling.NormalizeUpstreamStatus(failure) == "timeout" {
+// It names the status that the provider answered with; core gives a lost
+// connection a status of its own.
+func outcomeUnknownResponse(failure *schemas.BifrostError, call int, deployment, provider string) errorResponse {
+	status, errorType, failed := http.StatusBadGateway, "upstream_error", "failed"
+	switch stogasbilling.NormalizeUpstreamStatus(failure) {
+	case "timeout":
 		status, errorType, failed = http.StatusGatewayTimeout, schemas.RequestTimedOut, "timed out"
+	case "connection_error":
+	default:
+		if failure.StatusCode != nil {
+			failed = "failed with HTTP " + strconv.Itoa(*failure.StatusCode)
+		}
 	}
 	return errorResponse{status: status, final: true, payload: map[string]any{"error": map[string]any{
 		"message": "Provider attempt " + strconv.Itoa(call) + " (deployment " + deployment + ") " + failed +
 			" after the gateway sent the request, so the provider may have run it. Send the request again only if a second run is acceptable.",
-		"type": errorType, "code": "upstream_outcome_unknown", "param": nil,
+		"type": errorType, "code": "upstream_outcome_unknown", "param": nil, "provider": provider,
 	}}}
 }
 
@@ -119,6 +158,7 @@ func spreadRetryAfter(wait time.Duration) string {
 
 func bifrostErrorPayload(state *stogas.State, bifrostErr *schemas.BifrostError) any {
 	_, payload := publicProviderError(bifrostErr, providerMessageUseFor(state, bifrostErr))
+	attributeProvider(payload, bifrostErr, callProvider(state))
 	return payload
 }
 
@@ -224,6 +264,16 @@ func publicProviderError(bifrostErr *schemas.BifrostError, use providerMessageUs
 	message := publicBifrostMessage(statusCode, errorType, bifrostErr, use)
 	code := publicBifrostCode(statusCode, bifrostErr)
 	param := publicBifrostParam(statusCode, bifrostErr)
+	if code == nil && statusCode < http.StatusInternalServerError {
+		// A refusal without a code of its own gets the condition that the gateway recognizes in
+		// it, whichever provider sent it: Claude's "prompt is too long" becomes
+		// context_length_exceeded, OpenAI's code for it, on which agents such as Codex compact
+		// their history and continue.
+		switch condition := stogasbilling.NormalizeUpstreamStatus(bifrostErr); condition {
+		case "context_length_exceeded", "content_filter", "invalid_image", "request_too_large":
+			code = condition
+		}
+	}
 
 	return statusCode, map[string]any{
 		"error": map[string]any{
@@ -245,19 +295,29 @@ func publicStableGatewayError(bifrostErr *schemas.BifrostError) (int, string, st
 		return http.StatusGatewayTimeout, schemas.RequestTimedOut, code,
 			"The response timed out. Generation may continue and be billed.", true
 	case "upstream_verification_failed":
-		return http.StatusServiceUnavailable, "gateway_error", code,
+		return http.StatusServiceUnavailable, "upstream_error", code,
 			"Provider verification failed; the request was not sent", true
 	case "upstream_capacity_unavailable":
-		return http.StatusServiceUnavailable, "gateway_error", code,
+		return http.StatusServiceUnavailable, "upstream_error", code,
 			"Provider temporarily unavailable.", true
 	case "upstream_configuration_error":
-		return http.StatusServiceUnavailable, "gateway_error", code,
+		return http.StatusServiceUnavailable, "upstream_error", code,
 			"The managed provider configuration is unavailable", true
 	case "upstream_protocol_error":
-		return http.StatusBadGateway, "gateway_error", code,
+		return http.StatusBadGateway, "upstream_error", code,
 			"The provider returned an invalid private response", true
+	// The gateway's checks of a provider's reply fail it with these (stogas.UpstreamProtocolError).
+	case "upstream_response_invalid":
+		return http.StatusBadGateway, "upstream_error", code,
+			"The provider's response broke the format of its API.", true
+	case "upstream_execution_invalid":
+		return http.StatusBadGateway, "upstream_error", code,
+			"The provider reported that it ran the request differently from its deployment.", true
+	case "upstream_response_too_large":
+		return http.StatusBadGateway, "upstream_error", code,
+			"The provider's response exceeded the gateway's response size limit.", true
 	case "gateway_capacity_exceeded":
-		return http.StatusServiceUnavailable, "gateway_error", code,
+		return http.StatusServiceUnavailable, "service_unavailable", code,
 			"Gateway capacity is temporarily exhausted", true
 	case responseProofErrorCode:
 		return http.StatusInternalServerError, "internal_error", code,
@@ -276,19 +336,19 @@ func publicStableGatewayError(bifrostErr *schemas.BifrostError) (int, string, st
 	// fails the request answers 424, which no client retries by itself.
 	switch stogasbilling.NormalizeUpstreamStatus(bifrostErr) {
 	case "authentication_error":
-		return http.StatusFailedDependency, "gateway_error", "upstream_authentication_failed",
+		return http.StatusFailedDependency, "upstream_error", "upstream_authentication_failed",
 			"The configured provider credential was rejected", true
 	case "over_budget":
-		return http.StatusFailedDependency, "gateway_error", "upstream_quota_exceeded",
+		return http.StatusFailedDependency, "upstream_error", "upstream_quota_exceeded",
 			"The configured provider account has insufficient quota", true
 	case "permission_error":
-		return http.StatusFailedDependency, "gateway_error", "upstream_access_denied",
+		return http.StatusFailedDependency, "upstream_error", "upstream_access_denied",
 			"The configured provider credential cannot access the requested model", true
 	case "model_unavailable":
 		// A provider 404 keeps its status and code. A provider that refuses the
 		// gateway's region refuses its account, as a permission error does.
 		if bifrostErr.StatusCode == nil || *bifrostErr.StatusCode != http.StatusNotFound {
-			return http.StatusFailedDependency, "gateway_error", "upstream_access_denied",
+			return http.StatusFailedDependency, "upstream_error", "upstream_access_denied",
 				"The configured provider credential cannot access the requested model", true
 		}
 		return 0, "", "", "", false
@@ -368,14 +428,14 @@ func publicBifrostType(statusCode int, bifrostErr *schemas.BifrostError) string 
 	case 499:
 		return schemas.RequestCancelled
 	case http.StatusBadGateway, http.StatusServiceUnavailable:
-		return "gateway_error"
+		return "upstream_error"
 	case http.StatusGatewayTimeout:
 		return schemas.RequestTimedOut
 	case 529:
 		return "overloaded_error"
 	default:
-		if statusCode >= 500 && bifrostErr.StatusCode != nil {
-			return "gateway_error"
+		if statusCode >= 500 && bifrostErr.StatusCode != nil && !bifrostErr.IsBifrostError {
+			return "upstream_error"
 		}
 		return "internal_error"
 	}
@@ -383,7 +443,8 @@ func publicBifrostType(statusCode int, bifrostErr *schemas.BifrostError) string 
 
 // publicBifrostMessage passes on the message of a 4xx failure as use allows:
 // whole up to a bound, only when it is short and names nothing internal, or
-// not at all.
+// not at all. A server error's message can name a provider's internals, such
+// as a stack trace, so it never passes.
 // Claude refuses reasoning history whose system prompt, tools or earlier messages changed after
 // Claude produced it (https://platform.claude.com/docs/en/build-with-claude/preserved-thinking/prefix-checks).
 // Its 400 names a position in its own message list and a setting that Chat Completions and
@@ -436,7 +497,7 @@ func publicBifrostMessage(statusCode int, errorType string, bifrostErr *schemas.
 		return "Upstream request timed out"
 	case "overloaded_error":
 		return "Upstream provider is overloaded"
-	case "gateway_error":
+	case "upstream_error":
 		if statusCode == http.StatusServiceUnavailable {
 			return "Upstream provider is unavailable"
 		}
@@ -731,8 +792,12 @@ func localErrorResponse(err error) errorResponse {
 	var unsent *unsentCall
 	var refusal billingFailure
 	switch {
+	case errors.As(err, &unsent) && requestNotSent(unsent.failure):
+		return unsentResponse(0, unsent.deployment, unsent.provider)
 	case errors.As(err, &unsent):
-		return providerErrorResponse(nil, unsent.failure, unsent.ctx)
+		response := providerErrorResponse(nil, unsent.failure, unsent.ctx)
+		attributeProvider(response.payload, unsent.failure, unsent.provider)
+		return response
 	case errors.Is(err, errRequestMemoryCapacity):
 		return capacityErrorResponse()
 	case errors.As(err, &refusal), errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):

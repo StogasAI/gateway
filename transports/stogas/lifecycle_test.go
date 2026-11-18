@@ -79,7 +79,7 @@ func TestPublicBillingErrorTypes(t *testing.T) {
 		{"key disabled", billing.ErrAPIKeyDisabled, 403, "permission_denied", "key_disabled"},
 		{"organization restricted", billing.ErrOrganizationRestricted, 403, "permission_denied", "organization_restricted"},
 		{"rate limit", billing.ErrAPIKeyRateLimit, 429, "rate_limit_error", "key_rate_limited"},
-		{"gateway unavailable", billing.ErrGatewayUnavailable, 503, "gateway_error", "gateway_unavailable"},
+		{"gateway unavailable", billing.ErrGatewayUnavailable, 503, "service_unavailable", "gateway_unavailable"},
 		{"missing encryption key", customerkey.ErrKey, 400, "invalid_request_error", "encryption_key_required"},
 		{"policy work limit", policy.ErrSourceBudget, 400, "invalid_request_error", "policy_work_limit_exceeded"},
 		{"invalid decrypted policy", fmt.Errorf("%w: private literal", policy.ErrInvalidConfig), 400, "invalid_request_error", "invalid_request"},
@@ -100,7 +100,7 @@ func TestPublicBillingErrorNeverReturnsPrivateDetails(t *testing.T) {
 		want PublicBillingError
 	}{
 		{"database failure", fmt.Errorf("%w: postgres://private-user:private-password@private-host/database", billing.ErrGatewayUnavailable),
-			PublicBillingError{503, "gateway_unavailable", "gateway_error", "The gateway is temporarily unavailable. Retry the request later."}},
+			PublicBillingError{503, "gateway_unavailable", "service_unavailable", "The gateway is temporarily unavailable. Retry the request later."}},
 		{"wrapped rejection", fmt.Errorf("%w: balance=123 customer=private", billing.ErrInsufficientBalance),
 			PublicBillingError{402, "insufficient_balance", "billing_error", "Insufficient credit. Add funds to your organization to retry this request."}},
 		{"unknown error", errors.New("private database query and parameters"),

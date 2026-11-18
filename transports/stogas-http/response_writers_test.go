@@ -138,7 +138,8 @@ func TestPublicBifrostErrorKeepsProviderLimitAndPolicyDetails(t *testing.T) {
 		err      *schemas.BifrostError
 		wantCode any
 	}{
-		{"prompt too long", testBifrostError(http.StatusBadRequest, "prompt is too long: 215000 tokens > 200000 maximum", "invalid_request_error", ""), nil},
+		// Claude names no code, so the error gets OpenAI's for the condition, on which agents compact.
+		{"prompt too long", testBifrostError(http.StatusBadRequest, "prompt is too long: 215000 tokens > 200000 maximum", "invalid_request_error", ""), "context_length_exceeded"},
 		{"OpenAI cyber policy on 403", testBifrostError(http.StatusForbidden, "Request blocked by cyber policy.", "", "cyber_policy"), "cyber_policy"},
 		{"OpenAI cyber policy inside a stream", testBifrostError(0, "Request blocked by cyber policy.", "", "cyber_policy"), "cyber_policy"},
 	} {
@@ -225,6 +226,88 @@ func TestProviderErrorCarriesProviderWordsForACustomerCredential(t *testing.T) {
 }
 
 const testProviderSecret = "sk-test-0123456789abcdef"
+
+// An error that a provider's call caused names the provider, and one that the gateway made
+// itself names none, so a client tells an upstream failure from the gateway's own.
+func TestProviderErrorsNameTheProvider(t *testing.T) {
+	gatewayMade := func(err *schemas.BifrostError) *schemas.BifrostError {
+		err.IsBifrostError = true
+		return err
+	}
+	for _, tc := range []struct {
+		name         string
+		err          *schemas.BifrostError
+		customer     bool
+		wantStatus   int
+		wantType     string
+		wantCode     any
+		wantMessage  string
+		wantProvider bool
+	}{
+		{"provider refusal", testBifrostError(http.StatusBadRequest, "Unsupported value: 'temperature'.", "invalid_request_error", "unsupported_value"), false,
+			http.StatusBadRequest, "invalid_request_error", "unsupported_value", "Unsupported value: 'temperature'.", true},
+		{"provider credential refusal", testBifrostError(http.StatusUnauthorized, "bad key", "authentication_error", ""), false,
+			http.StatusFailedDependency, "upstream_error", "upstream_authentication_failed", "The configured provider credential was rejected", true},
+		{"core's own validation", gatewayMade(testBifrostError(http.StatusBadRequest, "messages.0.content is required", "invalid_request_error", "")), false,
+			http.StatusBadRequest, "invalid_request_error", nil, "messages.0.content is required", false},
+		{"timeout policy", requestTimeoutError(), false,
+			http.StatusGatewayTimeout, schemas.RequestTimedOut, "request_timeout", "The response timed out. Generation may continue and be billed.", false},
+		{"invalid provider reply", stogas.UpstreamProtocolError(stogas.ErrProviderExecutionMismatch), false,
+			http.StatusBadGateway, "upstream_error", "upstream_execution_invalid", "The provider reported that it ran the request differently from its deployment.", true},
+		// A provider cannot word the gateway's own codes.
+		{"provider that sends a gateway code", testBifrostError(http.StatusBadGateway, "internal host 10.0.0.7 failed", "", "upstream_response_invalid"), false,
+			http.StatusBadGateway, "upstream_error", "upstream_response_invalid", "The provider's response broke the format of its API.", true},
+		{"managed server error", testBifrostError(http.StatusInternalServerError, "stack trace at internal host", "api_error", ""), false,
+			http.StatusInternalServerError, "upstream_error", nil, "Upstream provider error", true},
+		// A server error can name the provider's internals, whoever's credential the call used.
+		{"customer server error", testBifrostError(http.StatusInternalServerError, "stack trace at internal host", "api_error", ""), true,
+			http.StatusInternalServerError, "upstream_error", nil, "Upstream provider error", true},
+		{"Claude's output filter", testBifrostError(http.StatusBadRequest, "Output blocked by content filtering policy", "invalid_request_error", ""), false,
+			http.StatusBadRequest, "invalid_request_error", "content_filter", "Output blocked by content filtering policy", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			byok := billing.ManagedUpstreamByok
+			if tc.customer {
+				byok = "byok_1"
+			}
+			state := &stogas.State{Pair: stogas.Pair{
+				Resolution:    &catalog.ResolvedRequest{Provider: "anthropic"},
+				Authorization: &billing.Authorization{UpstreamByok: byok, UpstreamByokSecret: testProviderSecret},
+			}}
+			response := providerErrorResponse(state, tc.err, schemas.NewBifrostContext(context.Background(), schemas.NoDeadline))
+			errorObject := publicErrorObject(t, response.payload)
+			provider, named := errorObject["provider"]
+			if response.status != tc.wantStatus || errorObject["type"] != tc.wantType || errorObject["code"] != tc.wantCode ||
+				errorObject["message"] != tc.wantMessage || named != tc.wantProvider || named && provider != "anthropic" {
+				t.Fatalf("status = %d, error = %#v", response.status, errorObject)
+			}
+		})
+	}
+}
+
+// A call that the provider may have run says whose call it was and the status that the provider
+// answered with. Core gives a lost connection a status of its own, which the message leaves out.
+func TestOutcomeUnknownNamesTheProviderFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		err    *schemas.BifrostError
+		failed string
+	}{
+		{"overloaded", testBifrostError(529, "Overloaded", "overloaded_error", ""), "failed with HTTP 529"},
+		{"lost connection", testBifrostError(http.StatusBadGateway, "connection reset by peer", schemas.ProviderConnectionFailed, ""), "failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := outcomeUnknownResponse(tc.err, 2, "anthropic-claude", "anthropic")
+			errorObject := publicErrorObject(t, response.payload)
+			want := "Provider attempt 2 (deployment anthropic-claude) " + tc.failed + " after the gateway sent the request, " +
+				"so the provider may have run it. Send the request again only if a second run is acceptable."
+			if response.status != http.StatusBadGateway || !response.final || errorObject["code"] != "upstream_outcome_unknown" ||
+				errorObject["type"] != "upstream_error" || errorObject["provider"] != "anthropic" || errorObject["message"] != want {
+				t.Fatalf("status = %d, error = %#v", response.status, errorObject)
+			}
+		})
+	}
+}
 
 // A JSON credential's secret fields never pass, while a provider's error may name its
 // identifiers, as Entra ID names the tenant and the application.

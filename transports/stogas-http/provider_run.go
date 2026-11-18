@@ -86,8 +86,9 @@ func (f billingFailure) Unwrap() error { return f.error }
 // proved so, or core failed before the call. It is not an attempt, and the
 // next pair can still serve the request.
 type unsentCall struct {
-	failure *schemas.BifrostError
-	ctx     *schemas.BifrostContext
+	failure              *schemas.BifrostError
+	ctx                  *schemas.BifrostContext
+	deployment, provider string
 }
 
 func (c *unsentCall) Error() string { return bifrostErrorMessage(c.failure) }
@@ -271,7 +272,7 @@ func (r *providerRun) failed(failure *schemas.BifrostError, attempt *schemas.Bif
 		count--
 	}
 	if count <= r.attempts {
-		r.local = &unsentCall{failure, attempt}
+		r.local = &unsentCall{failure: failure, ctx: attempt, deployment: r.pair.Resolution.Deployment.ID, provider: callProvider(r.state)}
 		r.noteLocal(r.local, r.pair.number)
 		return false
 	}
@@ -702,11 +703,11 @@ func callFailure(state *stogas.State, failure *schemas.BifrostError, attempt *sc
 	if wait := providerErrorWait(f.response.status, attempt); wait > 0 {
 		f.until = f.at.Add(wait)
 	}
-	switch {
+	switch provider := callProvider(state); {
 	case requestNotSent(failure):
-		f.response = unsentResponse(call, deployment)
+		f.response = unsentResponse(call, deployment, provider)
 	case outcomeUnknown(failure, attempt):
-		f.response = outcomeUnknownResponse(failure, call, deployment)
+		f.response = outcomeUnknownResponse(failure, call, deployment, provider)
 	}
 	switch {
 	case action == nextPair, failure.ExtraFields.BilledUsage != nil:

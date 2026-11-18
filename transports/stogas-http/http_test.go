@@ -1123,8 +1123,8 @@ func TestPublicBifrostErrorClassifiesProviderDependencyFailures(t *testing.T) {
 				t.Fatalf("expected 424, got %d", status)
 			}
 			errorObject := publicErrorObject(t, payload)
-			if errorObject["type"] != "gateway_error" {
-				t.Fatalf("expected gateway_error, got %#v", errorObject)
+			if errorObject["type"] != "upstream_error" {
+				t.Fatalf("expected upstream_error, got %#v", errorObject)
 			}
 			if errorObject["message"] != tt.wantMessage {
 				t.Fatalf("expected %q, got %#v", tt.wantMessage, errorObject)
@@ -1311,8 +1311,8 @@ func TestPublicBifrostErrorHidesProviderServerDetails(t *testing.T) {
 		t.Fatalf("expected 500, got %d", status)
 	}
 	errorObject := publicErrorObject(t, payload)
-	if errorObject["type"] != "gateway_error" {
-		t.Fatalf("expected gateway_error, got %#v", errorObject)
+	if errorObject["type"] != "upstream_error" {
+		t.Fatalf("expected upstream_error, got %#v", errorObject)
 	}
 	if errorObject["message"] != "Upstream provider error" {
 		t.Fatalf("expected scrubbed provider error message, got %#v", errorObject)

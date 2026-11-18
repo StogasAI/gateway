@@ -981,7 +981,7 @@ func clientRequestedChatStreamUsage(state *stogas.State) bool {
 
 func streamMemoryCapacityError() *schemas.BifrostError {
 	statusCode := http.StatusServiceUnavailable
-	errorType := "gateway_error"
+	errorType := "service_unavailable"
 	code := "gateway_capacity_exceeded"
 	allowFallbacks := false
 	return &schemas.BifrostError{

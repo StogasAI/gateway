@@ -530,6 +530,8 @@ func TestRunReportsTheFailureThatPassesSoonest(t *testing.T) {
 		{name: "a provider that asks for a retry", failures: []failure{{status: 400, headers: map[string]string{"x-should-retry": "true"}}}, status: 400, shouldRetry: "true"},
 		{name: "an unsent call's wait over a minute", failures: []failure{{status: 429, headers: wait("300"), unsent: true}},
 			status: 429, code: "upstream_rate_limit_error", retryAfter: []string{"300"}, shouldRetry: "false"},
+		{name: "a connection that never opened", failures: []failure{{unsent: true, notSent: true}},
+			status: 503, code: "upstream_unreachable"},
 		{name: "a refusal with a wait after a call", failures: []failure{{status: 401}, {pair: 1, local: billingFailure{waitRefusal{billing.ErrRateLimit, 300 * time.Millisecond}}}},
 			status: 429, code: "rate_limit_exceeded", retryAfter: []string{"1", "2"}, gateway: true},
 		{name: "gateway capacity after a call", failures: []failure{{status: 401}, {pair: -1, local: errRequestMemoryCapacity}},
@@ -558,13 +560,13 @@ func TestRunReportsTheFailureThatPassesSoonest(t *testing.T) {
 						failure.Error.Code = schemas.Ptr(f.code)
 					}
 					attempt := retryAfterContext(f.headers)
-					if f.unsent {
-						run.local = &unsentCall{failure: failure, ctx: attempt}
-						run.noteLocal(run.local, f.pair)
-						continue
-					}
 					if f.notSent {
 						failure.Error.Error = &network.NotSentError{Err: errors.New("dial tcp: connection refused")}
+					}
+					if f.unsent {
+						run.local = &unsentCall{failure: failure, ctx: attempt, deployment: "deployment", provider: "openai"}
+						run.noteLocal(run.local, f.pair)
+						continue
 					}
 					if f.billed {
 						failure.ExtraFields.BilledUsage = &schemas.BifrostLLMUsage{PromptTokens: 3}

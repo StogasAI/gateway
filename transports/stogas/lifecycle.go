@@ -58,7 +58,7 @@ func PublicBillingErrorFor(err error) PublicBillingError {
 		errorType = "rate_limit_error"
 		message = "Rate limit exceeded"
 	case 503:
-		errorType = "gateway_error"
+		errorType = "service_unavailable"
 		message = "The gateway is temporarily unavailable. Retry the request later."
 	}
 
