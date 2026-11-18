@@ -68,8 +68,8 @@ func TestExportCompositionRulesAndInspection(t *testing.T) {
 			if exports != nil {
 				n = len(exports.Destinations)
 				for _, d := range exports.Destinations {
-					if d.SendsContent() == tc.withoutContent {
-						t.Fatalf("destination %s sends content: %v", d.URL, d.SendsContent())
+					if (d.ContentReach() > 0) == tc.withoutContent {
+						t.Fatalf("destination %s sends content: %v", d.URL, d.ContentReach() > 0)
 					}
 				}
 			}

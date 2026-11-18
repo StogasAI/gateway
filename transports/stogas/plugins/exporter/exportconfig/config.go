@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"net/textproto"
 	"net/url"
+	"slices"
 	"strings"
 
 	"golang.org/x/net/http/httpguts"
@@ -28,16 +29,14 @@ type Config struct {
 
 // Destination is immutable after validation. URL is the complete ingestion URL;
 // no path is appended. Headers authenticate export delivery, never inference.
-// Content false sends records without request and response bodies. Sample nil
-// sends every record.
+// Sample nil sends every record, and Content nil sends each of them with its
+// request and response bodies.
 type Destination struct {
 	URL     string            `json:"url"`
 	Headers map[string]string `json:"headers,omitempty"`
-	Content *bool             `json:"content,omitempty"`
+	Content *Content          `json:"content,omitempty"`
 	Sample  *Sample           `json:"sample,omitempty"`
 }
-
-func (d Destination) SendsContent() bool { return d.Content == nil || *d.Content }
 
 // Outcomes are how a request ended, as its record and Analytics name it.
 var Outcomes = [...]string{"success", "failed", "cancelled", "rejected", "unknown"}
@@ -86,6 +85,36 @@ func (s Sample) MarshalJSON() ([]byte, error) {
 	return json.Marshal(rates)
 }
 
+// Content is the share of each outcome's records that carry request and
+// response bodies. A policy writes true or false for every record or none, or
+// a share as a sample writes it. A destination gets no bodies for a record
+// that its sample leaves out.
+type Content Sample
+
+func (c *Content) UnmarshalJSON(raw []byte) error {
+	var every bool
+	if json.Unmarshal(raw, &every) == nil && !bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		*c = Content{}
+		if every {
+			*c = Content(everyRecord)
+		}
+		return nil
+	}
+	return (*Sample)(c).UnmarshalJSON(raw)
+}
+
+func (c Content) MarshalJSON() ([]byte, error) {
+	switch Sample(c) {
+	case everyRecord:
+		return []byte("true"), nil
+	case Sample{}:
+		return []byte("false"), nil
+	}
+	return Sample(c).MarshalJSON()
+}
+
+var everyRecord = Sample{1, 1, 1, 1, 1}
+
 func (s *Sample) validate() error {
 	sends := false
 	for _, rate := range s {
@@ -121,17 +150,53 @@ func (d Destination) Rate(outcome string) float64 {
 	return 0
 }
 
+// ContentRate is the share of an outcome's records that the destination gets
+// with bodies.
+func (d Destination) ContentRate(outcome string) float64 {
+	rate := d.Rate(outcome)
+	if d.Content == nil {
+		return rate
+	}
+	if i := outcomeIndex(outcome); i >= 0 {
+		return min(rate, d.Content[i])
+	}
+	return 0
+}
+
+// shares are the destination's rates of records and of records with bodies,
+// for each outcome.
+func (d Destination) shares() (records, bodies Sample) {
+	for i, outcome := range Outcomes {
+		records[i], bodies[i] = d.Rate(outcome), d.ContentRate(outcome)
+	}
+	return records, bodies
+}
+
+// withShares writes the rates as a policy would: no sample for every record,
+// and no content for bodies on each record that the destination gets.
+func (d Destination) withShares(records, bodies Sample) Destination {
+	d.Sample, d.Content = nil, nil
+	if records != everyRecord {
+		d.Sample = &records
+	}
+	if bodies != records {
+		d.Content = (*Content)(&bodies)
+	}
+	return d
+}
+
 // Reach is the highest rate of any outcome: a request at or above it gets no
 // record from the destination however it ends.
 func (d Destination) Reach() float64 {
-	if d.Sample == nil {
-		return 1
-	}
-	reach := 0.0
-	for _, rate := range d.Sample {
-		reach = max(reach, rate)
-	}
-	return reach
+	records, _ := d.shares()
+	return slices.Max(records[:])
+}
+
+// ContentReach is the highest rate of bodies of any outcome: a request at or
+// above it sends the destination no bodies however it ends.
+func (d Destination) ContentReach() float64 {
+	_, bodies := d.shares()
+	return slices.Max(bodies[:])
 }
 
 // Position places a request in [0, 1) by the first 32 bits of the SHA-256 of
@@ -190,6 +255,13 @@ func (d *Destination) Validate() error {
 	if headerBytes > MaxHeaderBytes || len(d.Headers) > 32 {
 		return ErrConfig
 	}
+	if d.Content != nil {
+		for _, rate := range d.Content {
+			if !(rate >= 0 && rate <= 1) {
+				return ErrConfig
+			}
+		}
+	}
 	if d.Sample != nil {
 		return d.Sample.validate()
 	}
@@ -198,9 +270,11 @@ func (d *Destination) Validate() error {
 
 // Combine unions independent required destinations. The same URL and headers
 // name one receiver, which gets one record: two would share an Idempotency-Key.
-// It gets that record if any duplicate does, and with content if any duplicate
-// asks for it, so a descendant can neither withhold records or content from an
-// inherited destination nor alter its credentials.
+// It gets that record if any duplicate does, and with bodies if a duplicate
+// that gets the record sends them. Every destination reads the same position,
+// so the highest rate of each outcome says exactly that, for records and for
+// bodies. A descendant can therefore neither withhold records or bodies from
+// an inherited destination nor alter its credentials.
 func Combine(configs ...*Config) (*Config, error) {
 	result := &Config{Destinations: []Destination{}}
 	seen := map[[32]byte]int{}
@@ -213,40 +287,25 @@ func Combine(configs ...*Config) (*Config, error) {
 		}
 		for _, d := range c.Destinations {
 			id := d.Identity()
-			if i, found := seen[id]; found {
-				kept := &result.Destinations[i]
-				if d.SendsContent() {
-					kept.Content = nil
-				}
-				kept.Sample = widerSample(kept.Sample, d.Sample)
+			records, bodies := d.shares()
+			i, found := seen[id]
+			if !found {
+				seen[id] = len(result.Destinations)
+				result.Destinations = append(result.Destinations, d.withShares(records, bodies))
 				continue
 			}
-			seen[id] = len(result.Destinations)
-			d.Sample = widerSample(d.Sample, d.Sample)
-			result.Destinations = append(result.Destinations, d)
+			keptRecords, keptBodies := result.Destinations[i].shares()
+			for outcome := range records {
+				records[outcome] = max(records[outcome], keptRecords[outcome])
+				bodies[outcome] = max(bodies[outcome], keptBodies[outcome])
+			}
+			result.Destinations[i] = result.Destinations[i].withShares(records, bodies)
 		}
 	}
 	if len(result.Destinations) > MaxDestinations {
 		return nil, ErrConfig
 	}
 	return result, nil
-}
-
-// widerSample is the sample that gets every record that either gets, in a new
-// value, with nil for every record.
-func widerSample(a, b *Sample) *Sample {
-	if a == nil || b == nil {
-		return nil
-	}
-	wider, all := *a, true
-	for i, rate := range b {
-		wider[i] = max(wider[i], rate)
-		all = all && wider[i] == 1
-	}
-	if all {
-		return nil
-	}
-	return &wider
 }
 
 func (d Destination) Identity() [32]byte {

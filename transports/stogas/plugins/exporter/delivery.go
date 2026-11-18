@@ -146,8 +146,8 @@ type attempt struct {
 	retryAfter                          *time.Duration
 }
 
-func (c deliveryClient) send(ctx context.Context, d exportconfig.Destination, r *record) attempt {
-	content := d.SendsContent()
+func (c deliveryClient) send(ctx context.Context, d destination, r *record) attempt {
+	content := d.content
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.URL, &deliveryBody{record: r, content: content})
 	if err != nil || (!c.local && req.URL.Scheme != "https") {
 		return attempt{}

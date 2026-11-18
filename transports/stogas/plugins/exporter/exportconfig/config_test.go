@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+	"reflect"
 	"testing"
 )
 
@@ -142,8 +143,53 @@ func TestPositionFollowsTheRequestID(t *testing.T) {
 	}
 }
 
+// Content reads true, false or a share, and writes back what it read.
+func TestContentReadsEveryRecordNoneOrAShare(t *testing.T) {
+	for raw, want := range map[string]Content{
+		`true`:                        {1, 1, 1, 1, 1},
+		`false`:                       {},
+		`0.25`:                        {0.25, 0.25, 0.25, 0.25, 0.25},
+		`{"failed":1,"rejected":0.5}`: {0, 1, 0, 0.5, 0},
+	} {
+		var d Destination
+		if err := json.Unmarshal([]byte(`{"url":"https://receiver.example/","content":`+raw+`}`), &d); err != nil || d.Validate() != nil || *d.Content != want {
+			t.Fatalf("content %s = %v, %v", raw, d.Content, err)
+		}
+		encoded, err := json.Marshal(d)
+		if err != nil || string(encoded) != `{"url":"https://receiver.example/","content":`+raw+`}` {
+			t.Fatalf("content %s was written as %s, %v", raw, encoded, err)
+		}
+	}
+	for _, raw := range []string{`null`, `0`, `1.5`, `"true"`, `[true]`, `{}`, `{"failure":1}`, `{"failed":0}`, `{"failed":true}`} {
+		var d Destination
+		if err := json.Unmarshal([]byte(`{"url":"https://receiver.example/","content":`+raw+`}`), &d); err == nil && d.Content != nil {
+			t.Fatalf("content %s was accepted as %v", raw, d.Content)
+		}
+	}
+	var content Content
+	if json.Unmarshal([]byte(`null`), &content) == nil {
+		t.Fatal("a null content was accepted")
+	}
+	for _, content := range []Content{{math.NaN(), 1, 1, 1, 1}, {1, 1, 1, 1, 1.5}, {-0.1, 1, 1, 1, 1}} {
+		if (&Destination{URL: "https://receiver.example/", Content: &content}).Validate() == nil {
+			t.Fatalf("content %v was accepted", content)
+		}
+	}
+	// A destination gets bodies only with a record that it gets.
+	d := Destination{Sample: &Sample{0.2, 1, 0, 0, 0}, Content: &Content{0.5, 0.5, 1, 0, 0}}
+	for outcome, want := range map[string]float64{"success": 0.2, "failed": 0.5, "cancelled": 0, "rejected": 0, "unknown": 0, "": 0} {
+		if got := d.ContentRate(outcome); got != want {
+			t.Fatalf("content rate of %q = %v, want %v", outcome, got, want)
+		}
+	}
+	if d.ContentReach() != 0.5 || (Destination{}).ContentReach() != 1 || (Destination{Content: &Content{}}).ContentReach() != 0 {
+		t.Fatal("content reach is the highest rate of bodies")
+	}
+}
+
 // One receiver gets a record exactly when one of the destinations that name it
-// would, whatever their samples, and with content when any of them sends it.
+// would, whatever their samples, and with bodies exactly when one that gets the
+// record sends them.
 func TestCombineSendsWhatAnyDuplicateSends(t *testing.T) {
 	random := rand.New(rand.NewPCG(7, 19))
 	randomSample := func() *Sample {
@@ -166,14 +212,16 @@ func TestCombineSendsWhatAnyDuplicateSends(t *testing.T) {
 		}
 		return &sample
 	}
-	off := false
 	for range 2000 {
 		var configs []*Config
 		var parts []Destination
 		for range 1 + random.IntN(4) {
 			d := Destination{URL: "https://receiver.example/", Sample: randomSample()}
-			if random.IntN(2) == 0 {
-				d.Content = &off
+			switch random.IntN(3) {
+			case 0:
+				d.Content = &Content{}
+			case 1:
+				d.Content = (*Content)(randomSample())
 			}
 			parts = append(parts, d)
 			// Duplicates meet inside one policy and across policies.
@@ -192,30 +240,47 @@ func TestCombineSendsWhatAnyDuplicateSends(t *testing.T) {
 		if merged.Validate() != nil {
 			t.Fatalf("combined sample %v is not valid", merged.Sample)
 		}
-		content := false
-		for _, part := range parts {
-			content = content || part.SendsContent()
-		}
-		if merged.SendsContent() != content {
-			t.Fatalf("content = %v, want %v", merged.SendsContent(), content)
-		}
 		for range 50 {
 			position := random.Float64()
 			for _, outcome := range Outcomes {
-				want := false
+				want, wantBodies := false, false
 				for _, part := range parts {
 					want = want || position < part.Rate(outcome)
+					wantBodies = wantBodies || position < part.ContentRate(outcome)
 				}
 				if got := position < merged.Rate(outcome); got != want {
 					t.Fatalf("position %v, outcome %s: combined %v sends %v, parts %+v send %v", position, outcome, merged.Sample, got, parts, want)
 				}
+				if got := position < merged.ContentRate(outcome); got != wantBodies {
+					t.Fatalf("position %v, outcome %s: combined %v sends bodies %v, parts %+v send %v", position, outcome, merged.Content, got, parts, wantBodies)
+				}
 			}
 		}
-		// Combining again changes nothing, and the parts keep their samples.
+		// Combining again changes nothing, and what it wrote reads back the same.
 		again, err := Combine(combined, combined)
-		if err != nil || len(again.Destinations) != 1 || (again.Destinations[0].Sample == nil) != (merged.Sample == nil) || (merged.Sample != nil && *again.Destinations[0].Sample != *merged.Sample) {
+		if err != nil || len(again.Destinations) != 1 || !reflect.DeepEqual(again.Destinations[0], merged) {
 			t.Fatalf("combined twice = %+v, %v", again, err)
 		}
+		encoded, err := json.Marshal(merged)
+		var read Destination
+		if err != nil || json.Unmarshal(encoded, &read) != nil || read.Validate() != nil {
+			t.Fatalf("combined %s does not read back: %v", encoded, err)
+		}
+		records, bodies := merged.shares()
+		readRecords, readBodies := read.shares()
+		if records != readRecords || bodies != readBodies {
+			t.Fatalf("combined %s read back as %v and %v, want %v and %v", encoded, readRecords, readBodies, records, bodies)
+		}
+	}
+	// The record for every request with bodies for failures only, said as two
+	// destinations, is one destination that a policy can write.
+	metadata, failures := Destination{URL: "https://receiver.example/", Content: &Content{}}, Destination{URL: "https://receiver.example/", Sample: &Sample{0, 1, 0, 1, 0}}
+	both, err := Combine(&Config{Destinations: []Destination{metadata}}, &Config{Destinations: []Destination{failures}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if encoded, _ := json.Marshal(both.Destinations[0]); string(encoded) != `{"url":"https://receiver.example/","content":{"failed":1,"rejected":1}}` {
+		t.Fatalf("combined = %s", encoded)
 	}
 	// Every outcome in full is a destination without a sample, as the editor shows it.
 	combined, err := Combine(&Config{Destinations: []Destination{

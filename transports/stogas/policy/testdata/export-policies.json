@@ -884,5 +884,187 @@
       }
     },
     "valid": false
+  },
+  {
+    "name": "content for failures only",
+    "source": {
+      "plugins": {
+        "export": {
+          "destinations": [
+            {
+              "url": "https://collector.example/v1/traces",
+              "content": {
+                "failed": 1,
+                "rejected": 1
+              }
+            }
+          ]
+        }
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "content for a share",
+    "source": {
+      "plugins": {
+        "export": {
+          "destinations": [
+            {
+              "url": "https://collector.example/v1/traces",
+              "content": 0.05
+            }
+          ]
+        }
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "content for a share of each outcome",
+    "source": {
+      "plugins": {
+        "export": {
+          "destinations": [
+            {
+              "url": "https://collector.example/v1/traces",
+              "content": {
+                "success": 0.01,
+                "failed": 1,
+                "cancelled": 0.5,
+                "rejected": 1,
+                "unknown": 1
+              },
+              "sample": {
+                "success": 0.2,
+                "failed": 1
+              }
+            }
+          ]
+        }
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "content at zero",
+    "source": {
+      "plugins": {
+        "export": {
+          "destinations": [
+            {
+              "url": "https://collector.example/v1/traces",
+              "content": 0
+            }
+          ]
+        }
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "content above one",
+    "source": {
+      "plugins": {
+        "export": {
+          "destinations": [
+            {
+              "url": "https://collector.example/v1/traces",
+              "content": 1.5
+            }
+          ]
+        }
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "content array",
+    "source": {
+      "plugins": {
+        "export": {
+          "destinations": [
+            {
+              "url": "https://collector.example/v1/traces",
+              "content": [
+                true
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "content no outcome",
+    "source": {
+      "plugins": {
+        "export": {
+          "destinations": [
+            {
+              "url": "https://collector.example/v1/traces",
+              "content": {}
+            }
+          ]
+        }
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "content unknown outcome",
+    "source": {
+      "plugins": {
+        "export": {
+          "destinations": [
+            {
+              "url": "https://collector.example/v1/traces",
+              "content": {
+                "failure": 1
+              }
+            }
+          ]
+        }
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "content outcome at zero",
+    "source": {
+      "plugins": {
+        "export": {
+          "destinations": [
+            {
+              "url": "https://collector.example/v1/traces",
+              "content": {
+                "success": 0,
+                "failed": 1
+              }
+            }
+          ]
+        }
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "content outcome boolean",
+    "source": {
+      "plugins": {
+        "export": {
+          "destinations": [
+            {
+              "url": "https://collector.example/v1/traces",
+              "content": {
+                "failed": true
+              }
+            }
+          ]
+        }
+      }
+    },
+    "valid": false
   }
 ]

@@ -73,11 +73,18 @@ func (r *reservation) release() {
 	r.bytes = 0
 }
 
+// destination is one receiver of a capture. take decides whether it gets
+// bodies, once the outcome is known.
+type destination struct {
+	exportconfig.Destination
+	content bool
+}
+
 // Capture owns detached public JSON until Finish transfers it to delivery.
 // Its methods run on the request's single processing goroutine.
 type Capture struct {
 	engine       *Engine
-	destinations []exportconfig.Destination
+	destinations []destination
 	// The request's sample position and, for each outcome, the highest rate of
 	// the destinations that Start kept. Both outlive a dropped capture.
 	position                    float64
@@ -200,7 +207,7 @@ func (e *Engine) Start(config *exportconfig.Config, requestID string) *Capture {
 		if c.position >= d.Reach() {
 			continue
 		}
-		copy := exportconfig.Destination{URL: strings.Clone(d.URL), Headers: make(map[string]string, len(d.Headers)), Content: d.Content}
+		copy := exportconfig.Destination{URL: strings.Clone(d.URL), Headers: make(map[string]string, len(d.Headers))}
 		for key, value := range d.Headers {
 			copy.Headers[strings.Clone(key)] = strings.Clone(value)
 		}
@@ -208,8 +215,13 @@ func (e *Engine) Start(config *exportconfig.Config, requestID string) *Capture {
 			sample := *d.Sample
 			copy.Sample = &sample
 		}
-		c.destinations = append(c.destinations, copy)
-		c.content = c.content || d.SendsContent()
+		if d.Content != nil {
+			content := *d.Content
+			copy.Content = &content
+		}
+		c.destinations = append(c.destinations, destination{Destination: copy})
+		// Bodies are copied only for a request that can send them.
+		c.content = c.content || c.position < d.ContentReach()
 	}
 	return c
 }
@@ -221,13 +233,14 @@ func (c *Capture) Due(outcome string) bool {
 	return c != nil && c.position < exportconfig.Destination{Sample: &c.reach}.Rate(outcome)
 }
 
-// take keeps the destinations that get this outcome's record, and reports
-// whether one is left. The capture's content stays as captured, and each
-// destination still decides whether it receives it.
+// take keeps the destinations that get this outcome's record, decides which
+// of them get its bodies, and reports whether one is left. The capture's
+// content stays as captured.
 func (c *Capture) take(outcome string) bool {
 	due := c.destinations[:0]
 	for _, d := range c.destinations {
 		if c.position < d.Rate(outcome) {
+			d.content = c.position < d.ContentRate(outcome)
 			due = append(due, d)
 		}
 	}
@@ -255,7 +268,7 @@ func (c *Capture) Discard() {
 // alone: delivery state is admitted again when it leaves.
 type Held struct {
 	engine       *Engine
-	destinations []exportconfig.Destination
+	destinations []destination
 	position     float64
 	content      bool
 	response     []byte
@@ -400,7 +413,7 @@ func (c *Capture) finish(requestID string, event any, finalMetadata any) {
 	c.engine.start(r, destinations)
 }
 
-func (e *Engine) start(r *record, destinations []exportconfig.Destination) {
+func (e *Engine) start(r *record, destinations []destination) {
 	r.ctx, r.cancel = context.WithTimeout(e.ctx, deliveryWindow)
 	e.mu.Lock()
 	if e.closed || e.ctx.Err() != nil {
@@ -419,7 +432,7 @@ func (e *Engine) start(r *record, destinations []exportconfig.Destination) {
 	}
 }
 
-func (e *Engine) deliver(r *record, d exportconfig.Destination) {
+func (e *Engine) deliver(r *record, d destination) {
 	var result attempt
 	defer func() { e.finishDelivery(r, result) }()
 	for attempts := 1; ; attempts++ {

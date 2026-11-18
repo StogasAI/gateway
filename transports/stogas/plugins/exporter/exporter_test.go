@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -188,7 +189,7 @@ func TestDestinationsWithoutContent(t *testing.T) {
 		mu.Unlock()
 	}))
 	defer receiver.Close()
-	off := false
+	off := exportconfig.Content{}
 	withoutContent := exportconfig.Destination{URL: receiver.URL + "/metadata", Content: &off}
 	checkMetadataOnly := func() {
 		t.Helper()
@@ -518,7 +519,7 @@ func TestHTTPEarlyRejectionReleasesRequestBody(t *testing.T) {
 			for range 32 {
 				payload := []byte(strings.Repeat("x", 2<<20))
 				r := &record{ctx: context.Background(), cancel: func() {}, requestID: "id", size: int64(len(payload)), parts: [][]byte{payload}, reservation: &reservation{engine: e, lease: &testLease{}}}
-				result := e.client.send(context.Background(), testConfig(receiver.URL).Destinations[0], r)
+				result := e.client.send(context.Background(), destination{Destination: testConfig(receiver.URL).Destinations[0], content: true}, r)
 				// The last delivery can erase the payload while the transport still reads.
 				r.release()
 				if result.delivered || result.retryable {
@@ -699,6 +700,7 @@ func requestAt(t *testing.T, low, high float64) string {
 
 // Each destination gets the records that its sample chooses for the way the
 // request ended: all of them, a share, some outcomes, or a share per outcome.
+// Its content chooses in the same way which of them carry bodies.
 func TestSampleChoosesRecordsByRequestAndOutcome(t *testing.T) {
 	var mu sync.Mutex
 	received := map[string]map[string]bool{}
@@ -708,33 +710,48 @@ func TestSampleChoosesRecordsByRequestAndOutcome(t *testing.T) {
 			t.Error(err)
 		}
 		_, content := record["request"]
-		if content != (r.URL.Path != "/mixed") {
-			t.Errorf("%s got content: %v", r.URL.Path, content)
+		key := r.Header.Get("Idempotency-Key")
+		want := r.URL.Path != "/mixed"
+		if r.URL.Path == "/failure-bodies" {
+			// The ID ends in the request's number, which sets its outcome below.
+			number, err := strconv.ParseInt(key[len(key)-12:], 16, 64)
+			if err != nil {
+				t.Error(err)
+			}
+			outcome := exportconfig.Outcomes[number%int64(len(exportconfig.Outcomes))]
+			want = outcome == "failed" || outcome == "rejected"
+		}
+		if content != want {
+			t.Errorf("%s got content for %s: %v", r.URL.Path, key, content)
 		}
 		mu.Lock()
 		defer mu.Unlock()
 		if received[r.URL.Path] == nil {
 			received[r.URL.Path] = map[string]bool{}
 		}
-		key := r.Header.Get("Idempotency-Key")
 		if received[r.URL.Path][key] {
 			t.Errorf("%s got %s twice", r.URL.Path, key)
 		}
 		received[r.URL.Path][key] = true
 	}))
 	defer receiver.Close()
-	off := false
+	off := exportconfig.Content{}
 	samples := map[string]*exportconfig.Sample{
 		"/every":    nil,
 		"/tenth":    {0.1, 0.1, 0.1, 0.1, 0.1},
 		"/failures": {0, 1, 0, 1, 0},
 		"/mixed":    {0.2, 1, 0, 0, 0.5},
+		// Every record, with bodies for failures and rejections only.
+		"/failure-bodies": nil,
 	}
 	config := &exportconfig.Config{}
 	for path, sample := range samples {
 		d := exportconfig.Destination{URL: receiver.URL + path, Sample: sample}
-		if path == "/mixed" {
+		switch path {
+		case "/mixed":
 			d.Content = &off
+		case "/failure-bodies":
+			d.Content = &exportconfig.Content{0, 1, 0, 1, 0}
 		}
 		config.Destinations = append(config.Destinations, d)
 	}
@@ -787,7 +804,7 @@ func TestRecordsThatNoDestinationGetsCostNothing(t *testing.T) {
 	defer receiver.Close()
 	e := New(context.Background(), testOptions(true, 16<<20))
 	defer e.Close()
-	off := false
+	off := exportconfig.Content{}
 	inside, outside := requestAt(t, 0, 0.1), requestAt(t, 0.3, 1)
 	tenth := &exportconfig.Config{Destinations: []exportconfig.Destination{{URL: receiver.URL, Sample: &exportconfig.Sample{0.1, 0.1, 0.1, 0.1, 0.1}}}}
 
