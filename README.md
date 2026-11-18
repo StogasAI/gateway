@@ -31,7 +31,7 @@ bun run build
 stogas/release/scripts/build-release.sh v<version> <empty-directory>
 ```
 
-The build needs x86_64 Linux and Guix. It writes `gateway.igvm` and a manifest that holds the image's hash and its SEV-SNP launch measurement, and the same tag gives the same bytes on every host. Each release also has a CycloneDX bill of materials, `sbom.cdx.json`. GitHub attests the manifest, the image, and the bill of materials of each release. Stogas signs a manifest only after its own rebuild gives the same bytes.
+The build needs x86_64 Linux and Guix. It writes `gateway.igvm` and a manifest that holds the image's hash and its SEV-SNP launch measurement, and the same tag gives the same bytes on every host. Each release also has a CycloneDX bill of materials, `sbom.cdx.json`. GitHub attests the manifest, the image, and the bill of materials of each release. GitLab.com's hosted runners build the tag again and attest the manifest and the image in `gitlab-attestation.jsonl`. Stogas signs a manifest only when both builds give the same bytes.
 
 The [build audit](stogas/release/BUILD_AUDIT.md) lists every input and step.
 

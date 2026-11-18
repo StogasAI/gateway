@@ -6,6 +6,15 @@ if [ "$(uname -s)-$(uname -m)" != "Linux-x86_64" ]; then
   exit 69
 fi
 
+# Root runs each command itself, as in a container without sudo.
+as_root() {
+  if [ "$(id -u)" -eq 0 ]; then
+    "$@"
+  else
+    sudo "$@"
+  fi
+}
+
 repo_root="$(git rev-parse --show-toplevel)"
 pins="$repo_root/stogas/release/pins.lock.json"
 json() {
@@ -19,7 +28,7 @@ tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
 if ! getent group guixbuild >/dev/null; then
-  sudo groupadd --system guixbuild
+  as_root groupadd --system guixbuild
 fi
 nologin="$(command -v nologin || true)"
 if [ -z "$nologin" ]; then
@@ -34,7 +43,7 @@ expected_nologin="$(readlink -f -- "$nologin")"
 for index in $(seq -w 1 10); do
   user="guixbuilder$index"
   if ! id "$user" >/dev/null 2>&1; then
-    sudo useradd \
+    as_root useradd \
       --system \
       --home-dir /var/empty \
       --shell "$nologin" \
@@ -77,19 +86,17 @@ if [ "$("$guix_bin/guix" --version 2>/dev/null | head -n 1 || true)" != "guix (G
   printf '%s  %s\n' "$sha256" "$archive" | sha256sum --check --strict -
   # Stripping the leading "." keeps tar from changing the owner, mode and times
   # of /.
-  sudo tar --extract --strip-components=1 --file "$archive" -C /
+  as_root tar --extract --strip-components=1 --file "$archive" -C /
   restart_daemon=true
 fi
-sudo ln -sf "$guix_bin/guix" /usr/local/bin/guix
+as_root ln -sf "$guix_bin/guix" /usr/local/bin/guix
 
 guix_root="$(dirname "$(dirname "$(readlink -f "$guix_bin/guix")")")"
 key_count=0
 for key in "$guix_root"/share/guix/*.pub; do
   if [[ -f "$key" ]]; then
     key_count=$((key_count + 1))
-    # The caller intentionally opens this public key for sudo.
-    # shellcheck disable=SC2024
-    sudo "$guix_bin/guix" archive --authorize <"$key"
+    as_root "$guix_bin/guix" archive --authorize <"$key"
   fi
 done
 if [ "$key_count" -eq 0 ]; then
@@ -121,20 +128,20 @@ OOMPolicy=continue
 WantedBy=multi-user.target
 EOF
   if ! cmp -s "$unit" /etc/systemd/system/guix-daemon.service; then
-    sudo install -m 0644 "$unit" /etc/systemd/system/guix-daemon.service
-    sudo systemctl daemon-reload
+    as_root install -m 0644 "$unit" /etc/systemd/system/guix-daemon.service
+    as_root systemctl daemon-reload
     restart_daemon=true
   fi
-  sudo systemctl enable guix-daemon.service
+  as_root systemctl enable guix-daemon.service
   # A restart stops running builds, so only a new daemon or unit gets one.
   if [ "$restart_daemon" = true ]; then
-    sudo systemctl restart guix-daemon.service
+    as_root systemctl restart guix-daemon.service
   else
-    sudo systemctl start guix-daemon.service
+    as_root systemctl start guix-daemon.service
   fi
 else
   if ! daemon_answers; then
-    sudo nohup "$guix_bin/guix-daemon" --build-users-group=guixbuild >/dev/null 2>&1 &
+    as_root nohup "$guix_bin/guix-daemon" --build-users-group=guixbuild >/dev/null 2>&1 &
   fi
 fi
 if [[ -n "${GITHUB_PATH:-}" ]]; then

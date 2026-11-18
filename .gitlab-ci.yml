@@ -1,0 +1,32 @@
+# GitLab's hosted runners rebuild each release and sign a build proof for its manifest and image: a
+# second proof beside GitHub's, from a builder that neither GitHub nor Stogas runs. Stogas pushes
+# the release tag to gitlab.com/stogasai/gateway and starts this pipeline once GitHub has built the
+# tag. The release is published only when both proofs name the same bytes.
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "api" && $CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+$/
+
+rebuild:
+  image: node:24.22.1-bookworm@sha256:d862bb5d082c5ae0210ac07e8c0344cb8cf7bef6d78e9b8c50c179da923108ea
+  # 4 CPUs and 16 GB on every GitLab tier, in a privileged container, which the Guix daemon needs
+  # to isolate its builds.
+  tags: [saas-linux-medium-amd64]
+  # The ID token expires with the job's timeout, so cosign can still sign after the build.
+  timeout: 3h
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  variables:
+    GIT_DEPTH: '1'
+  script:
+    # GitLab adds the project's and the pipeline's CI/CD variables to every job, where they could
+    # change the build without a change to this file, so the rebuild gets only these.
+    - >-
+      env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root
+      CI_COMMIT_SHA="$CI_COMMIT_SHA" CI_COMMIT_TAG="$CI_COMMIT_TAG"
+      CI_PIPELINE_CREATED_AT="$CI_PIPELINE_CREATED_AT" CI_PIPELINE_URL="$CI_PIPELINE_URL"
+      CI_PROJECT_URL="$CI_PROJECT_URL" CI_RUNNER_ID="$CI_RUNNER_ID"
+      SIGSTORE_ID_TOKEN="$SIGSTORE_ID_TOKEN" bash stogas/release/scripts/gitlab.sh
+  artifacts:
+    paths: [gitlab-attestation.jsonl]
+    expire_in: 90 days

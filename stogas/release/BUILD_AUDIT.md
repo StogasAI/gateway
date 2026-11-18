@@ -1,6 +1,6 @@
 # Gateway IGVM Build Audit
 
-`scripts/build-release.sh <vX.Y.Z> <empty-out-dir>` builds the SEV-SNP gateway image from the tagged source. It runs on x86_64 Linux with Bash, Git, Node.js, GNU coreutils, and a running Guix daemon. `scripts/install-guix-bootstrap.sh` installs the pinned Guix release on hosts with sudo and keeps the store of a host that already runs it. Guix supplies every compiler and tool, so the host toolchain never reaches the image.
+`scripts/build-release.sh <vX.Y.Z> <empty-out-dir>` builds the SEV-SNP gateway image from the tagged source. It runs on x86_64 Linux with Bash, Git, Node.js, GNU coreutils, and a running Guix daemon. `scripts/install-guix-bootstrap.sh` installs the pinned Guix release as root or with sudo, and keeps the store of a host that already runs it. Guix supplies every compiler and tool, so the host toolchain never reaches the image.
 
 ## Inputs
 
@@ -92,7 +92,7 @@ gh attestation verify gateway.igvm --repo StogasAI/gateway --predicate-type http
 
 ## Reproducibility
 
-GitHub builds each tag, and Stogas rebuilds it independently. Stogas approves a release only if both `release-manifest.json` files match byte for byte.
+GitHub and GitLab.com's hosted runners each build every tag and attest the manifest and the image, GitLab in `gitlab-attestation.jsonl`. Stogas approves a release only if both proofs name the same `release-manifest.json` and image.
 
 To check a release:
 
