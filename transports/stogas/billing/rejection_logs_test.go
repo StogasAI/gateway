@@ -3,6 +3,7 @@ package billing
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -270,9 +271,11 @@ func TestRejectionLogsBoundMemoryAndDiscardUntrustedLabels(t *testing.T) {
 		}
 	}
 	service.rejectionLogs.mu.Unlock()
+	// A key's groups in one minute differ by error, request shape or the
+	// encryption keys that requests lacked.
 	for i := 1; i <= rejectionLogPerKeyCapacity; i++ {
 		copy := input
-		copy.CreatedAt = input.CreatedAt.Add(time.Duration(i) * rejectionLogWindow)
+		copy.EncryptionKeyIDs = []string{fmt.Sprint(i)}
 		if kept := service.RecordRejection(copy, nil); kept != (i < rejectionLogPerKeyCapacity) {
 			t.Fatalf("group %d of one key kept a row: %v", i, kept)
 		}
@@ -299,53 +302,101 @@ func TestRejectionLogsBoundMemoryAndDiscardUntrustedLabels(t *testing.T) {
 	}
 }
 
-// An organization with many keys can neither fill the buffer that every
-// organization shares nor add individual rows for every key.
-func TestRejectionLogsBoundEachOrganization(t *testing.T) {
+// An organization with many keys keeps the exact count of every key's first
+// group, while only its first groups send individual rows and its further
+// groups share less room.
+func TestRejectionLogsKeepEveryKeysFirstGroupAndBoundFurtherGroups(t *testing.T) {
 	db := newFakeSettlementDatabase(t, settleAll)
 	service := db.service
 	input := rejectionFixture()
 	input.CreatedAt = time.Now().Add(time.Hour).Truncate(rejectionLogWindow)
-	for key := range rejectionLogPerOrganizationCapacity + 1 {
+	keys := make([]RejectionInput, 300)
+	for key := range keys {
 		copy := input
 		claims := *input.Claims
 		claims.KeyID = uuid.Must(uuid.NewV7()).String()
 		copy.Claims = &claims
+		keys[key] = copy
 		for range 2 {
 			copy.RequestID = uuid.Must(uuid.NewV7()).String()
-			if kept := service.RecordRejection(copy, nil); kept != (key < rejectionLogPerKeyCapacity) {
+			if kept := service.RecordRejection(copy, nil); kept != (key < rejectionLogIndividualGroups) {
 				t.Fatalf("key %d kept a row: %v", key, kept)
 			}
 		}
 	}
-	other := rejectionFixture()
-	other.CreatedAt = input.CreatedAt
-	service.RecordRejection(other, nil)
-	if got := service.Diagnostics().RejectionLogs; got.PendingGroups != rejectionLogPerOrganizationCapacity+1 || got.DroppedRequests != 2 {
-		t.Fatalf("organization cap: %+v", got)
+	for key := range rejectionLogFurtherPerOrganization + 1 {
+		further := keys[key]
+		further.RequestID = uuid.Must(uuid.NewV7()).String()
+		further.Code, further.StatusCode = "key_rate_limited", 429
+		service.RecordRejection(further, nil)
+	}
+	if got := service.Diagnostics().RejectionLogs; got.PendingGroups != len(keys)+rejectionLogFurtherPerOrganization || got.DroppedRequests != 1 {
+		t.Fatalf("organization bounds: %+v", got)
 	}
 	drainSettlements(t, service)
-	var individual, counted int
+	type kind struct {
+		code  string
+		count uint32
+	}
+	got := map[kind]int{}
 	for _, raw := range rejectionRows(db) {
-		var row struct {
-			Organization string `json:"organization_id"`
-			Count        uint32 `json:"request_count"`
-		}
+		var row RequestEvent
 		if err := json.Unmarshal(raw, &row); err != nil {
 			t.Fatal(err)
 		}
-		switch {
-		case row.Organization == other.Claims.OrganizationID:
-		case row.Count == 1:
-			individual++
-		case row.Count == 2:
-			counted++
-		default:
-			t.Fatalf("unexpected row count %d", row.Count)
+		got[kind{row.GatewayError.Code, row.RequestCount}]++
+	}
+	// Past the organization's individual allowance, a group's first rejection
+	// joins its count.
+	want := map[kind]int{
+		{"insufficient_balance", 1}: 2 * rejectionLogIndividualGroups,
+		{"insufficient_balance", 2}: len(keys) - rejectionLogIndividualGroups,
+		{"key_rate_limited", 1}:     rejectionLogFurtherPerOrganization,
+	}
+	if !maps.Equal(got, want) {
+		t.Fatalf("rows by code and count: %v, want %v", got, want)
+	}
+}
+
+// Organizations whose further groups fill the gateway's room never take
+// another key's first group: only further groups are dropped.
+func TestRejectionLogsKeepFirstGroupsWhenFurtherGroupsAreFull(t *testing.T) {
+	db := newFakeSettlementDatabase(t, settleAll)
+	service := db.service
+	input := rejectionFixture()
+	input.CreatedAt = time.Now().Add(time.Hour).Truncate(rejectionLogWindow)
+	for range rejectionLogFurtherCapacity / rejectionLogFurtherPerOrganization {
+		organization := *input.Claims
+		organization.OrganizationID = uuid.Must(uuid.NewV7()).String()
+		for further := 0; further < rejectionLogFurtherPerOrganization; {
+			claims := organization
+			claims.KeyID = uuid.Must(uuid.NewV7()).String()
+			for group := 0; group < rejectionLogPerKeyCapacity && further < rejectionLogFurtherPerOrganization; group++ {
+				copy := input
+				copy.Claims = &claims
+				copy.EncryptionKeyIDs = []string{fmt.Sprint(group)}
+				service.RecordRejection(copy, nil)
+				if group > 0 {
+					further++
+				}
+			}
 		}
 	}
-	if individual != 2*rejectionLogPerKeyCapacity || counted != rejectionLogPerOrganizationCapacity-rejectionLogPerKeyCapacity {
-		t.Fatalf("got %d individual rows and %d count rows", individual, counted)
+	if got := service.Diagnostics().RejectionLogs; got.DroppedRequests != 0 {
+		t.Fatalf("filling further groups dropped rejections: %+v", got)
+	}
+	newcomer := rejectionFixture()
+	newcomer.CreatedAt = input.CreatedAt
+	if !service.RecordRejection(newcomer, nil) {
+		t.Fatal("a key's first group was not kept")
+	}
+	newcomer.RequestID = uuid.Must(uuid.NewV7()).String()
+	newcomer.Code, newcomer.StatusCode = "key_rate_limited", 429
+	if service.RecordRejection(newcomer, nil) {
+		t.Fatal("a further group past the gateway's room was kept")
+	}
+	if got := service.Diagnostics().RejectionLogs; got.DroppedRequests != 1 {
+		t.Fatalf("got %+v, want only the further group dropped", got)
 	}
 }
 
@@ -373,7 +424,7 @@ func TestRejectionLogsSendIndividualRowsAtOnceAndCountsWhenTheMinuteEnds(t *test
 	b := &service.rejectionLogs
 	// Existing maps keep RecordRejection from starting the sender, so the test
 	// takes each batch itself.
-	b.groups, b.perKey, b.perOrganization = map[rejectionLogKey]*rejectionLogGroup{}, map[string]int{}, map[string]int{}
+	b.allocate()
 	input := rejectionFixture()
 	record := func(at time.Time) {
 		copy := input
@@ -507,7 +558,7 @@ func TestRejectionExportsLeaveWithTheRowsThatHoldThem(t *testing.T) {
 	// already a repeat, so its export leaves with the count.
 	crowded := rejectionFixture()
 	crowded.CreatedAt = input.CreatedAt
-	for range rejectionLogPerKeyCapacity {
+	for range rejectionLogIndividualGroups {
 		group := crowded
 		group.Code, group.StatusCode = "key_rate_limited", 429
 		claims := *crowded.Claims
@@ -519,10 +570,11 @@ func TestRejectionExportsLeaveWithTheRowsThatHoldThem(t *testing.T) {
 	record(crowded, true)
 	// A key past its cap drops the rejection and its export.
 	full := input
-	for i := 1; i <= rejectionLogPerKeyCapacity; i++ {
-		full.CreatedAt = input.CreatedAt.Add(time.Duration(i) * rejectionLogWindow)
+	for i := 1; i < rejectionLogPerKeyCapacity; i++ {
+		full.EncryptionKeyIDs = []string{fmt.Sprint(i)}
 		record(full, false)
 	}
+	full.EncryptionKeyIDs = []string{"past the cap"}
 	dropped := record(full, true)
 
 	drainSettlements(t, service)
@@ -571,7 +623,7 @@ func TestRejectionCountExportsLeaveWhenTheMinuteEnds(t *testing.T) {
 	service := &Service{}
 	b := &service.rejectionLogs
 	// Existing maps keep RecordRejection from starting the sender.
-	b.groups, b.perKey, b.perOrganization = map[rejectionLogKey]*rejectionLogGroup{}, map[string]int{}, map[string]int{}
+	b.allocate()
 	exports := newExportLog(t)
 	input := rejectionFixture()
 	minute := time.Now().UTC().Add(time.Hour).Truncate(rejectionLogWindow)

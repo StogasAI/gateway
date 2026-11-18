@@ -16,15 +16,22 @@ const (
 	// Individual rows and the counts of ended windows leave on the next tick.
 	rejectionLogInterval        = time.Second
 	rejectionLogIndividualLimit = 5
-	rejectionLogCapacity        = 4096
-	rejectionLogPerKeyCapacity  = 32
-	// One organization may hold a sixteenth of the groups, and only its first
-	// rejectionLogPerKeyCapacity groups send individual rows; the rest send
-	// their count alone. So one organization's rejections add at most 416 rows
-	// a minute on each gateway instead of 24,576, and cannot fill the buffer
-	// that every organization's rejections share.
-	rejectionLogPerOrganizationCapacity = 256
-	rejectionLogBatchSize               = settlementMaxRejections
+	// A key's first group in a minute is always kept, so a key refused for one
+	// reason keeps an exact count however many other keys and organizations are
+	// refused. The gateway holds at most as many groups as it caches keys,
+	// about 77 MiB at 2.4 KB a group.
+	rejectionLogCapacity = 32768
+	// A key's further groups, for another error or request shape, share less
+	// room: 32 groups a key, 256 an organization and 4,096 on the gateway. So
+	// no key or organization can take the room of other keys' first groups.
+	rejectionLogPerKeyCapacity         = 32
+	rejectionLogFurtherPerOrganization = 256
+	rejectionLogFurtherCapacity        = 4096
+	// Only an organization's first 32 groups in a minute send individual rows,
+	// and the rest send their count alone, so one organization adds at most 160
+	// individual rows a minute on each gateway.
+	rejectionLogIndividualGroups = 32
+	rejectionLogBatchSize        = settlementMaxRejections
 )
 
 // Rejections never retain credentials, bodies, provider text, or arbitrary labels.
@@ -44,6 +51,12 @@ type RejectionInput struct {
 	// TraceID goes only to the rejection's own row, never to a count, so
 	// groups never split by trace.
 	TraceID string
+}
+
+// windowed names a key or an organization in one window.
+type windowed struct {
+	id     string
+	window int64
 }
 
 type rejectionLogKey struct {
@@ -85,13 +98,16 @@ type rejectionLogGroup struct {
 	recorded   int
 	// When the oldest row in individual arrived.
 	queuedAt time.Time
+	// The group is not its key's first in the window.
+	further bool
 }
 
 type rejectionLogBuffer struct {
-	mu              sync.Mutex
-	groups          map[rejectionLogKey]*rejectionLogGroup
-	perKey          map[string]int
-	perOrganization map[string]int
+	mu     sync.Mutex
+	groups map[rejectionLogKey]*rejectionLogGroup
+	// Groups of each key and organization in a window, and further groups.
+	perKey, perOrganization, furtherPerOrganization map[windowed]int
+	further                                         int
 	// The batch being settled.
 	pendingAt     time.Time
 	pendingGroups int
@@ -177,8 +193,7 @@ func (s *Service) recordRejection(input RejectionInput, export *RejectionExport)
 		return false, nil
 	}
 	if b.groups == nil {
-		b.groups = make(map[rejectionLogKey]*rejectionLogGroup)
-		b.perKey, b.perOrganization = make(map[string]int), make(map[string]int)
+		b.allocate()
 		b.stop, b.done = make(chan struct{}), make(chan struct{})
 		go s.runRejectionLogs()
 	}
@@ -201,20 +216,26 @@ func (s *Service) recordRejection(input RejectionInput, export *RejectionExport)
 	stamp := at.Format("2006-01-02T15:04:05.000Z")
 	group := b.groups[key]
 	if group == nil {
-		organization := b.perOrganization[input.Claims.OrganizationID]
-		if len(b.groups) >= rejectionLogCapacity || b.perKey[input.Claims.KeyID] >= rejectionLogPerKeyCapacity ||
-			organization >= rejectionLogPerOrganizationCapacity {
+		keyWindow := windowed{input.Claims.KeyID, key.window}
+		organization := windowed{input.Claims.OrganizationID, key.window}
+		further := b.perKey[keyWindow] > 0
+		if len(b.groups) >= rejectionLogCapacity || b.perKey[keyWindow] >= rejectionLogPerKeyCapacity ||
+			further && (b.further >= rejectionLogFurtherCapacity || b.furtherPerOrganization[organization] >= rejectionLogFurtherPerOrganization) {
 			b.recordDropped(1)
 			return false, nil
 		}
-		group = &rejectionLogGroup{RequestEvent: NewRejectionEvent(input)}
+		group = &rejectionLogGroup{RequestEvent: NewRejectionEvent(input), further: further}
 		group.RequestCount = 0
-		if organization >= rejectionLogPerKeyCapacity {
+		if b.perOrganization[organization] >= rejectionLogIndividualGroups {
 			group.recorded = rejectionLogIndividualLimit
 		}
 		b.groups[key] = group
-		b.perKey[input.Claims.KeyID]++
-		b.perOrganization[input.Claims.OrganizationID]++
+		b.perKey[keyWindow]++
+		b.perOrganization[organization]++
+		if further {
+			b.further++
+			b.furtherPerOrganization[organization]++
+		}
 	}
 	if group.recorded < rejectionLogIndividualLimit {
 		group.recorded++
@@ -249,6 +270,28 @@ func (s *Service) recordRejection(input RejectionInput, export *RejectionExport)
 		group.CreatedAt = stamp
 	}
 	return false, nil
+}
+
+func (b *rejectionLogBuffer) allocate() {
+	b.groups = make(map[rejectionLogKey]*rejectionLogGroup)
+	b.perKey, b.perOrganization, b.furtherPerOrganization = make(map[windowed]int), make(map[windowed]int), make(map[windowed]int)
+}
+
+// release returns a sent group's places to its key and organization.
+func (b *rejectionLogBuffer) release(key rejectionLogKey, group *rejectionLogGroup) {
+	organization := windowed{group.OrganizationID, key.window}
+	decrement(b.perKey, windowed{key.keyID, key.window})
+	decrement(b.perOrganization, organization)
+	if group.further {
+		b.further--
+		decrement(b.furtherPerOrganization, organization)
+	}
+}
+
+func decrement(counts map[windowed]int, id windowed) {
+	if counts[id]--; counts[id] == 0 {
+		delete(counts, id)
+	}
 }
 
 func (b *rejectionLogBuffer) recordDropped(count uint64) {
@@ -344,19 +387,12 @@ func (s *Service) nextBatch(now time.Time, closing bool) ([]RequestEvent, []coun
 			b.pendingGroups++
 		}
 		delete(b.groups, key)
-		releaseGroup(b.perKey, key.keyID)
-		releaseGroup(b.perOrganization, group.OrganizationID)
+		b.release(key, group)
 		if len(batch) == rejectionLogBatchSize {
 			break
 		}
 	}
 	return batch, exports
-}
-
-func releaseGroup(counts map[string]int, id string) {
-	if counts[id]--; counts[id] == 0 {
-		delete(counts, id)
-	}
 }
 
 func (s *Service) runRejectionLogs() {
