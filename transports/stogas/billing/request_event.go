@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/maximhq/bifrost/core/schemas"
@@ -98,7 +97,6 @@ type RequestEvent struct {
 	ParentAgentID    string                `json:"parent_agent_id"`
 	AgentName        string                `json:"agent_name"`
 	Transport        string                `json:"transport"`
-	Cancelled        bool                  `json:"cancelled"`
 	ClientStopMS     *uint32               `json:"client_stop_ms"`
 	CatalogVersion   *uint64               `json:"catalog_version"`
 	PolicyVersions   *LoggedPolicyVersions `json:"policy_versions"`
@@ -130,7 +128,7 @@ func (e *RequestEvent) Outcome() string {
 		return "rejected"
 	case failed:
 		return "failed"
-	case e.Cancelled:
+	case e.ClientStopMS != nil:
 		return "cancelled"
 	case status == "" || status == "unknown":
 		return "unknown"
@@ -365,42 +363,11 @@ func settingTexts(values []string) []string {
 }
 
 type RequestUsage struct {
-	UpstreamCostUSD       string             `json:"upstream_cost_usd"`
-	BilledCostUSD         string             `json:"billed_cost_usd"`
-	CacheReadSavingsUSD   *string            `json:"cache_read_savings_usd,omitempty"`
-	CacheWriteOverheadUSD *string            `json:"cache_write_overhead_usd,omitempty"`
-	Meters                EventMeters        `json:"meters"`
-	StandardTextTokens    StandardTextTokens `json:"standard_text_tokens"`
-}
-
-// StandardTextTokens counts four visible UTF-8 bytes per unit. Unknown material,
-// including opaque reasoning, is omitted; observed empty text is exactly zero. The client stop
-// counts are what a client that stopped early had received.
-type StandardTextTokens struct {
-	Input               *string `json:"input,omitempty"`
-	Reasoning           *string `json:"reasoning,omitempty"`
-	Output              *string `json:"output,omitempty"`
-	ClientStopReasoning *string `json:"client_stop_reasoning,omitempty"`
-	ClientStopOutput    *string `json:"client_stop_output,omitempty"`
-}
-
-func standardTextTokens(meters EventMeters) StandardTextTokens {
-	tokens := func(key string) *string {
-		meter, known := meters[key]
-		if !known {
-			return nil
-		}
-		bytes, err := strconv.ParseUint(meter.Quantity, 10, 64)
-		if err != nil {
-			return nil
-		}
-		value := strconv.FormatUint(bytes/4, 10) + [4]string{"", ".25", ".5", ".75"}[bytes%4]
-		return &value
-	}
-	return StandardTextTokens{
-		Input: tokens(MeterInputTextBytes), Reasoning: tokens(MeterReasoningTextBytes), Output: tokens(MeterOutputTextBytes),
-		ClientStopReasoning: tokens(MeterClientStopReasoningTextBytes), ClientStopOutput: tokens(MeterClientStopOutputTextBytes),
-	}
+	UpstreamCostUSD       string      `json:"upstream_cost_usd"`
+	BilledCostUSD         string      `json:"billed_cost_usd"`
+	CacheReadSavingsUSD   *string     `json:"cache_read_savings_usd,omitempty"`
+	CacheWriteOverheadUSD *string     `json:"cache_write_overhead_usd,omitempty"`
+	Meters                EventMeters `json:"meters"`
 }
 
 type EventMeter struct {

@@ -29,7 +29,7 @@ func (s *State) keepClientStopText() {
 	if s.clientStopTextTaken {
 		return
 	}
-	if _, stoppedAt := s.ClientStatus(); stoppedAt.IsZero() {
+	if s.ClientStopped().IsZero() {
 		return
 	}
 	s.clientStopText, s.clientStopTextObserved, s.clientStopTextTaken = s.textMaterial, s.textMaterialObserved, true

@@ -134,7 +134,7 @@ func TestEncryptedProviderWaitPreservesStatusAndTransfersPendingWork(t *testing.
 					}
 					<-returned
 					synctest.Wait()
-					if stopped, _ := state.ClientStatus(); stopped != (outcome == "cancel" || outcome == "write-failure") {
+					if stopped := !state.ClientStopped().IsZero(); stopped != (outcome == "cancel" || outcome == "write-failure") {
 						t.Fatal("client stop recorded incorrectly")
 					}
 					before := bytes.Clone(outer.Body.Bytes())
@@ -206,7 +206,7 @@ func TestRequestContextDisconnectPolicyAndCleanup(t *testing.T) {
 				}
 				disconnect()
 				synctest.Wait()
-				if stopped, _ := state.ClientStatus(); stopped != !finished {
+				if stopped := !state.ClientStopped().IsZero(); stopped != !finished {
 					t.Fatal("completion or disconnect was recorded incorrectly")
 				}
 				if (provider.Err() != nil) != finished {
@@ -251,7 +251,7 @@ func TestClientDisconnectDrainsFinalUsage(t *testing.T) {
 	if state.Signals == nil || state.Signals.PromptTokens() != 17 || state.Signals.CompletionTokens() != 23 {
 		t.Fatalf("lost final usage after disconnect: %#v", state.Signals)
 	}
-	if stopped, _ := state.ClientStatus(); !stopped || state.BifrostError != nil {
+	if state.ClientStopped().IsZero() || state.BifrostError != nil {
 		t.Fatalf("client disconnect changed provider outcome: %#v", state.BifrostError)
 	}
 }

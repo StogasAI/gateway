@@ -386,11 +386,10 @@ func PrepareFinalState(state *State) *gatewaybilling.RequestEvent {
 		}
 	}
 	catalogIdentity := state.Resolution.CatalogIdentity()
-	cancelled, clientStoppedAt := state.ClientStatus()
+	clientStoppedAt := state.ClientStopped()
 	event, err := gatewaybilling.NewRequestEvent(gatewaybilling.EventInput{
 		UpstreamCostUSD:       state.UpstreamCostUSD,
 		Authorization:         state.Authorization,
-		Cancelled:             cancelled,
 		ClientStoppedAt:       clientStoppedAt,
 		CatalogVersion:        catalogIdentity.Sequence,
 		PolicyVersions:        state.PolicyVersions,
@@ -426,7 +425,6 @@ func PrepareFinalState(state *State) *gatewaybilling.RequestEvent {
 		event, err = gatewaybilling.NewRequestEvent(gatewaybilling.EventInput{
 			UpstreamCostUSD:  gatewaybilling.ZeroChargeUSD,
 			Authorization:    state.Authorization,
-			Cancelled:        cancelled,
 			ClientStoppedAt:  clientStoppedAt,
 			CatalogVersion:   catalogIdentity.Sequence,
 			PolicyVersions:   state.PolicyVersions,
@@ -553,7 +551,7 @@ func metersForState(state *State) gatewaybilling.EventMeters {
 	if textBytes, known := state.reasoningTextBytes(); known {
 		addCount(billing.MeterReasoningTextBytes, textBytes)
 	}
-	if _, stoppedAt := state.ClientStatus(); !stoppedAt.IsZero() {
+	if !state.ClientStopped().IsZero() {
 		// A client that received no text before it stopped received none of either kind.
 		material, observed := state.clientStopTextMaterial()
 		addCount(billing.MeterClientStopOutputTextBytes, material.output)

@@ -189,7 +189,7 @@ func TestClientObservationFinishesBeforeSettlement(t *testing.T) {
 				disconnect()
 			}
 			ctx.finishClientWait()
-			if cancelled, _ := state.ClientStatus(); cancelled != disconnectFirst {
+			if cancelled := !state.ClientStopped().IsZero(); cancelled != disconnectFirst {
 				t.Fatalf("client observation still pending at settlement: cancelled=%v", cancelled)
 			}
 			if provider.Err() != nil || ctx.responseWait.waiting() {
@@ -198,7 +198,7 @@ func TestClientObservationFinishesBeforeSettlement(t *testing.T) {
 			disconnect()
 			synctest.Wait()
 			ctx.finishClientWait()
-			if cancelled, _ := state.ClientStatus(); cancelled != disconnectFirst {
+			if cancelled := !state.ClientStopped().IsZero(); cancelled != disconnectFirst {
 				t.Fatal("HTTP handler completion became a client disconnect")
 			}
 		})

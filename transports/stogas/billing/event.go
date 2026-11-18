@@ -26,7 +26,6 @@ type EventInput struct {
 	PolicyVersions        *LoggedPolicyVersions
 	UpstreamCostUSD       string
 	Authorization         *Authorization
-	Cancelled             bool
 	ClientStoppedAt       time.Time
 	CatalogVersion        uint64
 	Meters                EventMeters
@@ -171,7 +170,6 @@ func NewRequestEvent(input EventInput) (RequestEvent, error) {
 		ParentAgentID:    input.ParentAgentID,
 		AgentName:        input.AgentName,
 		Transport:        input.Transport,
-		Cancelled:        input.Cancelled,
 		ClientStopMS:     clientStopMS,
 		CatalogVersion:   catalogVersion(input.CatalogVersion),
 		ProviderAttempts: providerAttempts,
@@ -190,7 +188,6 @@ func NewRequestEvent(input EventInput) (RequestEvent, error) {
 			CacheReadSavingsUSD:   cacheReadSavingsUSD,
 			CacheWriteOverheadUSD: cacheWriteOverheadUSD,
 			Meters:                pricing,
-			StandardTextTokens:    standardTextTokens(pricing),
 		},
 		Plugins:        input.Plugins,
 		GatewayVersion: strings.TrimSpace(input.GatewayVersion),

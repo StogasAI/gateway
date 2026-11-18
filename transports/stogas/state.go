@@ -77,7 +77,6 @@ type State struct {
 	ProviderOutputObserved  bool
 	providerOutputEmitted   bool
 	ClientStoppedAt         time.Time
-	Cancelled               bool
 	clientStateMu           sync.RWMutex
 	runningUsage            atomic.Bool
 	GatewayVersion          string
@@ -288,19 +287,19 @@ func (s *State) MarkClientStopped() {
 	}
 	s.clientStateMu.Lock()
 	defer s.clientStateMu.Unlock()
-	s.Cancelled = true
 	if s.ClientStoppedAt.IsZero() {
 		s.ClientStoppedAt = time.Now()
 	}
 }
 
-func (s *State) ClientStatus() (cancelled bool, stoppedAt time.Time) {
+// ClientStopped returns when the client stopped the request, or the zero time when it did not.
+func (s *State) ClientStopped() time.Time {
 	if s == nil {
-		return false, time.Time{}
+		return time.Time{}
 	}
 	s.clientStateMu.RLock()
 	defer s.clientStateMu.RUnlock()
-	return s.Cancelled, s.ClientStoppedAt
+	return s.ClientStoppedAt
 }
 
 // observeTTFT records request start through the first generated token-bearing

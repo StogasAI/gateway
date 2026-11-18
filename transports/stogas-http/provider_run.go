@@ -455,7 +455,7 @@ func (r *providerRun) waitError() error {
 	if err := r.client.inferenceWaitError(); err != nil {
 		return err
 	}
-	if cancelled, _ := r.state.ClientStatus(); cancelled || !r.client.responseWait.waiting() {
+	if !r.state.ClientStopped().IsZero() || !r.client.responseWait.waiting() {
 		return context.Canceled
 	}
 	return nil

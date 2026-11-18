@@ -2788,10 +2788,10 @@ func TestWriteSSEStreamDrainsUpstreamAfterBodyStreamClose(t *testing.T) {
 		t.Fatalf("closing body stream failed: %v", err)
 	}
 	// A closure that is never recorded as a cancellation fails at go test's -timeout.
-	cancelledByClient, clientStoppedAt := state.ClientStatus()
-	for !cancelledByClient {
+	clientStoppedAt := state.ClientStopped()
+	for clientStoppedAt.IsZero() {
 		time.Sleep(time.Millisecond)
-		cancelledByClient, clientStoppedAt = state.ClientStatus()
+		clientStoppedAt = state.ClientStopped()
 	}
 	if state.ProviderOutputObserved {
 		t.Fatal("output must not be recorded after the client closes the stream")
@@ -2995,7 +2995,7 @@ func TestWriteSSEStreamStopsCallWithRunningUsageAfterClientLeaves(t *testing.T) 
 			if signals, ok := state.Signals.(*stogas.StandardSignals); !ok || signals.PromptTokens() != 11 || signals.CompletionTokens() != 7 {
 				t.Fatalf("stopped call billed %#v, want the usage that it reported", state.Signals)
 			}
-			if cancelled, _ := state.ClientStatus(); !cancelled {
+			if state.ClientStopped().IsZero() {
 				t.Fatal("the client's stop was not recorded")
 			}
 		})

@@ -369,7 +369,7 @@ func TestNewRequestEventUsesProviderClockAndClampsItToTotal(t *testing.T) {
 	if len(event.ProviderAttempts) != 0 {
 		t.Fatalf("a request that never started a provider has attempts: %#v", event.ProviderAttempts)
 	}
-	if len(event.Usage.Meters) != 0 || event.Usage.StandardTextTokens != (StandardTextTokens{}) {
+	if len(event.Usage.Meters) != 0 {
 		t.Fatalf("a request that never started a provider has usage: %#v", event.Usage)
 	}
 	if event.ProviderMS() != 0 {
@@ -533,11 +533,10 @@ func TestLargestRequestLogFitsTheLimit(t *testing.T) {
 			ResponseFormat: setting, Include: include, ToolChoice: setting, ParallelToolCalls: &flag, MaxToolCalls: &integer, Truncation: setting,
 		},
 		SessionID: quotes(MaxSessionIDBytes), Metadata: map[string]string{}, AppTitle: quotes(MaxMetadataValueBytes), AppURL: quotes(MaxMetadataValueBytes),
-		Transport: TransportAttestedTLS, Cancelled: true, ClientStopMS: &count, CatalogVersion: new(uint64(1<<64 - 1)),
+		Transport: TransportAttestedTLS, ClientStopMS: &count, CatalogVersion: new(uint64(1<<64 - 1)),
 		PolicyVersions: &LoggedPolicyVersions{}, NodeID: strings.Repeat("f", 64), GatewayVersion: "v" + strings.Repeat("9", 31),
 		Performance: RequestPerformance{TotalMS: count, FirstOutputMS: &count, TTFTMS: &count},
-		Usage: RequestUsage{UpstreamCostUSD: usd, BilledCostUSD: usd, CacheReadSavingsUSD: &usd, CacheWriteOverheadUSD: &usd, Meters: EventMeters{},
-			StandardTextTokens: StandardTextTokens{Input: &usd, Reasoning: &usd, Output: &usd, ClientStopReasoning: &usd, ClientStopOutput: &usd}},
+		Usage:       RequestUsage{UpstreamCostUSD: usd, BilledCostUSD: usd, CacheReadSavingsUSD: &usd, CacheWriteOverheadUSD: &usd, Meters: EventMeters{}},
 		Plugins: plugins.Metrics{Redaction: &plugins.RedactionMetrics{ItemsRedacted: count, DurationUS: count},
 			Export: &plugins.ExportMetrics{DurationUS: count}},
 	}
@@ -678,9 +677,9 @@ func TestMetersDistinguishFreeUnpricedAndAggregateCounts(t *testing.T) {
 	}
 }
 
-func TestRequestUsagePreservesExactStandardTextAndPluginPresence(t *testing.T) {
-	for _, item := range []struct{ bytes, tokens string }{{"0", "0"}, {"6", "1.5"}, {"7", "1.75"}, {"18446744073709551615", "4611686018427387903.75"}} {
-		event, err := NewRequestEvent(EventInput{Meters: EventMeters{MeterInputTextBytes: {Quantity: item.bytes}, MeterOutputTextBytes: {Quantity: "0"}}, CacheReadSavingsUSD: stringPtr("0"), ProviderAttempts: []ProviderAttemptInput{{Provider: "openai"}}})
+func TestRequestUsagePreservesExactMetersAndPluginPresence(t *testing.T) {
+	for _, bytes := range []string{"0", "7", "18446744073709551615"} {
+		event, err := NewRequestEvent(EventInput{Meters: EventMeters{MeterInputTextBytes: {Quantity: bytes}, MeterOutputTextBytes: {Quantity: "0"}}, CacheReadSavingsUSD: stringPtr("0"), ProviderAttempts: []ProviderAttemptInput{{Provider: "openai"}}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -702,12 +701,13 @@ func TestRequestUsagePreservesExactStandardTextAndPluginPresence(t *testing.T) {
 		if usage["cache_write_overhead_usd"] != nil || string(usage["cache_read_savings_usd"]) != `"0"` {
 			t.Fatal("cache costs did not distinguish unknown from measured zero")
 		}
-		var standardText map[string]string
-		if err := json.Unmarshal(usage["standard_text_tokens"], &standardText); err != nil {
+		var meters map[string]struct{ Quantity string }
+		if err := json.Unmarshal(usage["meters"], &meters); err != nil {
 			t.Fatal(err)
 		}
-		if _, present := standardText["reasoning"]; present || standardText["output"] != "0" || standardText["input"] != item.tokens {
-			t.Fatalf("standard text JSON contains an unmeasured value or lost measured zero: %s", usage["standard_text_tokens"])
+		if _, present := meters[MeterReasoningTextBytes]; present || meters[MeterOutputTextBytes].Quantity != "0" ||
+			meters[MeterInputTextBytes].Quantity != bytes {
+			t.Fatalf("meters contain an unmeasured value or lost an exact quantity: %s", usage["meters"])
 		}
 	}
 	event := testGatewayRequestEvent()

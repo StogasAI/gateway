@@ -12,6 +12,7 @@ func TestRequestOutcome(t *testing.T) {
 		return result
 	}
 	failure := &EventError{Code: "insufficient_balance", Status: 402}
+	stopped := uint32(40)
 	for _, tc := range []struct {
 		name  string
 		event RequestEvent
@@ -26,11 +27,11 @@ func TestRequestOutcome(t *testing.T) {
 		{"the gateway failed after the provider succeeded", RequestEvent{GatewayError: failure, ProviderAttempts: attempts("success")}, "failed"},
 		{"the gateway refused the next candidate", RequestEvent{GatewayError: failure, ProviderAttempts: attempts("rate_limited")}, "failed"},
 		// A gateway error comes before the caller's own stop.
-		{"rejected and cancelled", RequestEvent{GatewayError: failure, Cancelled: true}, "rejected"},
-		{"failed and cancelled", RequestEvent{GatewayError: failure, Cancelled: true, ProviderAttempts: attempts("cancelled")}, "failed"},
-		{"the caller stopped a call", RequestEvent{Cancelled: true, ProviderAttempts: attempts("cancelled")}, "cancelled"},
-		{"the caller stopped after the provider finished", RequestEvent{Cancelled: true, ProviderAttempts: attempts("success")}, "cancelled"},
-		{"the caller stopped before any call", RequestEvent{Cancelled: true}, "cancelled"},
+		{"rejected and cancelled", RequestEvent{GatewayError: failure, ClientStopMS: &stopped}, "rejected"},
+		{"failed and cancelled", RequestEvent{GatewayError: failure, ClientStopMS: &stopped, ProviderAttempts: attempts("cancelled")}, "failed"},
+		{"the caller stopped a call", RequestEvent{ClientStopMS: &stopped, ProviderAttempts: attempts("cancelled")}, "cancelled"},
+		{"the caller stopped after the provider finished", RequestEvent{ClientStopMS: &stopped, ProviderAttempts: attempts("success")}, "cancelled"},
+		{"the caller stopped before any call", RequestEvent{ClientStopMS: &stopped}, "cancelled"},
 		{"no call and no error", RequestEvent{}, "unknown"},
 		{"a call without a result", RequestEvent{ProviderAttempts: attempts("")}, "unknown"},
 		{"a call whose result is unknown", RequestEvent{ProviderAttempts: attempts("success", "unknown")}, "unknown"},
