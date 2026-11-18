@@ -38,6 +38,7 @@ type privateNodeDiagnostics struct {
 	Process                processDiagnostics             `json:"process"`
 	Requests               requestDiagnostics             `json:"requests"`
 	SanctionedNetworks     *sanctionedNetworksStatus      `json:"sanctionedNetworks,omitempty"`
+	NetworkLists           *networkListsStatus            `json:"networkLists,omitempty"`
 }
 
 type listenerDiagnostics struct {
@@ -117,6 +118,7 @@ func (s *Server) privateDiagnosticsSnapshot(details bool) privateNodeDiagnostics
 	result.Process = currentProcessDiagnostics(s.startedAt)
 	result.Exports = s.exports.Diagnostics()
 	result.SanctionedNetworks = s.sanctionedNetworks.diagnostics()
+	result.NetworkLists = s.networkLists.diagnostics()
 	if s.httpErrors != nil {
 		result.HTTPServerErrors = s.httpErrors.errors.Load()
 	}

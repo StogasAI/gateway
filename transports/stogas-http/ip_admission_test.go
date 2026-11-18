@@ -96,8 +96,8 @@ func TestIPAdmissionExemptsOnlyTheRelayAddress(t *testing.T) {
 	}
 }
 
-// Every Tor client of the relay arrives from its address, so none of them has
-// a client address that a network list could hold.
+// Every Tor client of the relay arrives from its address, so each of them is
+// an onion client, without an address that a network list could hold.
 func TestRelayClientsHaveNoClientAddress(t *testing.T) {
 	s := &Server{config: stogas.Config{OnionRelayAddress: netip.MustParseAddr("192.0.2.9")}}
 	for remote, want := range map[string]netip.Addr{
@@ -109,8 +109,8 @@ func TestRelayClientsHaveNoClientAddress(t *testing.T) {
 	} {
 		request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 		request.RemoteAddr = remote
-		if got := s.clientAddress(&requestContext{request: request}); got != want {
-			t.Errorf("%s: client address %v, want %v", remote, got, want)
+		if got := s.client(&requestContext{request: request}); got.Address != want || got.Onion != !want.IsValid() {
+			t.Errorf("%s: client %+v, want address %v", remote, got, want)
 		}
 	}
 }

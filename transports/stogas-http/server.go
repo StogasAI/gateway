@@ -77,6 +77,7 @@ type Server struct {
 	pairWaits             pairWaits
 	ipAdmission           *ipAdmission
 	sanctionedNetworks    *sanctionedNetworks
+	networkLists          *networkLists
 	idleConnections       idleConnections
 	waitingClients        waitingClients
 	jsonDecode            requestWorkActivity
@@ -142,6 +143,15 @@ func New(ctx context.Context, config stogas.Config, logger schemas.Logger) (*Ser
 		}
 		return nil, fmt.Errorf("%w: load sanctioned networks: %w", ErrGatewayRuntimeInitialization, err)
 	}
+	lists, err := startNetworkLists(ctx, runtime.Billing(), logger)
+	if err != nil {
+		sanctioned.close()
+		runtime.Close()
+		if secure != nil {
+			secure.Close()
+		}
+		return nil, fmt.Errorf("%w: load network lists: %w", ErrGatewayRuntimeInitialization, err)
+	}
 
 	s := &Server{
 		config:             config,
@@ -152,6 +162,7 @@ func New(ctx context.Context, config stogas.Config, logger schemas.Logger) (*Ser
 		runtime:            runtime,
 		secure:             secure,
 		sanctionedNetworks: sanctioned,
+		networkLists:       lists,
 	}
 	s.exports = exporter.New(context.Background(), exporter.Options{Local: config.Confidential.Environment == "local" && config.AllowPrivateProviderNetwork, NewLease: s.exportLease})
 	if secure != nil {

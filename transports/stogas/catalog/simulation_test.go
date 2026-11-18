@@ -210,7 +210,7 @@ func TestRoutingSimulationNamesWhatRemovedEachCandidate(t *testing.T) {
 			}
 			// A request tries the simulated pairs in order, or fails as simulated.
 			if test.client != "" {
-				input.ClientAddress = netip.MustParseAddr(test.client)
+				input.Client = policy.Client{Address: netip.MustParseAddr(test.client)}
 			}
 			attempts, err := requestAttempts(input, route, test.model, test.tier, test.mode)
 			if simulation.Err != nil {

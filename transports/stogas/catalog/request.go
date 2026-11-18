@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"net/netip"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -86,15 +86,38 @@ func (e APIError) Error() string {
 	return e.Message
 }
 
-// NetworkDenied refuses a client that the networks of a policy do not admit. It
-// names the address that the gateway saw, which is the one to allow or to
-// take off a deny list.
-func NetworkDenied(client netip.Addr) APIError {
-	message := "Request is not allowed from this network"
-	if client.IsValid() {
-		message = "Request is not allowed from " + client.String()
+// ClientDenied refuses a client that the access lists of a policy do not
+// admit. The message names what the gateway saw: the address, which is the one
+// to allow or to take off a deny list, and the fact about it that a list
+// refused. A list that is not loaded leaves the gateway unable to tell, so the
+// client retries later.
+func ClientDenied(client policy.Client, refusal policy.Refusal) APIError {
+	if refusal == policy.ListsMissing {
+		return APIError{Code: "gateway_unavailable", StatusCode: http.StatusServiceUnavailable, Type: ErrorTypeInternal, Message: "The gateway is temporarily unavailable. Retry the request later."}
 	}
-	return APIError{Code: "network_denied", StatusCode: http.StatusForbidden, Type: "permission_denied", Message: message}
+	from := "from this network"
+	if client.Onion {
+		from = "through the onion service"
+	} else if client.Address.IsValid() {
+		from = "from " + client.Address.String()
+	}
+	as := "AS" + strconv.FormatUint(uint64(client.AS), 10)
+	reason := map[policy.Refusal]string{
+		policy.RefusedAS: " in " + as, policy.RefusedTorExit: ", a Tor exit relay",
+		policy.RefusedVPN: " in " + as + ", a VPN provider's network", policy.RefusedHosting: " in " + as + ", a hosting provider's network",
+	}[refusal]
+	if refusal != policy.RefusedCountry {
+		return APIError{Code: "network_denied", StatusCode: http.StatusForbidden, Type: "permission_denied", Message: "Request is not allowed " + from + reason}
+	}
+	switch {
+	case client.Country != "":
+		reason = " in " + client.Country
+	case client.Address.IsValid():
+		reason = ", which is in no known country"
+	default:
+		reason = ", which has no country"
+	}
+	return APIError{Code: "country_denied", StatusCode: http.StatusForbidden, Type: "permission_denied", Message: "Request is not allowed " + from + reason}
 }
 
 // transportNames spell each connection mode as the docs do.
@@ -131,9 +154,10 @@ type RequestInput struct {
 	Fields map[string]json.RawMessage
 	Method string
 	Path   string
-	// ClientAddress is the address that the client connected from, which the
-	// load balancer's PROXY header states.
-	ClientAddress netip.Addr
+	// Client is where the request came from: the address that the load
+	// balancer's PROXY header states, with what the gateway's lists say about
+	// it, or the onion service.
+	Client policy.Client
 	// Transport is the connection mode that the request arrived over.
 	Transport           string
 	Policy              *policy.Config

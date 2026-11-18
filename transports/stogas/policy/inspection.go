@@ -240,7 +240,7 @@ func (v *Inspector) Finish() (*Inspection, error) {
 	if compiled.Timeouts != nil {
 		effective["timeouts"] = compiled.Timeouts
 	}
-	if compiled.Access != nil && (compiled.Access.Schedule != nil || compiled.Access.Networks != nil || compiled.Access.Transports != nil) {
+	if compiled.Access != nil && (compiled.Access.Schedule != nil || compiled.Access.Networks != nil || compiled.Access.Countries != nil || compiled.Access.Transports != nil) {
 		effective["access"] = compiled.Access
 	}
 	routing := map[string]any{}
@@ -473,6 +473,9 @@ func inspectionSetBy(entries []InspectionSource, sources []ScopedSource, compile
 	}
 	if compiled.Access != nil && compiled.Access.Networks != nil {
 		add("access.networks", permissionNetworks, true, func(c *Config) bool { return c.Access != nil && c.Access.Networks != nil })
+	}
+	if compiled.Access != nil && compiled.Access.Countries != nil {
+		add("access.countries", permissionCountries, true, func(c *Config) bool { return c.Access != nil && c.Access.Countries != nil })
 	}
 	if compiled.Access != nil && compiled.Access.Transports != nil {
 		add("access.transports", permissionTransports, true, func(c *Config) bool { return c.Access != nil && c.Access.Transports != nil })

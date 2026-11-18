@@ -301,10 +301,13 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 				continue
 			}
 			// A simulation runs from a dashboard and not from the client that
-			// sends the request, so it routes as a client inside every network.
-			if trace == nil && value.Config.NetworkDenied(input.ClientAddress) {
-				keep(selection, NetworkDenied(input.ClientAddress))
-				continue
+			// sends the request, so it routes as a client that every access list
+			// admits.
+			if trace == nil {
+				if refusal := value.Config.ClientRefusal(input.Client); refusal != policy.Admitted {
+					keep(selection, ClientDenied(input.Client, refusal))
+					continue
+				}
 			}
 			// It also routes as a client over every connection mode.
 			if trace == nil && value.Config.TransportDenied(input.Transport) {

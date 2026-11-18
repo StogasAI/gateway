@@ -204,6 +204,10 @@ func TestConditionalRulesExcludeOnlyTheirCandidates(t *testing.T) {
 	networks := func(when string) string {
 		return `{"office":{"when":"` + when + `","access":{"networks":{"allow":["198.51.100.0/24"]}}}}`
 	}
+	// The request states no client address, which is in no country.
+	countries := func(when string) string {
+		return `{"home":{"when":"` + when + `","access":{"countries":{"allow":["US"]}}}}`
+	}
 	// The request arrives over ordinary HTTPS, which the list does not admit.
 	transports := func(when string) string {
 		return `{"sealed":{"when":"` + when + `","access":{"transports":{"allow":["e2ee"]}}}}`
@@ -219,6 +223,8 @@ func TestConditionalRulesExcludeOnlyTheirCandidates(t *testing.T) {
 		{name: "deny period on every candidate", rules: denied("provider.id != 'blocked'"), order: "azure", code: "schedule_denied"},
 		{name: "networks leave another provider", rules: networks("provider.id == 'azure'"), order: "azure", want: "openai-gpt-5.6-sol"},
 		{name: "networks on every candidate", rules: networks("provider.id != 'blocked'"), order: "azure", code: "network_denied"},
+		{name: "countries leave another provider", rules: countries("provider.id == 'azure'"), order: "azure", want: "openai-gpt-5.6-sol"},
+		{name: "countries on every candidate", rules: countries("provider.id != 'blocked'"), order: "azure", code: "country_denied"},
 		{name: "connection modes leave another provider", rules: transports("provider.id == 'azure'"), order: "azure", want: "openai-gpt-5.6-sol"},
 		{name: "connection modes on every candidate", rules: transports("provider.id != 'blocked'"), order: "azure", code: "transport_denied"},
 		{name: "undecided condition leaves another provider", rules: undecided, order: "openai", want: "azure-gpt-5.6-sol"},

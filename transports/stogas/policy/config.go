@@ -10,7 +10,6 @@ import (
 	"maps"
 	"math/big"
 	"mime"
-	"net/netip"
 	"regexp"
 	"slices"
 	"sort"
@@ -281,29 +280,8 @@ type AllowedCatalogNodes struct {
 type Access struct {
 	Schedule   *Schedule   `json:"schedule,omitempty"`
 	Networks   *Networks   `json:"networks,omitempty"`
+	Countries  *Countries  `json:"countries,omitempty"`
 	Transports *Transports `json:"transports,omitempty"`
-}
-
-// How the client reached the gateway: ordinary TLS, TLS with the gateway's
-// attestation evidence, or an end-to-end encrypted session. Request logs name
-// the same modes.
-const (
-	TransportHTTPS       = "https"
-	TransportAttestedTLS = "attested_tls"
-	TransportE2EE        = "e2ee"
-)
-
-var transports = []string{TransportHTTPS, TransportAttestedTLS, TransportE2EE}
-
-// Transports limits requests by their connection mode, as Networks limits them
-// by the client's address.
-type Transports struct {
-	// Allow, when present, admits only requests over its modes. A composed
-	// config holds the modes that every policy allows, so an empty list
-	// admits none.
-	Allow []string `json:"allow,omitzero"`
-	// Deny refuses requests over its modes.
-	Deny []string `json:"deny,omitzero"`
 }
 
 // Schedule refuses requests during weekly periods. It has no allow list,
@@ -311,22 +289,6 @@ type Transports struct {
 // so the allow lists of several policies could not combine into one.
 type Schedule struct {
 	Deny []DenyWindow `json:"deny,omitzero"`
-}
-
-// Networks limits requests by the client's address. An entry is an address or
-// a CIDR range.
-type Networks struct {
-	// Allow, when present, admits only clients in its networks. A composed
-	// config holds the networks that every policy allows, so an empty list
-	// admits none.
-	Allow []string `json:"allow,omitzero"`
-	// Deny refuses clients in its networks.
-	Deny []string `json:"deny,omitzero"`
-
-	// allow and deny are the parsed entries, sorted and without one inside
-	// another, so at most one can hold an address: the last that starts at or
-	// before it.
-	allow, deny []netip.Prefix
 }
 
 type DenyWindow struct {
@@ -590,10 +552,13 @@ func (a *Access) validate() error {
 	if a == nil {
 		return nil
 	}
-	if a.Schedule == nil && a.Networks == nil && a.Transports == nil {
-		return configError("access requires schedule, networks or transports")
+	if a.Schedule == nil && a.Networks == nil && a.Countries == nil && a.Transports == nil {
+		return configError("access requires schedule, networks, countries or transports")
 	}
 	if err := a.Networks.validate(); err != nil {
+		return err
+	}
+	if err := a.Countries.validate(); err != nil {
 		return err
 	}
 	if err := a.Transports.validate(); err != nil {
@@ -707,255 +672,6 @@ func (p *Plugins) validate() error {
 		seen[pattern] = true
 	}
 	return nil
-}
-
-func (n *Networks) validate() error {
-	if n == nil {
-		return nil
-	}
-	if n.Allow == nil && n.Deny == nil {
-		return configError("access.networks requires allow or deny")
-	}
-	// An empty deny list replaces a default and refuses nobody. An empty
-	// allow list would refuse every client, which enabled already says.
-	if n.Allow != nil && len(n.Allow) == 0 {
-		return configError("access.networks.allow requires at least one address or range")
-	}
-	var err error
-	if n.allow, err = parseNetworks("allow", n.Allow); err != nil {
-		return err
-	}
-	if n.deny, err = parseNetworks("deny", n.Deny); err != nil {
-		return err
-	}
-	if n.Allow != nil && len(subtractNetworks(n.allow, n.deny)) == 0 {
-		return configError("access.networks.deny holds every network that allow lists")
-	}
-	return nil
-}
-
-// validate reads the lists of connection modes as Networks.validate reads
-// networks. An empty deny list replaces a default and refuses nothing, and a
-// deny list of every mode, as a default, refuses requests until a nearer
-// scope sets its own lists. An allow list that admits nothing would refuse
-// every request, which disabling the resource already says.
-func (t *Transports) validate() error {
-	if t == nil {
-		return nil
-	}
-	if t.Allow == nil && t.Deny == nil {
-		return configError("access.transports requires allow or deny")
-	}
-	if t.Allow != nil && len(t.Allow) == 0 {
-		return configError("access.transports.allow requires at least one connection mode")
-	}
-	if err := validateModes("allow", t.Allow); err != nil {
-		return err
-	}
-	if err := validateModes("deny", t.Deny); err != nil {
-		return err
-	}
-	if t.Allow != nil && !slices.ContainsFunc(t.Allow, t.admits) {
-		return configError("access.transports.deny holds every mode that allow lists")
-	}
-	return nil
-}
-
-func validateModes(list string, modes []string) error {
-	for index, mode := range modes {
-		if !slices.Contains(transports, mode) {
-			return configError("access.transports.%s has %q, which is not https, attested_tls or e2ee", list, mode)
-		}
-		if slices.Contains(modes[:index], mode) {
-			return configError("access.transports.%s lists %s twice", list, mode)
-		}
-	}
-	return nil
-}
-
-// admits reports whether the lists accept requests over the mode.
-func (t *Transports) admits(mode string) bool {
-	return (t.Allow == nil || slices.Contains(t.Allow, mode)) && !slices.Contains(t.Deny, mode)
-}
-
-// combine returns the modes that both allow and the modes that either denies,
-// in a fixed order.
-func (t *Transports) combine(other *Transports) *Transports {
-	if t == nil {
-		return other
-	}
-	out := &Transports{}
-	if t.Allow != nil || other.Allow != nil {
-		out.Allow = []string{}
-	}
-	if t.Deny != nil || other.Deny != nil {
-		out.Deny = []string{}
-	}
-	for _, mode := range transports {
-		if out.Allow != nil && (t.Allow == nil || slices.Contains(t.Allow, mode)) && (other.Allow == nil || slices.Contains(other.Allow, mode)) {
-			out.Allow = append(out.Allow, mode)
-		}
-		if slices.Contains(t.Deny, mode) || slices.Contains(other.Deny, mode) {
-			out.Deny = append(out.Deny, mode)
-		}
-	}
-	return out
-}
-
-// parseNetworks reads addresses and CIDR ranges. A range must name its first
-// address, and an IPv4 network takes its IPv4 form, because the gateway reads
-// an IPv4 client in that form.
-func parseNetworks(list string, entries []string) ([]netip.Prefix, error) {
-	networks := make([]netip.Prefix, 0, len(entries))
-	for _, entry := range entries {
-		var network netip.Prefix
-		if strings.Contains(entry, "/") {
-			parsed, err := netip.ParsePrefix(entry)
-			if err != nil {
-				return nil, configError("access.networks.%s has %q, which is not an IP address or CIDR range", list, entry)
-			}
-			network = parsed
-		} else {
-			address, err := netip.ParseAddr(entry)
-			if err != nil || address.Zone() != "" {
-				return nil, configError("access.networks.%s has %q, which is not an IP address or CIDR range", list, entry)
-			}
-			network = netip.PrefixFrom(address, address.BitLen())
-		}
-		if network.Addr().Is4In6() {
-			return nil, configError("access.networks.%s has %q, which must use its IPv4 form", list, entry)
-		}
-		if network != network.Masked() {
-			return nil, configError("access.networks.%s has %q, which must start at %s", list, entry, network.Masked())
-		}
-		if slices.Contains(networks, network) {
-			return nil, configError("access.networks.%s lists %s twice", list, network)
-		}
-		networks = append(networks, network)
-	}
-	return disjointNetworks(networks), nil
-}
-
-// disjointNetworks sorts networks and drops each one inside another. Two CIDR
-// ranges either nest or do not overlap.
-func disjointNetworks(networks []netip.Prefix) []netip.Prefix {
-	slices.SortFunc(networks, func(a, b netip.Prefix) int {
-		if order := a.Addr().Compare(b.Addr()); order != 0 {
-			return order
-		}
-		return a.Bits() - b.Bits()
-	})
-	out := networks[:0]
-	for _, network := range networks {
-		if len(out) == 0 || !out[len(out)-1].Overlaps(network) {
-			out = append(out, network)
-		}
-	}
-	return slices.Clip(out)
-}
-
-// networkHolding returns the network of disjoint, sorted networks that holds
-// address.
-func networkHolding(networks []netip.Prefix, address netip.Addr) (netip.Prefix, bool) {
-	index, found := slices.BinarySearchFunc(networks, address, func(network netip.Prefix, address netip.Addr) int {
-		return network.Addr().Compare(address)
-	})
-	if found {
-		return networks[index], true
-	}
-	if index > 0 && networks[index-1].Contains(address) {
-		return networks[index-1], true
-	}
-	return netip.Prefix{}, false
-}
-
-// intersectNetworks returns the addresses in both disjoint, sorted lists: each
-// range of one list that lies inside a range of the other.
-func intersectNetworks(a, b []netip.Prefix) []netip.Prefix {
-	out := []netip.Prefix{}
-	for _, pair := range [2][2][]netip.Prefix{{a, b}, {b, a}} {
-		for _, network := range pair[0] {
-			if outer, ok := networkHolding(pair[1], network.Addr()); ok && outer.Bits() <= network.Bits() {
-				out = append(out, network)
-			}
-		}
-	}
-	return disjointNetworks(out)
-}
-
-// subtractNetworks returns the ranges of a that no range of b holds. A range
-// of b inside one of a leaves that one, since part of it stays.
-func subtractNetworks(a, b []netip.Prefix) []netip.Prefix {
-	out := []netip.Prefix{}
-	for _, network := range a {
-		if outer, ok := networkHolding(b, network.Addr()); !ok || outer.Bits() > network.Bits() {
-			out = append(out, network)
-		}
-	}
-	return out
-}
-
-// combine returns the networks of both lists: the addresses that both allow
-// and the addresses that either denies.
-func (n *Networks) combine(other *Networks) *Networks {
-	if n == nil {
-		return other
-	}
-	out := &Networks{allow: n.allow, deny: disjointNetworks(slices.Concat(n.deny, other.deny))}
-	switch {
-	case n.Allow == nil:
-		out.allow = other.allow
-	case other.Allow != nil:
-		out.allow = intersectNetworks(n.allow, other.allow)
-	}
-	// Allow and Deny stay nil where no policy set them, because an empty
-	// allow list admits no client.
-	if n.Allow != nil || other.Allow != nil {
-		out.Allow = networkStrings(out.allow)
-	}
-	if n.Deny != nil || other.Deny != nil {
-		out.Deny = networkStrings(out.deny)
-	}
-	return out
-}
-
-func networkStrings(networks []netip.Prefix) []string {
-	out := make([]string, len(networks))
-	for index, network := range networks {
-		out[index] = network.String()
-	}
-	return out
-}
-
-// NetworkDenied reports whether the networks of the policies refuse the client
-// address: one outside the networks that every policy allows, or inside one
-// that a policy denies. The gateway reads an IPv4 client in its IPv4 form. A
-// client without a known address, such as one of the onion service, could have
-// any address: it is certainly inside only an allow list that holds 0.0.0.0/0
-// and ::/0, and certainly outside only an empty deny list.
-func (c *Config) NetworkDenied(client netip.Addr) bool {
-	if c == nil || c.Access == nil || c.Access.Networks == nil {
-		return false
-	}
-	networks := c.Access.Networks
-	if !client.IsValid() {
-		everyAddress := len(networks.allow) == 2 && networks.allow[0].Bits() == 0 && networks.allow[1].Bits() == 0
-		return networks.Allow != nil && !everyAddress || len(networks.deny) > 0
-	}
-	client = client.Unmap()
-	if networks.Allow != nil {
-		if _, ok := networkHolding(networks.allow, client); !ok {
-			return true
-		}
-	}
-	_, denied := networkHolding(networks.deny, client)
-	return denied
-}
-
-// TransportDenied reports whether the policies refuse requests over the
-// connection mode.
-func (c *Config) TransportDenied(transport string) bool {
-	return c != nil && c.Access != nil && c.Access.Transports != nil && !c.Access.Transports.admits(transport)
 }
 
 func (c *Config) DeniedAt(now time.Time) bool {

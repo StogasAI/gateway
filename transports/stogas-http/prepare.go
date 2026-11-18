@@ -84,10 +84,10 @@ func (s *Server) startRun(ctx *requestContext, startedAt time.Time, preparation 
 		s.writeCatalogError(ctx, catalog.ErrScheduleDenied)
 		return nil
 	}
-	client := s.clientAddress(ctx)
-	if keyConfig.Config.NetworkDenied(client) {
+	client := s.client(ctx)
+	if refusal := keyConfig.Config.ClientRefusal(client); refusal != policy.Admitted {
 		run.releasePlan()
-		s.writeCatalogError(ctx, catalog.NetworkDenied(client))
+		s.writeCatalogError(ctx, catalog.ClientDenied(client, refusal))
 		return nil
 	}
 	transport := ctx.transport()
@@ -107,7 +107,7 @@ func (s *Server) startRun(ctx *requestContext, startedAt time.Time, preparation 
 		Fields:               fields,
 		Method:               ctx.request.Method,
 		Path:                 ctx.request.URL.Path,
-		ClientAddress:        client,
+		Client:               client,
 		Transport:            transport,
 		Policy:               keyConfig.Config,
 		AvailableCredentials: keyConfig.AvailableCredentials(),

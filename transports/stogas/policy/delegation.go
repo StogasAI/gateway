@@ -33,14 +33,16 @@ const (
 	permissionMissingKeys
 	permissionNetworks
 	permissionTransports
-	allPermissions     = permissionTransports | (permissionTransports - 1)
+	permissionCountries
+	allPermissions     = permissionCountries | (permissionCountries - 1)
 	requestPermissions = allPermissions &^ (permissionLimits | permissionDelegation)
 )
 
 var permissionSections = map[string]Permission{
-	"access":            permissionSchedule | permissionNetworks | permissionTransports,
+	"access":            permissionSchedule | permissionNetworks | permissionCountries | permissionTransports,
 	"access.schedule":   permissionSchedule,
 	"access.networks":   permissionNetworks,
+	"access.countries":  permissionCountries,
 	"access.transports": permissionTransports,
 	"input":             permissionInput, "limits": permissionLimits,
 	"timeouts":                      permissionTotalTimeout | permissionOutputIdleTimeout,

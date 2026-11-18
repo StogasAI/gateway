@@ -254,6 +254,8 @@ type Service struct {
 	storeLogBatchQuery         string
 	sanctionedSourceQuery      string
 	sanctionedNetworksQuery    string
+	networkListSourcesQuery    string
+	networkListQuery           string
 	claimAzureCheckQuery       string
 	recordAzureCheckQuery      string
 	claimAzureDiscoveryQuery   string
@@ -315,6 +317,8 @@ func NewService(
 		storeLogBatchQuery:        db.functionQuery("store_gateway_log_batch", "*", "$1::json"),
 		sanctionedSourceQuery:     db.functionQuery("gateway_sanctioned_networks_source", "*", ""),
 		sanctionedNetworksQuery:   db.functionQuery("gateway_sanctioned_networks", "first_address, last_address", ""),
+		networkListSourcesQuery:   db.functionQuery("gateway_network_list_sources", "kind, source", ""),
+		networkListQuery:          db.functionQuery("gateway_network_list", "source, data", "$1::text"),
 		claimAzureCheckQuery:      db.functionQuery("gateway_claim_azure_check", "claimed, verified_at, started_at", "$1::uuid, make_interval(secs => $2::double precision)"),
 		recordAzureCheckQuery:     db.functionQuery("gateway_record_azure_check", "result", "$1::uuid, $2::timestamptz, $3::jsonb"),
 		claimAzureDiscoveryQuery:  db.functionQuery("gateway_claim_azure_discovery", "claimed, started_at", "$1::uuid"),
@@ -338,6 +342,8 @@ func NewService(
 		service.storeLogBatchQuery,
 		service.sanctionedSourceQuery,
 		service.sanctionedNetworksQuery,
+		service.networkListSourcesQuery,
+		service.networkListQuery,
 		service.claimAzureCheckQuery,
 		service.recordAzureCheckQuery,
 		service.claimAzureDiscoveryQuery,

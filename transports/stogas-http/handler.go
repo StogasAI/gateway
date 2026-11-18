@@ -41,16 +41,18 @@ type requestContext struct {
 	finalize func()
 }
 
-// clientAddress is the address that the client connected from. Behind the
-// load balancer it is the PROXY header's source, and forwarding headers never
-// set it. Clients of the onion service share its relay's address, so they have
-// none, which no network holds.
-func (s *Server) clientAddress(ctx *requestContext) netip.Addr {
+// client is where the request came from. Behind the load balancer its address
+// is the PROXY header's source, and forwarding headers never set it. Clients
+// of the onion service share its relay's address, so they have none.
+func (s *Server) client(ctx *requestContext) policy.Client {
 	peer, err := netip.ParseAddrPort(ctx.request.RemoteAddr)
-	if err != nil || peer.Addr().Unmap() == s.config.OnionRelayAddress {
-		return netip.Addr{}
+	if err != nil {
+		return policy.Client{}
 	}
-	return peer.Addr().Unmap()
+	if address := peer.Addr().Unmap(); address != s.config.OnionRelayAddress {
+		return s.networkLists.client(address)
+	}
+	return policy.Client{Onion: true}
 }
 
 // transport names how the client reached the gateway.

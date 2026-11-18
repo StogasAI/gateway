@@ -1221,6 +1221,7 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 	seenPlugins := map[*Plugins]bool{}
 	seenWindows := map[string]bool{}
 	var networks *Networks
+	var countries *Countries
 	var transportLists *Transports
 	for index, entry := range sources {
 		scope, source := entry.Scope, entry.Value
@@ -1292,6 +1293,9 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 		if allowed&permissionNetworks != 0 && config.Access != nil && config.Access.Networks != nil {
 			networks = networks.combine(config.Access.Networks)
 		}
+		if allowed&permissionCountries != 0 && config.Access != nil && config.Access.Countries != nil {
+			countries = countries.combine(config.Access.Countries)
+		}
 		// A request must use a mode that every policy allows and that no
 		// policy denies.
 		if allowed&permissionTransports != 0 && config.Access != nil && config.Access.Transports != nil {
@@ -1327,6 +1331,12 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 			out.Access = &Access{}
 		}
 		out.Access.Networks = networks
+	}
+	if countries != nil {
+		if out.Access == nil {
+			out.Access = &Access{}
+		}
+		out.Access.Countries = countries
 	}
 	if transportLists != nil {
 		if out.Access == nil {
