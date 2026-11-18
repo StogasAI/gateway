@@ -758,6 +758,67 @@ func TestRecordedEncryptedReasoningGoesBackAsTheProviderTookIt(t *testing.T) {
 	}
 }
 
+// TestItemsWithoutTheirReasoningGoAsTheProviderTookThem replays exchanges recorded from OpenAI and
+// Azure. A client sends back a reply that it got from a provider directly, so the gateway leaves
+// out its encrypted reasoning, which no account claims, and sends the call after it with the id
+// that the provider issued, as both providers took it in the recording, whichever issued the id.
+func TestItemsWithoutTheirReasoningGoAsTheProviderTookThem(t *testing.T) {
+	exchanges := providerCapture(t, "openai/items-without-their-reasoning")
+	for name, recorded := range exchanges {
+		if recorded.Response.Status != 200 {
+			t.Fatalf("%s: the provider answered %d in the recording", name, recorded.Response.Status)
+		}
+	}
+	items := func(t *testing.T, input json.RawMessage) (types []string, callID string) {
+		t.Helper()
+		var decoded []struct{ Type, ID string }
+		if err := json.Unmarshal(input, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		for _, item := range decoded {
+			types = append(types, item.Type)
+			if item.Type == "function_call" {
+				callID = item.ID
+			}
+		}
+		return types, callID
+	}
+	for _, test := range []struct{ mint, took, model string }{
+		{"openai mint", "openai call with its id, without its reasoning", "provider:openai gpt-6-luna"},
+		{"openai mint", "openai call with its id, sent to azure", "azure-gpt-5.6-sol"},
+		{"azure mint", "azure call with its id, sent to openai", "provider:openai gpt-6-luna"},
+	} {
+		t.Run(test.took, func(t *testing.T) {
+			mint := exchange(t, exchanges, test.mint)
+			var output struct {
+				Output []json.RawMessage `json:"output"`
+			}
+			if err := json.Unmarshal(mint.Response.Body, &output); err != nil {
+				t.Fatal(err)
+			}
+			var request map[string]json.RawMessage
+			if err := json.Unmarshal(exchange(t, exchanges, test.took).Request.Body, &request); err != nil {
+				t.Fatal(err)
+			}
+			wantTypes, wantID := items(t, request["input"])
+			var took []json.RawMessage
+			if err := json.Unmarshal(request["input"], &took); err != nil {
+				t.Fatal(err)
+			}
+			// The client's input: the question, the whole reply and the call's result.
+			client := append(append([]json.RawMessage{took[0]}, output.Output...), took[len(took)-1])
+			request["input"], _ = json.Marshal(client)
+			request["model"], _ = json.Marshal(test.model)
+			body, _ := json.Marshal(request)
+			sent, _, _ := providerBody(t, "/v1/responses", string(body))
+			gotTypes, gotID := items(t, sent["input"])
+			if !slices.Equal(gotTypes, wantTypes) || gotID != wantID || wantID == "" {
+				t.Fatalf("sent items %v with call id %q, the provider took %v with %q", gotTypes, gotID, wantTypes, wantID)
+			}
+		})
+	}
+}
+
 // Redaction runs before the request's checks, which compare a message's reasoning text with its
 // details and with its other name. A Claude reply that comes back unchanged keeps its signed
 // thinking and passes, and reasoning without a signature reaches its provider redacted.
