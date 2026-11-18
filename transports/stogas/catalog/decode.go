@@ -100,10 +100,9 @@ type groupSummary struct {
 // The countries that a region lists only explain what it covers, since the parents already say
 // what holds each place.
 type locationNode struct {
-	Countries   shown `json:"countries"`
-	Description shown `json:"description"`
-	Kind        shown `json:"kind"`
-	Name        shown `json:"name"`
+	Countries shown `json:"countries"`
+	Kind      shown `json:"kind"`
+	Name      shown `json:"name"`
 
 	ParentIDs []string `json:"parentIds"`
 }

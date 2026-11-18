@@ -18,7 +18,6 @@ locations:
   world:
     name: World
     kind: world
-    description: Every place. A deployment in world gives no narrower boundary.
   africa:
     name: Africa
     kind: continent
@@ -86,7 +85,6 @@ locations:
   asia:
     name: Asia
     kind: continent
-    description: The continent, with the Middle East.
     countries:
       - AE
       - AF
@@ -142,7 +140,6 @@ locations:
   europe:
     name: Europe
     kind: continent
-    description: The continent, with countries outside the European Union such as Norway, Switzerland and the United Kingdom.
     countries:
       - AD
       - AL
@@ -199,7 +196,6 @@ locations:
   north-america:
     name: North America
     kind: continent
-    description: The continent, with Central America and the Caribbean.
     countries:
       - AG
       - AI
@@ -245,7 +241,6 @@ locations:
   oceania:
     name: Oceania
     kind: continent
-    description: Australia, New Zealand and the Pacific islands.
     countries:
       - AS
       - AU
@@ -299,7 +294,6 @@ locations:
   apac:
     name: Asia-Pacific
     kind: region
-    description: Asia and Oceania without the Arab states, Israel, Iran and Cyprus. No standard defines Asia-Pacific.
     countries:
       - AF
       - AM
@@ -369,7 +363,6 @@ locations:
   central-america:
     name: Central America
     kind: region
-    description: Mexico and the countries south of it to Panama, as UN M.49 defines the region.
     countries:
       - BZ
       - CR
@@ -382,7 +375,6 @@ locations:
   eu:
     name: European Union
     kind: union
-    description: The 27 member states of the European Union.
     countries:
       - AT
       - BE
@@ -414,7 +406,6 @@ locations:
   southeast-asia:
     name: Southeast Asia
     kind: region
-    description: Brunei, Cambodia, Indonesia, Laos, Malaysia, Myanmar, the Philippines, Singapore, Thailand, Timor-Leste and Vietnam.
     countries:
       - BN
       - ID
