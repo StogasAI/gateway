@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 
@@ -243,6 +244,120 @@ func claudeBlocksFromOpenRouter(raw json.RawMessage, input []schemas.ResponsesMe
 		item.Content = nil
 		item.ResponsesReasoning = &schemas.ResponsesReasoning{Summary: []schemas.ResponsesReasoningSummary{}, EncryptedContent: &encoded}
 	}
+}
+
+// joinStreamedReasoningDetails joins the parts of each reasoning detail that a client sends back as
+// a stream gave them. A Chat stream sends a detail's text in parts and then its signature, each with
+// the detail's index, and some clients keep every part as a detail of its own. Joined, the text is
+// whole beside its signature again, so Claude takes it back and no other model reads it as plain
+// reasoning. Only consecutive text parts with the same explicit index, format and ID join, and
+// only up to a part with a signature, which a stream sends last.
+func joinStreamedReasoningDetails(rawData map[string]json.RawMessage) error {
+	raw := rawData["messages"]
+	// JSON can spell the key only plainly or with \u escapes.
+	if !bytes.Contains(raw, []byte("reasoning_details")) && !bytes.Contains(raw, []byte(`\u`)) {
+		return nil
+	}
+	messages, err := rawjson.Array(raw)
+	if err != nil {
+		return nil
+	}
+	changed := false
+	for index, messageRaw := range messages {
+		message, err := rawjson.Object(messageRaw)
+		if err != nil {
+			continue
+		}
+		details, err := rawjson.Array(message["reasoning_details"])
+		if err != nil || len(details) < 2 {
+			continue
+		}
+		joined, ok := joinStreamedParts(details)
+		if !ok {
+			continue
+		}
+		message["reasoning_details"] = joinRawArray(joined)
+		if messages[index], err = sonic.Marshal(message); err != nil {
+			return err
+		}
+		changed = true
+	}
+	if changed {
+		rawData["messages"] = joinRawArray(messages)
+	}
+	return nil
+}
+
+// streamedPart is a reasoning.text detail with an explicit index, the form in which a Chat stream
+// sends each part of one.
+type streamedPart struct {
+	Type      schemas.BifrostReasoningDetailsType `json:"type"`
+	Index     int                                 `json:"index"`
+	Text      *string                             `json:"text,omitempty"`
+	Signature *string                             `json:"signature,omitempty"`
+	Format    *string                             `json:"format,omitempty"`
+	ID        *string                             `json:"id,omitempty"`
+}
+
+// parseStreamedPart reads a detail as a streamed part. A detail with another key or value type is
+// none, and the request's checks name what is wrong with it.
+func parseStreamedPart(raw json.RawMessage) (streamedPart, bool) {
+	fields, err := rawjson.Object(raw)
+	if err != nil || rawStringValue(fields["type"]) != string(schemas.BifrostReasoningDetailsTypeText) {
+		return streamedPart{}, false
+	}
+	if _, ok := fields["index"]; !ok {
+		return streamedPart{}, false
+	}
+	for key := range fields {
+		switch key {
+		case "type", "index", "text", "signature", "format", "id":
+		default:
+			return streamedPart{}, false
+		}
+	}
+	var part streamedPart
+	if sonic.Unmarshal(raw, &part) != nil {
+		return streamedPart{}, false
+	}
+	return part, true
+}
+
+// joinStreamedParts joins each run of parts of one detail, and reports whether any joined.
+func joinStreamedParts(details []json.RawMessage) ([]json.RawMessage, bool) {
+	joined := make([]json.RawMessage, 0, len(details))
+	var open streamedPart
+	opened, changed := false, false
+	for _, raw := range details {
+		part, ok := parseStreamedPart(raw)
+		if ok && opened && part.Index == open.Index && equalStrings(part.Format, open.Format) && equalStrings(part.ID, open.ID) &&
+			(open.Signature == nil || *open.Signature == "") {
+			if part.Text != nil {
+				text := *part.Text
+				if open.Text != nil {
+					text = *open.Text + text
+				}
+				open.Text = &text
+			}
+			if part.Signature != nil {
+				open.Signature = part.Signature
+			}
+			encoded, err := sonic.Marshal(open)
+			if err != nil {
+				return nil, false
+			}
+			joined[len(joined)-1] = encoded
+			changed = true
+			continue
+		}
+		joined = append(joined, raw)
+		open, opened = part, ok
+	}
+	return joined, changed
+}
+
+func equalStrings(a, b *string) bool {
+	return a == nil && b == nil || a != nil && b != nil && *a == *b
 }
 
 // chatEncryptedReasoningHistory reports whether a message of a Chat Completions request carries

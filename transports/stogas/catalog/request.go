@@ -960,6 +960,9 @@ func planRoutes(input RequestInput, route Route, rawData map[string]json.RawMess
 		if _, err := normalizeChatStopString(rawData); err != nil {
 			return nil, err
 		}
+		if err := joinStreamedReasoningDetails(rawData); err != nil {
+			return nil, err
+		}
 		if err := validateChatRawAliases(rawData); err != nil {
 			return nil, err
 		}

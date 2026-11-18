@@ -819,6 +819,49 @@ func TestItemsWithoutTheirReasoningGoAsTheProviderTookThem(t *testing.T) {
 	}
 }
 
+// A client that keeps each part of a streamed detail as a detail of its own sends the parts back:
+// the text in pieces and then the signature, each with the detail's index. Claude gets each
+// thinking block whole, as from the joined details, and an open model gets none of Claude's
+// thinking as plain reasoning. Parts of different details stay apart.
+func TestStreamedReasoningPartsJoinBeforeTheHistoryIsRead(t *testing.T) {
+	const calls = `"tool_calls":[{"id":"toolu_01","type":"function","function":{"name":"lookup","arguments":"{}"}},` +
+		`{"id":"toolu_02","type":"function","function":{"name":"lookup","arguments":"{}"}}]`
+	parts := `{"role":"assistant","reasoning":"Found the config.","reasoning_details":[` +
+		`{"type":"reasoning.text","index":0,"signature":"c2lnLXJlYXNvbg=="},` +
+		`{"type":"reasoning.text","index":1,"text":"Found the "},{"type":"reasoning.text","index":1,"text":"config."},` +
+		`{"type":"reasoning.text","index":1,"signature":"c2lnLXVwZGF0ZTE="}],` + calls + `}`
+	if got := claudeHistoryAfter(t, parts); got != claudeProgressUpdateHistory {
+		t.Fatalf("Claude gets\n%s\nwant\n%s", got, claudeProgressUpdateHistory)
+	}
+	body, _, _ := providerBody(t, "/v1/chat/completions", `{"model":"chutes-glm-5.2",`+claudeProgressUpdateTool+`,"messages":[{"role":"user","content":"hi"},`+parts+
+		`,{"role":"tool","tool_call_id":"toolu_01","content":"a"},{"role":"tool","tool_call_id":"toolu_02","content":"b"}]}`)
+	if sent := string(body["messages"]); strings.Contains(sent, "config") {
+		t.Fatalf("an open model got Claude's thinking: %s", sent)
+	}
+
+	resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/chat/completions", Body: []byte(`{"model":"chutes-glm-5.2","messages":[` +
+		`{"role":"user","content":"hi"},{"role":"assistant","content":"ok","reasoning_details":[` +
+		`{"type":"reasoning.text","index":0,"text":"A","signature":"s0"},{"type":"reasoning.text","index":0,"text":"B"},` +
+		`{"type":"reasoning.text","index":1,"text":"C","format":"anthropic-claude-v1"},{"type":"reasoning.text","index":1,"text":"D"},` +
+		`{"type":"reasoning.text","text":"E"},{"type":"reasoning.text","text":"F"}]},{"role":"user","content":"again"}]}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var messages []struct {
+		ReasoningDetails []struct{ Text string } `json:"reasoning_details"`
+	}
+	if err := json.Unmarshal(resolution.RawBody()["messages"], &messages); err != nil {
+		t.Fatal(err)
+	}
+	var texts []string
+	for _, detail := range messages[1].ReasoningDetails {
+		texts = append(texts, detail.Text)
+	}
+	if got := strings.Join(texts, "|"); got != "A|B|C|D|E|F" {
+		t.Fatalf("details joined as %s", got)
+	}
+}
+
 // Redaction runs before the request's checks, which compare a message's reasoning text with its
 // details and with its other name. A Claude reply that comes back unchanged keeps its signed
 // thinking and passes, and reasoning without a signature reaches its provider redacted.
@@ -837,6 +880,15 @@ func TestRedactionScansOnlyReasoningHistoryWithoutASignature(t *testing.T) {
 		`"reasoning_details":[{"index":0,"type":"reasoning.text","text":"Mail owner@corp.io.","signature":"sig"}]}`))
 	if thinking := rawString(assistantBlocks(t, body)[0][0]["thinking"]); thinking != "Mail owner@corp.io." {
 		t.Fatalf("signed thinking = %q", thinking)
+	}
+
+	// The parts of a streamed detail that a client sends back as they came join before redaction,
+	// so the signature covers the whole text again.
+	body, _, _ = providerBodyOf(t, request("anthropic-claude-sonnet-5", `{"role":"assistant","content":"The owner.","reasoning_details":[`+
+		`{"index":0,"type":"reasoning.text","text":"Mail owner@"},{"index":0,"type":"reasoning.text","text":"corp.io."},`+
+		`{"index":0,"type":"reasoning.text","signature":"sig"}]}`))
+	if blocks := assistantBlocks(t, body)[0]; len(blocks) != 2 || rawString(blocks[0]["thinking"]) != "Mail owner@corp.io." || rawString(blocks[0]["signature"]) != "sig" {
+		t.Fatalf("streamed thinking reached Claude as %v", blocks)
 	}
 
 	body, _, _ = providerBodyOf(t, request("chutes-glm-5.2", `{"role":"assistant","content":"The owner.",`+
