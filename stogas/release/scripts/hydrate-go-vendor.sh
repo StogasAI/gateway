@@ -13,7 +13,7 @@ source "$release_root/scripts/guix.sh"
 resolve_stogas_guix "$release_root"
 
 # shellcheck disable=SC2016 # The inner shell expands its arguments.
-"$STOGAS_GUIX" shell --pure -L "$release_root/guix/modules" \
+stogas_guix shell --pure -L "$release_root/guix/modules" \
   -e '(@ (stogas release packages) stogas-go)' bash-minimal coreutils -- \
   bash -c '
     set -euo pipefail

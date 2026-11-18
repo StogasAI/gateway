@@ -51,7 +51,7 @@ resolve_stogas_guix "$release_root"
 verifier_source="${STOGAS_VERIFIER_SOURCE:-}"
 if [ -z "$verifier_source" ]; then
   verifier_source="$(
-    "$STOGAS_GUIX" build --source -L "$release_root/guix/modules" \
+    stogas_guix build --source -L "$release_root/guix/modules" \
       -e '(@ (stogas release packages) stogas-verifier)'
   )"
 fi
@@ -61,7 +61,7 @@ STOGAS_RELEASE_VENDOR_SHA256="$(digest "$snapshot/gateway/transports/vendor")"
 export STOGAS_RELEASE_SOURCE_SHA256 STOGAS_RELEASE_VERIFIER_SHA256 STOGAS_RELEASE_VENDOR_SHA256
 
 result="$(
-  "$STOGAS_GUIX" build -L "$release_root/guix/modules" -f "$release_root/guix/release.scm"
+  stogas_guix build -L "$release_root/guix/modules" -f "$release_root/guix/release.scm"
 )"
 mkdir -p "$out_dir"
 cp -r -- "$result"/. "$out_dir"/

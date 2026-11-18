@@ -58,10 +58,10 @@ jobs:
         run: stogas/release/scripts/install-guix-bootstrap.sh
 
       - name: Build IGVM in pinned Guix environment
-        # Rebuilds take Guix packages from bordeaux.guix.gnu.org, so this build
-        # takes them from the other Guix build farm.
+        # Rebuilds take Guix packages from bordeaux.guix.gnu.org first, so this
+        # build takes them from the other Guix build farm first.
         env:
-          STOGAS_GUIX_SUBSTITUTE_URL: https://ci.guix.gnu.org
+          STOGAS_GUIX_SUBSTITUTE_URLS: https://ci.guix.gnu.org https://bordeaux.guix.gnu.org
         run: stogas/release/scripts/build-release.sh "$GITHUB_REF_NAME" "dist/gateway/$GITHUB_REF_NAME"
 
       - name: Generate GitHub artifact attestation

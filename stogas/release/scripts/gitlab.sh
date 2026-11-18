@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # GitLab's rebuild of a release tag, which .gitlab-ci.yml runs with only the variables it names:
-# build the release as GitHub's build does, with Guix packages from the other Guix build farm, and
-# sign a build proof for the manifest and the image.
+# build the release as GitHub's build does, with Guix packages from the other Guix build farm first,
+# and sign a build proof for the manifest and the image.
 set -euo pipefail
 test "$(git rev-parse HEAD)" = "$CI_COMMIT_SHA"
 test -z "$(git status --porcelain)"
