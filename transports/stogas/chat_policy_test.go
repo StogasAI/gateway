@@ -1584,6 +1584,57 @@ func TestRequestSessionIDPrefersTheBodyThenXSessionID(t *testing.T) {
 	}
 }
 
+func TestRequestAgentReadsStogasThenClientHeaders(t *testing.T) {
+	long := strings.Repeat("é", billing.MaxSessionIDBytes/2)
+	cases := []struct {
+		name    string
+		session string
+		headers map[string][]string
+		want    Agent
+		err     string
+	}{
+		{name: "none", session: "s"},
+		{name: "Stogas agent", session: "s", headers: map[string][]string{"Stogas-Agent-Id": {"a2"}, "Stogas-Parent-Agent-Id": {"a1"}, "Stogas-Agent-Name": {"researcher"}}, want: Agent{ID: "a2", ParentID: "a1", Name: "researcher"}},
+		{name: "Stogas name alone", headers: map[string][]string{"Stogas-Agent-Name": {"planner"}}, want: Agent{Name: "planner"}},
+		{name: "Stogas headers win", session: "s", headers: map[string][]string{"Stogas-Agent-Name": {"planner"}, "X-Claude-Code-Agent-Id": {"cc"}}, want: Agent{Name: "planner"}},
+		{name: "the session's own ID is the main conversation", session: "s", headers: map[string][]string{"Stogas-Agent-Id": {"s"}, "Stogas-Agent-Name": {"lead"}}, want: Agent{Name: "lead"}},
+		{name: "a parent that is the session", session: "s", headers: map[string][]string{"Stogas-Agent-Id": {"a"}, "Stogas-Parent-Agent-Id": {"s"}}, want: Agent{ID: "a"}},
+		{name: "longest", headers: map[string][]string{"Stogas-Agent-Id": {long}}, want: Agent{ID: long}},
+		{name: "Stogas header twice", headers: map[string][]string{"Stogas-Agent-Id": {"a", "b"}}, err: "Stogas-Agent-Id must appear at most once"},
+		{name: "Stogas header too long", headers: map[string][]string{"Stogas-Agent-Name": {long + "e"}}, err: "Stogas-Agent-Name must be up to 256 bytes"},
+		{name: "Stogas control character", headers: map[string][]string{"Stogas-Parent-Agent-Id": {"a\x01"}}, err: "without control characters"},
+		{name: "parent without an agent", headers: map[string][]string{"Stogas-Parent-Agent-Id": {"a"}}, err: "Stogas-Parent-Agent-Id needs Stogas-Agent-Id"},
+		{name: "own parent", headers: map[string][]string{"Stogas-Agent-Id": {"a"}, "Stogas-Parent-Agent-Id": {"a"}}, err: "must differ from Stogas-Agent-Id"},
+		{name: "Claude Code main conversation", session: "cc-session", headers: map[string][]string{"X-Claude-Code-Session-Id": {"cc-session"}}},
+		{name: "Claude Code subagent", session: "cc-session", headers: map[string][]string{"X-Claude-Code-Agent-Id": {"agent-1"}, "X-Claude-Code-Agent-Type": {"Explore"}}, want: Agent{ID: "agent-1", Name: "Explore"}},
+		{name: "Claude Code nested subagent", session: "cc-session", headers: map[string][]string{"X-Claude-Code-Agent-Id": {"agent-2"}, "X-Claude-Code-Parent-Agent-Id": {"agent-1"}}, want: Agent{ID: "agent-2", ParentID: "agent-1"}},
+		{name: "invalid Claude Code type names none", headers: map[string][]string{"X-Claude-Code-Agent-Id": {"agent-1"}, "X-Claude-Code-Agent-Type": {long + "e"}}, want: Agent{ID: "agent-1"}},
+		{name: "Codex main conversation", session: "root", headers: map[string][]string{"Session-Id": {"root"}, "Thread-Id": {"root"}}},
+		{name: "Codex subagent", session: "root", headers: map[string][]string{"Session-Id": {"root"}, "Thread-Id": {"t2"}, "X-Openai-Subagent": {"collab_spawn"}, "X-Codex-Parent-Thread-Id": {"root"}}, want: Agent{ID: "t2", Name: "collab_spawn"}},
+		{name: "Codex nested subagent", session: "root", headers: map[string][]string{"Session-Id": {"root"}, "Thread-Id": {"t3"}, "X-Openai-Subagent": {"collab_spawn"}, "X-Codex-Parent-Thread-Id": {"t2"}}, want: Agent{ID: "t3", ParentID: "t2", Name: "collab_spawn"}},
+		{name: "Codex subagent in a session that the client names", session: "mine", headers: map[string][]string{"Session-Id": {"root"}, "Thread-Id": {"t2"}, "X-Openai-Subagent": {"review"}, "X-Codex-Parent-Thread-Id": {"root"}}, want: Agent{ID: "t2", Name: "review"}},
+		{name: "Codex request of the main thread", session: "root", headers: map[string][]string{"Session-Id": {"root"}, "Thread-Id": {"root"}, "X-Openai-Subagent": {"compact"}}, want: Agent{Name: "compact"}},
+		{name: "OpenCode main session", session: "ses_1", headers: map[string][]string{"X-Session-Id": {"ses_1"}, "X-Opencode-Session-Id": {"ses_1"}}},
+		{name: "OpenCode child session", session: "ses_1", headers: map[string][]string{"X-Session-Id": {"ses_1"}, "X-Opencode-Session-Id": {"ses_2"}, "X-Opencode-Parent-Session-Id": {"ses_1"}, "X-Parent-Session-Id": {"ses_1"}}, want: Agent{ID: "ses_2"}},
+		{name: "OpenCode grandchild session", session: "ses_2", headers: map[string][]string{"X-Session-Id": {"ses_2"}, "X-Opencode-Session-Id": {"ses_3"}, "X-Parent-Session-Id": {"ses_2"}}, want: Agent{ID: "ses_3"}},
+		{name: "repeated client header names none", session: "s", headers: map[string][]string{"X-Claude-Code-Agent-Id": {"a", "b"}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := RequestAgent(tc.headers, tc.session)
+			if tc.err != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.err) {
+					t.Fatalf("RequestAgent() error = %v, want %q", err, tc.err)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Fatalf("RequestAgent() = (%#v, %v), want %#v", got, err, tc.want)
+			}
+		})
+	}
+}
+
 func TestRequestTraceIDFollowsW3CTraceContext(t *testing.T) {
 	trace := "4bf92f3577b34da6a3ce929d0e0e4736"
 	valid := "00-" + trace + "-00f067aa0ba902b7-01"

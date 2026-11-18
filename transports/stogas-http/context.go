@@ -70,6 +70,11 @@ func newRequestContext(ctx *requestContext, startedAt time.Time, resolution *cat
 		cancel()
 		return nil, nil, nil, err
 	}
+	state.Agent, err = stogas.RequestAgent(ctx.request.Header, state.SessionID)
+	if err != nil {
+		cancel()
+		return nil, nil, nil, err
+	}
 	state.TraceID = stogas.RequestTraceID(ctx.request.Header)
 	state.MetadataHeader = ctx.request.Header.Values(stogas.MetadataHeader)
 	state.App = stogas.RequestApp(ctx.request.Header)

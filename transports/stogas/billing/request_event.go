@@ -89,8 +89,14 @@ type RequestEvent struct {
 	Metadata         map[string]string `json:"metadata"`
 	// AppTitle and AppURL name the application that sent the request, as its attribution
 	// headers give it; each is empty when absent.
-	AppTitle         string                `json:"app_title"`
-	AppURL           string                `json:"app_url"`
+	AppTitle string `json:"app_title"`
+	AppURL   string `json:"app_url"`
+	// AgentID names the agent of the session that sent the request, empty for the main
+	// conversation; ParentAgentID names the agent that started it, empty for the main
+	// conversation; AgentName is the agent's kind or name, empty when the client sends none.
+	AgentID          string                `json:"agent_id"`
+	ParentAgentID    string                `json:"parent_agent_id"`
+	AgentName        string                `json:"agent_name"`
 	Transport        string                `json:"transport"`
 	Cancelled        bool                  `json:"cancelled"`
 	ClientStopMS     *uint32               `json:"client_stop_ms"`

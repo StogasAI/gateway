@@ -540,6 +540,99 @@ func appURL(value string) string {
 	return text
 }
 
+// Agent names the agent that sent a request. An empty ID names the session's main conversation,
+// and an empty parent ID says that the main conversation started the agent.
+type Agent struct {
+	ID       string
+	ParentID string
+	Name     string
+}
+
+// RequestAgent reads which agent sent a request, from Stogas-Agent-Id, Stogas-Parent-Agent-Id and
+// Stogas-Agent-Name, else from the headers that Claude Code, Codex and OpenCode send on a
+// subagent's requests. The Stogas headers fail a request whose value is invalid, as X-Session-Id
+// does. The clients' own headers name nothing when invalid, so a change in a client never fails
+// its requests. An ID that equals the session's names the main conversation. Providers never
+// receive the headers.
+func RequestAgent(header http.Header, sessionID string) (Agent, error) {
+	agent, err := stogasAgent(header)
+	if err != nil {
+		return Agent{}, err
+	}
+	if agent == (Agent{}) {
+		agent = clientAgent(header)
+	}
+	if sessionID != "" && agent.ID == sessionID {
+		agent.ID = ""
+	}
+	if agent.ID == "" || agent.ParentID == agent.ID || agent.ParentID == sessionID {
+		agent.ParentID = ""
+	}
+	return agent, nil
+}
+
+func stogasAgent(header http.Header) (Agent, error) {
+	var agent Agent
+	for _, field := range []struct {
+		name  string
+		value *string
+	}{
+		{"Stogas-Agent-Id", &agent.ID},
+		{"Stogas-Parent-Agent-Id", &agent.ParentID},
+		{"Stogas-Agent-Name", &agent.Name},
+	} {
+		values := header.Values(field.name)
+		if len(values) > 1 {
+			return Agent{}, invalidRequest(field.name + " must appear at most once")
+		}
+		if len(values) == 1 {
+			if !validSessionID(values[0]) {
+				return Agent{}, invalidRequest(field.name + " must be up to 256 bytes without control characters")
+			}
+			*field.value = values[0]
+		}
+	}
+	if agent.ParentID != "" && agent.ID == "" {
+		return Agent{}, invalidRequest("Stogas-Parent-Agent-Id needs Stogas-Agent-Id")
+	}
+	if agent.ParentID != "" && agent.ParentID == agent.ID {
+		return Agent{}, invalidRequest("Stogas-Parent-Agent-Id must differ from Stogas-Agent-Id")
+	}
+	return agent, nil
+}
+
+// clientAgent reads the agent headers of coding clients, which name a subagent only. Claude Code
+// sends its own; Codex marks a subagent with X-OpenAI-Subagent and names it by its thread; and
+// OpenCode runs a subagent as a child session, which names its parent. Codex and OpenCode send
+// their session headers on the main conversation's requests too, so those count only beside the
+// subagent's mark. A parent that is the client's root session is the main conversation.
+func clientAgent(header http.Header) Agent {
+	value := func(name string) string {
+		if text := singleHeader(header, name); validSessionID(text) {
+			return text
+		}
+		return ""
+	}
+	if id := value("X-Claude-Code-Agent-Id"); id != "" {
+		return Agent{ID: id, ParentID: value("X-Claude-Code-Parent-Agent-Id"), Name: value("X-Claude-Code-Agent-Type")}
+	}
+	if name := value("X-Openai-Subagent"); name != "" {
+		agent := Agent{ID: value("Thread-Id"), ParentID: value("X-Codex-Parent-Thread-Id"), Name: name}
+		if agent.ParentID == value("Session-Id") {
+			agent.ParentID = ""
+		}
+		return agent
+	}
+	parent := value("X-Opencode-Parent-Session-Id")
+	if parent == "" {
+		parent = value("X-Parent-Session-Id")
+	}
+	if id := value("X-Opencode-Session-Id"); parent != "" && id != "" {
+		return Agent{ID: id, ParentID: parent}
+	}
+	return Agent{}
+}
+
 // RequestTraceID reads the trace ID from the request's W3C traceparent
 // header, which OpenTelemetry clients send, so a log can be found from the
 // client's trace. A missing or invalid header names no trace and, as the W3C

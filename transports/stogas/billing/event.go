@@ -47,6 +47,9 @@ type EventInput struct {
 	Metadata              map[string]string
 	AppTitle              string
 	AppURL                string
+	AgentID               string
+	ParentAgentID         string
+	AgentName             string
 	Transport             string
 	StartedAt             time.Time
 	ToolCalls             []ToolCallInput
@@ -164,6 +167,9 @@ func NewRequestEvent(input EventInput) (RequestEvent, error) {
 		Metadata:         requestMetadata(input.Metadata),
 		AppTitle:         input.AppTitle,
 		AppURL:           input.AppURL,
+		AgentID:          input.AgentID,
+		ParentAgentID:    input.ParentAgentID,
+		AgentName:        input.AgentName,
 		Transport:        input.Transport,
 		Cancelled:        input.Cancelled,
 		ClientStopMS:     clientStopMS,

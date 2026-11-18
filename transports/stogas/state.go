@@ -61,6 +61,7 @@ type State struct {
 	MetadataHeader          []string
 	Metadata                map[string]string
 	App                     App
+	Agent                   Agent
 	Transport               string
 	Response                *schemas.BifrostResponse
 	BifrostError            *schemas.BifrostError
