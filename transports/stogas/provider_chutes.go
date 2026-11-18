@@ -22,6 +22,7 @@ var chutesAllowedChatFields = map[string]bool{
 	"provider":              true,
 	"repetition_penalty":    true,
 	"reasoning":             true,
+	"reasoning_display":     true,
 	"reasoning_effort":      true,
 	"response_format":       true,
 	"safety_identifier":     true,
@@ -162,9 +163,12 @@ func validateChutesChatPolicy(state *State) error {
 	}
 	reasoning, _ := rawObject(raw["reasoning"])
 	for name := range reasoning {
-		if name != "effort" && name != "enabled" {
+		if name != "effort" && name != "enabled" && name != "display" {
 			return invalidRequest("reasoning." + name + " is not supported for Chutes deployments")
 		}
+	}
+	if err := validateChatReasoningDisplay(state, raw); err != nil {
+		return err
 	}
 	if err := validateChutesResponseFormat(raw["response_format"], state.Resolution.Deployment.Capabilities.StructuredOutputs); err != nil {
 		return err

@@ -215,7 +215,7 @@ func validateOpenAIWireChatPolicy(state *State) error {
 	if err := validateOpenAIChatScalarPolicy(raw); err != nil {
 		return err
 	}
-	if err := validateOpenAIChatReasoningDisplay(state, raw); err != nil {
+	if err := validateChatReasoningDisplay(state, raw); err != nil {
 		return err
 	}
 	for _, name := range []string{"cache_control", "context_management", "stop_sequences", "task_budget", "top_k"} {
@@ -275,11 +275,15 @@ func validateOpenAIChatScalarPolicy(raw map[string]json.RawMessage) error {
 	return validateChatPrediction(raw["prediction"])
 }
 
-// validateOpenAIChatReasoningDisplay accepts the reasoning displays of OpenAI's models: summarized,
-// which asks for the reasoning summaries that only Responses return, so a request that reasons goes
-// through Responses (catalog's chatThroughResponses), and omitted, the default. The other models of
-// the format show all of their reasoning or none, which no display changes.
-func validateOpenAIChatReasoningDisplay(state *State, raw map[string]json.RawMessage) error {
+// validateChatReasoningDisplay accepts the reasoning displays of the deployments that Chat
+// Completions reach in OpenAI's format, which decide whether a reply shows a summary of the
+// reasoning: summarized, and omitted. OpenAI's models return summaries only on Responses, so a
+// request that asks for them while the model reasons goes through Responses (catalog's
+// chatThroughResponses). Other models return their reasoning whole, with no summary to show or
+// leave out, as their Responses replies carry it whole whatever summary a client asks for, so a
+// client's display never keeps a conversation or a fallback from them. Claude's updates have no
+// counterpart here.
+func validateChatReasoningDisplay(state *State, raw map[string]json.RawMessage) error {
 	name, value := "reasoning_display", raw["reasoning_display"]
 	if reasoning, ok := rawObject(raw["reasoning"]); ok && rawJSONValueSet(reasoning["display"]) {
 		name, value = "reasoning.display", reasoning["display"]
@@ -289,11 +293,11 @@ func validateOpenAIChatReasoningDisplay(state *State, raw map[string]json.RawMes
 	}
 	display, _ := rawStringValue(value)
 	switch resolution := state.Resolution; {
-	case !resolution.RunsOpenAIModel():
+	case !resolution.Deployment.ReasoningSupported:
 		return invalidRequest(name + " is not supported for the selected deployment")
 	case display != "summarized" && display != "omitted":
-		return invalidRequest(name + " must be summarized or omitted for OpenAI's models")
-	case display == "omitted" || resolution.WireRoute() == catalog.RouteResponses || resolution.ReasoningOff():
+		return invalidRequest(name + " must be summarized or omitted for the selected deployment")
+	case display == "omitted" || !resolution.RunsOpenAIModel() || resolution.WireRoute() == catalog.RouteResponses || resolution.ReasoningOff():
 		return nil
 	}
 	if gap := state.Resolution.ResponsesGap(); gap != "" {

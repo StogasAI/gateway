@@ -123,20 +123,49 @@ func (r *ResolvedRequest) ownEncryptedReasoning(content *string) (string, bool) 
 	return provider, true
 }
 
+// OpenRouter names the provider whose reasoning an entry holds in its format: Claude's is
+// openRouterClaudeFormat, and an absent format or "unknown" names none. The gateway's own replies
+// carry no format, and its markers, the account binding of OpenAI's encrypted reasoning and the
+// Claude block in encrypted content, decide before any format.
+const openRouterClaudeFormat = "anthropic-claude-v1"
+
+// otherProviderFormat reports whether an OpenRouter format names a provider other than Claude, such
+// as OpenAI, xAI or Gemini, whose signed or encrypted reasoning no deployment takes back unbound.
+func otherProviderFormat(format string) bool {
+	return format != "" && format != "unknown" && format != openRouterClaudeFormat
+}
+
 // chatReasoningDetailFormat is the format of a Chat Completions reasoning detail. Claude's thinking
 // is signed text and its redacted thinking is encrypted data without an ID. OpenAI's encrypted
 // reasoning keeps the ID of its item or the account that BindEncryptedReasoning bound it to, so a
-// client can drop the ID, which OpenAI takes it back without. Text without a signature is plain. A
-// detail of another type has no format, and no deployment takes it back.
+// client can drop the ID, which OpenAI takes it back without. OpenRouter's format overrides the
+// shape: its Claude data may carry an ID, and another provider's data may lack one. Text without a
+// signature is plain. Signed or encrypted reasoning of another provider's format, and a detail of
+// another type, have no format, and no deployment takes them back: redaction leaves signed and
+// encrypted reasoning as the client sent it, so it may reach only the provider that checks it.
 func chatReasoningDetailFormat(detail schemas.ChatReasoningDetails) ReasoningFormat {
+	format := ""
+	if detail.Format != nil {
+		format = *detail.Format
+	}
 	switch detail.Type {
 	case schemas.BifrostReasoningDetailsTypeText:
-		if detail.Signature != nil && *detail.Signature != "" {
-			return ClaudeReasoning
+		switch {
+		case detail.Signature == nil || *detail.Signature == "":
+			return PlainReasoning
+		case otherProviderFormat(format):
+			return 0
 		}
-		return PlainReasoning
+		return ClaudeReasoning
 	case schemas.BifrostReasoningDetailsTypeEncrypted:
-		if detail.ID != nil && *detail.ID != "" || detail.Data != nil && strings.HasPrefix(*detail.Data, encryptedReasoningPrefix) {
+		switch {
+		case detail.Data != nil && strings.HasPrefix(*detail.Data, encryptedReasoningPrefix):
+			return EncryptedReasoning
+		case format == openRouterClaudeFormat:
+			return ClaudeReasoning
+		case otherProviderFormat(format):
+			return 0
+		case detail.ID != nil && *detail.ID != "":
 			return EncryptedReasoning
 		}
 		return ClaudeReasoning
@@ -161,44 +190,64 @@ func responsesReasoningFormat(item *schemas.ResponsesMessage) ReasoningFormat {
 	return PlainReasoning
 }
 
-// claudeThinkingFromSignatures gives each reasoning item that holds Claude's thinking as OpenRouter
-// returns it, the text of one content block with the block's signature beside it, the form that
-// the gateway's own replies give a Claude block: the whole block in encrypted content, so that only
-// Claude deployments take it back. An item with encrypted content keeps it. The request's checks
-// allowed at most one content block beside a signature.
-func claudeThinkingFromSignatures(raw json.RawMessage, input []schemas.ResponsesMessage) {
+// claudeBlocksFromOpenRouter gives each reasoning item that holds a Claude block as OpenRouter
+// returns it the form that the gateway's own replies give one: the whole block in encrypted content,
+// so that only Claude deployments take it back. OpenRouter returns Claude's thinking as the text of
+// one content block with the block's signature beside it, and its redacted thinking as encrypted
+// content with Claude's format. Encrypted content that the gateway bound or that holds a Claude block
+// already stays as it is. An item signed in another provider's format loses its content, so that
+// no deployment takes it back: redaction leaves a signed item as the client sent it. The request's
+// checks allowed at most one content block beside a signature.
+func claudeBlocksFromOpenRouter(raw json.RawMessage, input []schemas.ResponsesMessage) {
 	items, err := rawjson.Array(raw)
 	if err != nil || len(items) != len(input) {
 		return
 	}
 	for index := range input {
 		item := &input[index]
-		if item.Type == nil || *item.Type != schemas.ResponsesMessageTypeReasoning ||
-			item.ResponsesReasoning != nil && item.ResponsesReasoning.EncryptedContent != nil && *item.ResponsesReasoning.EncryptedContent != "" {
+		if item.Type == nil || *item.Type != schemas.ResponsesMessageTypeReasoning {
 			continue
 		}
 		fields, err := rawjson.Object(items[index])
-		var signature string
-		if err != nil || sonic.Unmarshal(fields["signature"], &signature) != nil || signature == "" {
+		if err != nil {
 			continue
 		}
-		thinking := ""
-		if item.Content != nil && len(item.Content.ContentBlocks) > 0 && item.Content.ContentBlocks[0].Text != nil {
-			thinking = *item.Content.ContentBlocks[0].Text
+		var format, signature string
+		_ = sonic.Unmarshal(fields["format"], &format)
+		_ = sonic.Unmarshal(fields["signature"], &signature)
+		block := anthropicprovider.AnthropicContentBlock{Type: anthropicprovider.AnthropicContentBlockTypeThinking, Signature: &signature}
+		if reasoning := item.ResponsesReasoning; reasoning != nil && reasoning.EncryptedContent != nil && *reasoning.EncryptedContent != "" {
+			data := *reasoning.EncryptedContent
+			if format != openRouterClaudeFormat || anthropicprovider.HoldsThinkingBlock(data) || strings.HasPrefix(data, encryptedReasoningPrefix) {
+				continue
+			}
+			block = anthropicprovider.AnthropicContentBlock{Type: anthropicprovider.AnthropicContentBlockTypeRedactedThinking, Data: &data}
+		} else {
+			if signature == "" {
+				continue
+			}
+			if otherProviderFormat(format) {
+				item.Content = nil
+				continue
+			}
+			thinking := ""
+			if item.Content != nil && len(item.Content.ContentBlocks) > 0 && item.Content.ContentBlocks[0].Text != nil {
+				thinking = *item.Content.ContentBlocks[0].Text
+			}
+			block.Thinking = &thinking
 		}
-		block, ok := anthropicprovider.EncodeThinkingBlock(anthropicprovider.AnthropicContentBlock{
-			Type: anthropicprovider.AnthropicContentBlockTypeThinking, Thinking: &thinking, Signature: &signature,
-		})
+		encoded, ok := anthropicprovider.EncodeThinkingBlock(block)
 		if !ok {
 			continue
 		}
 		item.Content = nil
-		item.ResponsesReasoning = &schemas.ResponsesReasoning{Summary: []schemas.ResponsesReasoningSummary{}, EncryptedContent: &block}
+		item.ResponsesReasoning = &schemas.ResponsesReasoning{Summary: []schemas.ResponsesReasoningSummary{}, EncryptedContent: &encoded}
 	}
 }
 
 // chatEncryptedReasoningHistory reports whether a message of a Chat Completions request carries
-// OpenAI's encrypted reasoning, which only Responses take back.
+// OpenAI's encrypted reasoning bound to an account, which only Responses take back. Unbound content
+// goes to no deployment, so it leaves the request on the interface that the client called.
 func chatEncryptedReasoningHistory(raw json.RawMessage) bool {
 	messages, err := rawjson.Array(raw)
 	if err != nil {
@@ -214,7 +263,10 @@ func chatEncryptedReasoningHistory(raw json.RawMessage) bool {
 			continue
 		}
 		for _, detail := range details {
-			if chatReasoningDetailFormat(detail) == EncryptedReasoning {
+			if chatReasoningDetailFormat(detail) != EncryptedReasoning || detail.Data == nil {
+				continue
+			}
+			if _, _, bound := cutEncryptedReasoning(*detail.Data); bound {
 				return true
 			}
 		}

@@ -719,7 +719,7 @@ func (v *requestVariants) prepareBody(selection routingSelection, value RequestP
 	} else {
 		variant.responses = &openaiprovider.OpenAIResponsesRequest{}
 		if err = sonic.Unmarshal(body, variant.responses); err == nil {
-			claudeThinkingFromSignatures(fields["input"], variant.responses.Input.OpenAIResponsesRequestInputArray)
+			claudeBlocksFromOpenRouter(fields["input"], variant.responses.Input.OpenAIResponsesRequestInputArray)
 		}
 	}
 	if err != nil {

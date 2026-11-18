@@ -1904,6 +1904,9 @@ type ChatReasoningDetails struct {
 	Text      *string                     `json:"text,omitempty"`
 	Signature *string                     `json:"signature,omitempty"`
 	Data      *string                     `json:"data,omitempty"` // for encrypted data
+	// Format is OpenRouter's name for the provider format of a detail that a client sends back,
+	// such as "anthropic-claude-v1" or "openai-responses-v1".
+	Format *string `json:"format,omitempty"`
 }
 
 // BifrostLogProbs represents the log probabilities for different aspects of a response.

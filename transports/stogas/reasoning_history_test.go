@@ -468,8 +468,9 @@ func TestChatReplyWithReasoningTextGoesBackUnchanged(t *testing.T) {
 }
 
 // A conversation can move from OpenRouter, whose reasoning details carry a format, can lack an
-// index, and include summaries. Every deployment takes them. No provider gets a summary or a
-// format, and open models get the plain reasoning of a message without a summary.
+// index, and include summaries. Every deployment takes them. No provider gets a summary, a format,
+// or another provider's signed or encrypted reasoning, Claude gets its redacted thinking although
+// OpenRouter gave it an ID, and open models get the plain reasoning of a message without a summary.
 func TestOpenRouterReasoningDetailsAreAccepted(t *testing.T) {
 	messages := `"messages":[{"role":"user","content":"hi"},` +
 		`{"role":"assistant","content":"Hello.","reasoning":"Summed up.","reasoning_details":[` +
@@ -478,11 +479,16 @@ func TestOpenRouterReasoningDetailsAreAccepted(t *testing.T) {
 		`{"role":"user","content":"Go on."},` +
 		`{"role":"assistant","content":"More.","reasoning":"Thought it through.","reasoning_details":[` +
 		`{"type":"reasoning.text","text":"Thought it through.","format":"unknown"}]},` +
+		`{"role":"user","content":"Next?"},` +
+		`{"role":"assistant","content":"Last.","reasoning_details":[` +
+		`{"type":"reasoning.encrypted","data":"claude-redacted","id":"rd_1","format":"anthropic-claude-v1","index":0},` +
+		`{"type":"reasoning.encrypted","data":"gemini-signature","format":"google-gemini-v1","index":1},` +
+		`{"type":"reasoning.text","text":"Gemini thought.","signature":"gemini-sig","format":"google-gemini-v1","index":2}]},` +
 		`{"role":"user","content":"Done?"}]`
 	for _, model := range historyDeployments {
 		body, _, _ := providerBody(t, "/v1/chat/completions", `{"model":"`+model+`",`+messages+`}`)
 		history := string(body["input"]) + string(body["messages"])
-		for _, gone := range []string{"Summed up.", "gAAAAforeign", "format"} {
+		for _, gone := range []string{"Summed up.", "gAAAAforeign", "format", "gemini-signature", "gemini-sig", "Gemini thought."} {
 			if strings.Contains(history, gone) {
 				t.Fatalf("%s got %q: %s", model, gone, history)
 			}
@@ -490,36 +496,50 @@ func TestOpenRouterReasoningDetailsAreAccepted(t *testing.T) {
 		if plain := strings.Contains(history, "Thought it through."); plain != slices.Contains(openModels, model) {
 			t.Fatalf("%s plain reasoning sent = %v: %s", model, plain, history)
 		}
+		claude := model == "anthropic-claude-sonnet-4-6"
+		if claude {
+			if got := blockFields(assistantBlocks(t, body)[2], "type", "data", "text"); got != `type="redacted_thinking" data="claude-redacted"`+"\n"+`type="text" text="Last."` {
+				t.Fatalf("Claude's last assistant blocks =\n%s", got)
+			}
+		} else if strings.Contains(history, "claude-redacted") {
+			t.Fatalf("%s got Claude's redacted thinking: %s", model, history)
+		}
 	}
 }
 
 // A conversation can move from OpenRouter, whose Responses reasoning items carry a format and, for
-// Claude, the signature of the thinking in their content. Claude gets the signed item as its
-// thinking block, open models get plain reasoning, and no provider gets a format, a summary or
-// another account's encrypted reasoning.
+// Claude, the signature of the thinking in their content or the redacted thinking in their
+// encrypted content. Claude gets both as its blocks, open models get plain reasoning, and no
+// provider gets a format, a summary, or another provider's signed or encrypted reasoning.
 func TestOpenRouterReasoningItemsAreAccepted(t *testing.T) {
 	input := `"input":[{"role":"user","content":"hi"},` +
 		`{"type":"reasoning","id":"rs_claude","format":"anthropic-claude-v1","signature":"sig-openrouter",` +
 		`"summary":[{"type":"summary_text","text":"Summed up."}],"content":[{"type":"reasoning_text","text":"Thought it through."}]},` +
+		`{"type":"reasoning","id":"rs_redacted","format":"anthropic-claude-v1","summary":[],"encrypted_content":"claude-redacted"},` +
 		`{"type":"reasoning","id":"rs_openai","format":"openai-responses-v1","signature":null,` +
 		`"summary":[{"type":"summary_text","text":"Summed up."}],"encrypted_content":"gAAAAforeign"},` +
+		`{"type":"reasoning","id":"rs_xai","format":"xai-responses-v1","summary":[],"encrypted_content":"xai-encrypted"},` +
+		`{"type":"reasoning","id":"rs_gemini","format":"google-gemini-v1","signature":"gemini-sig","summary":[],` +
+		`"content":[{"type":"reasoning_text","text":"Gemini thought."}]},` +
 		`{"type":"reasoning","id":"rs_plain","format":"unknown","summary":[],"content":[{"type":"reasoning_text","text":"Plain thought."}]},` +
 		`{"role":"assistant","content":[{"type":"output_text","text":"Hello."}]},{"role":"user","content":"again"}]`
 	for _, model := range historyDeployments {
 		body, _, _ := providerBody(t, "/v1/responses", `{"model":"`+model+`",`+input+`}`)
-		if model == "anthropic-claude-sonnet-4-6" {
-			if got := blockFields(assistantBlocks(t, body)[0], "type", "thinking", "signature", "text"); got != `type="thinking" thinking="Thought it through." signature="sig-openrouter"`+"\n"+`type="text" text="Hello."` {
+		claude := model == "anthropic-claude-sonnet-4-6"
+		if claude {
+			if got := blockFields(assistantBlocks(t, body)[0], "type", "thinking", "signature", "data", "text"); got != `type="thinking" thinking="Thought it through." signature="sig-openrouter"`+"\n"+
+				`type="redacted_thinking" data="claude-redacted"`+"\n"+`type="text" text="Hello."` {
 				t.Fatalf("Claude's assistant blocks =\n%s", got)
 			}
 		}
 		history := string(body["input"]) + string(body["messages"])
-		for _, gone := range []string{"Summed up.", "gAAAAforeign", "format", "anthropic-claude-v1"} {
+		for _, gone := range []string{"Summed up.", "gAAAAforeign", "format", "anthropic-claude-v1", "xai-encrypted", "gemini-sig", "Gemini thought."} {
 			if strings.Contains(history, gone) {
 				t.Fatalf("%s got %q: %s", model, gone, history)
 			}
 		}
-		if claude := strings.Contains(history, "sig-openrouter"); claude != (model == "anthropic-claude-sonnet-4-6") {
-			t.Fatalf("%s Claude's thinking sent = %v: %s", model, claude, history)
+		if got := strings.Contains(history, "sig-openrouter") || strings.Contains(history, "claude-redacted"); got != claude {
+			t.Fatalf("%s Claude's thinking sent = %v: %s", model, got, history)
 		}
 		if plain := strings.Contains(history, "Plain thought."); plain != slices.Contains(openModels, model) {
 			t.Fatalf("%s plain reasoning sent = %v: %s", model, plain, history)
@@ -780,5 +800,24 @@ func TestRedactionScansOnlyReasoningHistoryWithoutASignature(t *testing.T) {
 		`"summary":[{"type":"summary_text","text":"Mail owner@corp.io."}],"encrypted_content":"`+boundReasoning("gAAAAopaque")+`"}`))
 	if input := string(body["input"]); strings.Contains(input, "owner@corp.io") || !strings.Contains(input, "gAAAAopaque") {
 		t.Fatalf("encrypted reasoning reached the provider as %s", input)
+	}
+
+	// Text that redaction left as the client sent it reaches no provider unless that provider checks
+	// its signature: reasoning text beyond the signed thinking that starts it, and thinking signed in
+	// another provider's format.
+	for _, model := range historyDeployments {
+		for _, input := range []catalog.RequestInput{
+			request(model, `{"role":"assistant","content":"The owner.","reasoning":"Plan. Mail owner@corp.io.",`+
+				`"reasoning_details":[{"index":0,"type":"reasoning.text","text":"Plan.","signature":"sig"}]}`),
+			request(model, `{"role":"assistant","content":"The owner.","reasoning_details":[`+
+				`{"index":0,"type":"reasoning.text","text":"Mail owner@corp.io.","signature":"sig","format":"google-gemini-v1"}]}`),
+			responses(model, `{"type":"reasoning","id":"rs_1","signature":"sig","format":"google-gemini-v1","summary":[],`+
+				`"content":[{"type":"reasoning_text","text":"Mail owner@corp.io."}]}`),
+		} {
+			body, _, _ := providerBodyOf(t, input)
+			if wire, _ := json.Marshal(body); strings.Contains(string(wire), "owner@corp.io") {
+				t.Fatalf("%s got unredacted reasoning: %s", model, wire)
+			}
+		}
 	}
 }

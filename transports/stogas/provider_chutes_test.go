@@ -354,7 +354,7 @@ func TestChutesReasoningPolicyRejectsUnreviewedControls(t *testing.T) {
 	}
 	for _, field := range []string{
 		`"reasoning":{"max_tokens":100}`,
-		`"reasoning_display":"summarized"`,
+		`"reasoning_display":"updates"`,
 		`"reasoning_max_tokens":100`,
 	} {
 		t.Run(field, func(t *testing.T) {
