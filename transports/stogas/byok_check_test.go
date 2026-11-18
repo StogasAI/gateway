@@ -11,13 +11,16 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/maximhq/bifrost/transports/stogas/awsauth"
@@ -556,47 +559,101 @@ func TestCheckByokDiscoversAnAzureAccount(t *testing.T) {
 	}
 }
 
-// One organization's checks take at most half of a gateway's slots, so another organization's
-// check never waits for all of them, and a check that stops waiting holds nothing.
-func TestCheckSlotsKeepRoomForOtherOrganizations(t *testing.T) {
+// The last free slot stays for an organization that holds none, and a freed slot goes to the
+// waiting organization that holds the fewest, so one organization's checks never hold back
+// another's, and a check that stops waiting holds nothing.
+func TestCheckSlotsShareBetweenOrganizations(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		slots := newCheckSlots(4)
+		type check struct {
+			started chan struct{}
+			release func()
+			err     error
+			cancel  context.CancelFunc
+		}
+		start := func(organizationID string) *check {
+			ctx, cancel := context.WithCancel(t.Context())
+			c := &check{started: make(chan struct{}), cancel: cancel}
+			go func() {
+				c.release, c.err = slots.take(ctx, organizationID)
+				close(c.started)
+			}()
+			synctest.Wait()
+			return c
+		}
+		runs := func(c *check) bool {
+			select {
+			case <-c.started:
+				return c.err == nil
+			default:
+				return false
+			}
+		}
+		end := func(c *check) {
+			c.release()
+			synctest.Wait()
+		}
+		expect := func(step string, want map[*check]bool) {
+			t.Helper()
+			for c, running := range want {
+				if runs(c) != running {
+					t.Fatalf("%s: a check ran %v, want %v", step, !running, running)
+				}
+			}
+		}
+
+		a1, a2, a3, a4 := start("a"), start("a"), start("a"), start("a")
+		expect("an organization alone", map[*check]bool{a1: true, a2: true, a3: true, a4: false})
+		b1 := start("b")
+		expect("the slot kept for an organization that holds none", map[*check]bool{b1: true})
+		c1, b2 := start("c"), start("b")
+		expect("a full gateway", map[*check]bool{c1: false, b2: false})
+		end(a1)
+		expect("the organization that holds none goes first", map[*check]bool{c1: true, a4: false, b2: false})
+		end(a2)
+		expect("the last free slot stays", map[*check]bool{a4: false, b2: false})
+		d1 := start("d")
+		expect("the kept slot", map[*check]bool{d1: true})
+		end(b1)
+		expect("fewest slots before the longest wait", map[*check]bool{b2: true, a4: false})
+		a4.cancel()
+		synctest.Wait()
+		if !errors.Is(a4.err, context.Canceled) || runs(a4) {
+			t.Fatal("a check that stopped waiting ran")
+		}
+		for _, c := range []*check{a3, b2, c1, d1} {
+			end(c)
+		}
+		if slots.free != 4 || len(slots.held) != 0 || len(slots.waiting) != 0 {
+			t.Fatalf("%d slots free, %d organizations holding and %d waiting after every check ended", slots.free, len(slots.held), len(slots.waiting))
+		}
+	})
+}
+
+// Checks that stop waiting at any moment, also as their slot arrives, leave every slot free, and no
+// more than the gateway's slots run at once.
+func TestCheckSlotsHoldUnderConcurrency(t *testing.T) {
 	slots := newCheckSlots(byokCheckLimit)
-	ctx := context.Background()
-	take := func(organizationID string) func() {
-		t.Helper()
-		release, err := slots.take(ctx, organizationID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return release
-	}
-	waits := func(organizationID string) bool {
-		t.Helper()
-		waiting, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
-		defer cancel()
-		release, err := slots.take(waiting, organizationID)
-		if err == nil {
+	var running atomic.Int32
+	var group sync.WaitGroup
+	for i := range 2000 {
+		group.Go(func() {
+			ctx, cancel := context.WithTimeout(t.Context(), time.Duration(i%5)*100*time.Microsecond)
+			defer cancel()
+			release, err := slots.take(ctx, fmt.Sprintf("organization-%d", i%7))
+			if err != nil {
+				return
+			}
+			if running.Add(1) > byokCheckLimit {
+				t.Error("more checks ran than the gateway has slots")
+			}
+			time.Sleep(time.Duration(i%3) * 50 * time.Microsecond)
+			running.Add(-1)
 			release()
-		}
-		return errors.Is(err, context.DeadlineExceeded)
+		})
 	}
-	first := []func(){take("a"), take("a")}
-	if !waits("a") {
-		t.Fatal("one organization took more than half of the slots")
-	}
-	second := []func(){take("b"), take("b")}
-	if !waits("c") {
-		t.Fatal("a check ran beyond the gateway's slots")
-	}
-	first[0]()
-	// The slot that a frees serves c, not a third check of b.
-	if !waits("b") {
-		t.Fatal("one organization took more than half of the slots")
-	}
-	third := take("c")
-	for _, release := range append(append(first[1:], second...), third) {
-		release()
-	}
-	if len(slots.all) != 0 || len(slots.organizations) != 0 {
-		t.Fatalf("%d slots and %d organizations held after every check ended", len(slots.all), len(slots.organizations))
+	group.Wait()
+	if slots.free != byokCheckLimit || len(slots.held) != 0 || len(slots.waiting) != 0 {
+		t.Fatalf("%d slots free, %d organizations holding and %d waiting after every check ended", slots.free, len(slots.held), len(slots.waiting))
 	}
 }

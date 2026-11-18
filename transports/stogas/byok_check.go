@@ -33,7 +33,9 @@ import (
 // unverified. An Azure credential's check signs in to Entra anew and discovers the account's
 // targets.
 const (
-	byokCheckTimeout       = 8 * time.Second
+	byokCheckTimeout = 8 * time.Second
+	// A run of Control's schedule sends four checks at once, which four slots start together, and
+	// the slots bound the Azure discoveries in flight, whose reads request admission does not count.
 	byokCheckLimit         = 4
 	byokCheckResponseLimit = 64 << 10
 	stsRequestBody         = "Action=GetCallerIdentity&Version=2011-06-15"
@@ -189,61 +191,98 @@ func checkByok(ctx context.Context, store byokCheckStore, checker *byokChecker, 
 	return result, nil
 }
 
-// checkSlots bounds the checks that a gateway runs at once: byokCheckLimit in all, and half of them
-// for one organization, so one organization's checks, which can each wait 25 seconds for Azure,
-// never make every other organization's wait.
+// checkSlots bounds the checks that a gateway runs at once to byokCheckLimit and shares them between
+// organizations, as an Azure discovery can hold a slot for 25 seconds:
+//   - An organization that holds a slot never takes the last free one, which stays for an
+//     organization that holds none. Alone, an organization runs all slots but one.
+//   - A slot that frees goes to the waiting organization that holds the fewest, and among equals to
+//     the check that has waited longest, so one organization's queued checks never hold back
+//     another organization's.
 type checkSlots struct {
-	all chan struct{}
-	mu  sync.Mutex
-	// The organizations that hold or wait for a slot, each with its share.
-	organizations map[string]*organizationCheckSlots
+	mu   sync.Mutex
+	free int
+	// The slots that each organization holds, and its waiting checks, oldest first.
+	held    map[string]int
+	waiting map[string][]*checkWaiter
+	queued  uint64
 }
 
-type organizationCheckSlots struct {
-	share chan struct{}
-	users int
+type checkWaiter struct {
+	ready chan struct{}
+	order uint64
 }
 
 func newCheckSlots(limit int) *checkSlots {
-	return &checkSlots{all: make(chan struct{}, limit), organizations: map[string]*organizationCheckSlots{}}
+	return &checkSlots{free: limit, held: map[string]int{}, waiting: map[string][]*checkWaiter{}}
 }
 
-// take waits for a slot of the organization's share and then for one of all, and returns what
-// frees both. An organization holds nothing while it waits for all.
+// take waits for a slot for the organization and returns what frees it.
 func (s *checkSlots) take(ctx context.Context, organizationID string) (func(), error) {
-	s.mu.Lock()
-	organization := s.organizations[organizationID]
-	if organization == nil {
-		organization = &organizationCheckSlots{share: make(chan struct{}, max(1, cap(s.all)/2))}
-		s.organizations[organizationID] = organization
-	}
-	organization.users++
-	s.mu.Unlock()
-	leave := func() {
+	release := func() {
 		s.mu.Lock()
-		if organization.users--; organization.users == 0 {
-			delete(s.organizations, organizationID)
-		}
+		s.release(organizationID)
 		s.mu.Unlock()
 	}
-	select {
-	case organization.share <- struct{}{}:
-	case <-ctx.Done():
-		leave()
-		return nil, ctx.Err()
+	s.mu.Lock()
+	// A check that waits leaves the free slot as the one kept for organizations that hold none.
+	if s.free > 1 || s.free == 1 && s.held[organizationID] == 0 {
+		s.free--
+		s.held[organizationID]++
+		s.mu.Unlock()
+		return release, nil
 	}
+	s.queued++
+	waiter := &checkWaiter{ready: make(chan struct{}), order: s.queued}
+	s.waiting[organizationID] = append(s.waiting[organizationID], waiter)
+	s.mu.Unlock()
 	select {
-	case s.all <- struct{}{}:
+	case <-waiter.ready:
+		return release, nil
 	case <-ctx.Done():
-		<-organization.share
-		leave()
-		return nil, ctx.Err()
 	}
-	return func() {
-		<-s.all
-		<-organization.share
-		leave()
-	}, nil
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	queue := s.waiting[organizationID]
+	if at := slices.Index(queue, waiter); at >= 0 {
+		if queue = slices.Delete(queue, at, at+1); len(queue) == 0 {
+			delete(s.waiting, organizationID)
+		} else {
+			s.waiting[organizationID] = queue
+		}
+	} else {
+		// The slot came as the wait ended, so the next check takes it.
+		s.release(organizationID)
+	}
+	return nil, ctx.Err()
+}
+
+// release frees one of the organization's slots and hands free slots to waiting checks. The caller
+// holds s.mu.
+func (s *checkSlots) release(organizationID string) {
+	if s.held[organizationID]--; s.held[organizationID] == 0 {
+		delete(s.held, organizationID)
+	}
+	s.free++
+	for s.free > 0 {
+		next, first := "", (*checkWaiter)(nil)
+		for organization, queue := range s.waiting {
+			if first == nil || s.held[organization] < s.held[next] ||
+				s.held[organization] == s.held[next] && queue[0].order < first.order {
+				next, first = organization, queue[0]
+			}
+		}
+		if first == nil || s.free == 1 && s.held[next] > 0 {
+			return
+		}
+		if queue := s.waiting[next][1:]; len(queue) == 0 {
+			delete(s.waiting, next)
+		} else {
+			s.waiting[next] = queue
+		}
+		s.free--
+		s.held[next]++
+		close(first.ready)
+	}
 }
 
 // run checks an organization's credential while it holds one of the checker's slots. For an Azure
