@@ -47,6 +47,50 @@ func BenchmarkRoutingCredentialAlternatives(b *testing.B) {
 	}
 }
 
+// One model with many deployments, as an organization's own records could add: the plan filters
+// and orders every deployment of the requested model before the first call.
+func BenchmarkRoutingManyDeployments(b *testing.B) {
+	snap := testSnapshot(b)
+	previous := active.Swap(snap)
+	b.Cleanup(func() { active.Store(previous) })
+	base, err := ResolveRequest(RequestInput{Body: []byte(`{"model":"openai-gpt-5.6-sol","messages":[{"role":"user","content":"hi"}]}`), Method: "POST", Path: "/v1/chat/completions"})
+	if err != nil {
+		b.Fatal(err)
+	}
+	query, err := policy.CompileRouting("provider.id == 'openai' && deployment.contextWindowTokens >= 100000", testDefaultSort())
+	if err != nil {
+		b.Fatal(err)
+	}
+	withFilter := policyConfig(1)
+	withFilter.Routing.Query = query
+	for _, deployments := range []int{100, 1000, 10000} {
+		selections := make([]routingSelection, deployments)
+		for index := range selections {
+			deployment := base.Deployment
+			deployment.ID = fmt.Sprintf("benchmark-many-%05d", index)
+			snap.graph.Deployments[deployment.ID] = snap.graph.Deployments[base.Deployment.ID]
+			selections[index] = routingSelection{provider: schemas.OpenAI, deployment: deployment}
+		}
+		for name, config := range map[string]*policy.Config{"sort": policyConfig(1), "filter_and_sort": withFilter} {
+			b.Run(fmt.Sprintf("deployments_%d/%s", deployments, name), func(b *testing.B) {
+				b.ReportAllocs()
+				for b.Loop() {
+					variants := &requestVariants{base: RequestPolicy{Config: config}, selections: selections}
+					input := RequestInput{now: time.Now(), policyBudget: policy.NewCELBudget(), Policy: config, AvailableCredentials: map[string][]int{"openai": {0}}}
+					err := planFirstPair(input, base.policyModel, variants)
+					// One request's expression budget bounds the candidates that a filter can read.
+					if err != nil && strings.Contains(err.Error(), policy.ErrPolicyWorkLimit.Error()) {
+						b.Skipf("%d candidates pass the request's expression budget", deployments)
+					}
+					if err != nil {
+						b.Fatalf("unexpected routing result: %v", err)
+					}
+				}
+			})
+		}
+	}
+}
+
 func BenchmarkRoutingDistinctCredentialPolicies(b *testing.B) {
 	snap := testSnapshot(b)
 	previous := active.Swap(snap)
