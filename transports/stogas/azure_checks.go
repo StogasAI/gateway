@@ -133,8 +133,11 @@ func (c *AzureChecks) Confirm(_ context.Context, target azureCheckTarget) error 
 	if age < azureCheckFresh {
 		return nil
 	}
+	// The answer rests on the checks that ended before the request, so the check that it starts
+	// decides only later requests, however fast that check ends.
+	refused := age >= azureCheckGrace && c.failing(target.ByokID)
 	c.background(target, target.ByokID, azureCheckFresh)
-	if age >= azureCheckGrace && c.failing(target.ByokID) {
+	if refused {
 		return billing.ErrByok
 	}
 	return nil
