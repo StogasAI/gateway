@@ -1,0 +1,138 @@
+{
+	"shows": "OpenAI and Azure refuse the reasoning.summary values that only Claude takes, none and updates, so the gateway leaves them out for GPT models.",
+	"recorded": "2026-11-18",
+	"exchanges": [
+		{
+			"name": "openai summary none",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "low",
+						"summary": "none"
+					},
+					"max_output_tokens": 200,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say hi."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Invalid value: 'none'. Supported values are: 'concise', 'detailed', and 'auto'.",
+						"type": "invalid_request_error",
+						"param": "reasoning.summary",
+						"code": "invalid_value"
+					}
+				}
+			}
+		},
+		{
+			"name": "openai summary updates",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "low",
+						"summary": "updates"
+					},
+					"max_output_tokens": 200,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say hi."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Invalid value: 'updates'. Supported values are: 'concise', 'detailed', and 'auto'.",
+						"type": "invalid_request_error",
+						"param": "reasoning.summary",
+						"code": "invalid_value"
+					}
+				}
+			}
+		},
+		{
+			"name": "azure summary none",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/responses",
+				"body": {
+					"model": "gpt-5.6-sol",
+					"store": false,
+					"reasoning": {
+						"effort": "low",
+						"summary": "none"
+					},
+					"max_output_tokens": 200,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say hi."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Invalid value: 'none'. Supported values are: 'concise', 'detailed', and 'auto'.",
+						"type": "invalid_request_error",
+						"param": "reasoning.summary",
+						"code": "invalid_value"
+					}
+				}
+			}
+		},
+		{
+			"name": "azure summary updates",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/responses",
+				"body": {
+					"model": "gpt-5.6-sol",
+					"store": false,
+					"reasoning": {
+						"effort": "low",
+						"summary": "updates"
+					},
+					"max_output_tokens": 200,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say hi."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Invalid value: 'updates'. Supported values are: 'concise', 'detailed', and 'auto'.",
+						"type": "invalid_request_error",
+						"param": "reasoning.summary",
+						"code": "invalid_value"
+					}
+				}
+			}
+		}
+	]
+}

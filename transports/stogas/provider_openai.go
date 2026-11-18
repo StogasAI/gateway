@@ -277,12 +277,12 @@ func validateOpenAIChatScalarPolicy(raw map[string]json.RawMessage) error {
 
 // validateChatReasoningDisplay accepts the reasoning displays of the deployments that Chat
 // Completions reach in OpenAI's format, which decide whether a reply shows a summary of the
-// reasoning: summarized, and omitted. OpenAI's models return summaries only on Responses, so a
-// request that asks for them while the model reasons goes through Responses (catalog's
-// chatThroughResponses). Other models return their reasoning whole, with no summary to show or
-// leave out, as their Responses replies carry it whole whatever summary a client asks for, so a
-// client's display never keeps a conversation or a fallback from them. Claude's updates have no
-// counterpart here.
+// reasoning: summarized, omitted, and Claude's updates, which these models write none of and so
+// answer as omitted, as Claude's models without progress updates do. OpenAI's models return
+// summaries only on Responses, so a request that asks for them while the model reasons goes
+// through Responses (catalog's chatThroughResponses). Other models return their reasoning whole,
+// with no summary to show or leave out, as their Responses replies carry it whole whatever summary
+// a client asks for, so a client's display never keeps a conversation or a fallback from them.
 func validateChatReasoningDisplay(state *State, raw map[string]json.RawMessage) error {
 	name, value := "reasoning_display", raw["reasoning_display"]
 	if reasoning, ok := rawObject(raw["reasoning"]); ok && rawJSONValueSet(reasoning["display"]) {
@@ -295,9 +295,9 @@ func validateChatReasoningDisplay(state *State, raw map[string]json.RawMessage) 
 	switch resolution := state.Resolution; {
 	case !resolution.Deployment.ReasoningSupported:
 		return invalidRequest(name + " is not supported for the selected deployment")
-	case display != "summarized" && display != "omitted":
-		return invalidRequest(name + " must be summarized or omitted for the selected deployment")
-	case display == "omitted" || !resolution.RunsOpenAIModel() || resolution.WireRoute() == catalog.RouteResponses || resolution.ReasoningOff():
+	case display != "summarized" && display != "omitted" && display != "updates":
+		return invalidRequest(name + " must be summarized, omitted or updates for the selected deployment")
+	case display != "summarized" || !resolution.RunsOpenAIModel() || resolution.WireRoute() == catalog.RouteResponses || resolution.ReasoningOff():
 		return nil
 	}
 	if gap := state.Resolution.ResponsesGap(); gap != "" {

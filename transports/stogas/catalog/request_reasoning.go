@@ -287,14 +287,40 @@ var (
 		"mode":       true,
 	}
 	responsesRawReasoningFields = map[string]bool{
-		"context":          true,
-		"effort":           true,
-		"generate_summary": true,
-		"max_tokens":       true,
-		"mode":             true,
-		"summary":          true,
+		"context":    true,
+		"effort":     true,
+		"max_tokens": true,
+		"mode":       true,
+		"summary":    true,
 	}
 )
+
+// foldGenerateSummary moves reasoning.generate_summary, OpenAI's former name of reasoning.summary,
+// into reasoning.summary, so that every check and provider reads one field.
+func foldGenerateSummary(rawData map[string]json.RawMessage) error {
+	reasoning, ok, err := rawReasoningObject(rawData["reasoning"])
+	if err != nil || !ok {
+		// validateRawReasoningParameters names a reasoning value that is not an object.
+		return nil
+	}
+	former, found := reasoning["generate_summary"]
+	if !found {
+		return nil
+	}
+	delete(reasoning, "generate_summary")
+	if !rawJSONNull(former) {
+		if summary, set := reasoning["summary"]; set && !rawJSONNull(summary) {
+			return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "reasoning.generate_summary conflicts with reasoning.summary"}
+		}
+		reasoning["summary"] = former
+	}
+	encoded, err := sonic.Marshal(reasoning)
+	if err != nil {
+		return err
+	}
+	rawData["reasoning"] = encoded
+	return nil
+}
 
 // rawReasoningFields holds only the small reasoning controls of a request, so that they decode
 // with the same codecs used for the final request without materializing messages or tools.
@@ -437,9 +463,6 @@ func validateRawReasoningParameters(rawData map[string]json.RawMessage, allowedF
 			return err
 		}
 		if err := validateRawReasoningSummary(reasoning["summary"], "reasoning.summary"); err != nil {
-			return err
-		}
-		if err := validateRawReasoningSummary(reasoning["generate_summary"], "reasoning.generate_summary"); err != nil {
 			return err
 		}
 		if _, _, err := rawReasoningString(reasoning["context"], "reasoning.context"); err != nil {

@@ -88,15 +88,9 @@ func responsesParamsChatGap(p *ResponsesParameters) *ConversionGap {
 			return &ConversionGap{"include[" + strconv.Itoa(i) + "]", "the " + value + " output"}
 		}
 	}
+	// Chat Completions returns the model's reasoning text, never a summary of it, so the reply
+	// carries that text whatever summary the request asks for.
 	if r := p.Reasoning; r != nil {
-		// Chat Completions returns the model's reasoning text, which the reply carries as reasoning
-		// content, and never a summary of it. Auto takes what the model returns.
-		if r.Summary != nil && *r.Summary != "auto" && *r.Summary != "none" {
-			return &ConversionGap{"reasoning.summary", "reasoning summaries"}
-		}
-		if r.GenerateSummary != nil && *r.GenerateSummary != "auto" && *r.GenerateSummary != "none" {
-			return &ConversionGap{"reasoning.generate_summary", "reasoning summaries"}
-		}
 		if r.Context != nil && *r.Context != "auto" {
 			return &ConversionGap{"reasoning.context", "the reasoning context setting"}
 		}

@@ -73,8 +73,9 @@ func chatParamsResponsesGap(p *ChatParameters) *ConversionGap {
 		if r.Enabled != nil {
 			return &ConversionGap{"reasoning.enabled", "a reasoning on/off switch"}
 		}
-		// Responses show reasoning only as summaries, which summarized asks for and omitted leaves out.
-		if r.Display != nil && *r.Display != "summarized" && *r.Display != "omitted" {
+		// Responses show reasoning only as summaries, which summarized asks for. Omitted leaves them
+		// out, and so does Claude's updates, which models without progress updates answer as omitted.
+		if r.Display != nil && *r.Display != "summarized" && *r.Display != "omitted" && *r.Display != "updates" {
 			return &ConversionGap{"reasoning.display", "the " + *r.Display + " reasoning display"}
 		}
 	}

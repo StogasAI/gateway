@@ -409,12 +409,12 @@ func validateAnthropicResponsesPolicy(state *State) error {
 		return err
 	}
 	if reasoning, ok := rawObject(raw["reasoning"]); ok {
-		// summary "updates" asks Claude for its progress updates without reasoning summaries.
-		if value, exists := rawStringValue(reasoning["summary"]); exists && value != "auto" && value != "none" && value != anthropicprovider.AnthropicThinkingDisplayUpdates {
-			return invalidRequest("reasoning.summary must be auto, none or updates for Anthropic-format deployments")
-		}
-		if value, exists := rawStringValue(reasoning["generate_summary"]); exists && value != "auto" && value != "none" {
-			return invalidRequest("reasoning.generate_summary must be auto or none for Anthropic-format deployments")
+		// OpenAI's summaries become Claude's summarized thinking, none omits it, and updates asks
+		// for Claude's progress updates without reasoning summaries.
+		switch value, _ := rawStringValue(reasoning["summary"]); value {
+		case "", "auto", "concise", "detailed", "none", anthropicprovider.AnthropicThinkingDisplayUpdates:
+		default:
+			return invalidRequest("reasoning.summary must be auto, concise, detailed, none or updates for Anthropic-format deployments")
 		}
 		// Claude has no such setting: context_management's clear_thinking edit chooses which
 		// earlier thinking it reads.

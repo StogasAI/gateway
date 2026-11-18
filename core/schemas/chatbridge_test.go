@@ -28,8 +28,6 @@ func TestChatCompletionsGapNamesWhatChatCompletionsCannotCarry(t *testing.T) {
 		{"automatic truncation", BifrostResponsesRequest{Params: &ResponsesParameters{Truncation: Ptr("auto")}}, "truncation", "automatic truncation"},
 		{"include", BifrostResponsesRequest{Params: &ResponsesParameters{Include: []string{responsesIncludeLogProbs, responsesIncludeEncryptedReasoning, "web_search_call.results"}}},
 			"include[2]", "the web_search_call.results output"},
-		{"reasoning summary", BifrostResponsesRequest{Params: &ResponsesParameters{Reasoning: &ResponsesParametersReasoning{Summary: Ptr("detailed")}}},
-			"reasoning.summary", "reasoning summaries"},
 		{"reasoning context", BifrostResponsesRequest{Params: &ResponsesParameters{Reasoning: &ResponsesParametersReasoning{Context: Ptr("all")}}},
 			"reasoning.context", "the reasoning context setting"},
 		{"hosted tool", BifrostResponsesRequest{Params: &ResponsesParameters{Tools: []ResponsesTool{function, {Type: ResponsesToolTypeWebSearch}}}},

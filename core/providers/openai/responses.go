@@ -1125,8 +1125,9 @@ func ToOpenAIResponsesRequest(ctx *schemas.BifrostContext, bifrostReq *schemas.B
 				req.ResponsesParameters.Reasoning.Effort = schemas.Ptr(caps.NormalizeReasoningEffort(schemas.ReasoningEffortMinimal, defaultEffortControl(req.Provider, capModel)))
 			}
 
-			// summary:"none" is Anthropic-specific (maps to display:"omitted"); strip it for OpenAI.
-			if req.ResponsesParameters.Reasoning.Summary != nil && *req.ResponsesParameters.Reasoning.Summary == "none" {
+			// summary "none" and "updates" are Claude's displays "omitted" and "updates", which OpenAI
+			// refuses. Both mean no reasoning summary, as OpenAI's models write no progress updates.
+			if summary := req.ResponsesParameters.Reasoning.Summary; summary != nil && (*summary == "none" || *summary == "updates") {
 				req.ResponsesParameters.Reasoning.Summary = nil
 			}
 

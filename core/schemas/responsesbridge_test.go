@@ -41,7 +41,7 @@ func TestResponsesGapNamesWhatResponsesCannotCarry(t *testing.T) {
 		{"request cache control", params(ChatParameters{CacheControl: &CacheControl{Type: CacheControlTypeEphemeral}}), "cache_control", "request cache control"},
 		{"audio modality", params(ChatParameters{Modalities: []string{"text", "audio"}}), "modalities[1]", "audio output"},
 		{"reasoning switch", params(ChatParameters{Reasoning: &ChatReasoning{Enabled: Ptr(true)}}), "reasoning.enabled", "a reasoning on/off switch"},
-		{"reasoning display", params(ChatParameters{Reasoning: &ChatReasoning{Display: Ptr("updates")}}), "reasoning.display", "the updates reasoning display"},
+		{"reasoning display", params(ChatParameters{Reasoning: &ChatReasoning{Display: Ptr("brief")}}), "reasoning.display", "the brief reasoning display"},
 		{"untyped response format", params(ChatParameters{ResponseFormat: format(map[string]any{"json_schema": map[string]any{}})}),
 			"response_format", "a response format without a type"},
 		{"unknown response format", params(ChatParameters{ResponseFormat: format(map[string]any{"type": "grammar"})}),

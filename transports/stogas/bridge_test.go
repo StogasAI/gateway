@@ -148,7 +148,6 @@ func TestBridgedRequestsRefuseWhatChatCompletionsLacks(t *testing.T) {
 		{"verbosity", `"text":{"verbosity":"low"}`, "verbosity is not supported for Chutes deployments"},
 		{"truncation", `"truncation":"auto"`, "truncation: Chat Completions deployments do not support automatic truncation"},
 		{"hosted tool", `"tools":[{"type":"web_search"}]`, "web_search"},
-		{"reasoning summary", `"reasoning":{"summary":"detailed"}`, "reasoning.summary: Chat Completions deployments do not support reasoning summaries"},
 		{"file URL", `"input":[{"role":"user","content":[{"type":"input_file","file_url":"https://example.com/a.pdf"}]}]`, "file URLs are not supported"},
 		{"custom tool in a namespace", `"tools":[{"type":"namespace","name":"crm","description":"CRM tools.","tools":[{"type":"custom","name":"note"}]}]`, "custom tools"},
 		{"empty namespace", `"tools":[{"type":"namespace","name":"crm","description":"CRM tools.","tools":[]}]`, "tools[0].tools must be a non-empty array"},

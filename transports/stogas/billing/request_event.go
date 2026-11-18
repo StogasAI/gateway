@@ -259,11 +259,7 @@ func ResponsesRequestSettings(params *schemas.ResponsesParameters) RequestSettin
 	if reasoning := params.Reasoning; reasoning != nil {
 		settings.ReasoningEffort = settingText(derefString(reasoning.Effort))
 		settings.ReasoningMaxTokens = settingInt(reasoning.MaxTokens)
-		summary := reasoning.Summary
-		if summary == nil {
-			summary = reasoning.GenerateSummary
-		}
-		settings.ReasoningSummary = settingText(derefString(summary))
+		settings.ReasoningSummary = settingText(derefString(reasoning.Summary))
 	}
 	if text := params.Text; text != nil {
 		settings.Verbosity = settingText(derefString(text.Verbosity))

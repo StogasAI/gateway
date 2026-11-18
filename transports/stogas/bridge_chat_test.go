@@ -155,7 +155,7 @@ func TestChatBridgeRefusesWhatResponsesLackOrTheFormatRefuses(t *testing.T) {
 		{"message name", `"messages":[{"role":"user","name":"ann","content":"hi"}]`, "messages[0].name: Responses deployments do not support message names"},
 		// OpenAI's format refuses these on Chat Completions, so the translation must not drop them.
 		{"repetition penalty", `"repetition_penalty":1.1`, "repetition_penalty is not supported for OpenAI-format deployments"},
-		{"reasoning display", `"reasoning":{"display":"updates"}`, "reasoning.display"},
+		{"reasoning display", `"reasoning":{"display":"brief"}`, "reasoning.display"},
 		{"top_k", `"top_k":5`, "top_k"},
 		{"prompt cache breakpoint member", `"messages":[{"role":"user","content":[{"type":"text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit","ttl":"1h"}}]}]`, "prompt_cache_breakpoint.ttl must be 30m"},
 		{"prompt cache option", `"prompt_cache_options":{"mode":"implicit","scope":"org"}`, "prompt_cache_options supports only mode and ttl"},
@@ -181,8 +181,9 @@ func TestChatBridgeRefusesWhatResponsesLackOrTheFormatRefuses(t *testing.T) {
 // A Chat Completions client of OpenAI's models asks for reasoning summaries with the display
 // summarized. Only Responses return them, so a request that reasons goes through Responses, which
 // get the summary auto. A request that Responses cannot carry is refused rather than answered
-// without them. Open models return their reasoning whole, so they take either display and stay on
-// Chat Completions, and their provider gets no display.
+// without them. Claude's updates get what omitted gets, as these models write no progress updates.
+// Open models return their reasoning whole, so they take every display and stay on Chat
+// Completions, and their provider gets no display.
 func TestChatSummarizedReasoningGoesThroughResponses(t *testing.T) {
 	const user = `"messages":[{"role":"user","content":"Find a1."}]`
 	for name, test := range map[string]struct{ body, route, err string }{
@@ -193,10 +194,11 @@ func TestChatSummarizedReasoningGoesThroughResponses(t *testing.T) {
 		"summarized, enabled false":    {`"model":"provider:openai gpt-6-luna",` + user + `,"reasoning":{"display":"summarized","enabled":false}`, "openai-chat-completions", ""},
 		"omitted":                      {`"model":"provider:openai gpt-6-luna",` + user + `,"reasoning_display":"omitted"`, "openai-chat-completions", ""},
 		"summarized with a seed":       {`"model":"provider:openai gpt-6-luna",` + user + `,"reasoning_display":"summarized","seed":1`, "openai-chat-completions", "reasoning_display summarized is not supported with seed"},
-		"updates":                      {`"model":"provider:openai gpt-6-luna",` + user + `,"reasoning":{"display":"updates"}`, "openai-chat-completions", "reasoning.display must be summarized or omitted for the selected deployment"},
+		"updates":                      {`"model":"provider:openai gpt-6-luna",` + user + `,"reasoning":{"display":"updates"}`, "openai-chat-completions", ""},
 		"an open model on Azure":       {`"model":"azure-deepseek-v4-flash-0423",` + user + `,"reasoning":{"display":"summarized"}`, "", ""},
 		"omitted on Chutes":            {`"model":"chutes-glm-5.2",` + user + `,"reasoning_display":"omitted"`, "", ""},
-		"updates on an open model":     {`"model":"azure-deepseek-v4-flash-0423",` + user + `,"reasoning":{"display":"updates"}`, "", "reasoning.display must be summarized or omitted for the selected deployment"},
+		"updates on an open model":     {`"model":"azure-deepseek-v4-flash-0423",` + user + `,"reasoning":{"display":"updates"}`, "", ""},
+		"another display":              {`"model":"provider:openai gpt-6-luna",` + user + `,"reasoning":{"display":"brief"}`, "openai-chat-completions", "reasoning.display must be summarized, omitted or updates for the selected deployment"},
 		"summarized on the Chat route": {`"model":"route:openai-chat-completions gpt-6-luna",` + user + `,"reasoning_display":"summarized"`, "openai-chat-completions", "reasoning_display summarized is not supported for the selected deployment"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -215,7 +217,9 @@ func TestChatSummarizedReasoningGoesThroughResponses(t *testing.T) {
 	}
 	for _, body := range []string{
 		`{"model":"azure-deepseek-v4-flash-0423",` + user + `,"reasoning":{"effort":"high","display":"summarized"}}`,
+		`{"model":"azure-deepseek-v4-flash-0423",` + user + `,"reasoning":{"effort":"high","display":"updates"}}`,
 		`{"model":"chutes-glm-5.2",` + user + `,"reasoning":{"effort":"high"},"reasoning_display":"summarized"}`,
+		`{"model":"provider:openai gpt-6-luna",` + user + `,"reasoning":{"effort":"low","display":"updates"}}`,
 	} {
 		wire, _, _ := providerBody(t, "/v1/chat/completions", body)
 		if sent, _ := json.Marshal(wire); strings.Contains(string(sent), "display") || strings.Contains(string(sent), "summary") {
@@ -225,6 +229,7 @@ func TestChatSummarizedReasoningGoesThroughResponses(t *testing.T) {
 	for body, want := range map[string]string{
 		`{"model":"provider:openai gpt-6-luna",` + user + `,"reasoning":{"effort":"low","display":"summarized"}}`:   `{"effort":"low","summary":"auto"}`,
 		`{"model":"openai-gpt-5.6-sol-pro",` + user + `,"reasoning_effort":"low","reasoning_display":"summarized"}`: `{"effort":"low","mode":"pro","summary":"auto"}`,
+		`{"model":"openai-gpt-5.6-sol-pro",` + user + `,"reasoning_effort":"low","reasoning_display":"updates"}`:    `{"effort":"low","mode":"pro","summary":null}`,
 		// OpenAI and Azure take a null effort (testdata/provider/openai/reasoning-null-effort.json).
 		`{"model":"azure-gpt-5.6-sol",` + user + `,"reasoning":{"display":"summarized"}}`: `{"effort":null,"summary":"auto"}`,
 	} {
@@ -238,6 +243,57 @@ func TestChatSummarizedReasoningGoesThroughResponses(t *testing.T) {
 // that the recorded reply calls.
 const summaryRequest = `{"model":"provider:openai gpt-6-luna","messages":[{"role":"user","content":"Work it out."}],"reasoning":{"display":"summarized"},` +
 	`"tools":[{"type":"function","function":{"name":"get_secret_number","description":"Returns the secret number.","parameters":{"type":"object","properties":{},"additionalProperties":false},"strict":true}}]`
+
+// A Responses client sets reasoning.summary, or its former name generate_summary, for every model.
+// Claude shows each of OpenAI's summaries as its summarized thinking, omits it for none and writes
+// progress updates for updates. OpenAI's models get their own values, and no summary for Claude's,
+// which OpenAI refuses (testdata/provider/openai/claude-summary-values.json). Open models return
+// their reasoning whole, so their provider gets no summary.
+func TestResponsesSummaryReachesEveryReasoningModel(t *testing.T) {
+	for name, recorded := range providerCapture(t, "openai/claude-summary-values") {
+		if recorded.Response.Status != 400 {
+			t.Fatalf("%s: the provider answered %d in the recording", name, recorded.Response.Status)
+		}
+	}
+	for _, test := range []struct{ model, reasoning, field, want string }{
+		{"anthropic-claude-fable-5-1", `"summary":"auto"`, "thinking", `"display":"summarized"`},
+		{"anthropic-claude-fable-5-1", `"summary":"concise"`, "thinking", `"display":"summarized"`},
+		{"anthropic-claude-fable-5-1", `"summary":"detailed"`, "thinking", `"display":"summarized"`},
+		{"anthropic-claude-fable-5-1", `"summary":"none"`, "thinking", `"display":"omitted"`},
+		{"anthropic-claude-fable-5-1", `"summary":"updates"`, "thinking", `"display":"updates"`},
+		{"anthropic-claude-fable-5-1", `"generate_summary":"none"`, "thinking", `"display":"omitted"`},
+		{"provider:openai gpt-6-luna", `"summary":"detailed"`, "reasoning", `{"effort":"low","summary":"detailed"}`},
+		{"provider:openai gpt-6-luna", `"generate_summary":"concise"`, "reasoning", `{"effort":"low","summary":"concise"}`},
+		{"provider:openai gpt-6-luna", `"summary":"none"`, "reasoning", `{"effort":"low","summary":null}`},
+		{"azure-gpt-5.6-sol", `"summary":"updates"`, "reasoning", `{"effort":"low","summary":null}`},
+		{"chutes-glm-5.2", `"summary":"detailed"`, "", ""},
+		{"chutes-glm-5.2", `"summary":"updates"`, "", ""},
+		{"chutes-glm-5.2", `"generate_summary":"concise"`, "", ""},
+	} {
+		t.Run(test.model+" "+test.reasoning, func(t *testing.T) {
+			body, _, _ := providerBody(t, "/v1/responses", `{"model":"`+test.model+`","input":"hi","reasoning":{"effort":"low",`+test.reasoning+`}}`)
+			sent, _ := json.Marshal(body)
+			if test.field == "" {
+				if strings.Contains(string(sent), "summary") || strings.Contains(string(sent), "display") {
+					t.Fatalf("provider body = %s", sent)
+				}
+				return
+			}
+			if got := string(body[test.field]); !strings.Contains(got, test.want) || strings.Contains(string(sent), "generate_summary") {
+				t.Fatalf("provider body = %s, want %s %s", sent, test.field, test.want)
+			}
+		})
+	}
+	for reasoning, want := range map[string]string{
+		`"summary":"brief"`: "reasoning.summary must be auto, concise, detailed, none or updates for Anthropic-format deployments",
+		`"summary":"auto","generate_summary":"detailed"`: "reasoning.generate_summary conflicts with reasoning.summary",
+	} {
+		err := requestCheckError(t, "/v1/responses", `{"model":"anthropic-claude-fable-5-1","input":"hi","reasoning":{`+reasoning+`}}`)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("%s: error = %v, want %q", reasoning, err, want)
+		}
+	}
+}
 
 // A recorded reply with a reasoning summary reaches a Chat Completions client with the summary as
 // its reasoning text and in a summary detail, which goes back to no provider.

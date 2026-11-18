@@ -951,6 +951,9 @@ func planRoutes(input RequestInput, route Route, rawData map[string]json.RawMess
 		if err := hoistAdditionalTools(rawData); err != nil {
 			return nil, err
 		}
+		if err := foldGenerateSummary(rawData); err != nil {
+			return nil, err
+		}
 	}
 	tokenFields := []string{"max_output_tokens"}
 	if route == RouteChat {
