@@ -57,14 +57,6 @@ type EventError struct {
 
 const RequestLogSchemaVersion uint8 = 1
 
-// How the client reached the gateway: ordinary TLS, TLS with the gateway's
-// attestation evidence, or an end-to-end encrypted session.
-const (
-	TransportHTTPS       = "https"
-	TransportAttestedTLS = "attested_tls"
-	TransportE2EE        = "e2ee"
-)
-
 type RequestEvent struct {
 	SchemaVersion  uint8       `json:"schema_version"`
 	RequestID      string      `json:"request_id"`

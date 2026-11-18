@@ -306,6 +306,11 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 				keep(selection, NetworkDenied(input.ClientAddress))
 				continue
 			}
+			// It also routes as a client over every connection mode.
+			if trace == nil && value.Config.TransportDenied(input.Transport) {
+				keep(selection, TransportDenied(input.Transport))
+				continue
+			}
 			candidate := template
 			candidate.CredentialIndex, candidate.policy = index, value.Config
 			groups[original] = &candidate

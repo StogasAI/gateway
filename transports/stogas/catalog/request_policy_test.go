@@ -204,6 +204,10 @@ func TestConditionalRulesExcludeOnlyTheirCandidates(t *testing.T) {
 	networks := func(when string) string {
 		return `{"office":{"when":"` + when + `","access":{"networks":{"allow":["198.51.100.0/24"]}}}}`
 	}
+	// The request arrives over ordinary HTTPS, which the list does not admit.
+	transports := func(when string) string {
+		return `{"sealed":{"when":"` + when + `","access":{"transports":{"allow":["e2ee"]}}}}`
+	}
 	// The catalog states an Azure deployment type and no OpenAI deployment type.
 	undecided := `{"typed":{"when":"deployment.upstream.deploymentType == 'global_standard'","input":{"asciiOnly":true}}}`
 	for _, test := range []struct {
@@ -215,6 +219,8 @@ func TestConditionalRulesExcludeOnlyTheirCandidates(t *testing.T) {
 		{name: "deny period on every candidate", rules: denied("provider.id != 'blocked'"), order: "azure", code: "schedule_denied"},
 		{name: "networks leave another provider", rules: networks("provider.id == 'azure'"), order: "azure", want: "openai-gpt-5.6-sol"},
 		{name: "networks on every candidate", rules: networks("provider.id != 'blocked'"), order: "azure", code: "network_denied"},
+		{name: "connection modes leave another provider", rules: transports("provider.id == 'azure'"), order: "azure", want: "openai-gpt-5.6-sol"},
+		{name: "connection modes on every candidate", rules: transports("provider.id != 'blocked'"), order: "azure", code: "transport_denied"},
 		{name: "undecided condition leaves another provider", rules: undecided, order: "openai", want: "azure-gpt-5.6-sol"},
 		{name: "undecided condition leaves another credential", rules: undecided, want: "openai-gpt-5.6-sol", credentials: true},
 		{name: "undecided condition on every candidate", rules: `{"geo":{"when":"deployment.upstream.inferenceGeo == 'us'","input":{"asciiOnly":true}}}`, order: "azure", code: "invalid_request"},
@@ -225,7 +231,8 @@ func TestConditionalRulesExcludeOnlyTheirCandidates(t *testing.T) {
 			preferred := map[string]string{"azure": `"azure","openai"`, "openai": `"openai","azure"`}[test.order]
 			input := RequestInput{
 				Body: policyChatBody(`,"provider":{"order":[` + preferred + `]}`), Method: "POST", Path: "/v1/chat/completions",
-				Policy: compose(test.rules), AvailableCredentials: map[string][]int{"azure": {0}, "openai": {0}},
+				Transport: policy.TransportHTTPS,
+				Policy:    compose(test.rules), AvailableCredentials: map[string][]int{"azure": {0}, "openai": {0}},
 				DeploymentEligible: func(_ schemas.ModelProvider, _ int, _ Route, deployment Deployment) bool {
 					if test.serves != "" {
 						return deployment.ID == test.serves

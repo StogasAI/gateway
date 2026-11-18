@@ -1221,6 +1221,7 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 	seenPlugins := map[*Plugins]bool{}
 	seenWindows := map[string]bool{}
 	var networks *Networks
+	var transportLists *Transports
 	for index, entry := range sources {
 		scope, source := entry.Scope, entry.Value
 		if !scope.Valid() && scope != RequestScope || source == nil {
@@ -1291,6 +1292,11 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 		if allowed&permissionNetworks != 0 && config.Access != nil && config.Access.Networks != nil {
 			networks = networks.combine(config.Access.Networks)
 		}
+		// A request must use a mode that every policy allows and that no
+		// policy denies.
+		if allowed&permissionTransports != 0 && config.Access != nil && config.Access.Transports != nil {
+			transportLists = transportLists.combine(config.Access.Transports)
+		}
 		if allowed&permissionNodes != 0 {
 			out.Routing.AllowedCatalogNodes = intersectAllowedNodes(out.Routing.AllowedCatalogNodes, config.Routing.AllowedCatalogNodes)
 		}
@@ -1321,6 +1327,12 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 			out.Access = &Access{}
 		}
 		out.Access.Networks = networks
+	}
+	if transportLists != nil {
+		if out.Access == nil {
+			out.Access = &Access{}
+		}
+		out.Access.Transports = transportLists
 	}
 	if retries != nil {
 		out.Routing.Retries = *retries

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/maximhq/bifrost/transports/stogas/billing"
+	"github.com/maximhq/bifrost/transports/stogas/policy"
 )
 
 // Request state belongs to one handler. Provider work receives its own state
@@ -55,12 +56,12 @@ func (s *Server) clientAddress(ctx *requestContext) netip.Addr {
 // transport names how the client reached the gateway.
 func (ctx *requestContext) transport() string {
 	if ctx.encrypted {
-		return billing.TransportE2EE
+		return policy.TransportE2EE
 	}
 	if conn, ok := ctx.request.Context().Value(httpConnectionKey{}).(*ingressTLSConn); ok && conn.attested {
-		return billing.TransportAttestedTLS
+		return policy.TransportAttestedTLS
 	}
-	return billing.TransportHTTPS
+	return policy.TransportHTTPS
 }
 
 type requestHandler func(*requestContext)

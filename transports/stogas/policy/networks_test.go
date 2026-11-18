@@ -37,7 +37,7 @@ func TestNetworksTakeAddressesAndRangesThatStartAtTheirFirstAddress(t *testing.T
 	}
 
 	for raw, message := range map[string]string{
-		`{"access":{}}`:                                            "schedule or networks",
+		`{"access":{}}`:                                            "schedule, networks or transports",
 		`{"access":{"schedule":{}}}`:                               "access.schedule requires deny",
 		`{"access":{"networks":{}}}`:                               "allow or deny",
 		`{"access":{"networks":["10.0.0.0/8"]}}`:                   "cannot unmarshal",
@@ -119,24 +119,25 @@ func TestDefaultNetworksYieldOnlyToRequiredNetworks(t *testing.T) {
 	}
 }
 
-func TestNetworksAndDenyPeriodsAreDelegatedApart(t *testing.T) {
+func TestAccessSettingsAreDelegatedApart(t *testing.T) {
 	parent := json.RawMessage(`{"delegation":{"keys":["access.schedule"]}}`)
 	edit := &InspectionEdit{Scope: KeyScope, Previous: json.RawMessage(`{}`)}
 	for key, allowed := range map[string]bool{
 		`{"access":{"schedule":{"deny":[{"days":["sun"],"start":"00:00","end":"01:00","timeZone":"UTC"}]}}}`: true,
 		`{"access":{"networks":{"allow":["10.0.0.0/8"]}}}`:                                                   false,
+		`{"access":{"transports":{"deny":["https"]}}}`:                                                       false,
 	} {
 		_, err := InspectSources([]InspectionSource{{Scope: OrganizationScope, Config: parent}, {Scope: KeyScope, Config: json.RawMessage(key)}}, edit)
 		if allowed != (err == nil) || !allowed && !errors.Is(err, ErrPolicyEditForbidden) {
 			t.Errorf("%s: %v", key, err)
 		}
 	}
-	// The whole section still names both settings.
+	// The whole section still names every setting.
 	var permission Permission
-	if err := json.Unmarshal([]byte(`["access"]`), &permission); err != nil || permission != permissionSchedule|permissionNetworks {
+	if err := json.Unmarshal([]byte(`["access"]`), &permission); err != nil || permission != permissionSchedule|permissionNetworks|permissionTransports {
 		t.Fatalf("access section %b %v", permission, err)
 	}
-	if raw, _ := json.Marshal(permission | permissionInput); string(raw) != `["access.networks","access.schedule","input"]` {
+	if raw, _ := json.Marshal(permission | permissionInput); string(raw) != `["access.networks","access.schedule","access.transports","input"]` {
 		t.Fatalf("access permission names %s", raw)
 	}
 }

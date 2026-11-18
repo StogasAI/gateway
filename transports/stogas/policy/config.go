@@ -279,8 +279,31 @@ type AllowedCatalogNodes struct {
 }
 
 type Access struct {
-	Schedule *Schedule `json:"schedule,omitempty"`
-	Networks *Networks `json:"networks,omitempty"`
+	Schedule   *Schedule   `json:"schedule,omitempty"`
+	Networks   *Networks   `json:"networks,omitempty"`
+	Transports *Transports `json:"transports,omitempty"`
+}
+
+// How the client reached the gateway: ordinary TLS, TLS with the gateway's
+// attestation evidence, or an end-to-end encrypted session. Request logs name
+// the same modes.
+const (
+	TransportHTTPS       = "https"
+	TransportAttestedTLS = "attested_tls"
+	TransportE2EE        = "e2ee"
+)
+
+var transports = []string{TransportHTTPS, TransportAttestedTLS, TransportE2EE}
+
+// Transports limits requests by their connection mode, as Networks limits them
+// by the client's address.
+type Transports struct {
+	// Allow, when present, admits only requests over its modes. A composed
+	// config holds the modes that every policy allows, so an empty list
+	// admits none.
+	Allow []string `json:"allow,omitzero"`
+	// Deny refuses requests over its modes.
+	Deny []string `json:"deny,omitzero"`
 }
 
 // Schedule refuses requests during weekly periods. It has no allow list,
@@ -567,10 +590,13 @@ func (a *Access) validate() error {
 	if a == nil {
 		return nil
 	}
-	if a.Schedule == nil && a.Networks == nil {
-		return configError("access requires schedule or networks")
+	if a.Schedule == nil && a.Networks == nil && a.Transports == nil {
+		return configError("access requires schedule, networks or transports")
 	}
 	if err := a.Networks.validate(); err != nil {
+		return err
+	}
+	if err := a.Transports.validate(); err != nil {
 		return err
 	}
 	if a.Schedule == nil {
@@ -706,6 +732,74 @@ func (n *Networks) validate() error {
 		return configError("access.networks.deny holds every network that allow lists")
 	}
 	return nil
+}
+
+// validate reads the lists of connection modes as Networks.validate reads
+// networks. An empty deny list replaces a default and refuses nothing, and a
+// deny list of every mode, as a default, refuses requests until a nearer
+// scope sets its own lists. An allow list that admits nothing would refuse
+// every request, which disabling the resource already says.
+func (t *Transports) validate() error {
+	if t == nil {
+		return nil
+	}
+	if t.Allow == nil && t.Deny == nil {
+		return configError("access.transports requires allow or deny")
+	}
+	if t.Allow != nil && len(t.Allow) == 0 {
+		return configError("access.transports.allow requires at least one connection mode")
+	}
+	if err := validateModes("allow", t.Allow); err != nil {
+		return err
+	}
+	if err := validateModes("deny", t.Deny); err != nil {
+		return err
+	}
+	if t.Allow != nil && !slices.ContainsFunc(t.Allow, t.admits) {
+		return configError("access.transports.deny holds every mode that allow lists")
+	}
+	return nil
+}
+
+func validateModes(list string, modes []string) error {
+	for index, mode := range modes {
+		if !slices.Contains(transports, mode) {
+			return configError("access.transports.%s has %q, which is not https, attested_tls or e2ee", list, mode)
+		}
+		if slices.Contains(modes[:index], mode) {
+			return configError("access.transports.%s lists %s twice", list, mode)
+		}
+	}
+	return nil
+}
+
+// admits reports whether the lists accept requests over the mode.
+func (t *Transports) admits(mode string) bool {
+	return (t.Allow == nil || slices.Contains(t.Allow, mode)) && !slices.Contains(t.Deny, mode)
+}
+
+// combine returns the modes that both allow and the modes that either denies,
+// in a fixed order.
+func (t *Transports) combine(other *Transports) *Transports {
+	if t == nil {
+		return other
+	}
+	out := &Transports{}
+	if t.Allow != nil || other.Allow != nil {
+		out.Allow = []string{}
+	}
+	if t.Deny != nil || other.Deny != nil {
+		out.Deny = []string{}
+	}
+	for _, mode := range transports {
+		if out.Allow != nil && (t.Allow == nil || slices.Contains(t.Allow, mode)) && (other.Allow == nil || slices.Contains(other.Allow, mode)) {
+			out.Allow = append(out.Allow, mode)
+		}
+		if slices.Contains(t.Deny, mode) || slices.Contains(other.Deny, mode) {
+			out.Deny = append(out.Deny, mode)
+		}
+	}
+	return out
 }
 
 // parseNetworks reads addresses and CIDR ranges. A range must name its first
@@ -856,6 +950,12 @@ func (c *Config) NetworkDenied(client netip.Addr) bool {
 	}
 	_, denied := networkHolding(networks.deny, client)
 	return denied
+}
+
+// TransportDenied reports whether the policies refuse requests over the
+// connection mode.
+func (c *Config) TransportDenied(transport string) bool {
+	return c != nil && c.Access != nil && c.Access.Transports != nil && !c.Access.Transports.admits(transport)
 }
 
 func (c *Config) DeniedAt(now time.Time) bool {

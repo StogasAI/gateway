@@ -97,6 +97,17 @@ func NetworkDenied(client netip.Addr) APIError {
 	return APIError{Code: "network_denied", StatusCode: http.StatusForbidden, Type: "permission_denied", Message: message}
 }
 
+// transportNames spell each connection mode as the docs do.
+var transportNames = map[string]string{
+	policy.TransportHTTPS: "ordinary HTTPS", policy.TransportAttestedTLS: "attested TLS", policy.TransportE2EE: "E2EE",
+}
+
+// TransportDenied refuses a request over a connection mode that a policy does
+// not admit. It names the mode that the gateway saw.
+func TransportDenied(transport string) APIError {
+	return APIError{Code: "transport_denied", StatusCode: http.StatusForbidden, Type: "permission_denied", Message: "Request is not allowed over " + transportNames[transport]}
+}
+
 func PublicError(err error) APIError {
 	if err == nil {
 		return APIError{}
@@ -122,7 +133,9 @@ type RequestInput struct {
 	Path   string
 	// ClientAddress is the address that the client connected from, which the
 	// load balancer's PROXY header states.
-	ClientAddress       netip.Addr
+	ClientAddress netip.Addr
+	// Transport is the connection mode that the request arrived over.
+	Transport           string
 	Policy              *policy.Config
 	RedactionPolicy     *redaction.Policy
 	LoadRedactionPolicy func() (*redaction.Policy, error)

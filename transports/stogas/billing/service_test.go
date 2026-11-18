@@ -16,6 +16,7 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/customerkey"
 	"github.com/maximhq/bifrost/transports/stogas/money"
 	"github.com/maximhq/bifrost/transports/stogas/plugins"
+	"github.com/maximhq/bifrost/transports/stogas/policy"
 )
 
 func TestParseSignedAPIKey(t *testing.T) {
@@ -537,7 +538,7 @@ func TestLargestRequestLogFitsTheLimit(t *testing.T) {
 		SessionID: quotes(MaxSessionIDBytes), TraceID: strings.Repeat("f", 32), Metadata: map[string]string{},
 		AppTitle: quotes(MaxMetadataValueBytes), AppURL: quotes(MaxMetadataValueBytes),
 		AgentID: quotes(MaxSessionIDBytes), ParentAgentID: quotes(MaxSessionIDBytes), AgentName: quotes(MaxSessionIDBytes),
-		Transport: TransportAttestedTLS, ClientStopMS: &count, CatalogVersion: new(uint64(1<<64 - 1)),
+		Transport: policy.TransportAttestedTLS, ClientStopMS: &count, CatalogVersion: new(uint64(1<<64 - 1)),
 		PolicyVersions: &LoggedPolicyVersions{}, NodeID: strings.Repeat("f", 64), GatewayVersion: "v" + strings.Repeat("9", 31),
 		Performance: RequestPerformance{TotalMS: count, RateLimitWaitMS: count, FirstOutputMS: &count, TTFTMS: &count},
 		Usage:       RequestUsage{UpstreamCostUSD: usd, BilledCostUSD: usd, CacheReadSavingsUSD: &usd, CacheWriteOverheadUSD: &usd, Meters: EventMeters{}},

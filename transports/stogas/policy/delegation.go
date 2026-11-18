@@ -32,15 +32,17 @@ const (
 	permissionOutputIdleTimeout
 	permissionMissingKeys
 	permissionNetworks
-	allPermissions     = permissionNetworks | (permissionNetworks - 1)
+	permissionTransports
+	allPermissions     = permissionTransports | (permissionTransports - 1)
 	requestPermissions = allPermissions &^ (permissionLimits | permissionDelegation)
 )
 
 var permissionSections = map[string]Permission{
-	"access":          permissionSchedule | permissionNetworks,
-	"access.schedule": permissionSchedule,
-	"access.networks": permissionNetworks,
-	"input":           permissionInput, "limits": permissionLimits,
+	"access":            permissionSchedule | permissionNetworks | permissionTransports,
+	"access.schedule":   permissionSchedule,
+	"access.networks":   permissionNetworks,
+	"access.transports": permissionTransports,
+	"input":             permissionInput, "limits": permissionLimits,
 	"timeouts":                      permissionTotalTimeout | permissionOutputIdleTimeout,
 	"timeouts.totalSeconds":         permissionTotalTimeout,
 	"timeouts.outputIdleSeconds":    permissionOutputIdleTimeout,

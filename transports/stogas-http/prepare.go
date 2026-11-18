@@ -90,6 +90,12 @@ func (s *Server) startRun(ctx *requestContext, startedAt time.Time, preparation 
 		s.writeCatalogError(ctx, catalog.NetworkDenied(client))
 		return nil
 	}
+	transport := ctx.transport()
+	if keyConfig.Config.TransportDenied(transport) {
+		run.releasePlan()
+		s.writeCatalogError(ctx, catalog.TransportDenied(transport))
+		return nil
+	}
 	var candidateBudget policy.SourceBudget
 	// The plan's root check covers every pair the request may try, so its
 	// roots are the ones the request needs.
@@ -102,6 +108,7 @@ func (s *Server) startRun(ctx *requestContext, startedAt time.Time, preparation 
 		Method:               ctx.request.Method,
 		Path:                 ctx.request.URL.Path,
 		ClientAddress:        client,
+		Transport:            transport,
 		Policy:               keyConfig.Config,
 		AvailableCredentials: keyConfig.AvailableCredentials(),
 		DeploymentEligible:   stogas.CredentialDeploymentFilter(keyConfig, startedAt),
