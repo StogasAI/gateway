@@ -101,11 +101,15 @@ func TestLiveChutesAttestation(t *testing.T) {
 
 // attestLiveChute reports whether Chutes did not serve the chute, or the reason that an instance
 // failed verification. An instance without evidence is starting or stopping, so it fails nothing.
+// A discovery that answers 404 lists no instance to verify, so Chutes did not serve the chute: on
+// November 18, 2026 it answered so for a hot chute for more than ten minutes.
 func attestLiveChute(t *testing.T, pools *poolState, live liveChutesTarget) (bool, error) {
 	target := ModelTarget{ChuteID: live.ChuteID, GPUCount: live.GPUCount}
 	discovered, _, err := pools.discover(target)
 	if err != nil {
-		return chutesOutage(err), err
+		var status *httpStatusError
+		notFound := errors.As(err, &status) && status.StatusCode == http.StatusNotFound
+		return notFound || chutesOutage(err), err
 	}
 	result, err := pools.attestor.verify(t.Context(), target, discovered, true)
 	if err == nil {
