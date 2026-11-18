@@ -153,19 +153,21 @@ func TestMeasurementPolicySkipsMalformedRecordsAndRejectsAmbiguousMatches(t *tes
 	}
 }
 
-// A TD passes only without debug and migration and with SEPT_VE_DISABLE, which every Chutes
-// instance reported, and any CPU feature bit leaves it a production TD.
+// A TD passes only with SEPT_VE_DISABLE and no other attribute, which every Chutes instance
+// reported: debug, profiling, migration and bits without a reviewed meaning all fail.
 func TestTDXAttributesRequireAProductionTD(t *testing.T) {
 	attributes := func(bits uint64) []byte { return binary.LittleEndian.AppendUint64(nil, bits) }
-	for _, bits := range []uint64{tdAttributeSEPTVEDisable, tdAttributeSEPTVEDisable | 1<<30 | 1<<31 | 1<<63} {
-		if err := validateTDAttributes(attributes(bits)); err != nil {
-			t.Fatalf("attributes %#x rejected: %v", bits, err)
-		}
+	if err := validateTDAttributes(attributes(tdAttributeSEPTVEDisable)); err != nil {
+		t.Fatalf("production attributes rejected: %v", err)
 	}
 	for name, bits := range map[string]uint64{
-		"debug":                   tdAttributeSEPTVEDisable | tdAttributeDebug,
+		"debug":                   tdAttributeSEPTVEDisable | 1<<0,
+		"performance profiling":   tdAttributeSEPTVEDisable | 1<<5,
+		"a reserved bit":          tdAttributeSEPTVEDisable | 1<<40,
 		"without SEPT_VE_DISABLE": 0,
-		"migratable":              tdAttributeSEPTVEDisable | tdAttributeMigratable,
+		"migratable":              tdAttributeSEPTVEDisable | 1<<29,
+		"Key Locker":              tdAttributeSEPTVEDisable | 1<<31,
+		"performance monitoring":  tdAttributeSEPTVEDisable | 1<<63,
 	} {
 		if err := validateTDAttributes(attributes(bits)); err == nil {
 			t.Errorf("%s: accepted", name)
@@ -173,6 +175,26 @@ func TestTDXAttributesRequireAProductionTD(t *testing.T) {
 	}
 	if err := validateTDAttributes(make([]byte, 7)); err == nil {
 		t.Fatal("expected malformed TDX attributes to be rejected")
+	}
+}
+
+// The host sets MRCONFIGID, MROWNER and MROWNERCONFIG, and no published measurement covers them,
+// so a quote passes only while all three are zero.
+func TestTDXOwnerFieldsMustBeZero(t *testing.T) {
+	zero := make([]byte, 48)
+	set := append(make([]byte, 47), 1)
+	if err := validateTDOwnerFields(&tdxpb.TDQuoteBody{MrConfigId: zero, MrOwner: zero, MrOwnerConfig: zero}); err != nil {
+		t.Fatalf("zero owner fields rejected: %v", err)
+	}
+	for name, body := range map[string]*tdxpb.TDQuoteBody{
+		"a configuration ID":     {MrConfigId: set, MrOwner: zero, MrOwnerConfig: zero},
+		"an owner":               {MrConfigId: zero, MrOwner: set, MrOwnerConfig: zero},
+		"an owner configuration": {MrConfigId: zero, MrOwner: zero, MrOwnerConfig: set},
+		"a missing field":        {MrConfigId: zero, MrOwner: zero},
+	} {
+		if err := validateTDOwnerFields(body); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
 	}
 }
 

@@ -257,6 +257,9 @@ func verifyTDXEvidence(
 	if err := validateTDAttributes(body.GetTdAttributes()); err != nil {
 		return nil, false, err
 	}
+	if err := validateTDOwnerFields(body); err != nil {
+		return nil, false, err
+	}
 
 	certificateDER, err := base64.StdEncoding.Strict().DecodeString(evidence.Certificate)
 	if err != nil || len(certificateDER) == 0 || len(certificateDER) > maxEvidenceCertSize {
@@ -384,26 +387,38 @@ func verifyAttestedEvidenceBody(body []byte, evidence instanceEvidence) error {
 	return nil
 }
 
-// TD attribute bits that the quote reports in little-endian order (Intel TDX module ABI).
-const (
-	tdAttributeDebug         = 1 << 0
-	tdAttributeSEPTVEDisable = 1 << 28
-	tdAttributeMigratable    = 1 << 29
-)
+// The one TD attribute bit that a production TD sets, in the quote's little-endian order (Intel TDX
+// module ABI).
+const tdAttributeSEPTVEDisable = 1 << 28
 
-// validateTDAttributes requires a production TD. Debug lets the host read and change the TD's
-// memory and registers. Without SEPT_VE_DISABLE the host can raise #VE exceptions in the TD as it
-// touches private memory, which the Linux guest kernel refuses to run with. A migratable TD hands
-// its keys to a migration service that the quote does not identify. The other bits enable CPU
-// features that keep the host out of the TD. On November 17, 2026 all 137 instances of the 11 TEE
-// chutes reported SEPT_VE_DISABLE and no other bit.
+// validateTDAttributes requires exactly the attributes of a production TD. Without SEPT_VE_DISABLE
+// the host can raise #VE exceptions in the TD as it touches private memory, which the Linux guest
+// kernel refuses to run with. Every other bit is refused: bits 0 to 7 mark a TD that the host can
+// debug or profile, a migratable TD hands its keys to a migration service that the quote does not
+// identify, and a bit that this code does not know has no reviewed meaning. On November 18, 2026
+// every instance of the 11 TEE chutes reported SEPT_VE_DISABLE and no other bit, so a chute that
+// turns on a CPU feature bit, such as PKS or Key Locker, fails the daily drift check until that
+// bit is reviewed here.
 func validateTDAttributes(attributes []byte) error {
 	if len(attributes) != 8 {
 		return fmt.Errorf("%w: TDX attributes are invalid", ErrAttestationFailed)
 	}
-	value := binary.LittleEndian.Uint64(attributes)
-	if value&tdAttributeDebug != 0 || value&tdAttributeSEPTVEDisable == 0 || value&tdAttributeMigratable != 0 {
-		return fmt.Errorf("%w: TDX attributes allow debugging, #VE on private memory or migration", ErrAttestationFailed)
+	if binary.LittleEndian.Uint64(attributes) != tdAttributeSEPTVEDisable {
+		return fmt.Errorf("%w: TDX attributes are not those of a production TD", ErrAttestationFailed)
+	}
+	return nil
+}
+
+// validateTDOwnerFields requires that the host gave the TD no configuration or owner identity.
+// MRCONFIGID, MROWNER and MROWNERCONFIG are values that the host sets when it creates the TD, and
+// Chutes' published measurements cover none of them, so a guest that read one would run with
+// input that no reference value describes. Every instance reported all three as zero on
+// November 18, 2026.
+func validateTDOwnerFields(body *tdxpb.TDQuoteBody) error {
+	for _, field := range [][]byte{body.GetMrConfigId(), body.GetMrOwner(), body.GetMrOwnerConfig()} {
+		if len(field) != 48 || !bytes.Equal(field, make([]byte, 48)) {
+			return fmt.Errorf("%w: TDX quote carries a host-set configuration or owner value", ErrAttestationFailed)
+		}
 	}
 	return nil
 }
