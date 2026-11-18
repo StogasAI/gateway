@@ -77,6 +77,8 @@ test('the bill of materials lists the pinned sources, crates and built Go module
 		{ alg: 'SHA-256', content: '348bda24330eb231c0f27d630212d2833ac0cf2d4782bfa136b6f9edefbde05d' }
 	]);
 	assert.equal(result.metadata.component.purl, `pkg:github/StogasAI/gateway@${release.commit}`);
+	// Python's uuid.uuid5(uuid.NAMESPACE_URL, 'pkg:github/StogasAI/gateway@v1.2.3').
+	assert.equal(result.serialNumber, 'urn:uuid:0d3a489d-abdf-580e-a014-111455599fb7');
 	assert.deepEqual(result.dependencies[0].dependsOn, Object.keys(scopes));
 });
 

@@ -75,7 +75,7 @@ The manifest records the image hash and size, the launch measurement and launch 
 
 ## Bill of materials
 
-`sbom.cdx.json` is a CycloneDX 1.6 file that you can give to a vulnerability scanner such as OSV-Scanner, Grype, or Dependency-Track. `scripts/sbom.mjs` writes it from the tagged source alone, so a rebuild gives the same bytes. It lists:
+`sbom.cdx.json` is a CycloneDX 1.6 file that you can give to a vulnerability scanner such as OSV-Scanner, Grype, or Dependency-Track. `scripts/sbom.mjs` writes it from the tagged source alone, so a rebuild gives the same bytes. Its serial number is the version 5 UUID of `pkg:github/StogasAI/gateway@<tag>` in the URL namespace, so each release has its own. It lists:
 
 - Each source in `pins.lock.json`, at its commit. Linux, systemd, EDK II, and the Go standard library also carry the CPE that the NVD uses.
 - Each Go module that the build vendors, with its `go.sum` hash.

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Writes the CycloneDX bill of materials of a release from its captured source, so the same tag
 // gives the same bytes.
+import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -47,6 +48,15 @@ const LOCKS = {
 	'stogas-verifier.Cargo.lock': IMAGE,
 	'virt-firmware-rs.Cargo.lock': BUILD_TOOL
 };
+
+// The version 5 UUID of a URL, from the namespace that RFC 9562 gives URLs. A package URL is one.
+function urlUuid(url) {
+	const namespace = Buffer.from('6ba7b8119dad11d180b400c04fd430c8', 'hex');
+	const hash = createHash('sha1').update(namespace).update(url).digest();
+	hash[6] = (hash[6] & 0x0f) | 0x50;
+	hash[8] = (hash[8] & 0x3f) | 0x80;
+	return hash.toString('hex', 0, 16).replace(/^(.{8})(.{4})(.{4})(.{4})/, '$1-$2-$3-$4-');
+}
 
 function sameKeys(table, names, label) {
 	const known = Object.keys(table).sort().join(' ');
@@ -148,6 +158,9 @@ export function bom(sourceRoot, { tag, commit, time }) {
 	return {
 		bomFormat: 'CycloneDX',
 		specVersion: '1.6',
+		// GitHub attests no CycloneDX file without a serial number. One that names the release
+		// stays the same when the tag is built again.
+		serialNumber: `urn:uuid:${urlUuid(`pkg:github/StogasAI/gateway@${tag}`)}`,
 		version: 1,
 		metadata: {
 			timestamp: new Date(time * 1000).toISOString(),
