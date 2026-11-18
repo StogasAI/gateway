@@ -82,21 +82,24 @@ type Deployment struct {
 	RouteID   string
 	// Hosting is the company that runs the model: the provider's own, another whose service the
 	// provider resells, or HostingUnknown.
-	Hosting             string
-	Upstream            Upstream
-	Capabilities        Capabilities
-	DocumentFormats     DocumentFormats
-	InputModalities     []string
-	OutputModalities    []string
-	ContextWindowTokens int
-	MaxInputTokens      int
-	MaxOutputTokens     int
-	Pricing             Pricing
-	Reasoning           string
-	ReasoningEfforts    []string
-	ReasoningMaxTokens  *ReasoningMaxTokens
-	ReasoningSupported  bool
-	DataHandling        DataHandling
+	Hosting  string
+	Upstream Upstream
+	// SupportsCancellation states that the route's streams report the usage so far and that the
+	// provider bills a stream that the client stops for no more than its last report.
+	SupportsCancellation bool
+	Capabilities         Capabilities
+	DocumentFormats      DocumentFormats
+	InputModalities      []string
+	OutputModalities     []string
+	ContextWindowTokens  int
+	MaxInputTokens       int
+	MaxOutputTokens      int
+	Pricing              Pricing
+	Reasoning            string
+	ReasoningEfforts     []string
+	ReasoningMaxTokens   *ReasoningMaxTokens
+	ReasoningSupported   bool
+	DataHandling         DataHandling
 	// HostedTools are the tools that the route runs for the deployment. Each can only make
 	// DataHandling worse, for requests that let the model call it.
 	HostedTools map[HostedTool]HostedToolOffer
@@ -383,4 +386,7 @@ type compiledRoute struct {
 	ProviderID      string          `json:"providerId"`
 	// The day that the provider names for shutting the route down, or for its own end.
 	RetirementDate *string `json:"retirementDate"`
+	// The provider bills a stream that the client stops for no more than the usage that the
+	// stream reported, so a call can stop when its client does.
+	SupportsCancellation bool `json:"supportsCancellation"`
 }

@@ -67,11 +67,10 @@ func HasMeasuredUsage(state *State) bool {
 	return state != nil && hasMeasuredUsage(state.Signals)
 }
 
-// MarkRunningUsage records that the provider reports the usage so far with its output and bills a
-// call that stops by that report. Only Chutes' encrypted route does both: its instances add usage to
-// every chunk, and Chutes bills a stopped call for no more than the last usage that it saw. The
-// request keeps the mark because a stream that reports usage has started, and no other call follows
-// a started stream.
+// MarkRunningUsage records that the stream of a route that supports cancellation in the catalog has
+// reported the usage so far with its output, so stopping the call bills that report. The request
+// keeps the mark because a stream that reports usage has started, and no other call follows a
+// started stream.
 func (s *State) MarkRunningUsage() {
 	if s != nil {
 		s.runningUsage.Store(true)

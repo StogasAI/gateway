@@ -264,7 +264,8 @@ func (s *snapshot) deploymentFromCompiledAt(deploymentID string, route compiledR
 			ServiceTier:    deployment.Upstream.ServiceTier,
 			DeploymentType: deployment.Upstream.DeploymentType,
 		},
-		Capabilities: served.Capabilities,
+		SupportsCancellation: route.SupportsCancellation,
+		Capabilities:         served.Capabilities,
 		DocumentFormats: DocumentFormats{
 			MediaTypes: slices.Clone(route.DocumentFormats.MediaTypes),
 			Extensions: slices.Clone(route.DocumentFormats.Extensions),
