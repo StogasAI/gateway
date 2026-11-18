@@ -9,4 +9,5 @@ models:
   reasoning: optional
   reasoningEfforts: [low, medium, xhigh]
   openWeights: true
+  weightsUrl: https://huggingface.co/Qwen/Qwen3.8-27B
   releaseDate: 2026-08-13

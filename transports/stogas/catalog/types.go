@@ -327,6 +327,9 @@ type compiledModel struct {
 	ReasoningEffortsByInterface shown `json:"reasoningEffortsByInterface"`
 	Sampling                    shown `json:"sampling"`
 	Snapshot                    shown `json:"snapshot"`
+	Succeeds                    shown `json:"succeeds"`
+	SuccessorIDs                shown `json:"successorIds"`
+	WeightsURL                  shown `json:"weightsUrl"`
 
 	Aliases            []string            `json:"aliases"`
 	AuthorID           string              `json:"authorId"`

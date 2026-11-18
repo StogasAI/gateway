@@ -9,4 +9,5 @@ models:
   reasoning: required
   reasoningEfforts: [low, high, max]
   openWeights: true
+  weightsUrl: https://huggingface.co/moonshotai/Kimi-K3
   releaseDate: 2026-07-16

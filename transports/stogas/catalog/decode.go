@@ -70,6 +70,7 @@ type summary struct {
 	Interfaces  shown `json:"interfaces"`
 	Name        shown `json:"name"`
 	ReleaseDate shown `json:"releaseDate"`
+	Succeeds    shown `json:"succeeds"`
 
 	Aliases        []string `json:"aliases"`
 	AuthorID       string   `json:"authorId"`

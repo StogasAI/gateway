@@ -8,4 +8,5 @@ models:
   outputModalities: [text]
   reasoning: optional
   openWeights: true
+  weightsUrl: https://huggingface.co/deepseek-ai/DeepSeek-V3.2
   releaseDate: 2025-12-01

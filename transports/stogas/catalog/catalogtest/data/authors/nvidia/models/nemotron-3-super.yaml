@@ -8,4 +8,5 @@ models:
   outputModalities: [text]
   reasoning: optional
   openWeights: true
+  weightsUrl: https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16
   releaseDate: 2026-03-11

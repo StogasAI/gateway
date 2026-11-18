@@ -8,4 +8,5 @@ models:
   outputModalities: [text]
   reasoning: optional
   openWeights: true
+  weightsUrl: https://huggingface.co/MiniMaxAI/MiniMax-M3
   releaseDate: 2026-06-01

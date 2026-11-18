@@ -8,6 +8,7 @@ models:
   outputModalities: [text]
   reasoning: optional
   openWeights: true
+  weightsUrl: https://huggingface.co/google/gemma-4-26B-A4B-it
   releaseDate: 2026-03-31
   # Google discloses the same January 2025 pre-training cutoff for the Gemma 4 family.
   knowledgeCutoff: 2025-01-01

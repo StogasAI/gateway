@@ -9,4 +9,5 @@ models:
   reasoning: optional
   reasoningEfforts: [high, max]
   openWeights: true
+  weightsUrl: https://huggingface.co/zai-org/GLM-5.2
   releaseDate: 2026-06-16

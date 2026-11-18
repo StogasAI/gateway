@@ -11,4 +11,5 @@ models:
     minimum: 1
     maximum: 262143
   openWeights: true
+  weightsUrl: https://huggingface.co/nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16
   releaseDate: 2026-04-28

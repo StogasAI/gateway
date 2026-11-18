@@ -8,4 +8,5 @@ models:
   outputModalities: [text]
   reasoning: optional
   openWeights: true
+  weightsUrl: https://huggingface.co/zai-org/GLM-5.1
   releaseDate: 2026-04-07

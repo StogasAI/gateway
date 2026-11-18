@@ -8,6 +8,7 @@ models:
   outputModalities: [text]
   reasoning: unsupported
   openWeights: true
+  weightsUrl: https://huggingface.co/mistralai/Mistral-Nemo-Instruct-2407
   snapshot: 2024-07-01
   releaseDate: 2024-07-18
   knowledgeCutoff: 2024-04-01

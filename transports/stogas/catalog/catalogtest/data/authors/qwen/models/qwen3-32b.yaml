@@ -8,4 +8,5 @@ models:
   outputModalities: [text]
   reasoning: optional
   openWeights: true
+  weightsUrl: https://huggingface.co/Qwen/Qwen3-32B
   releaseDate: 2025-04-29

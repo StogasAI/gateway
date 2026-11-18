@@ -8,5 +8,6 @@ models:
   outputModalities: [text]
   reasoning: optional
   openWeights: true
+  weightsUrl: https://huggingface.co/google/gemma-4-31B-it
   releaseDate: 2026-03-31
   knowledgeCutoff: 2025-01-01

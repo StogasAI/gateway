@@ -8,4 +8,5 @@ models:
   outputModalities: [text]
   reasoning: optional
   openWeights: true
+  weightsUrl: https://huggingface.co/moonshotai/Kimi-K2.6
   releaseDate: 2026-04-21
