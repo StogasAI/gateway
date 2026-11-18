@@ -59,8 +59,8 @@ test('the bill of materials lists the pinned sources, crates and built Go module
 		result.components.find(({ name }) => name === 'linux').cpe,
 		`cpe:2.3:o:linux:linux_kernel:${pins.linux.version}:*:*:*:*:*:*:*`
 	);
-	// igvmmeasure alone uses base16ct. The NTP daemon in the image also uses digest.
-	assert.equal(scopes['pkg:cargo/base16ct@0.2.0'], 'excluded');
+	// igvmmeasure alone uses igvm. The NTP daemon in the image also uses digest.
+	assert.equal(scopes['pkg:cargo/igvm@0.4.0'], 'excluded');
 	assert.equal(scopes['pkg:cargo/digest@0.10.7'], 'required');
 
 	assert.deepEqual(
