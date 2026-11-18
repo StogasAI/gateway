@@ -217,41 +217,46 @@ func TestRequestContextDisconnectPolicyAndCleanup(t *testing.T) {
 	}
 }
 
+// On synctest's clock, the one-second wait passes only once every goroutine waits, so a busy machine
+// cannot fail the test.
 func TestClientDisconnectDrainsFinalUsage(t *testing.T) {
-	server := &Server{}
-	ctx := newTestRequest(t)
-	provider, cancel := schemas.NewBifrostContextWithCancel(t.Context())
-	defer cancel()
-	state := &stogas.State{Pair: stogas.Pair{Resolution: testResolution(), Adapter: stogas.DefaultAdapter{}}}
-	stream := make(chan *schemas.BifrostStreamChunk, 1)
-	var closeOnce sync.Once
-	closeStream := func() { closeOnce.Do(func() { close(stream) }) }
-	defer closeStream()
-	finished := make(chan struct{})
-	reader := startTestStream(server, ctx, provider, state, stream, cancel, func() { close(finished) })
-	if err := reader.Close(); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case <-provider.Done():
-		t.Fatal("client disconnect ended the billing read")
-	default:
-	}
-	stream <- &schemas.BifrostStreamChunk{BifrostChatResponse: &schemas.BifrostChatResponse{
-		ID: "chatcmpl_cancel", Object: "chat.completion.chunk", Model: "gpt-5.5",
-		Choices: []schemas.BifrostResponseChoice{{Index: 0, FinishReason: schemas.Ptr("stop"), ChatStreamResponseChoice: &schemas.ChatStreamResponseChoice{Delta: &schemas.ChatStreamResponseChoiceDelta{}}}},
-		Usage:   &schemas.BifrostLLMUsage{PromptTokens: 17, CompletionTokens: 23, TotalTokens: 40},
-	}}
-	closeStream()
-	select {
-	case <-finished:
-	case <-time.After(time.Second):
-		t.Fatal("cancelled provider stream did not finish")
-	}
-	if state.Signals == nil || state.Signals.PromptTokens() != 17 || state.Signals.CompletionTokens() != 23 {
-		t.Fatalf("lost final usage after disconnect: %#v", state.Signals)
-	}
-	if state.ClientStopped().IsZero() || state.BifrostError != nil {
-		t.Fatalf("client disconnect changed provider outcome: %#v", state.BifrostError)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		server := &Server{}
+		ctx := newTestRequest(t)
+		provider, cancel := schemas.NewBifrostContextWithCancel(t.Context())
+		defer cancel()
+		state := &stogas.State{Pair: stogas.Pair{Resolution: testResolution(), Adapter: stogas.DefaultAdapter{}}}
+		stream := make(chan *schemas.BifrostStreamChunk, 1)
+		var closeOnce sync.Once
+		closeStream := func() { closeOnce.Do(func() { close(stream) }) }
+		defer closeStream()
+		finished := make(chan struct{})
+		reader := startTestStream(server, ctx, provider, state, stream, cancel, func() { close(finished) })
+		if err := reader.Close(); err != nil {
+			t.Fatal(err)
+		}
+		synctest.Wait()
+		select {
+		case <-provider.Done():
+			t.Fatal("client disconnect ended the billing read")
+		default:
+		}
+		stream <- &schemas.BifrostStreamChunk{BifrostChatResponse: &schemas.BifrostChatResponse{
+			ID: "chatcmpl_cancel", Object: "chat.completion.chunk", Model: "gpt-5.5",
+			Choices: []schemas.BifrostResponseChoice{{Index: 0, FinishReason: schemas.Ptr("stop"), ChatStreamResponseChoice: &schemas.ChatStreamResponseChoice{Delta: &schemas.ChatStreamResponseChoiceDelta{}}}},
+			Usage:   &schemas.BifrostLLMUsage{PromptTokens: 17, CompletionTokens: 23, TotalTokens: 40},
+		}}
+		closeStream()
+		select {
+		case <-finished:
+		case <-time.After(time.Second):
+			t.Fatal("cancelled provider stream did not finish")
+		}
+		if state.Signals == nil || state.Signals.PromptTokens() != 17 || state.Signals.CompletionTokens() != 23 {
+			t.Fatalf("lost final usage after disconnect: %#v", state.Signals)
+		}
+		if state.ClientStopped().IsZero() || state.BifrostError != nil {
+			t.Fatalf("client disconnect changed provider outcome: %#v", state.BifrostError)
+		}
+	})
 }
