@@ -589,7 +589,8 @@ func TestEveryChutesDeploymentPricesCompleteUsageExactly(t *testing.T) {
 				t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 			}
 
-			pricing := billing.WithReasoningTokenFallback(deployment.Pricing)
+			// A dated state can change a price, so the rates are those of the record in effect.
+			pricing := billing.WithReasoningTokenFallback(state.Resolution.Deployment.Pricing)
 			wantTotal := new(money.USD)
 			for _, meterKey := range []string{
 				billing.MeterInputTokens,

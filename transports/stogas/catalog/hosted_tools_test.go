@@ -74,10 +74,10 @@ func TestEffectiveDataHandlingOnlyWorsens(t *testing.T) {
 				SharedWith: []string{"anthropic", "openai", "unknown"}, WithoutCertifications: []string{"hipaa-eligible", "fedramp-high"}}},
 		},
 	}
-	if got := deployment.EffectiveDataHandling(nil); !reflect.DeepEqual(got, deployment.DataHandling) {
+	if got := deployment.EffectiveDataHandling(nil, nil); !reflect.DeepEqual(got, deployment.DataHandling) {
 		t.Fatalf("no tools changed data handling: %+v", got)
 	}
-	search := deployment.EffectiveDataHandling([]HostedTool{HostedToolWebSearch})
+	search := deployment.EffectiveDataHandling(nil, []HostedTool{HostedToolWebSearch})
 	// A tool that keeps content ends zero data retention although its record does not say so.
 	if search.ProcessingLocation != "world" || search.StorageLocation != "none" || search.RetentionDays == nil || *search.RetentionDays != 30 ||
 		search.ZeroDataRetention || !search.TEEVerified || !search.EndToEndEncrypted {
@@ -86,11 +86,11 @@ func TestEffectiveDataHandlingOnlyWorsens(t *testing.T) {
 	// A tool that leaves the TEE ends the encryption and the verification that rest on it.
 	outside := deployment
 	outside.HostedTools = map[HostedTool]HostedToolOffer{HostedToolWebSearch: {DataHandling: HostedToolDataHandling{TEE: &no}}}
-	if got := outside.EffectiveDataHandling([]HostedTool{HostedToolWebSearch}); got.TEE || got.TEEVerified || got.EndToEndEncrypted ||
+	if got := outside.EffectiveDataHandling(nil, []HostedTool{HostedToolWebSearch}); got.TEE || got.TEEVerified || got.EndToEndEncrypted ||
 		!got.ZeroDataRetention {
 		t.Fatalf("a tool outside the TEE: %+v", got)
 	}
-	fetch := deployment.EffectiveDataHandling([]HostedTool{HostedToolWebSearch, HostedToolWebFetch})
+	fetch := deployment.EffectiveDataHandling(nil, []HostedTool{HostedToolWebSearch, HostedToolWebFetch})
 	if fetch.ProcessingLocation != "unknown" || fetch.StorageLocation != "unknown" || fetch.RetentionDays != nil || fetch.ZeroDataRetention ||
 		fetch.TrainingUse == nil || !*fetch.TrainingUse || fetch.EndToEndEncrypted || fetch.TEE || fetch.TEEVerified ||
 		!slices.Equal(fetch.SharedWith, []string{"anthropic", "openai", "unknown"}) || !slices.Equal(search.SharedWith, []string{"openai"}) {
@@ -106,7 +106,7 @@ func TestEffectiveDataHandlingOnlyWorsens(t *testing.T) {
 	}
 	offered := deployment
 	delete(offered.HostedTools, HostedToolWebFetch)
-	if got := offered.EffectiveDataHandling([]HostedTool{HostedToolWebFetch}); !reflect.DeepEqual(got, deployment.DataHandling) {
+	if got := offered.EffectiveDataHandling(nil, []HostedTool{HostedToolWebFetch}); !reflect.DeepEqual(got, deployment.DataHandling) {
 		t.Fatalf("a tool that the deployment does not run changed data handling: %+v", got)
 	}
 }

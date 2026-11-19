@@ -27,9 +27,18 @@ type CachedCredential struct {
 	EncryptionKeyID string                   `json:"encryptionKeyId"`
 	Bindings        []AzureCredentialBinding `json:"bindings"`
 	Target          *CloudTarget             `json:"target"`
+	AccountOptions  []HeldOption             `json:"accountOptions"`
 	Policy          credentialPolicyRecord   `json:"policy"`
 	policySource    *sharedCredentialPolicy
 	azureBindings   map[azureBindingKey][]*AzureCredentialBinding
+}
+
+// HeldOption is an account option, named by its catalog ID, that the provider account behind a
+// credential holds. Declared says that only the credential's owner states it: the provider did
+// not report it for the account.
+type HeldOption struct {
+	ID       string `json:"id"`
+	Declared bool   `json:"declared"`
 }
 
 // CloudTarget is the public part of an AWS or Google Cloud credential: who may
@@ -122,6 +131,15 @@ func (s *KeyConfigSnapshot) UsesBYOK(provider string, index int) bool {
 	}
 	selections := s.Credentials[provider]
 	return index >= 0 && index < len(selections) && selections[index].customerOwned()
+}
+
+// AccountOptions gives the account options that an assigned customer credential holds. Stogas's
+// own credentials hold none: the catalog states the facts of its accounts.
+func (s *KeyConfigSnapshot) AccountOptions(provider string, index int) []HeldOption {
+	if !s.UsesBYOK(provider, index) || s.Credentials[provider][index].Credential == nil {
+		return nil
+	}
+	return s.Credentials[provider][index].Credential.AccountOptions
 }
 
 // CustomerCredentialID is the ID of an assigned credential that is the

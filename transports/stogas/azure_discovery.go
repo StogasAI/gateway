@@ -118,11 +118,14 @@ type azureDiscoveredBinding struct {
 // azureDiscovery is what a discovery found: the targets, every deployment that the account lists,
 // a problem that leaves the targets in place, and the account's name.
 type azureDiscovery struct {
-	Bindings     []azureDiscoveredBinding
-	Deployments  []billing.AzureDeployment
-	CheckError   string
-	DiscoveredAt time.Time
-	Name         string
+	Bindings    []azureDiscoveredBinding
+	Deployments []billing.AzureDeployment
+	// AccountOptions says, by the catalog's ID, whether the account holds each account option
+	// that Azure reports.
+	AccountOptions map[string]bool
+	CheckError     string
+	DiscoveredAt   time.Time
+	Name           string
 }
 
 // armReads makes a discovery's reads of Azure Resource Manager, a few at a time, each bounded in
@@ -656,6 +659,28 @@ func readAzureAccount(value json.RawMessage) (azureAccount, bool) {
 		ok && idOK && kindOK && locationOK && nameOK && propertiesOK && endpointsOK && subdomainOK && publicOK && aclsOK
 }
 
+// azureAbuseMonitoringOption is the catalog's ID of the account option that an Azure account
+// reports.
+const azureAbuseMonitoringOption = "modified-abuse-monitoring"
+
+// azureReportedOptions reads the account options that an account reports. Azure lists the
+// capability ContentLogging, with the value false, only for an account whose subscription
+// Microsoft approved to turn off data storage for abuse monitoring:
+// https://learn.microsoft.com/en-us/azure/foundry/responsible-ai/openai/data-privacy
+func azureReportedOptions(properties map[string]json.RawMessage) map[string]bool {
+	var capabilities []struct {
+		Name  string `json:"name"`
+		Value string `json:"value"`
+	}
+	// A list of another shape reports nothing, and the option stays not held.
+	_ = json.Unmarshal(properties["capabilities"], &capabilities)
+	off := false
+	for _, capability := range capabilities {
+		off = off || capability.Name == "ContentLogging" && strings.EqualFold(trimJS(capability.Value), "false")
+	}
+	return map[string]bool{azureAbuseMonitoringOption: off}
+}
+
 // modelAccount reports a Foundry or Azure OpenAI account, the kinds that serve models.
 func (a azureAccount) modelAccount() bool {
 	kind := strings.ToLower(trimJS(a.kind))
@@ -799,7 +824,8 @@ func discoverAzure(ctx context.Context, client *http.Client, token string, accou
 	if err != nil {
 		return nil, err
 	}
-	result := &azureDiscovery{DiscoveredAt: now, Deployments: deployments, Name: trimJS(account.name)}
+	result := &azureDiscovery{DiscoveredAt: now, Deployments: deployments, Name: trimJS(account.name),
+		AccountOptions: azureReportedOptions(account.properties)}
 	// Instant targets take roles from their project, so only the account's own deployments need one.
 	if len(bindings) > 0 {
 		role, err := azureHasModelRole(ctx, reads, accountID)

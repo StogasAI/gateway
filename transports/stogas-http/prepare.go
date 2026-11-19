@@ -115,6 +115,9 @@ func (s *Server) startRun(ctx *requestContext, startedAt time.Time, preparation 
 		CredentialBYOK: func(provider schemas.ModelProvider, index int) bool {
 			return keyConfig.UsesBYOK(string(provider), index)
 		},
+		CredentialOptions: func(provider schemas.ModelProvider, index int) []billing.HeldOption {
+			return keyConfig.AccountOptions(string(provider), index)
+		},
 		LoadRedactionPolicy: keyConfig.RedactionPolicy,
 		ReserveBody: func(bytes int) error {
 			if !lease.resize(max(bodyCapacity, bytes)) {

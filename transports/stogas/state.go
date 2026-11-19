@@ -196,6 +196,7 @@ type providerAttemptObservation struct {
 	CatalogChainHash string
 	Provider         string
 	Byok             string
+	AccountOptions   []billing.HeldOption
 	StartedAt        time.Time
 	CompletedAt      time.Time
 	Response         *schemas.BifrostResponse
@@ -346,6 +347,7 @@ func (s *State) beginProviderAttempt(startedAt time.Time) int {
 	attempt := providerAttemptObservation{StartedAt: startedAt}
 	if s.Resolution != nil {
 		attempt.CatalogChainHash = s.Resolution.Deployment.ChainHash
+		attempt.AccountOptions = s.Resolution.AccountOptions()
 	}
 	if s.Authorization != nil {
 		attempt.Byok = s.Authorization.UpstreamByok
@@ -439,6 +441,7 @@ func (s *State) providerAttemptInputs() []billing.ProviderAttemptInput {
 		attempts[index] = billing.ProviderAttemptInput{
 			Provider:                 attempt.Provider,
 			Byok:                     attempt.Byok,
+			AccountOptions:           attempt.AccountOptions,
 			CatalogChainHash:         attempt.CatalogChainHash,
 			ResolvedCatalogChainHash: attempt.CatalogChainHash,
 			StartedAt:                attempt.StartedAt,

@@ -103,6 +103,9 @@ type Deployment struct {
 	// HostedTools are the tools that the route runs for the deployment. Each can only make
 	// DataHandling worse, for requests that let the model call it.
 	HostedTools map[HostedTool]HostedToolOffer
+	// AccountOptions are the options of the provider that reach the deployment on its route.
+	// One that a credential holds sets its facts over DataHandling.
+	AccountOptions []AccountOption
 	// Locations are the places of the catalog that the deployment belongs to, which say what
 	// lies within each data handling location.
 	Locations        *location.Places
@@ -236,9 +239,12 @@ type compiledDeployment struct {
 }
 
 type compiledDeploymentRoute struct {
-	Capabilities Capabilities `json:"capabilities"`
-	ChainHash    string       `json:"chainHash"`
-	DataHandling DataHandling `json:"dataHandling"`
+	// AccountOptions are the IDs of the provider's account options that reach the deployment on
+	// the route, in the provider's order.
+	AccountOptions []string     `json:"accountOptions"`
+	Capabilities   Capabilities `json:"capabilities"`
+	ChainHash      string       `json:"chainHash"`
+	DataHandling   DataHandling `json:"dataHandling"`
 	// HostedTools are the tools that the route runs for this deployment, each with its call meters.
 	HostedTools map[HostedTool]HostedToolOffer `json:"hostedTools"`
 	// InputLimits are the provider's limits on a request and its files. The provider enforces
@@ -334,27 +340,33 @@ type compiledModel struct {
 	SuccessorIDs                shown `json:"successorIds"`
 	WeightsURL                  shown `json:"weightsUrl"`
 
-	Aliases            []string            `json:"aliases"`
-	AuthorID           string              `json:"authorId"`
-	GroupIDs           []string            `json:"groupIds"`
-	MaxOutputTokens    int                 `json:"maxOutputTokens"`
-	Name               string              `json:"name"`
-	OpenWeights        bool                `json:"openWeights"`
-	Reasoning          string              `json:"reasoning"`
-	ReasoningEfforts   []string            `json:"reasoningEfforts"`
-	ReasoningMaxTokens *ReasoningMaxTokens `json:"reasoningMaxTokens"`
-	ReleaseDate        string              `json:"releaseDate"`
+	Aliases         []string `json:"aliases"`
+	AuthorID        string   `json:"authorId"`
+	GroupIDs        []string `json:"groupIds"`
+	MaxOutputTokens int      `json:"maxOutputTokens"`
+	// MinimumRetentionDays is the retention that the model's developer requires wherever the
+	// model runs. No account option brings a deployment of the model under it.
+	MinimumRetentionDays *int                `json:"minimumRetentionDays"`
+	Name                 string              `json:"name"`
+	OpenWeights          bool                `json:"openWeights"`
+	Reasoning            string              `json:"reasoning"`
+	ReasoningEfforts     []string            `json:"reasoningEfforts"`
+	ReasoningMaxTokens   *ReasoningMaxTokens `json:"reasoningMaxTokens"`
+	ReleaseDate          string              `json:"releaseDate"`
 }
 
 type compiledProvider struct {
 	// AccountLocations are the places where an account's resources can keep data. A credential
 	// narrows storage to its resource's place, which the gateway checks against the catalog's places.
-	AccountLocations shown    `json:"accountLocations"`
-	Notes            shown    `json:"notes"`
-	RetirementDate   shown    `json:"retirementDate"`
-	StogasByok       shown    `json:"stogasByok"`
-	StogasManaged    shown    `json:"stogasManaged"`
-	Aliases          []string `json:"aliases"`
+	AccountLocations shown `json:"accountLocations"`
+	// AccountOptions are the agreements and settings of a customer's account that change how the
+	// provider handles requests. A credential holds the ones that its account has taken up.
+	AccountOptions []AccountOption `json:"accountOptions"`
+	Notes          shown           `json:"notes"`
+	RetirementDate shown           `json:"retirementDate"`
+	StogasByok     shown           `json:"stogasByok"`
+	StogasManaged  shown           `json:"stogasManaged"`
+	Aliases        []string        `json:"aliases"`
 	// CompanyID names the provider's company, whose headquarters HeadquarteredCountry repeats.
 	CompanyID            string `json:"companyId"`
 	HeadquarteredCountry string `json:"headquarteredCountry"`

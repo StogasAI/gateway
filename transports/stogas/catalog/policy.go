@@ -56,6 +56,14 @@ type policyDataHandling struct {
 	StorageWithin    []string `json:"storageWithin"`
 }
 
+// policyCredentialData is the pair's credential as policies read it: the account options that
+// apply to the deployment, and those among them that the credential's owner declared, which no
+// provider confirmed.
+type policyCredentialData struct {
+	AccountOptions         []string `json:"accountOptions"`
+	DeclaredAccountOptions []string `json:"declaredAccountOptions"`
+}
+
 type policyRequestData struct {
 	BodyBytes   int      `json:"bodyBytes"`
 	ClientTools []string `json:"clientTools"`
@@ -409,6 +417,13 @@ func newResolvedPolicyValues(candidate *ResolvedRequest) (*resolvedPolicyValues,
 	for i, tool := range candidate.hostedTools {
 		hostedTools[i] = string(tool)
 	}
+	accountOptions, declaredOptions := []string{}, []string{}
+	for _, option := range candidate.accountOptions {
+		accountOptions = append(accountOptions, option.ID)
+		if option.Declared {
+			declaredOptions = append(declaredOptions, option.ID)
+		}
+	}
 	return &resolvedPolicyValues{now: candidate.policyTime, budget: candidate.policyBudget, pricing: deployment.Pricing, root: map[string]policyNode{
 		"author": {id: ids.author, fields: author},
 		"deployment": {
@@ -442,10 +457,11 @@ func newResolvedPolicyValues(candidate *ResolvedRequest) (*resolvedPolicyValues,
 				WeightPrecision:    deployment.WeightPrecision,
 			},
 		},
-		"model":    {id: ids.model, fields: model},
-		"provider": {id: ids.provider, fields: provider},
-		"request":  {fields: candidate.policyRequestData(hostedTools)},
-		"route":    {id: ids.route, fields: route},
+		"credential": {fields: policyCredentialData{AccountOptions: accountOptions, DeclaredAccountOptions: declaredOptions}},
+		"model":      {id: ids.model, fields: model},
+		"provider":   {id: ids.provider, fields: provider},
+		"request":    {fields: candidate.policyRequestData(hostedTools)},
+		"route":      {id: ids.route, fields: route},
 	}}, true
 }
 

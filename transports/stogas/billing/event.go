@@ -61,6 +61,7 @@ type ProviderAttemptInput struct {
 	ResolvedCatalogChainHash string
 	Provider                 string
 	Byok                     string
+	AccountOptions           []HeldOption
 	StartedAt                time.Time
 	CompletedAt              time.Time
 	OutputObserved           bool
@@ -271,6 +272,7 @@ func requestProviderAttempts(input EventInput, startedAt time.Time, totalTimeMS 
 			ProviderInstanceID:       boundedTelemetryValue(observed.Upstream.InstanceID, maxProviderInstanceIDBytes),
 			FinishReason:             finishReason(observed.Response),
 			Byok:                     loggedCredentialID(observed.Byok),
+			AccountOptions:           observed.AccountOptions,
 		}
 	}
 	return attempts

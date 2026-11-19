@@ -401,7 +401,7 @@ func azureDiscoveryOutcome(found *azureDiscovery, err error) (string, *billing.A
 	if err != nil {
 		return azureDiscoveryUnavailable, nil
 	}
-	return found.CheckError, &billing.AzureDiscoveryResult{Bindings: encoded, Deployments: found.Deployments}
+	return found.CheckError, &billing.AzureDiscoveryResult{Bindings: encoded, Deployments: found.Deployments, AccountOptions: found.AccountOptions}
 }
 
 // checkAWS makes the cheapest request that each AWS credential can: a role is assumed anew with

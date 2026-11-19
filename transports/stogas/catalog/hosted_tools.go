@@ -80,12 +80,21 @@ func (r *RetentionEffect) UnmarshalJSONFrom(decoder *jsontext.Decoder) error {
 // runs, if it runs one.
 func HostedToolForType(kind string) (HostedTool, bool) { return hostedToolForType(kind) }
 
-// EffectiveDataHandling joins the deployment's data handling with that of each hosted tool that
-// the request lets the model call, so a fact holds for everything the request can cause. Inference
-// itself stays where the deployment's own facts say. A name never makes a tool hosted: only a
-// tool's type does (hostedToolForType), so a client's function named web_search changes nothing.
-func (d Deployment) EffectiveDataHandling(tools []HostedTool) DataHandling {
+// EffectiveDataHandling gives the facts of one request: the deployment's data handling, with the
+// facts that each account option of its credential sets, joined with that of each hosted tool that
+// the request lets the model call, so a fact holds for everything the request can cause. Options
+// come first and tools join after, so an option cannot hide what a tool does. Inference itself
+// stays where the deployment's own facts say. A name never makes a tool hosted: only a tool's type
+// does (hostedToolForType), so a client's function named web_search changes nothing.
+func (d Deployment) EffectiveDataHandling(options []HeldOption, tools []HostedTool) DataHandling {
 	handling := d.DataHandling
+	var applied []AccountOption
+	for _, option := range d.AccountOptions {
+		if slices.ContainsFunc(options, func(held HeldOption) bool { return held.ID == option.ID }) {
+			option.set(&handling)
+			applied = append(applied, option)
+		}
+	}
 	for _, tool := range tools {
 		offer, ok := d.HostedTools[tool]
 		if !ok {
@@ -131,6 +140,7 @@ func (d Deployment) EffectiveDataHandling(tools []HostedTool) DataHandling {
 		handling.RetentionDays != nil && *handling.RetentionDays == 0 && isFalse(handling.TrainingUse)
 	handling.TEEVerified = handling.TEEVerified && handling.TEE
 	handling.EndToEndEncrypted = handling.EndToEndEncrypted && handling.TEE
+	grant(&handling, applied)
 	return handling
 }
 

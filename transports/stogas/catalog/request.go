@@ -175,7 +175,9 @@ type RequestInput struct {
 	// the deployments that Stogas serves with its kind, and only a customer's own reads provider
 	// file IDs, so a request that sends one skips the other pairs. Nil counts every credential as
 	// the customer's own.
-	CredentialBYOK       func(schemas.ModelProvider, int) bool
+	CredentialBYOK func(schemas.ModelProvider, int) bool
+	// CredentialOptions gives the account options that a credential holds. Nil means none.
+	CredentialOptions    func(schemas.ModelProvider, int) []HeldOption
 	CompileRequestPolicy func([]byte) (*policy.Request, error)
 	// CheckCandidate prepares local credential prerequisites after metadata
 	// routing. An explicit fallback allowance permits another candidate only for
@@ -243,6 +245,8 @@ type ResolvedRequest struct {
 	accountTag string
 	// hostedTools are the hosted tools that the request lets the model call.
 	hostedTools []HostedTool
+	// accountOptions are the account options of the pair's credential that apply to the deployment.
+	accountOptions []HeldOption
 
 	chat               *openaiprovider.OpenAIChatRequest
 	inputTokenLimit    int
@@ -276,10 +280,19 @@ func (r *ResolvedRequest) HostedTools() []HostedTool {
 	return r.hostedTools
 }
 
-// EffectiveDataHandling is the deployment's data handling joined with that of each hosted tool
-// that the request lets the model call.
+// AccountOptions lists, in the provider's order, the account options of the pair's credential
+// that apply to the deployment.
+func (r *ResolvedRequest) AccountOptions() []HeldOption {
+	if r == nil {
+		return nil
+	}
+	return r.accountOptions
+}
+
+// EffectiveDataHandling is the deployment's data handling with the facts that the credential's
+// account options set, joined with that of each hosted tool that the request lets the model call.
 func (r *ResolvedRequest) EffectiveDataHandling() DataHandling {
-	return r.Deployment.EffectiveDataHandling(r.hostedTools)
+	return r.Deployment.EffectiveDataHandling(r.accountOptions, r.hostedTools)
 }
 
 // ActivePolicyRules carries only matched counter names into the financial hold.

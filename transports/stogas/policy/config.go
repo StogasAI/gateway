@@ -870,6 +870,7 @@ var exactFieldTypes = map[string]string{
 	"deployment.upstream.model":        "string", "deployment.upstream.modelFormat": "string",
 	"deployment.upstream.modelVersion": "string", "deployment.upstream.reasoningMode": "string",
 	"deployment.upstream.serviceTier": "string", "deployment.weightPrecision": "string",
+	"credential.accountOptions": "string_list", "credential.declaredAccountOptions": "string_list",
 	"deployment.id": "string", "model.authorId": "string", "model.groupIds": "string_list",
 	"model.maxOutputTokens": "integer", "model.name": "string", "model.reasoning": "string",
 	"model.reasoningEfforts": "string_list", "model.reasoningMaxTokens.maximum": "integer",

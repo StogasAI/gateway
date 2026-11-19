@@ -218,7 +218,7 @@ func (s *Service) RecordByokCheck(ctx context.Context, target *ByokCheckTarget, 
 	if failure != "" {
 		message = pgtype.Text{String: failure, Valid: true}
 	}
-	bindings, deployments, err := discovery.parameters()
+	bindings, deployments, accountOptions, err := discovery.parameters()
 	if err != nil {
 		return nil, err
 	}
@@ -229,7 +229,7 @@ func (s *Service) RecordByokCheck(ctx context.Context, target *ByokCheckTarget, 
 	var targets []byte
 	grant := target.Grant
 	if err := s.db.pool.QueryRow(queryCtx, s.recordByokCheckQuery, grant.ActorUserID, grant.OrganizationID, grant.ByokID,
-		target.EncryptedSecret, target.checkedAt, message, target.StartedAt, bindings, deployments).Scan(&result, &checkedAt, &targets); err != nil {
+		target.EncryptedSecret, target.checkedAt, message, target.StartedAt, bindings, deployments, accountOptions).Scan(&result, &checkedAt, &targets); err != nil {
 		return nil, fmt.Errorf("%w: record credential check: %v", ErrGatewayUnavailable, err)
 	}
 	switch result {

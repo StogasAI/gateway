@@ -98,30 +98,39 @@ func (s *Service) RefuseAzureCheck(ctx context.Context, byokID string, startedAt
 }
 
 // AzureDiscoveryResult is what a gateway's discovery of an Azure credential's targets found, as
-// azure_save_discovery reads it: the targets, already encoded, and every deployment that the
-// account lists.
+// azure_save_discovery reads it: the targets, already encoded, every deployment that the account
+// lists, and whether the account holds each account option that Azure reports.
 type AzureDiscoveryResult struct {
-	Bindings    json.RawMessage
-	Deployments []AzureDeployment
+	Bindings       json.RawMessage
+	Deployments    []AzureDeployment
+	AccountOptions map[string]bool
 }
 
-// parameters encodes a discovery for the database, as two nulls when there is none.
-func (d *AzureDiscoveryResult) parameters() (bindings, deployments pgtype.Text, err error) {
+// parameters encodes a discovery for the database, as nulls when there is none.
+func (d *AzureDiscoveryResult) parameters() (bindings, deployments, accountOptions pgtype.Text, err error) {
 	if d == nil {
-		return pgtype.Text{}, pgtype.Text{}, nil
+		return bindings, deployments, accountOptions, nil
 	}
 	if !json.Valid(d.Bindings) {
-		return pgtype.Text{}, pgtype.Text{}, fmt.Errorf("%w: invalid Azure discovery", ErrGatewayUnavailable)
+		return bindings, deployments, accountOptions, fmt.Errorf("%w: invalid Azure discovery", ErrGatewayUnavailable)
 	}
-	listed := d.Deployments
+	listed, options := d.Deployments, d.AccountOptions
 	if listed == nil {
 		listed = []AzureDeployment{}
 	}
+	if options == nil {
+		options = map[string]bool{}
+	}
 	payload, err := json.Marshal(listed)
 	if err != nil {
-		return pgtype.Text{}, pgtype.Text{}, err
+		return bindings, deployments, accountOptions, err
 	}
-	return pgtype.Text{String: string(d.Bindings), Valid: true}, pgtype.Text{String: string(payload), Valid: true}, nil
+	reported, err := json.Marshal(options)
+	if err != nil {
+		return bindings, deployments, accountOptions, err
+	}
+	return pgtype.Text{String: string(d.Bindings), Valid: true}, pgtype.Text{String: string(payload), Valid: true},
+		pgtype.Text{String: string(reported), Valid: true}, nil
 }
 
 // ClaimAzureDiscovery claims the discovery of a customer-encrypted Azure credential's targets when
@@ -153,14 +162,14 @@ func (s *Service) RecordAzureDiscovery(ctx context.Context, byokID string, start
 	if failure != "" {
 		message = pgtype.Text{String: failure, Valid: true}
 	}
-	bindings, deployments, err := discovery.parameters()
+	bindings, deployments, accountOptions, err := discovery.parameters()
 	if err != nil {
 		return false, err
 	}
 	queryCtx, cancel := context.WithTimeout(ctx, azureCheckQueryTimeout)
 	defer cancel()
 	var outcome string
-	if err := s.db.pool.QueryRow(queryCtx, s.recordAzureDiscoveryQuery, byokID, startedAt, envelope, message, bindings, deployments).Scan(&outcome); err != nil {
+	if err := s.db.pool.QueryRow(queryCtx, s.recordAzureDiscoveryQuery, byokID, startedAt, envelope, message, bindings, deployments, accountOptions).Scan(&outcome); err != nil {
 		return false, fmt.Errorf("%w: record Azure discovery: %v", ErrGatewayUnavailable, err)
 	}
 	if outcome != "ok" && outcome != "changed" {

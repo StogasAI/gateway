@@ -51,11 +51,13 @@ type StoredByokCheck struct {
 }
 
 // StoredAzureDiscovery is a discovery as Control saves it: the account's name, its targets and
-// every deployment that it lists, each list encoded as JSON.
+// every deployment that it lists, each list encoded as JSON, and whether the account holds each
+// account option that Azure reports.
 type StoredAzureDiscovery struct {
-	Name        string          `json:"name"`
-	Bindings    json.RawMessage `json:"bindings"`
-	Deployments json.RawMessage `json:"deployments"`
+	Name           string          `json:"name"`
+	Bindings       json.RawMessage `json:"bindings"`
+	Deployments    json.RawMessage `json:"deployments"`
+	AccountOptions map[string]bool `json:"accountOptions"`
 }
 
 // StoredAzureAccountsRequest lists the accounts that the application in a sealed secret can read
@@ -155,7 +157,7 @@ func checkStoredByok(ctx context.Context, opener storedByokOpener, checker *byok
 	return &StoredByokCheck{
 		Outcome: storedByokAccepted,
 		Message: optionalMessage(found.CheckError),
-		Azure:   &StoredAzureDiscovery{Name: found.Name, Bindings: bindings, Deployments: deployments},
+		Azure:   &StoredAzureDiscovery{Name: found.Name, Bindings: bindings, Deployments: deployments, AccountOptions: found.AccountOptions},
 	}, nil
 }
 

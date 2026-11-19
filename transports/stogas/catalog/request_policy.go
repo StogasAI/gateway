@@ -189,8 +189,14 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 		if input.AvailableCredentials != nil {
 			indexes = input.AvailableCredentials[string(selection.provider)]
 		}
-		// The credentials of a deployment that share a policy share one candidate.
-		groups := make(map[*policy.Config]*ResolvedRequest)
+		// The credentials of a deployment that share a policy and account options share one
+		// candidate. Options change the facts that policies read, so each set has its own values.
+		type pairGroup struct {
+			config  *policy.Config
+			options string
+		}
+		groups := make(map[pairGroup]*ResolvedRequest)
+		valuesFor := map[string]*resolvedPolicyValues{"": values}
 		for rank, index := range indexes {
 			// Credentials are tried in assignment order, so later ones cannot
 			// fit within the request's pairs once they are full.
@@ -231,7 +237,19 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 				continue
 			}
 			original := value.Config
-			if existing, found := groups[original]; found {
+			var options []HeldOption
+			if input.CredentialOptions != nil {
+				options = selection.deployment.AppliedOptions(input.CredentialOptions(selection.provider, index))
+			}
+			group := pairGroup{original, optionsKey(options)}
+			values := valuesFor[group.options]
+			if values == nil {
+				held := template
+				held.accountOptions = options
+				values, _ = newResolvedPolicyValues(&held)
+				valuesFor[group.options] = values
+			}
+			if existing, found := groups[group]; found {
 				switch {
 				case existing == nil:
 					trace.removeGrouped(selection, index, original)
@@ -249,7 +267,7 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 				}
 				continue
 			}
-			groups[original] = nil
+			groups[group] = nil
 			// An undecided condition or a deny period from a matched rule
 			// excludes only this candidate, as an unmatched filter does.
 			value.Config, err = value.Config.Activate(values)
@@ -315,8 +333,8 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 				continue
 			}
 			candidate := template
-			candidate.CredentialIndex, candidate.policy = index, value.Config
-			groups[original] = &candidate
+			candidate.CredentialIndex, candidate.policy, candidate.accountOptions = index, value.Config, options
+			groups[group] = &candidate
 			if skips(selection, index, value.Config) {
 				pending[&candidate] = values
 				continue
@@ -482,7 +500,7 @@ func (p *requestPlan) take(failure error) (*ResolvedRequest, error) {
 		p.variants.selections = []routingSelection{selection}
 		resolved, err := p.resolve(selection, value)
 		if err == nil {
-			resolved.plan = p
+			resolved.plan, resolved.accountOptions = p, candidate.accountOptions
 			return resolved, nil
 		}
 		if stopsPlan(err) {

@@ -906,6 +906,9 @@ func validateCompiledProviders(graph compiledGraph) error {
 		if err := validateQualifierAliases(providerQualifiers, "provider", providerID, provider.Aliases); err != nil {
 			return err
 		}
+		if err := validateAccountOptions(providerID, provider, graph.Routes); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -945,6 +948,9 @@ func validateCompiledModel(modelID string, model compiledModel) error {
 	// Policies sort on release dates and /v1/models shows them, so every model needs one.
 	if !validDate(model.ReleaseDate) {
 		return fmt.Errorf("model %s has an invalid releaseDate", modelID)
+	}
+	if model.MinimumRetentionDays != nil && *model.MinimumRetentionDays <= 0 {
+		return fmt.Errorf("model %s has an invalid minimumRetentionDays", modelID)
 	}
 	return validateModelReasoning(modelID, model)
 }
@@ -1030,6 +1036,12 @@ func validateCompiledDeployment(graph compiledGraph, selectors selectorRegistry,
 			return fmt.Errorf("%s has invalid modalities", owner)
 		}
 		if err := validateDeploymentDataHandling(owner, route.DataHandling); err != nil {
+			return err
+		}
+		if days, minimum := route.DataHandling.RetentionDays, model.MinimumRetentionDays; days != nil && minimum != nil && *days < *minimum {
+			return fmt.Errorf("%s keeps content for less than its model's minimum retention", owner)
+		}
+		if err := validateReachingOptions(owner, routeID, route, graph.Providers[providerID], model); err != nil {
 			return err
 		}
 		if err := validateDeploymentPricing(owner, providerID, deployment.ModelID, route); err != nil {

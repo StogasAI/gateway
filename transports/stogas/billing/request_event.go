@@ -32,6 +32,9 @@ type ProviderAttempt struct {
 	ProviderInstanceID       string  `json:"provider_instance_id,omitempty"`
 	FinishReason             string  `json:"finish_reason"`
 	Byok                     *string `json:"byok"`
+	// AccountOptions are the options of the credential's provider account that changed the facts
+	// of the call.
+	AccountOptions []HeldOption `json:"account_options,omitempty"`
 }
 
 // RequestPerformance records the request's own times on the request clock.

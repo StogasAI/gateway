@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -291,7 +292,7 @@ func newCELEnvironment() (*cel.Env, error) {
 			cel.Overload("policy_random_weight", []*cel.Type{cel.IntType}, cel.IntType,
 				cel.UnaryBinding(func(weight ref.Val) ref.Val { return weight }))),
 	}
-	for _, name := range []string{"author", "model", "deployment", "route", "provider", "request"} {
+	for _, name := range celRoots {
 		options = append(options, cel.Variable(name, cel.ObjectType(celNodeTypeName(name))))
 	}
 	for _, operator := range []string{operators.Less, operators.LessEquals, operators.Greater, operators.GreaterEquals} {
@@ -396,6 +397,10 @@ func newCELFieldProvider() *celFieldProvider {
 	return provider
 }
 
+// celRoots are the values that an expression reads fields from: the candidate's catalog records,
+// the credential that would send the request, and the request.
+var celRoots = []string{"author", "model", "deployment", "route", "provider", "credential", "request"}
+
 func celNodeTypeName(path string) string { return "stogas.policy." + path }
 
 func candidateCELType(value *cel.Type) bool {
@@ -489,8 +494,7 @@ type celPolicyActivation struct {
 
 func (a celPolicyActivation) Parent() interpreter.Activation { return nil }
 func (a celPolicyActivation) ResolveName(name string) (any, bool) {
-	switch name {
-	case "author", "model", "deployment", "route", "provider", "request":
+	if slices.Contains(celRoots, name) {
 		return &celPolicyNode{path: name, values: a.values, now: a.now}, true
 	}
 	return nil, false

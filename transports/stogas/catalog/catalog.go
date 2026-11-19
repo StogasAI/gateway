@@ -282,6 +282,7 @@ func (s *snapshot) deploymentFromCompiledAt(deploymentID string, route compiledR
 		ReasoningSupported:  deployment.Reasoning != "unsupported",
 		DataHandling:        served.DataHandling,
 		HostedTools:         served.HostedTools,
+		AccountOptions:      s.graph.Providers[route.ProviderID].optionsNamed(served.AccountOptions),
 		Locations:           s.places,
 		ApprovalRequired:    deployment.ApprovalRequired,
 		WeightPrecision:     deployment.WeightPrecision,
