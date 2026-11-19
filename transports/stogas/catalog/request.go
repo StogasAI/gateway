@@ -264,6 +264,7 @@ type ResolvedRequest struct {
 	activePolicyRules []policy.RuleMatch
 	retries           int
 	policyTimeouts    *policy.Timeouts
+	promptCaching     string
 	plan              *requestPlan
 }
 
@@ -297,6 +298,7 @@ func (r *ResolvedRequest) retainPolicyDecision(config *policy.Config) {
 		r.activePolicyRules = append([]policy.RuleMatch(nil), config.ActiveRules...)
 		r.policyTimeouts = config.Timeouts
 		r.retries = config.Routing.Retries
+		r.promptCaching = config.PromptCaching()
 	}
 }
 

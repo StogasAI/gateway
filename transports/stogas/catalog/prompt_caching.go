@@ -7,11 +7,9 @@ import "github.com/maximhq/bifrost/transports/stogas/policy"
 // it asks for none. Only a deployment that caches nothing unmarked needs marks; one that caches
 // on its own, as OpenAI's do, gets none.
 func (r *ResolvedRequest) PromptCaching() string {
-	if r == nil || !r.Deployment.Capabilities.ExplicitPromptCaching || r.Deployment.Capabilities.ImplicitPromptCaching {
+	if r == nil || !r.Deployment.Capabilities.ExplicitPromptCaching || r.Deployment.Capabilities.ImplicitPromptCaching ||
+		r.promptCaching == policy.PromptCachingOff {
 		return ""
 	}
-	if mode := r.policy.PromptCaching(); mode != policy.PromptCachingOff {
-		return mode
-	}
-	return ""
+	return r.promptCaching
 }
