@@ -241,7 +241,11 @@ func (v *Inspector) Finish() (*Inspection, error) {
 		effective["timeouts"] = compiled.Timeouts
 	}
 	if compiled.Access != nil && (compiled.Access.Schedule != nil || compiled.Access.Networks != nil || compiled.Access.Countries != nil || compiled.Access.Transports != nil) {
-		effective["access"] = compiled.Access
+		access := *compiled.Access
+		if countries := access.Countries; countries != nil {
+			access.Countries = &Lists{Allow: namedCountries(countries.Allow), Deny: namedCountries(countries.Deny)}
+		}
+		effective["access"] = &access
 	}
 	routing := map[string]any{}
 	for _, list := range routingLists {

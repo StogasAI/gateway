@@ -579,8 +579,16 @@ func (a *Access) validate() error {
 	if err := a.Networks.validate(); err != nil {
 		return err
 	}
-	if err := a.Countries.validate("access.countries", "country", "an ISO 3166-1 alpha-2 country code", CountryCode); err != nil {
+	if err := a.Countries.validate("access.countries", "country", "an ISO 3166-1 alpha-2 country code or a region such as eu", countryEntry); err != nil {
 		return err
+	}
+	if a.Countries != nil {
+		// A region in deny can hold every country of an allow list that names
+		// none of the same entries.
+		a.Countries = &Lists{Allow: countriesOf(a.Countries.Allow), Deny: countriesOf(a.Countries.Deny)}
+		if err := a.Countries.validate("access.countries", "country", "", CountryCode); err != nil {
+			return err
+		}
 	}
 	if err := a.Transports.validate("access.transports", "connection mode", "https, attested_tls or e2ee", func(mode string) bool {
 		return slices.Contains(transports, mode)

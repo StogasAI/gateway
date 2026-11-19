@@ -70,7 +70,6 @@ func TestNetworksTakeAddressesAndRangesThatStartAtTheirFirstAddress(t *testing.T
 		`{"access":{"countries":{"allow":[]}}}`:                   "access.countries.allow requires at least one country",
 		`{"access":{"countries":{"allow":["UK"]}}}`:               "access.countries.allow has \"UK\", which is not an ISO 3166-1 alpha-2 country code",
 		`{"access":{"countries":{"deny":["us"]}}}`:                "not an ISO 3166-1",
-		`{"access":{"countries":{"deny":["eu"]}}}`:                "not an ISO 3166-1",
 		`{"access":{"countries":{"deny":["DE","DE"]}}}`:           "access.countries.deny lists DE twice",
 		`{"access":{"countries":{"allow":["DE"],"deny":["DE"]}}}`: "holds every country that allow lists",
 	} {
