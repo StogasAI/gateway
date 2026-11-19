@@ -132,14 +132,11 @@ func (s *Server) sessionTransport(next requestHandler) requestHandler {
 		metadata, err := parseSessionMetadata(encoded)
 		if err != nil {
 			writer.WriteHeader(http.StatusBadRequest)
-		} else if metadata.Method == http.MethodDelete && metadata.Path == sessionPath {
-			var extra [1]byte
-			if n, err := incoming.Read(extra[:]); n != 0 || !errors.Is(err, io.EOF) {
-				writer.WriteHeader(http.StatusBadRequest)
-			} else {
-				s.sessions.Remove(incoming.ID)
-				writer.WriteHeader(http.StatusNoContent)
-			}
+		} else if metadata.Method != http.MethodPost && !emptySessionBody(incoming) {
+			writer.WriteHeader(http.StatusBadRequest)
+		} else if metadata.Method == http.MethodDelete {
+			s.sessions.Remove(incoming.ID)
+			writer.WriteHeader(http.StatusNoContent)
 		} else if !s.admissionReady() {
 			s.requireAdmission(ctx)
 		} else {
@@ -208,6 +205,33 @@ func writeSessionReadError(ctx *requestContext, err error) {
 	ctx.writer.WriteHeader(http.StatusBadRequest)
 }
 
+// emptySessionBody reports whether the request ends without content, which also authenticates its
+// end.
+func emptySessionBody(body io.Reader) bool {
+	var extra [1]byte
+	n, err := body.Read(extra[:])
+	return n == 0 && errors.Is(err, io.EOF)
+}
+
+// isCatalogReadPath reports whether a GET of the path reads the public catalog: the root, one part
+// by its SHA-256 or the model list. A session carries these so that a client that reaches the
+// gateway only through E2EE reads them from the verified gateway too.
+func isCatalogReadPath(path string) bool {
+	if path == "/v1/catalog" || path == "/v1/models" {
+		return true
+	}
+	digest, ok := strings.CutPrefix(path, catalogPartsPath)
+	if !ok || len(digest) != 64 {
+		return false
+	}
+	for _, character := range []byte(digest) {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
 func parseSessionMetadata(encoded []byte) (sessionRequestMetadata, error) {
 	var metadata sessionRequestMetadata
 	if len(encoded) > serverReadBufferSize {
@@ -221,7 +245,11 @@ func parseSessionMetadata(encoded []byte) (sessionRequestMetadata, error) {
 	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
 		return metadata, channel.ErrRecord
 	}
-	if !(metadata.Method == http.MethodPost && isGatewayRequestPath(metadata.Path)) && !(metadata.Method == http.MethodDelete && metadata.Path == sessionPath) {
+	switch {
+	case metadata.Method == http.MethodPost && isGatewayRequestPath(metadata.Path):
+	case metadata.Method == http.MethodGet && isCatalogReadPath(metadata.Path):
+	case metadata.Method == http.MethodDelete && metadata.Path == sessionPath:
+	default:
 		return metadata, channel.ErrRecord
 	}
 	seen := make(map[string]bool, len(metadata.Headers))

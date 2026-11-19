@@ -745,6 +745,12 @@ func TestSessionHTTPMetadataAndOuterRoutingCannotGrantAuthority(t *testing.T) {
 		`{"method":"POST","path":"/v1/responses","headers":{"Forwarded":"for=somebody"}}`,
 		`{"method":"POST","path":"/v1/responses","headers":{"Stogas-Node-ID":"fixture-owner"}}`,
 		`{"method":"GET","path":"/diagnostics/v1","headers":{}}`,
+		`{"method":"GET","path":"/v1/responses","headers":{}}`,
+		`{"method":"POST","path":"/v1/catalog","headers":{}}`,
+		`{"method":"GET","path":"/v1/catalog?x=1","headers":{}}`,
+		`{"method":"GET","path":"/v1/catalog/parts/","headers":{}}`,
+		`{"method":"GET","path":"/v1/catalog/parts/` + strings.Repeat("A", 64) + `","headers":{}}`,
+		`{"method":"GET","path":"/v1/catalog/parts/` + strings.Repeat("a", 62) + `/x","headers":{}}`,
 	} {
 		wire, decoder := f.request(t, []byte(metadata), nil)
 		result, _ := readSessionResponse(t, f.post(t, wire, true), decoder)
@@ -763,6 +769,29 @@ func TestSessionHTTPMetadataAndOuterRoutingCannotGrantAuthority(t *testing.T) {
 	metadata, _ := readSessionResponse(t, f.post(t, wire, true), decoder)
 	if metadata.Status != 204 || dispatched.Load() != 0 {
 		t.Fatal("invalid request reached application")
+	}
+}
+
+func TestSessionHTTPCarriesCatalogReadsWithoutContent(t *testing.T) {
+	var paths []string
+	f := newSessionHTTPFixture(t, func(ctx *requestContext) {
+		paths = append(paths, ctx.request.Method+" "+ctx.request.URL.Path)
+		ctx.writer.WriteHeader(204)
+	}, true)
+	part := "/v1/catalog/parts/" + strings.Repeat("0a", 32)
+	for _, path := range []string{"/v1/catalog", part, "/v1/models"} {
+		metadata := []byte(`{"method":"GET","path":"` + path + `","headers":{}}`)
+		wire, decoder := f.request(t, metadata, nil)
+		if result, _ := readSessionResponse(t, f.post(t, wire, true), decoder); result.Status != 204 {
+			t.Fatalf("GET %s answered %d", path, result.Status)
+		}
+		wire, decoder = f.request(t, metadata, []byte("content"))
+		if result, _ := readSessionResponse(t, f.post(t, wire, true), decoder); result.Status != 400 {
+			t.Fatalf("GET %s with content answered %d", path, result.Status)
+		}
+	}
+	if want := []string{"GET /v1/catalog", "GET " + part, "GET /v1/models"}; !slices.Equal(paths, want) {
+		t.Fatalf("application saw %v", paths)
 	}
 }
 
