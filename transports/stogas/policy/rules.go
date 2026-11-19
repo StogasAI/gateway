@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	jsonv2 "encoding/json/v2"
 	"errors"
+	"slices"
 	"sort"
 )
 
@@ -18,6 +19,106 @@ type Rule struct {
 	Value     *Source
 	Encrypted *SourceDocument
 	HasLimits bool
+	// Exclude lists the resources whose keys skip the rule.
+	Exclude map[Resource]struct{}
+}
+
+// exclusionKinds are the resources that a rule can exclude, under the names
+// that delegation gives them. A credential is chosen for each attempt, and
+// whoever manages members can give anyone a role, so neither can be listed.
+var exclusionKinds = map[string]Scope{"folders": FolderScope, "grants": GrantScope, "members": MemberScope, "keys": KeyScope}
+
+func parseExclusions(name string, raw json.RawMessage) (map[Resource]struct{}, error) {
+	var lists map[string][]string
+	if jsonv2.Unmarshal(raw, &lists) != nil || len(lists) == 0 {
+		return nil, configError("rule %q exclude requires lists of folders, grants, members or keys", name)
+	}
+	excluded := map[Resource]struct{}{}
+	for kind, ids := range lists {
+		scope, ok := exclusionKinds[kind]
+		if !ok || len(ids) == 0 {
+			return nil, configError("rule %q exclude requires lists of folders, grants, members or keys", name)
+		}
+		for _, id := range ids {
+			resource := Resource{scope, id}
+			if _, listed := excluded[resource]; listed || !policyEntityID.MatchString(id) {
+				return nil, configError("rule %q exclude requires distinct lowercase UUIDv7 IDs", name)
+			}
+			excluded[resource] = struct{}{}
+		}
+	}
+	return excluded, nil
+}
+
+// excludedBy returns the first resource of the chain that the rule lists.
+func (r Rule) excludedBy(chain []ScopedSource) (Resource, bool) {
+	if r.Exclude == nil {
+		return Resource{}, false
+	}
+	for _, entry := range chain {
+		resource := Resource{entry.Scope, entry.ID}
+		if _, listed := r.Exclude[resource]; listed {
+			return resource, true
+		}
+	}
+	return Resource{}, false
+}
+
+// excludable reports whether a policy of scope can exclude a kind of resource.
+// A policy excludes only what lies under it, as it delegates: a folder holds
+// grants and keys, and a grant its keys. Members use keys of every folder and
+// grant, so each policy above them can list one.
+func excludable(scope, kind Scope) bool {
+	switch scope {
+	case OrganizationScope:
+		return true
+	case FolderScope:
+		return kind != FolderScope
+	case GrantScope:
+		return kind == MemberScope || kind == KeyScope
+	}
+	return false
+}
+
+func (s *Source) validateExclusions(scope Scope) error {
+	for _, rule := range s.Rules {
+		for resource := range rule.Exclude {
+			if !excludable(scope, resource.Scope) {
+				return configError("%s policies cannot exclude %ss from a rule", scope, resource.Scope)
+			}
+		}
+	}
+	return nil
+}
+
+// applyExclusions returns the chain without the rules that exclude one of its
+// resources, so that a skipped rule requires, replaces and counts nothing. A
+// source that loses rules is copied; its expressions, plugins and work
+// allowance stay shared.
+func applyExclusions(sources []ScopedSource) ([]ScopedSource, error) {
+	applied := sources
+	for i, entry := range sources {
+		if entry.Value == nil || !entry.Value.excludes {
+			continue
+		}
+		if err := entry.Value.validateExclusions(entry.Scope); err != nil {
+			return nil, err
+		}
+		rules := slices.DeleteFunc(slices.Clone(entry.Value.Rules), func(rule Rule) bool {
+			_, skipped := rule.excludedBy(sources)
+			return skipped
+		})
+		if len(rules) == len(entry.Value.Rules) {
+			continue
+		}
+		if len(applied) > 0 && &applied[0] == &sources[0] {
+			applied = slices.Clone(sources)
+		}
+		source := *entry.Value
+		source.Rules = rules
+		applied[i].Value = &source
+	}
+	return applied, nil
 }
 
 type RuleMatch struct {
@@ -61,7 +162,7 @@ func parseRuleDocuments(raw json.RawMessage, envelopes map[[32]byte]encryptedPlu
 		settings := make(map[string]json.RawMessage, len(fields))
 		for field, value := range fields {
 			switch field {
-			case "when", "mode":
+			case "when", "mode", "exclude":
 			case "limits", "routing", "plugins", "input", "access", "timeouts":
 				settings[field] = value
 			default:
@@ -109,6 +210,13 @@ func compileRules(documents map[string]ruleDocument, plugins map[[32]byte]*Plugi
 				return nil, err
 			}
 		}
+		if value, ok := fields["exclude"]; ok {
+			var err error
+			rule.Exclude, err = parseExclusions(name, value)
+			if err != nil {
+				return nil, err
+			}
+		}
 		rule.HasLimits = fields["limits"] != nil
 		if rule.Default && rule.HasLimits {
 			return nil, configError("shared limits must be required")
@@ -124,6 +232,11 @@ func compileRules(documents map[string]ruleDocument, plugins map[[32]byte]*Plugi
 		// set them.
 		if rule.Value.settings&permissionSort != 0 && (!rule.Default || rule.When != nil) {
 			return nil, configError("rule %q can set routing.sort only with mode default and no when", name)
+		}
+		// Every default ordering of a chain applies, and composition places
+		// each without reading rules.
+		if rule.Value.settings&permissionSort != 0 && rule.Exclude != nil {
+			return nil, configError("rule %q cannot set routing.sort with exclude", name)
 		}
 		if rule.When != nil && rule.When.candidate && rule.Value.settings&requestWidePermissions != 0 {
 			return nil, configError("rule %q cannot set routing.fallbacks or timeouts.totalSeconds because its condition reads author, model, deployment, route, provider or credential fields", name)

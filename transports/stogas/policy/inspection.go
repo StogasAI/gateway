@@ -189,7 +189,7 @@ func (v *Inspector) Add(entry InspectionSource) error {
 	}
 	v.entries = append(v.entries, entry)
 	v.documents = append(v.documents, document)
-	v.sources = append(v.sources, ScopedSource{Scope: entry.Scope, Value: source})
+	v.sources = append(v.sources, ScopedSource{Scope: entry.Scope, ID: entry.ID, Value: source})
 	return nil
 }
 
@@ -261,14 +261,22 @@ func (v *Inspector) Finish() (*Inspection, error) {
 		}
 	}
 	var limits, opaque, rules []map[string]any
-	required := requirements(sources)
-	replacements := replacedDefaults(documents, sources, required)
-	notes = append(notes, replacedNotes(entries, documents, sources, required, edit)...)
+	// A rule that the chain skips requires and replaces nothing.
+	applied := compiled.sources
+	required := requirements(applied)
+	replacements := replacedDefaults(documents, applied, required)
+	notes = append(notes, replacedNotes(entries, documents, applied, required, edit)...)
 	replaced := map[int][]replacement{}
 	for i, entry := range entries {
 		document := documents[i]
 		for _, rule := range sources[i].Value.Rules {
 			config := document.rules[rule.Name].fields
+			if rule.Exclude != nil {
+				// The list names other resources. This chain shows only the
+				// one of its own that the rule lists.
+				config = maps.Clone(config)
+				delete(config, "exclude")
+			}
 			// A default ordering joins routing.sort, whose sortFrom names its
 			// rule, so the rule lists only its other settings, if it has any.
 			if ordering := sources[i].Value.defaultOrdering; ordering != nil && ordering.rule == rule.Name {
@@ -277,6 +285,9 @@ func (v *Inspector) Finish() (*Inspection, error) {
 				}
 			}
 			item := map[string]any{"policy": inspectionReference(entry), "name": rule.Name, "config": config}
+			if by, skipped := rule.excludedBy(sources); skipped {
+				item["skipped"] = map[string]any{"scope": by.Scope, "id": by.ID}
+			}
 			if list := replacements[ruleKey{i, rule.Name}]; len(list) > 0 {
 				replaced[len(rules)] = list
 			}

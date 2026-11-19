@@ -921,5 +921,64 @@
       "schema": "stogas.key-config.compiled.v1"
     },
     "digest": "f2d01680c4ef9fedd0b5cd72399d932d52da2b1817b1309dbed0f0c00212fdaf"
+  },
+  {
+    "name": "rules skip a key whose grant or own ID they exclude",
+    "sources": [
+      {
+        "rules": {
+          "ascii": {
+            "exclude": {
+              "grants": [
+                "018f6f3d-0000-7000-8000-000000000001"
+              ]
+            },
+            "input": {
+              "asciiOnly": true
+            }
+          },
+          "mine": {
+            "exclude": {
+              "keys": [
+                "018f6f3d-0000-7000-8000-000000000003"
+              ]
+            },
+            "timeouts": {
+              "outputIdleSeconds": 30
+            }
+          },
+          "others": {
+            "exclude": {
+              "keys": [
+                "018f6f3d-0000-7000-8000-000000000004"
+              ]
+            },
+            "routing": {
+              "retries": 0
+            }
+          }
+        }
+      },
+      {},
+      {}
+    ],
+    "ids": [
+      "organization",
+      "018f6f3d-0000-7000-8000-000000000001",
+      "018f6f3d-0000-7000-8000-000000000003"
+    ],
+    "digest": "a05480c9004d597253601c3a8f8a148a7b2b324ef773a2a7cd7edcaf4157a96f",
+    "compiled": {
+      "access": null,
+      "compilerVersion": 1,
+      "plugins": null,
+      "routing": {
+        "query": null,
+        "retries": 0,
+        "fallbacks": 2
+      },
+      "requestPermission": false,
+      "schema": "stogas.key-config.compiled.v1"
+    }
   }
 ]

@@ -551,7 +551,7 @@ func (s *KeyConfigSnapshot) selectionPolicy(selection CredentialSelection, now t
 	}
 	values := make([]policy.ScopedSource, len(versions))
 	for i, version := range versions {
-		values[i] = policy.ScopedSource{Scope: version.Scope, Value: refs[i].value}
+		values[i] = policy.ScopedSource{Scope: version.Scope, ID: version.ID, Value: refs[i].value}
 	}
 	digest := policy.ChainDigest(values)
 	config, err := c.composeSources(values, digest)

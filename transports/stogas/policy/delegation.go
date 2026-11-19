@@ -301,8 +301,9 @@ func (d *SourceDocument) eachSection(visit func(name string, value json.RawMessa
 }
 
 // changedSections returns the sections a proposal adds or changes. A rule's
-// name, condition and mode belong to each of its settings, because they decide
-// where the settings apply. Canonical JSON never contains a raw NUL byte.
+// name, condition, mode and exclusions belong to each of its settings, because
+// they decide where the settings apply. Canonical JSON never contains a raw
+// NUL byte.
 func changedSections(proposal, previous *SourceDocument) Permission {
 	values := func(document *SourceDocument, visit func(key string, section Permission)) {
 		if document == nil {
@@ -317,7 +318,7 @@ func changedSections(proposal, previous *SourceDocument) Permission {
 		}
 		document.eachSection(place(""))
 		for name, rule := range document.rules {
-			rule.source.eachSection(place(name + "\x00" + string(rule.fields["when"]) + "\x00" + string(rule.fields["mode"])))
+			rule.source.eachSection(place(name + "\x00" + string(rule.fields["when"]) + "\x00" + string(rule.fields["mode"]) + "\x00" + string(rule.fields["exclude"])))
 		}
 	}
 	kept := map[string]bool{}

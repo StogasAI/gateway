@@ -33,6 +33,7 @@ func TestInspectionMatchesExecutionCorpus(t *testing.T) {
 	var corpus []struct {
 		Name     string
 		Sources  [3]json.RawMessage
+		IDs      [3]string
 		Digest   string
 		Compiled json.RawMessage
 	}
@@ -44,7 +45,7 @@ func TestInspectionMatchesExecutionCorpus(t *testing.T) {
 			var entries []InspectionSource
 			for i, source := range row.Sources {
 				if string(source) != "null" {
-					entries = append(entries, InspectionSource{Scope: []Scope{OrganizationScope, GrantScope, KeyScope}[i], Config: source})
+					entries = append(entries, InspectionSource{Scope: []Scope{OrganizationScope, GrantScope, KeyScope}[i], ID: row.IDs[i], Config: source})
 				}
 			}
 			result, err := InspectSources(entries, nil)

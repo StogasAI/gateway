@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/maximhq/bifrost/transports/stogas/customerkey"
 	"github.com/maximhq/bifrost/transports/stogas/plugins/exporter/exportconfig"
@@ -45,6 +46,8 @@ type Source struct {
 	Config                   *Config
 	Digest                   string
 	Delegation               *Delegation
+	// excludes is set when a rule lists resources whose keys skip it.
+	excludes bool
 	// work is what the policy's expressions and rules charge their cost to.
 	work *policyWork
 }
@@ -604,6 +607,7 @@ func (d *SourceDocument) compile(plugins map[[32]byte]*Plugins, compiler *celCom
 		return nil, err
 	}
 	for _, rule := range source.Rules {
+		source.excludes = source.excludes || rule.Exclude != nil
 		if rule.Value.settings&permissionSort == 0 {
 			continue
 		}
@@ -888,10 +892,19 @@ func (s Scope) Valid() bool {
 	return false
 }
 
+// Resource names a resource whose policy applies to a key.
+type Resource struct {
+	Scope Scope
+	ID    string
+}
+
 // ScopedSource separates applicability from shared immutable policy content.
 // Identical policies may belong to different resources and organizations.
 type ScopedSource struct {
 	Scope Scope
+	// ID names the resource. Rules that exclude it are skipped; a chain that
+	// names no resources skips none.
+	ID    string
 	Value *Source
 	// Activation adds a matched rule's settings with the rule's name and the
 	// position of its policy.
@@ -1093,10 +1106,22 @@ func (c *Config) SortOrigins() []Origin { return c.sortOrigins }
 // request's provider order comes after them, before the defaults.
 func (c *Config) RequiredSorts() int { return c.requiredSorts }
 
+// ChainDigest names the settings that a chain composes: each policy's scope
+// and content and, after them, the names of its rules that the chain skips.
+// Keys with equal policies share composed settings unless a rule excludes a
+// resource of only some of them.
 func ChainDigest(sources []ScopedSource) string {
-	values := make([][2]string, len(sources))
+	values := make([][]string, len(sources))
 	for i, source := range sources {
-		values[i] = [2]string{string(source.Scope), source.Value.Digest}
+		values[i] = []string{string(source.Scope), source.Value.Digest}
+		if !source.Value.excludes {
+			continue
+		}
+		for _, rule := range source.Value.Rules {
+			if _, skipped := rule.excludedBy(sources); skipped {
+				values[i] = append(values[i], rule.Name)
+			}
+		}
 	}
 	raw, _ := json.Marshal(values)
 	sum := sha256.Sum256(raw)
@@ -1107,7 +1132,25 @@ func ChainDigest(sources []ScopedSource) string {
 // sections. It never concatenates large inherited PII dictionaries into a key.
 // Policies that each compile always compose: every bound is one policy's own,
 // so no policy's edit can make another's requests fail to combine.
-func ComposeSources(sources []ScopedSource) (*Config, error) {
+func ComposeSources(chain []ScopedSource) (*Config, error) {
+	sources, err := applyExclusions(chain)
+	if err != nil {
+		return nil, err
+	}
+	out, err := composeApplied(sources)
+	if err != nil {
+		return nil, err
+	}
+	for i, entry := range sources {
+		if entry.Value != chain[i].Value {
+			out.copiedBytes += int64(unsafe.Sizeof(*entry.Value)) + int64(cap(entry.Value.Rules))*int64(unsafe.Sizeof(Rule{}))
+		}
+	}
+	return out, nil
+}
+
+// composeApplied composes a chain whose skipped rules are already left out.
+func composeApplied(sources []ScopedSource) (*Config, error) {
 	out, err := composeSettings(sources)
 	if err != nil {
 		return nil, err

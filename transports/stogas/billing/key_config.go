@@ -315,7 +315,7 @@ func (s *Service) composeKeyConfig(row keyConfigRow, pins policySourcePins, encr
 	if err == nil {
 		values := make([]policy.ScopedSource, len(sources))
 		for i, source := range sources {
-			values[i] = policy.ScopedSource{Scope: versions[i].Scope, Value: source.value}
+			values[i] = policy.ScopedSource{Scope: versions[i].Scope, ID: versions[i].ID, Value: source.value}
 		}
 		digest = policy.ChainDigest(values)
 		compiled, err = s.keyConfigs.composeSources(values, digest)

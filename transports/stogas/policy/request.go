@@ -72,9 +72,13 @@ func ApplyRequest(parent *Config, request *Request) (*Config, error) {
 	if len(parent.sources) == 0 {
 		return nil, configError("request policies require compiled saved sources")
 	}
+	// The saved chain already leaves out the rules that it skips.
+	if err := source.validateExclusions(RequestScope); err != nil {
+		return nil, err
+	}
 	sources := append([]ScopedSource{}, parent.sources...)
 	sources = append(sources, ScopedSource{Scope: RequestScope, Value: source})
-	return ComposeSources(sources)
+	return composeApplied(sources)
 }
 
 // CompileRedaction compiles the request policy's redaction once ApplyRequest

@@ -68,6 +68,9 @@ type Config struct {
 	ActiveEncryptedPlugins []EncryptedPlugins `json:"-"`
 	sources                []ScopedSource
 	hasRules               bool
+	// copiedBytes is the size of the sources that composition copied without
+	// the rules that the chain skips.
+	copiedBytes            int64
 	activated              bool
 	requiredSettings       Permission
 	sortOrigins            []Origin

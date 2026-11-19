@@ -2,11 +2,13 @@ package policy
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -737,3 +739,201 @@ func TestRuleShapeRejectsNestedAuthorityAndReplaceableBudgets(t *testing.T) {
 }
 
 func quoted(value string) string { return `"` + strings.ReplaceAll(value, `"`, `\"`) + `"` }
+
+const (
+	excludedFolder = "018f6f3d-0000-7000-8000-00000000000f"
+	excludedGrant  = "018f6f3d-0000-7000-8000-000000000001"
+	excludedMember = "018f6f3d-0000-7000-8000-000000000002"
+	excludedKey    = "018f6f3d-0000-7000-8000-000000000003"
+	otherKey       = "018f6f3d-0000-7000-8000-000000000004"
+)
+
+func TestRulesSkipTheKeysThatTheyExclude(t *testing.T) {
+	org := ruleSource(t, `{"rules":{
+		"ascii":{"exclude":{"keys":["`+excludedKey+`"],"grants":["`+excludedGrant+`"]},"input":{"asciiOnly":true},"limits":{"daily":{"requests":5}}},
+		"members":{"exclude":{"members":["`+excludedMember+`"]},"when":"request.interface == 'chat_completions'","timeouts":{"outputIdleSeconds":30}},
+		"always":{"routing":{"retries":0}}}}`)
+	folder := ruleSource(t, `{"rules":{"fallback":{"mode":"default","input":{"asciiOnly":false}},"folder":{"exclude":{"keys":["`+excludedKey+`"],"grants":["`+excludedGrant+`"],"members":["`+excludedMember+`"]},"routing":{"fallbacks":0}}}}`)
+	key := ruleSource(t, `{}`)
+	chain := func(grant, member, id string) []ScopedSource {
+		return []ScopedSource{{Scope: OrganizationScope, ID: "org", Value: org}, {Scope: FolderScope, ID: excludedFolder, Value: folder},
+			{Scope: GrantScope, ID: grant, Value: key}, {Scope: MemberScope, ID: member, Value: key}, {Scope: KeyScope, ID: id, Value: key}}
+	}
+	values := ruleValues{"request.interface": {Type: "string", String: "chat_completions"}}
+	for _, test := range []struct {
+		name           string
+		sources        []ScopedSource
+		ascii          bool
+		idle, limits   int
+		fallbacks      int
+		skippedInChain int
+	}{
+		{"no listed resource", chain(otherKey, otherKey, otherKey), true, 30, 1, 0, 0},
+		{"listed key", chain(otherKey, otherKey, excludedKey), false, 30, 0, DefaultFallbacks, 2},
+		{"listed grant", chain(excludedGrant, otherKey, otherKey), false, 30, 0, DefaultFallbacks, 2},
+		{"listed member", chain(otherKey, excludedMember, otherKey), true, 0, 1, DefaultFallbacks, 2},
+		// An ID matches only the kind that lists it.
+		{"key ID as a member", chain(otherKey, excludedKey, otherKey), true, 30, 1, 0, 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			composed, err := ComposeSources(test.sources)
+			if err != nil {
+				t.Fatal(err)
+			}
+			active, err := composed.Activate(values)
+			if err != nil {
+				t.Fatal(err)
+			}
+			idle := 0
+			if active.Timeouts != nil && active.Timeouts.OutputIdleSeconds != nil {
+				idle = *active.Timeouts.OutputIdleSeconds
+			}
+			// A skipped requirement leaves the folder's default in place, and its limit counts nothing.
+			if ascii := active.Input != nil && active.Input.ASCIIOnly; ascii != test.ascii || idle != test.idle || len(active.ActiveRules) != test.limits ||
+				active.Routing.Fallbacks != test.fallbacks || active.Routing.Retries != 0 {
+				t.Fatalf("ascii=%v idle=%d limits=%v fallbacks=%d retries=%d", ascii, idle, active.ActiveRules, active.Routing.Fallbacks, active.Routing.Retries)
+			}
+			skipped := 0
+			for i, entry := range composed.sources {
+				skipped += len(test.sources[i].Value.Rules) - len(entry.Value.Rules)
+			}
+			if skipped != test.skippedInChain || (skipped > 0) != (composed.copiedBytes > 0) {
+				t.Fatalf("skipped=%d copied=%d", skipped, composed.copiedBytes)
+			}
+			if len(org.Rules) != 3 || len(folder.Rules) != 2 {
+				t.Fatal("composition changed a shared source")
+			}
+			// Keys share composed settings by this name, so it separates the chains that skip rules.
+			if same := ChainDigest(test.sources) == ChainDigest(chain(otherKey, otherKey, otherKey)); same != (skipped == 0) {
+				t.Fatalf("chain digest equal=%v with %d skipped rules", same, skipped)
+			}
+			// A request policy keeps the saved chain's skipped rules out.
+			request, err := CompileRequest([]byte(`{"routing":{"retries":0}}`), "org", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			composed.RequestPermission = RequestPermission(requestPermissions)
+			applied, err := ApplyRequest(composed, request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if active, err = applied.Activate(values); err != nil || (active.Input != nil && active.Input.ASCIIOnly) != test.ascii {
+				t.Fatalf("request policy changed the skipped rules: %v", err)
+			}
+		})
+	}
+	// Chains that name no resources skip nothing and keep the digest of their content alone.
+	bare := []ScopedSource{{Scope: OrganizationScope, Value: org}, {Scope: KeyScope, Value: key}}
+	raw, _ := json.Marshal([][]string{{"organization", org.Digest}, {"key", key.Digest}})
+	sum := sha256.Sum256(raw)
+	if composed, err := ComposeSources(bare); err != nil || len(composed.sources[0].Value.Rules) != 3 || ChainDigest(bare) != hex.EncodeToString(sum[:]) {
+		t.Fatalf("a chain without resource IDs skipped a rule or changed its digest: %v", err)
+	}
+}
+
+func TestExclusionsNameOnlyResourcesUnderTheirPolicy(t *testing.T) {
+	rule := func(exclude string) string {
+		return `{"rules":{"r":{"exclude":` + exclude + `,"input":{"asciiOnly":true}}}}`
+	}
+	for _, exclude := range []string{
+		`{}`, `[]`, `["` + excludedKey + `"]`, `null`, `{"keys":[]}`, `{"keys":null}`, `{"keys":"` + excludedKey + `"}`,
+		`{"roles":["` + excludedKey + `"]}`, `{"credentials":["` + excludedKey + `"]}`, `{"Keys":["` + excludedKey + `"]}`,
+		`{"keys":["key"]}`, `{"keys":["` + strings.ToUpper(excludedKey) + `"]}`, `{"keys":["` + excludedKey + `","` + excludedKey + `"]}`,
+	} {
+		if _, err := CompileSource([]byte(rule(exclude))); !errors.Is(err, ErrInvalidConfig) {
+			t.Errorf("exclude %s compiled: %v", exclude, err)
+		}
+	}
+	// Every default ordering of a chain applies, so none can leave a key out.
+	if _, err := CompileSource([]byte(`{"rules":{"r":{"mode":"default","exclude":{"keys":["` + excludedKey + `"]},"routing":{"sort":[{"by":"provider.id"}]}}}}`)); !errors.Is(err, ErrInvalidConfig) {
+		t.Errorf("a default ordering took exclusions: %v", err)
+	}
+	kinds := map[Scope][]string{OrganizationScope: {"folders", "grants", "members", "keys"}, FolderScope: {"grants", "members", "keys"}, GrantScope: {"members", "keys"}}
+	empty := ruleSource(t, `{}`)
+	for _, scope := range []Scope{OrganizationScope, FolderScope, GrantScope, RoleScope, MemberScope, CredentialScope, KeyScope} {
+		for kind := range exclusionKinds {
+			source := ruleSource(t, rule(`{"`+kind+`":["`+excludedKey+`"]}`))
+			sources := []ScopedSource{{Scope: OrganizationScope, Value: empty}, {Scope: scope, Value: source}, {Scope: KeyScope, Value: empty}}
+			if scope == OrganizationScope || scope == KeyScope {
+				sources = []ScopedSource{{Scope: OrganizationScope, Value: empty}, {Scope: KeyScope, Value: empty}}
+				sources[map[Scope]int{OrganizationScope: 0, KeyScope: 1}[scope]].Value = source
+			}
+			_, err := ComposeSources(sources)
+			if allowed := slices.Contains(kinds[scope], kind); allowed != (err == nil) || err != nil && !errors.Is(err, ErrInvalidConfig) {
+				t.Errorf("%s policy excluding %s: allowed=%v err=%v", scope, kind, allowed, err)
+			}
+		}
+	}
+	// A key cannot leave itself out of its own rule, and a request cannot leave its key out.
+	own := ruleSource(t, rule(`{"keys":["`+excludedKey+`"]}`))
+	if _, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: empty}, {Scope: KeyScope, ID: excludedKey, Value: own}}); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("a key policy excluded its own key: %v", err)
+	}
+	parent, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: ruleSource(t, `{"delegation":{"requests":true}}`)}, {Scope: KeyScope, ID: excludedKey, Value: empty}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := CompileRequest([]byte(rule(`{"keys":["`+excludedKey+`"]}`)), "org", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ApplyRequest(parent, request); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("a request policy took exclusions: %v", err)
+	}
+}
+
+func TestInspectionMarksSkippedRulesWithoutTheirLists(t *testing.T) {
+	org := `{"rules":{"ascii":{"exclude":{"keys":["` + excludedKey + `","` + otherKey + `"]},"input":{"asciiOnly":true}},"kept":{"plugins":{"promptCaching":"off"}}}}`
+	folder := `{"rules":{"fallback":{"mode":"default","input":{"asciiOnly":false}}}}`
+	inspect := func(key string) []any {
+		inspection, err := InspectSources([]InspectionSource{{Scope: OrganizationScope, ID: "org", Config: json.RawMessage(org)},
+			{Scope: FolderScope, ID: excludedFolder, Config: json.RawMessage(folder)}, {Scope: KeyScope, ID: key, Config: json.RawMessage(`{}`)}}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := json.Marshal(inspection.Effective["rules"])
+		var rules []any
+		if err := json.Unmarshal(raw, &rules); err != nil {
+			t.Fatal(err)
+		}
+		return rules
+	}
+	skipped, applied := inspect(excludedKey), inspect("018f6f3d-0000-7000-8000-000000000009")
+	want := map[string]any{"scope": "key", "id": excludedKey}
+	ascii, fallback := skipped[0].(map[string]any), skipped[2].(map[string]any)
+	if !reflect.DeepEqual(ascii["skipped"], want) || ascii["config"].(map[string]any)["exclude"] != nil || fallback["replaced"] != nil || skipped[1].(map[string]any)["skipped"] != nil {
+		t.Fatalf("skipped rule: %v, default: %v", ascii, fallback)
+	}
+	ascii, fallback = applied[0].(map[string]any), applied[2].(map[string]any)
+	if ascii["skipped"] != nil || ascii["config"].(map[string]any)["exclude"] != nil || fallback["replaced"] == nil {
+		t.Fatalf("applied rule: %v, default: %v", ascii, fallback)
+	}
+}
+
+// A kept rule's exclusions decide which keys its settings apply to, so a
+// policy that can no longer set a section cannot change them either.
+func TestChangingExclusionsNeedsTheRuleSectionsPermission(t *testing.T) {
+	folder := func(exclude string) string {
+		return `{"rules":{"ascii":{"exclude":{"keys":[` + exclude + `]},"input":{"asciiOnly":true}}}}`
+	}
+	inspect := func(delegation, proposal, previous string) error {
+		_, err := InspectSources([]InspectionSource{
+			{Scope: OrganizationScope, ID: "org", Config: json.RawMessage(`{"delegation":{"folders":` + delegation + `}}`)},
+			{Scope: FolderScope, ID: excludedFolder, Config: json.RawMessage(proposal)},
+			{Scope: KeyScope, Config: json.RawMessage(`{}`)},
+		}, &InspectionEdit{Scope: FolderScope, ID: excludedFolder, Previous: json.RawMessage(previous)})
+		return err
+	}
+	one, two := `"`+excludedKey+`"`, `"`+excludedKey+`","`+otherKey+`"`
+	if err := inspect(`["limits"]`, folder(one), folder(one)); err != nil {
+		t.Fatalf("an unchanged kept rule failed: %v", err)
+	}
+	for _, change := range [][2]string{{one, two}, {two, one}} {
+		if err := inspect(`["limits"]`, folder(change[1]), folder(change[0])); !errors.Is(err, ErrPolicyEditForbidden) {
+			t.Fatalf("exclusions of a kept rule changed from %s to %s: %v", change[0], change[1], err)
+		}
+		if err := inspect(`["input"]`, folder(change[1]), folder(change[0])); err != nil {
+			t.Fatalf("a permitted section's exclusions could not change: %v", err)
+		}
+	}
+}

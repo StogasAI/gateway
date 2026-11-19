@@ -88,8 +88,10 @@ func TestSavedSourceCompositionMatchesCompilerCorpus(t *testing.T) {
 		t.Fatal(err)
 	}
 	var corpus []struct {
-		Name     string
-		Sources  [3]json.RawMessage
+		Name    string
+		Sources [3]json.RawMessage
+		// IDs name the three resources where a rule excludes one.
+		IDs      [3]string
 		Digest   string
 		Compiled json.RawMessage
 	}
@@ -105,7 +107,7 @@ func TestSavedSourceCompositionMatchesCompilerCorpus(t *testing.T) {
 				}
 				value, compileErr := CompileSource(document)
 				err = compileErr
-				sources = append(sources, ScopedSource{Scope: []Scope{OrganizationScope, GrantScope, KeyScope}[i], Value: value})
+				sources = append(sources, ScopedSource{Scope: []Scope{OrganizationScope, GrantScope, KeyScope}[i], ID: row.IDs[i], Value: value})
 				if err != nil {
 					t.Fatal(err)
 				}

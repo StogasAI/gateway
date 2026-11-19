@@ -143,7 +143,7 @@ func (s *Service) ValidatePolicySources(raw []PolicyValidationSource, organizati
 			return nil, err
 		}
 		sources = append(sources, compiled)
-		values = append(values, policy.ScopedSource{Scope: entry.Scope, Value: compiled.value})
+		values = append(values, policy.ScopedSource{Scope: entry.Scope, ID: entry.ID, Value: compiled.value})
 		// Every bound is the policy's own, so each policy is checked alone:
 		// its matchers build, and its sections, which one request can match
 		// together, keep to the bounds of one policy.
