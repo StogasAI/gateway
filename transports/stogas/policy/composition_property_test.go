@@ -267,6 +267,7 @@ func TestEverySettingDeclaresItsScopeAndCombination(t *testing.T) {
 		"plugins.textExtraction.office": {"candidate", "the strongest mode: always, then auto, then off"},
 		"plugins.textExtraction.pdf":    {"candidate", "the strongest mode: always, then auto, then off"},
 		"plugins.export":                {"candidate", "union of destinations"},
+		"plugins.promptCaching":         {"candidate", "the strongest mode: 1h, then 5m, then off"},
 		"routing.filter":                {"candidate", "every filter must match"},
 		"routing.allowedCatalogNodes":   {"candidate", "intersection"},
 		"routing.retries":               {"candidate", "minimum"},

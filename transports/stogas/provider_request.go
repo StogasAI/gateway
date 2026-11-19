@@ -112,6 +112,14 @@ func PrepareProviderRequest(ctx *schemas.BifrostContext, state *State, request *
 	if bifrostErr != nil || len(body) == 0 {
 		return invalidRequest("Invalid request for selected provider")
 	}
+	if lifetime := gatewayPromptCache(state); lifetime != "" && usesAnthropicWireFormat(ctx, resolution.Provider, resolution.Model) {
+		marked, err := markAnthropicPromptCache(body, lifetime)
+		if err != nil {
+			return invalidRequest("Invalid request for selected provider")
+		}
+		body = marked
+		settings.PromptCaching = lifetime
+	}
 
 	if !providerutils.SetPreparedRequestBody(ctx, request.RequestType, resolution.Provider, resolution.Model, body) {
 		return catalog.ErrUnsupportedRequest

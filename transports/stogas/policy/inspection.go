@@ -398,7 +398,7 @@ func inspectionPlugins(parts []*Plugins) (*Plugins, error) {
 	}
 	presets, patterns := map[string]bool{}, map[string]bool{}
 	selected := &Redaction{Presets: []string{}}
-	plugins := &Plugins{TextExtraction: combineTextExtraction(parts)}
+	plugins := &Plugins{TextExtraction: combineTextExtraction(parts), PromptCaching: combinePromptCaching(parts)}
 	var exports []*exportconfig.Config
 	for _, part := range parts {
 		if part.Export != nil {
@@ -519,6 +519,10 @@ func inspectionSetBy(entries []InspectionSource, sources []ScopedSource, compile
 		for _, i := range first {
 			out = append(out, map[string]any{"setting": "plugins.textExtraction." + string(family), "policy": inspectionReference(entries[i])})
 		}
+	}
+	// The strongest prompt caching mode wins, so it names the first policy that sets that mode.
+	if mode := combinePromptCaching(compiled.PluginSources); mode != "" {
+		add("plugins.promptCaching", permissionPromptCaching, false, func(c *Config) bool { return c.Plugins != nil && c.Plugins.PromptCaching == mode })
 	}
 	if compiled.Routing.AllowedCatalogNodes != nil {
 		add("routing.allowedCatalogNodes", permissionNodes, true, func(c *Config) bool { return c.Routing.AllowedCatalogNodes != nil })

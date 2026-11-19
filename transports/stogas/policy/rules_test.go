@@ -591,8 +591,8 @@ func TestEveryReplaceableKindHasOneName(t *testing.T) {
 		t.Fatalf("named kinds %b, want %b", kinds, want)
 	}
 	if want := []string{
-		"access.countries", "access.networks", "access.schedule", "access.transports", "input", "plugins.export", "plugins.redaction",
-		"plugins.textExtraction.office", "plugins.textExtraction.pdf", "plugins.textExtraction.text",
+		"access.countries", "access.networks", "access.schedule", "access.transports", "input", "plugins.export", "plugins.promptCaching",
+		"plugins.redaction", "plugins.textExtraction.office", "plugins.textExtraction.pdf", "plugins.textExtraction.text",
 		"routing.allowedCatalogNodes", "routing.fallbacks", "routing.filter", "routing.missingEncryptionKeys",
 		"routing.retries", "timeouts.outputIdleSeconds", "timeouts.totalSeconds",
 	}; !slices.Equal(names, want) {

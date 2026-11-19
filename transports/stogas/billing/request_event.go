@@ -177,6 +177,9 @@ type RequestSettings struct {
 	// HostedTools are the hosted tools that the request let the model call, whose data
 	// handling joined the deployment's.
 	HostedTools []string `json:"hosted_tools,omitempty"`
+	// PromptCaching is the lifetime of the cache entries that the gateway's cache marks asked
+	// for, because the request marked nothing to cache.
+	PromptCaching string `json:"prompt_caching,omitempty"`
 }
 
 // A request's metadata follows OpenAI's: up to 16 pairs, with keys up to 64

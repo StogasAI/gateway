@@ -305,6 +305,7 @@ type DenyWindow struct {
 
 type Plugins struct {
 	Export         *exportconfig.Config `json:"export,omitempty"`
+	PromptCaching  string               `json:"promptCaching,omitempty"`
 	Redaction      *Redaction           `json:"redaction,omitempty"`
 	TextExtraction TextExtraction       `json:"textExtraction,omitempty"`
 }
@@ -427,7 +428,7 @@ type Redaction struct {
 
 // pluginUnits are the plugins that combine on their own: a required plugin
 // setting replaces only the defaults of the same plugin.
-const pluginUnits = permissionRedaction | textExtractionUnits | permissionExport
+const pluginUnits = permissionRedaction | textExtractionUnits | permissionExport | permissionPromptCaching
 
 func (p *Plugins) units() Permission {
 	var units Permission
@@ -439,6 +440,9 @@ func (p *Plugins) units() Permission {
 	}
 	if p != nil && p.Export != nil {
 		units |= permissionExport
+	}
+	if p != nil && p.PromptCaching != "" {
+		units |= permissionPromptCaching
 	}
 	return units
 }
@@ -467,6 +471,9 @@ func (p *Plugins) only(units Permission) *Plugins {
 	}
 	if units&permissionExport != 0 {
 		part.Export = p.Export
+	}
+	if units&permissionPromptCaching != 0 {
+		part.PromptCaching = p.PromptCaching
 	}
 	return part
 }
@@ -637,12 +644,17 @@ func (p *Plugins) validate() error {
 				return err
 			}
 		}
+		if p.PromptCaching != "" {
+			if err := validatePromptCaching(p.PromptCaching); err != nil {
+				return err
+			}
+		}
 	}
 	if p == nil || p.Redaction == nil {
 		if p == nil {
 			return nil
 		}
-		if p.TextExtraction != nil || p.Export != nil {
+		if p.TextExtraction != nil || p.Export != nil || p.PromptCaching != "" {
 			return nil
 		}
 		return configError("plugins require explicit configuration")

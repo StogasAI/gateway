@@ -43,6 +43,8 @@ type anthropicAdapterContext struct {
 	RawBody               map[string]json.RawMessage
 	RawTools              []map[string]json.RawMessage
 	ActualWebSearchCalls  int
+	// PromptCache is the lifetime of the cache entries that the gateway's marks ask for, or "".
+	PromptCache string
 }
 
 // anthropicWireSupportsMidConversationSystem reports whether the model keeps a system message
@@ -344,7 +346,8 @@ func validateAnthropicOutputTokenLimit(state *State) error {
 	if state == nil || state.Resolution == nil || state.Resolution.OutputTokenLimit() != 0 {
 		return nil
 	}
-	if anthropicRawRequestContainsCacheControl(state.Resolution.Route, state.Resolution.RawBody()) {
+	// A request without output only fills the cache, so it needs marks of its own or the gateway's.
+	if anthropicRawRequestContainsCacheControl(state.Resolution.Route, state.Resolution.RawBody()) || gatewayPromptCache(state) != "" {
 		return nil
 	}
 	return catalog.ErrOutputLimitTooSmall
@@ -854,6 +857,7 @@ func anthropicAdapterContextForDeployment(state *State, deployment catalog.Deplo
 		RawBody:               state.Resolution.RawBody(),
 		RawTools:              state.Resolution.RawTools(),
 		ActualWebSearchCalls:  actualWebSearchCalls(state),
+		PromptCache:           gatewayPromptCache(state),
 	}
 }
 
@@ -1004,6 +1008,9 @@ func anthropicHostedContentHoldTokens(req anthropicAdapterContext) int {
 }
 
 func anthropicCacheWriteHoldMeter(req anthropicAdapterContext) string {
+	if req.PromptCache != "" {
+		return promptCacheWriteMeter(req.PromptCache)
+	}
 	route := catalog.Route(req.Route)
 	if !anthropicRawRequestContainsCacheControl(route, req.RawBody) && !anthropicToolCacheControlExists(req.RawTools) {
 		return ""
