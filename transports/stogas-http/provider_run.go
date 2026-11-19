@@ -649,7 +649,8 @@ func (r *providerRun) end() (*schemas.BifrostError, *schemas.BifrostContext) {
 		return r.last, r.lastCtx
 	}
 	if r.state.ProcessingError == nil && !cancelledLocally(r.local) {
-		r.state.ProcessingError = gatewayFailure(r.response())
+		response := r.response()
+		r.state.ProcessingError, r.state.RefusedLimit = gatewayFailure(response), response.limit
 	}
 	return nil, nil
 }

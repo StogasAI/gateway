@@ -330,7 +330,7 @@ func (s *Server) failRun(ctx *requestContext, run *providerRun, respond bool) {
 			// The rejection is recorded before the response, and its export
 			// leaves with the request record that holds the rejection.
 			if respond && response != nil {
-				s.recordAdmissionRejection(ctx, response.status, response.code(), stogas.HoldRejectedExport(run.request, run.state))
+				s.recordAdmissionRejection(ctx, response.status, response.code(), response.limit, stogas.HoldRejectedExport(run.request, run.state))
 			} else {
 				run.state.Export.Discard()
 			}

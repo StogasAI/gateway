@@ -66,6 +66,7 @@ type State struct {
 	Response                *schemas.BifrostResponse
 	BifrostError            *schemas.BifrostError
 	ProcessingError         *schemas.BifrostError
+	RefusedLimit            billing.RefusedLimit // the policy limit behind ProcessingError, if one refused the request
 	FinalEvent              *billing.RequestEvent
 	UpstreamCostUSD         string
 	FinalMeters             []catalog.MeterEstimate

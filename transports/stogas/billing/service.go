@@ -62,7 +62,7 @@ const authorizeHoldArguments = `
   $24::uuid[]
 `
 
-const authorizeHoldColumns = "result, hold_id, user_id, key_id, grant_id, organization_id, authorized_billed_cost_usd, created_at, expires_at, upstream_byok, upstream_byok_binding, config_current, wait_ms, requests_per_second"
+const authorizeHoldColumns = "result, hold_id, user_id, key_id, grant_id, organization_id, authorized_billed_cost_usd, created_at, expires_at, upstream_byok, upstream_byok_binding, config_current, wait_ms, requests_per_second, limit_name, limit_rule"
 
 const closeRequestArguments = `
   $1::uuid,
@@ -89,13 +89,16 @@ type authorizeRow struct {
 	// RequestsPerSecond is the organization's platform rate, which results that
 	// checked it report.
 	RequestsPerSecond *int32
+	// LimitName and LimitRule name the policy limit that refused the request,
+	// and the rule that holds it, if any.
+	LimitName, LimitRule *string
 }
 
 func (r *authorizeRow) fields() []any {
 	return []any{
 		&r.Result, &r.HoldID, &r.UserID, &r.KeyID, &r.GrantID, &r.OrganizationID, &r.AuthorizedBilledCostUSD,
 		&r.CreatedAt, &r.ExpiresAt, &r.UpstreamByok, &r.UpstreamByokBinding, &r.ConfigCurrent, &r.WaitMS,
-		&r.RequestsPerSecond,
+		&r.RequestsPerSecond, &r.LimitName, &r.LimitRule,
 	}
 }
 
@@ -508,7 +511,7 @@ func PairRefused(err error) bool {
 	// Other policy results are limits, except a disabled or expired scope that
 	// every pair shares.
 	code := refusal.Code
-	return policyResultErrors[code] == refusal && (strings.HasPrefix(code, "credential_") ||
+	return policyResultErrors[code] != nil && (strings.HasPrefix(code, "credential_") ||
 		!strings.HasSuffix(code, "_disabled") && !strings.HasSuffix(code, "_expired"))
 }
 
@@ -656,7 +659,7 @@ func (s *Service) authorizeResolvedRequest(ctx context.Context, apiKeyHash strin
 	row := outcome.row
 	s.organizationRates.learn(snapshot.Claims.OrganizationID, row.RequestsPerSecond)
 
-	if resultErr := authorizationResultError(row.Result, row.WaitMS); resultErr != nil {
+	if resultErr := authorizationResultError(row.Result, row.WaitMS, RefusedLimit{derefString(row.LimitName), derefString(row.LimitRule)}); resultErr != nil {
 		if !row.ConfigCurrent && derefString(row.KeyID) == snapshot.Claims.KeyID {
 			s.confirmKeyConfig(apiKeyHash, dashboard, snapshot, false, started)
 		}
@@ -737,17 +740,21 @@ func (s *Service) authorizeResolvedRequest(ctx context.Context, apiKeyHash strin
 	}
 }
 
-func authorizationResultError(result string, waitMS *int64) error {
+func authorizationResultError(result string, waitMS *int64, limit RefusedLimit) error {
 	if refusal := databaseRefusals[result]; refusal != nil {
+		var err error = refusal
+		if limit.Name != "" {
+			err = limitError(refusal, limit)
+		}
 		if refusal.statusCode == 429 && waitMS != nil {
 			// A reset can be up to 1,000 years away, past the longest Duration.
 			delay := time.Duration(math.MaxInt64)
 			if *waitMS < int64(delay/time.Millisecond) {
 				delay = time.Duration(*waitMS) * time.Millisecond
 			}
-			return &retryAfterError{refusal, delay}
+			return &retryAfterError{err, delay}
 		}
-		return refusal
+		return err
 	}
 	switch result {
 	case "params_mismatch", "authorization_closed", "expired", "hold_not_found":

@@ -724,7 +724,7 @@ func (s *Server) writeError(ctx *requestContext, statusCode int, payload any) {
 	if len(ctx.writer.Header().Get("X-Request-ID")) == 0 {
 		_, _ = inferenceRequestID(ctx)
 	}
-	s.recordAdmissionRejection(ctx, statusCode, stogasbilling.NormalizeStogasErrorCode(code, statusCode), nil)
+	s.recordAdmissionRejection(ctx, statusCode, stogasbilling.NormalizeStogasErrorCode(code, statusCode), stogasbilling.RefusedLimit{}, nil)
 	data, err := sonic.Marshal(payload)
 	if err != nil {
 		data = []byte(`{"error":{"message":"We could not complete the response.","type":"internal_error","code":"internal_error","param":null}}`)
@@ -749,6 +749,8 @@ type errorResponse struct {
 	status     int
 	payload    map[string]any
 	retryAfter string
+	// limit names the policy limit that refused the request, if one did.
+	limit stogasbilling.RefusedLimit
 	// final tells SDK clients not to retry, and retry to retry a status that
 	// they do not retry by themselves.
 	final, retry bool
@@ -858,6 +860,10 @@ func billingErrorResponse(err error) errorResponse {
 	response := errorResponse{status: apiErr.StatusCode, payload: map[string]any{
 		"error": map[string]any{"message": apiErr.Message, "type": apiErr.Type, "code": apiErr.Code, "param": nil},
 	}}
+	var limited *stogasbilling.LimitError
+	if errors.As(err, &limited) {
+		response.limit = limited.Limit
+	}
 	var retry interface{ RetryAfter() time.Duration }
 	if errors.As(err, &retry) {
 		response.retryAfter = spreadRetryAfter(retry.RetryAfter())

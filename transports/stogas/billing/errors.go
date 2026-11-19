@@ -3,6 +3,7 @@ package billing
 import (
 	"maps"
 	"strconv"
+	"strings"
 
 	"github.com/maximhq/bifrost/transports/stogas/customerkey"
 )
@@ -18,6 +19,34 @@ type RequestError struct {
 func (e *RequestError) Error() string   { return e.Message }
 func (e *RequestError) StatusCode() int { return e.statusCode }
 
+// RefusedLimit names the policy limit that refused a request, and the rule
+// that holds it, if any.
+type RefusedLimit struct {
+	Name string `json:"limit,omitempty"`
+	Rule string `json:"rule,omitempty"`
+}
+
+// LimitError is a policy limit's refusal. Its message names the limit, which
+// the error code cannot: a scope can have several limits of one kind.
+type LimitError struct {
+	*RequestError
+	Limit RefusedLimit
+}
+
+func (e *LimitError) Unwrap() error { return e.RequestError }
+
+// limitError names limit in refusal's message, as in `Grant token limit
+// "daily" in rule "openai_budget" exceeded`.
+func limitError(refusal *RequestError, limit RefusedLimit) *LimitError {
+	name := ` "` + limit.Name + `"`
+	if limit.Rule != "" {
+		name += ` in rule "` + limit.Rule + `"`
+	}
+	named := *refusal
+	named.Message = strings.TrimSuffix(refusal.Message, " exceeded") + name + " exceeded"
+	return &LimitError{&named, limit}
+}
+
 var (
 	ErrAPIKeyDisabled      = &RequestError{"key_disabled", "API key is disabled", 403}
 	ErrAPIKeyExpired       = &RequestError{"key_expired", "API key is expired", 403}
@@ -25,8 +54,6 @@ var (
 	ErrInvalidAPIKey       = &RequestError{"invalid_api_key", "Invalid API key", 401}
 	ErrAPIKeyOldSecret     = &RequestError{"key_secret_replaced", "This API key's secret was replaced. Copy the current secret from the dashboard.", 401}
 	ErrInsufficientBalance = &RequestError{"insufficient_balance", "Insufficient credit. Add funds to your organization to retry this request.", 402}
-	ErrAPIKeySpendLimit    = &RequestError{"key_spend_limit", "API key spend limit exceeded", 402}
-	ErrAPIKeyRateLimit     = &RequestError{"key_rate_limited", "API key rate limit exceeded", 429}
 	ErrRateLimit           = &RequestError{"rate_limit_exceeded", "Too many requests. Wait before retrying.", 429}
 	ErrPlatformRateLimit   = &RequestError{"platform_rate_limited", "The organization's requests exceed its platform request rate. Wait before retrying.", 429}
 	ErrAPIKeyConfigStale   = &RequestError{"key_configuration_changed", "API key configuration changed. The gateway needs to refresh it. This request was not sent to a provider or charged. Retry shortly.", 503}
@@ -67,7 +94,7 @@ var policyResultErrors = func() map[string]*RequestError {
 			errors[code] = &RequestError{code, label + " " + reason.message, reason.status}
 		}
 	}
-	for _, err := range []*RequestError{ErrAPIKeyDisabled, ErrAPIKeyExpired, ErrGrantDisabled, ErrAPIKeySpendLimit, ErrAPIKeyRateLimit} {
+	for _, err := range []*RequestError{ErrAPIKeyDisabled, ErrAPIKeyExpired, ErrGrantDisabled} {
 		errors[err.Code] = err
 	}
 	return errors

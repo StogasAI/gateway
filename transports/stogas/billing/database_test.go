@@ -479,6 +479,7 @@ var dropConnection = &pgproto3.ErrorResponse{}
 type fakeRow struct {
 	result string
 	waitMS int64
+	limit  RefusedLimit
 }
 
 // limitRows refuses each authorization of a statement with a limit whose wait
@@ -487,14 +488,16 @@ func limitRows(statement fakeStatement) []fakeRow {
 	rows := make([]fakeRow, len(statement.products))
 	for index, product := range statement.products {
 		wait, _ := strconv.ParseInt(product[strings.LastIndexByte(product, '-')+1:], 10, 64)
-		rows[index] = fakeRow{result: "key_rate_limited", waitMS: wait}
+		rows[index] = fakeRow{result: "key_rate_limited", waitMS: wait, limit: RefusedLimit{"rpm", "openai"}}
 	}
 	return rows
 }
 
 func retriesAfter(err error, milliseconds int) bool {
 	var retry interface{ RetryAfter() time.Duration }
-	return errors.Is(err, ErrAPIKeyRateLimit) && errors.As(err, &retry) && retry.RetryAfter() == time.Duration(milliseconds)*time.Millisecond
+	var limited *LimitError
+	return errors.As(err, &limited) && limited.Code == "key_rate_limited" && limited.Limit == RefusedLimit{"rpm", "openai"} &&
+		errors.As(err, &retry) && retry.RetryAfter() == time.Duration(milliseconds)*time.Millisecond
 }
 
 // authorizeProduct authorizes a request of organization whose product key
@@ -654,6 +657,10 @@ func servePostgres(conn net.Conn, answer func(fakeStatement) ([]fakeRow, *pgprot
 						}
 					case name == "wait_ms" && row.waitMS >= 0:
 						values[column] = fakeInt8(row.waitMS, format)
+					case name == "limit_name" && row.limit.Name != "":
+						values[column] = []byte(row.limit.Name)
+					case name == "limit_rule" && row.limit.Rule != "":
+						values[column] = []byte(row.limit.Rule)
 					}
 				}
 				backend.Send(&pgproto3.DataRow{Values: values})

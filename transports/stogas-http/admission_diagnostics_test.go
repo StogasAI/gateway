@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/maximhq/bifrost/transports/stogas/billing"
 )
 
 func TestAdmissionDiagnosticsBoundRejectedTrafficAndExcludeAdmittedErrors(t *testing.T) {
@@ -20,7 +22,7 @@ func TestAdmissionDiagnosticsBoundRejectedTrafficAndExcludeAdmittedErrors(t *tes
 			s.writeError(ctx, 401, map[string]string{"error": fmt.Sprintf("secret-%d", i)})
 			// An encrypted reply has an outer 200; the inner rejection still counts once.
 			ctx.writer.WriteHeader(200)
-			s.recordAdmissionRejection(ctx, 500, "internal_error", nil)
+			s.recordAdmissionRejection(ctx, 500, "internal_error", billing.RefusedLimit{}, nil)
 		})
 	}
 	workers.Wait()

@@ -56,6 +56,7 @@ type RequestPerformance struct {
 type EventError struct {
 	Code   string `json:"code"`
 	Status int    `json:"status"`
+	RefusedLimit
 }
 
 const RequestLogSchemaVersion uint8 = 1

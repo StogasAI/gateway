@@ -464,7 +464,7 @@ func PrepareFinalState(state *State) *gatewaybilling.RequestEvent {
 		if state.ProcessingError.Error != nil && state.ProcessingError.Error.Code != nil {
 			code = *state.ProcessingError.Error.Code
 		}
-		event.GatewayError = &gatewaybilling.EventError{Code: gatewaybilling.NormalizeStogasErrorCode(code, status), Status: status}
+		event.GatewayError = &gatewaybilling.EventError{Code: gatewaybilling.NormalizeStogasErrorCode(code, status), Status: status, RefusedLimit: state.RefusedLimit}
 	}
 	// A local failure can interrupt a provider stream before its outcome is
 	// known. Keep completed provider results; do not invent success or HTTP 500.

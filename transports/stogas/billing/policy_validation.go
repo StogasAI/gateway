@@ -50,7 +50,7 @@ func (s *Service) AuthorizePolicyValidation(ctx context.Context, rawKey string, 
 	if err := s.queryForTool(ctx, query, []any{hash, keyID, actorID, sessionID, nil, "use"}, &result, &claims); err != nil {
 		return nil, err
 	}
-	if err := authorizationResultError(result, nil); err != nil {
+	if err := authorizationResultError(result, nil, RefusedLimit{}); err != nil {
 		return nil, err
 	}
 	if result != "ok" || claims == nil {

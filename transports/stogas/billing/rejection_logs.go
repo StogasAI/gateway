@@ -42,6 +42,8 @@ type RejectionInput struct {
 	RequestType    string
 	Code           string
 	StatusCode     int
+	// Limit names the policy limit that refused the request, if one did.
+	Limit          RefusedLimit
 	CreatedAt      time.Time
 	NodeID         string
 	GatewayVersion string
@@ -62,6 +64,7 @@ type windowed struct {
 
 type rejectionLogKey struct {
 	keyID, requestInterface, code, transport string
+	limit                                    RefusedLimit
 	stream                                   bool
 	status                                   int
 	window                                   int64
@@ -139,7 +142,7 @@ func NewRejectionEvent(input RejectionInput) RequestEvent {
 		MemberID: input.Claims.ResponsibleID, GrantID: input.Claims.GrantID,
 		Metadata: map[string]string{}, Transport: input.Transport,
 		EncryptionKeyIDs: encryptionKeyIDs(input.EncryptionKeyIDs),
-		GatewayError:     &EventError{Code: NormalizeStogasErrorCode(input.Code, input.StatusCode), Status: input.StatusCode},
+		GatewayError:     &EventError{NormalizeStogasErrorCode(input.Code, input.StatusCode), input.StatusCode, input.Limit},
 		ProviderAttempts: []ProviderAttempt{},
 		Usage: RequestUsage{Meters: EventMeters{}, UpstreamCostUSD: ZeroChargeUSD, BilledCostUSD: ZeroChargeUSD,
 			CacheReadSavingsUSD: &zero, CacheWriteOverheadUSD: &zero},
@@ -213,7 +216,7 @@ func (s *Service) recordRejection(input RejectionInput, export *RejectionExport)
 		roots = sha256.Sum256([]byte(strings.Join(input.EncryptionKeyIDs, ",")))
 	}
 	requestInterface, stream := RequestShape(input.RequestType)
-	key := rejectionLogKey{input.Claims.KeyID, requestInterface, input.Code, input.Transport, stream, input.StatusCode, at.Truncate(rejectionLogWindow).Unix(), versions, roots}
+	key := rejectionLogKey{input.Claims.KeyID, requestInterface, input.Code, input.Transport, input.Limit, stream, input.StatusCode, at.Truncate(rejectionLogWindow).Unix(), versions, roots}
 	stamp := at.Format("2006-01-02T15:04:05.000Z")
 	group := b.groups[key]
 	if group == nil {

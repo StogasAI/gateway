@@ -48,7 +48,7 @@ func (s *Server) recordAdmission(ctx *requestContext) {
 // Fixed counters retain neither identities nor client/provider-controlled labels.
 // The request log sends the export with the row that holds the rejection, and
 // discards it when no row does.
-func (s *Server) recordAdmissionRejection(ctx *requestContext, status int, code string, export billing.RejectionExport) {
+func (s *Server) recordAdmissionRejection(ctx *requestContext, status int, code string, limit billing.RefusedLimit, export billing.RejectionExport) {
 	defer func() {
 		if export != nil {
 			export.Discard()
@@ -108,7 +108,7 @@ func (s *Server) recordAdmissionRejection(ctx *requestContext, status int, code 
 	}
 	s.runtime.Billing().RecordRejection(billing.RejectionInput{
 		PolicyVersions: ctx.policyVersions, Claims: claims, RequestID: requestID, RequestType: requestType, Code: code,
-		StatusCode: status, CreatedAt: startedAt, NodeID: nodeID, GatewayVersion: stogas.GatewayVersion,
+		StatusCode: status, Limit: limit, CreatedAt: startedAt, NodeID: nodeID, GatewayVersion: stogas.GatewayVersion,
 		Transport: ctx.transport(), EncryptionKeyIDs: ctx.encryptionKeyIDs,
 		TraceID: stogas.RequestTraceID(ctx.request.Header),
 	}, export)

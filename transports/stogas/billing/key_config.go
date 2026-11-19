@@ -265,7 +265,7 @@ func (s *Service) fetchKeyConfig(
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, err)
 	}
-	if resultErr := authorizationResultError(row.Result, nil); resultErr != nil {
+	if resultErr := authorizationResultError(row.Result, nil, RefusedLimit{}); resultErr != nil {
 		if row.Claims != nil && row.Claims.KeyID == expectedKeyID {
 			snapshot := &KeyConfigSnapshot{Claims: row.Claims}
 			s.keyConfigs.put(cacheKey, snapshot, time.Now())

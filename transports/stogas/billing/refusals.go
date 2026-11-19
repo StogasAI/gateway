@@ -10,11 +10,11 @@ import (
 // retryAfterError tells the caller when a refusal ends. RetryAfter survives
 // public error wrapping and encrypted HTTP responses.
 type retryAfterError struct {
-	*RequestError
+	error
 	delay time.Duration
 }
 
-func (e *retryAfterError) Unwrap() error             { return e.RequestError }
+func (e *retryAfterError) Unwrap() error             { return e.error }
 func (e *retryAfterError) RetryAfter() time.Duration { return e.delay }
 
 const (

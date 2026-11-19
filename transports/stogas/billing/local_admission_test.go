@@ -509,7 +509,7 @@ func TestOrganizationQueueLetsWaitingAuthorizationsLeave(t *testing.T) {
 }
 
 func TestStaleConfigurationIsServiceUnavailable(t *testing.T) {
-	err := authorizationResultError("config_stale", nil)
+	err := authorizationResultError("config_stale", nil, RefusedLimit{})
 	if !strings.Contains(err.Error(), ErrAPIKeyConfigStale.Error()) || ErrorStatus(err) != 503 {
 		t.Fatalf("stale configuration error = %v, status = %d", err, ErrorStatus(err))
 	}
@@ -532,7 +532,7 @@ func TestSharedPolicyDeclinesPreserveScopeStatus(t *testing.T) {
 		{"organization_spend_limit", 402, "Organization spend limit exceeded"},
 		{"grant_spend_limit", 402, "Grant spend limit exceeded"},
 	} {
-		err := authorizationResultError(item.result, nil)
+		err := authorizationResultError(item.result, nil, RefusedLimit{})
 		if ErrorStatus(err) != item.status || err.Error() != item.message {
 			t.Fatalf("decline = %v, status = %d", err, ErrorStatus(err))
 		}

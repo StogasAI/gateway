@@ -105,20 +105,20 @@ func TestKeyRefusalsRepeatDuringTheHoldBack(t *testing.T) {
 // gives no time. The platform request rate covers every pair.
 func TestDatabaseLimitRefusalsTellClientsWhenTheyEnd(t *testing.T) {
 	wait := int64(1500)
-	err := authorizationResultError("organization_rate_limited", &wait)
+	err := authorizationResultError("organization_rate_limited", &wait, RefusedLimit{})
 	var retry interface{ RetryAfter() time.Duration }
 	if !errors.As(err, &retry) || retry.RetryAfter() != 1500*time.Millisecond || !PairRefused(err) || ErrorStatus(err) != 429 {
 		t.Fatalf("limit refusal = %v", err)
 	}
-	if err := authorizationResultError("key_token_limit", nil); errors.As(err, &retry) || !PairRefused(err) || ErrorStatus(err) != 429 {
+	if err := authorizationResultError("key_token_limit", nil, RefusedLimit{}); errors.As(err, &retry) || !PairRefused(err) || ErrorStatus(err) != 429 {
 		t.Fatalf("lasting refusal = %v", err)
 	}
 	// A limit that resets every 1,000 years can wait longer than a Duration holds.
 	millennium := int64(1000 * 366 * 24 * 3_600_000)
-	if err := authorizationResultError("key_rate_limited", &millennium); !errors.As(err, &retry) || retry.RetryAfter() < 292*365*24*time.Hour {
+	if err := authorizationResultError("key_rate_limited", &millennium, RefusedLimit{}); !errors.As(err, &retry) || retry.RetryAfter() < 292*365*24*time.Hour {
 		t.Fatalf("millennium refusal = %v", err)
 	}
-	if err := authorizationResultError("platform_rate_limited", &wait); !errors.As(err, &retry) || PairRefused(err) || !errors.Is(err, ErrPlatformRateLimit) {
+	if err := authorizationResultError("platform_rate_limited", &wait, RefusedLimit{}); !errors.As(err, &retry) || PairRefused(err) || !errors.Is(err, ErrPlatformRateLimit) {
 		t.Fatalf("platform refusal = %v", err)
 	}
 }
