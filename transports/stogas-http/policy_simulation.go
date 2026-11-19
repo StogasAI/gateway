@@ -288,8 +288,8 @@ func (s *Server) simulatePolicy(ctx *requestContext) {
 		Policy:               config.Config,
 		AvailableCredentials: available,
 		DeploymentEligible:   stogas.CredentialDeploymentFilter(config, now),
-		CredentialBYOK: func(provider schemas.ModelProvider, index int) bool {
-			return config.UsesBYOK(string(provider), index)
+		CredentialKind: func(provider schemas.ModelProvider, index int) string {
+			return config.CredentialKind(string(provider), index)
 		},
 		CredentialOptions: func(provider schemas.ModelProvider, index int) []billing.HeldOption {
 			return config.AccountOptions(string(provider), index)

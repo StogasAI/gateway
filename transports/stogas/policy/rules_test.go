@@ -606,8 +606,9 @@ func TestFallbacksAndTotalTimeoutCannotDependOnTheCandidate(t *testing.T) {
 		`{"rules":{"r":{"when":"request.interface == 'chat_completions' && author.id == 'openai'","routing":{"fallbacks":1}}}}`,
 		`{"rules":{"r":{"when":"blendedPrice(3, 1) < decimal('5')","routing":{"fallbacks":1}}}}`,
 		`{"rules":{"r":{"when":"'claude-opus' in model.groupIds","timeouts":{"totalSeconds":60}}}}`,
+		`{"rules":{"r":{"when":"credential.kind == 'managed'","routing":{"fallbacks":0}}}}`,
 	} {
-		if _, err := CompileSource([]byte(raw)); err == nil || !strings.Contains(err.Error(), "author, model, deployment, route or provider fields") {
+		if _, err := CompileSource([]byte(raw)); err == nil || !strings.Contains(err.Error(), "author, model, deployment, route, provider or credential fields") {
 			t.Fatalf("candidate-dependent fallbacks or total timeout accepted: %s: %v", raw, err)
 		}
 	}

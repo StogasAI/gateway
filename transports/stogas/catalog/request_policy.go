@@ -180,23 +180,21 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 			policyTime: input.now, policyBudget: input.policyBudget, policyBodyBytes: len(input.Body),
 			hostedTools: variants.hostedTools, policyFacts: variants.facts,
 		}
-		values, ok := newResolvedPolicyValues(&template)
-		if !ok {
-			continue
-		}
 		retained := 0
 		indexes := []int{0}
 		if input.AvailableCredentials != nil {
 			indexes = input.AvailableCredentials[string(selection.provider)]
 		}
-		// The credentials of a deployment that share a policy and account options share one
-		// candidate. Options change the facts that policies read, so each set has its own values.
+		// The credentials of a deployment that share a policy, a kind and account options share one
+		// candidate. The kind and options are facts that policies read, so each pair of them has its
+		// own values.
+		type credentialFacts struct{ kind, options string }
 		type pairGroup struct {
-			config  *policy.Config
-			options string
+			config *policy.Config
+			facts  credentialFacts
 		}
 		groups := make(map[pairGroup]*ResolvedRequest)
-		valuesFor := map[string]*resolvedPolicyValues{"": values}
+		valuesFor := make(map[credentialFacts]*resolvedPolicyValues)
 		for rank, index := range indexes {
 			// Credentials are tried in assignment order, so later ones cannot
 			// fit within the request's pairs once they are full.
@@ -207,7 +205,11 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 				break
 			}
 			ranks[credentialCandidate{selection.provider, index}] = rank
-			byok := input.CredentialBYOK == nil || input.CredentialBYOK(selection.provider, index)
+			kind := CredentialStored
+			if input.CredentialKind != nil {
+				kind = input.CredentialKind(selection.provider, index)
+			}
+			byok := kind != CredentialManaged
 			if !selection.deployment.ServesWith(byok) {
 				trace.removePair(selection, index, nil, RemovedCandidate{Reason: RemovedCredentialKind})
 				continue
@@ -241,13 +243,17 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 			if input.CredentialOptions != nil {
 				options = selection.deployment.AppliedOptions(input.CredentialOptions(selection.provider, index))
 			}
-			group := pairGroup{original, optionsKey(options)}
-			values := valuesFor[group.options]
+			withCredential := template
+			withCredential.credentialKind, withCredential.accountOptions = kind, options
+			group := pairGroup{original, credentialFacts{kind, optionsKey(options)}}
+			values, found := valuesFor[group.facts]
+			if !found {
+				values, _ = newResolvedPolicyValues(&withCredential)
+				valuesFor[group.facts] = values
+			}
+			// Policies cannot read a deployment whose nodes the catalog graph lacks.
 			if values == nil {
-				held := template
-				held.accountOptions = options
-				values, _ = newResolvedPolicyValues(&held)
-				valuesFor[group.options] = values
+				continue
 			}
 			if existing, found := groups[group]; found {
 				switch {
@@ -332,8 +338,8 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 				keep(selection, TransportDenied(input.Transport))
 				continue
 			}
-			candidate := template
-			candidate.CredentialIndex, candidate.policy, candidate.accountOptions = index, value.Config, options
+			candidate := withCredential
+			candidate.CredentialIndex, candidate.policy = index, value.Config
 			groups[group] = &candidate
 			if skips(selection, index, value.Config) {
 				pending[&candidate] = values

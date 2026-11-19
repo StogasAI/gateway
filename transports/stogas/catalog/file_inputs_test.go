@@ -197,7 +197,12 @@ func TestRoutingSendsProviderFileIDsOnlyThroughCustomerCredentials(t *testing.T)
 			resolved, err := ResolveRequest(RequestInput{
 				Body:   []byte(`{"model":"` + tc.model + `","input":[{"role":"user","content":[{"type":"input_text","text":"read this"},{"type":"input_file","file_id":"file-abc"}]}]}`),
 				Method: "POST", Path: "/v1/responses", Policy: config, AvailableCredentials: tc.credentials,
-				CredentialBYOK: func(provider schemas.ModelProvider, index int) bool { return tc.byok[string(provider)][index] },
+				CredentialKind: func(provider schemas.ModelProvider, index int) string {
+					if tc.byok[string(provider)][index] {
+						return CredentialStored
+					}
+					return CredentialManaged
+				},
 				CheckCandidate: func(_ schemas.ModelProvider, index int, _ Deployment) error {
 					checked = append(checked, index)
 					return nil

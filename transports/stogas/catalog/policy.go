@@ -56,10 +56,11 @@ type policyDataHandling struct {
 	StorageWithin    []string `json:"storageWithin"`
 }
 
-// policyCredentialData is the pair's credential as policies read it: the account options that
-// apply to the deployment, and those among them that the credential's owner declared, which no
-// provider confirmed.
+// policyCredentialData is the pair's credential as policies read it: its kind, the account options
+// that apply to the deployment, and those among them that the credential's owner declared, which
+// no provider confirmed.
 type policyCredentialData struct {
+	Kind                   string   `json:"kind"`
 	AccountOptions         []string `json:"accountOptions"`
 	DeclaredAccountOptions []string `json:"declaredAccountOptions"`
 }
@@ -461,7 +462,7 @@ func newResolvedPolicyValues(candidate *ResolvedRequest) (*resolvedPolicyValues,
 				WeightPrecision:    deployment.WeightPrecision,
 			},
 		},
-		"credential": {fields: policyCredentialData{AccountOptions: accountOptions, DeclaredAccountOptions: declaredOptions}},
+		"credential": {fields: policyCredentialData{Kind: candidate.credentialKind, AccountOptions: accountOptions, DeclaredAccountOptions: declaredOptions}},
 		"model":      {id: ids.model, fields: model},
 		"provider":   {id: ids.provider, fields: provider},
 		"request":    {fields: candidate.policyRequestData(hostedTools)},

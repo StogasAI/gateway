@@ -171,11 +171,12 @@ type RequestInput struct {
 	// route on which the gateway calls the provider, since a provider's replies can report more
 	// on one route than another.
 	DeploymentEligible func(schemas.ModelProvider, int, Route, Deployment) bool
-	// CredentialBYOK reports a customer's own credential. Routing pairs each credential only with
-	// the deployments that Stogas serves with its kind, and only a customer's own reads provider
-	// file IDs, so a request that sends one skips the other pairs. Nil counts every credential as
-	// the customer's own.
-	CredentialBYOK func(schemas.ModelProvider, int) bool
+	// CredentialKind gives a credential's kind, which policies read as credential.kind:
+	// CredentialManaged for Stogas's own, or stored or encrypted for a customer's own. Routing
+	// pairs each credential only with the deployments that Stogas serves with its kind, and only a
+	// customer's own reads provider file IDs, so a request that sends one skips the other pairs.
+	// Nil counts every credential as a customer's stored one.
+	CredentialKind func(schemas.ModelProvider, int) string
 	// CredentialOptions gives the account options that a credential holds. Nil means none.
 	CredentialOptions    func(schemas.ModelProvider, int) []HeldOption
 	CompileRequestPolicy func([]byte) (*policy.Request, error)
@@ -247,6 +248,8 @@ type ResolvedRequest struct {
 	hostedTools []HostedTool
 	// accountOptions are the account options of the pair's credential that apply to the deployment.
 	accountOptions []HeldOption
+	// credentialKind is the kind of the pair's credential (RequestInput.CredentialKind).
+	credentialKind string
 
 	chat               *openaiprovider.OpenAIChatRequest
 	inputTokenLimit    int
@@ -271,6 +274,14 @@ type ResolvedRequest struct {
 	promptCaching     string
 	plan              *requestPlan
 }
+
+// CredentialManaged is the kind of Stogas's own credentials, and CredentialStored the kind of a
+// customer's own credential that Stogas stores. A customer's credential can also be encrypted with
+// the customer's encryption key.
+const (
+	CredentialManaged = "managed"
+	CredentialStored  = "stored"
+)
 
 // HostedTools lists, in canonical order, the hosted tools that the request lets the model call.
 func (r *ResolvedRequest) HostedTools() []HostedTool {

@@ -914,3 +914,65 @@ func TestLocalPairFailuresUseTheirSlots(t *testing.T) {
 		t.Fatalf("reservations=%d error=%v", reserved, err)
 	}
 }
+
+// A credential's kind is a fact of its pair, so the pairs of one deployment and policy that differ
+// only in kind are separate candidates, and a rule that reads the kind applies to its pairs alone.
+func TestPoliciesReadEachCredentialsKind(t *testing.T) {
+	loadTestCatalog(t)
+	kinds := []string{CredentialManaged, CredentialStored, "encrypted"}
+	input := func(raw string, order ...int) RequestInput {
+		t.Helper()
+		source, err := policy.CompileSource([]byte(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		config, err := policy.ComposeSources([]policy.ScopedSource{{Scope: policy.OrganizationScope, Value: source}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return RequestInput{Policy: config, AvailableCredentials: map[string][]int{"chutes": order},
+			CredentialKind: func(_ schemas.ModelProvider, index int) string { return kinds[index] }}
+	}
+	for _, test := range []struct {
+		name, filter string
+		want         []int
+	}{
+		{"every kind", "true", []int{0, 1, 2}},
+		{"a customer's own", "credential.kind != 'managed'", []int{1, 2}},
+		{"customer encrypted", "credential.kind == 'encrypted'", []int{2}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			simulation := SimulateRouting(input(`{"routing":{"filter":"`+test.filter+`"}}`, 0, 1, 2), RouteChat, "chutes-kimi-k3", "", "", nil, nil)
+			var got []int
+			for _, pair := range simulation.Pairs {
+				got = append(got, pair.Credential)
+			}
+			if !slices.Equal(got, test.want) {
+				t.Fatalf("credentials %v (%v), want %v", got, simulation.Err, test.want)
+			}
+		})
+	}
+
+	const budget = `{"rules":{"managed_budget":{"when":"credential.kind == 'managed'","limits":{"spend":{"usd":"100"}}}}}`
+	for _, test := range []struct {
+		order []int
+		rules []string
+	}{
+		{[]int{0, 1}, []string{"managed_budget"}},
+		{[]int{1, 0}, nil},
+	} {
+		request := input(budget, test.order...)
+		request.Body, request.Method, request.Path = []byte(`{"model":"chutes-kimi-k3","messages":[{"role":"user","content":"hi"}]}`), "POST", "/v1/chat/completions"
+		resolved, err := ResolveRequest(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var rules []string
+		for _, match := range resolved.ActivePolicyRules() {
+			rules = append(rules, match.Name)
+		}
+		if resolved.CredentialIndex != test.order[0] || !slices.Equal(rules, test.rules) {
+			t.Fatalf("credentials %v: credential %d with rules %v, want %d with %v", test.order, resolved.CredentialIndex, rules, test.order[0], test.rules)
+		}
+	}
+}

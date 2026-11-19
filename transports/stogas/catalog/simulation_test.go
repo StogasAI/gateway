@@ -175,8 +175,11 @@ func TestRoutingSimulationNamesWhatRemovedEachCandidate(t *testing.T) {
 				input.CredentialPolicy = func(_ schemas.ModelProvider, index int) (RequestPolicy, error) { return test.credential(index) }
 			}
 			if test.managed != nil {
-				input.CredentialBYOK = func(provider schemas.ModelProvider, index int) bool {
-					return !slices.Contains(test.managed[string(provider)], index)
+				input.CredentialKind = func(provider schemas.ModelProvider, index int) string {
+					if slices.Contains(test.managed[string(provider)], index) {
+						return CredentialManaged
+					}
+					return CredentialStored
 				}
 			}
 			if test.eligible != nil {

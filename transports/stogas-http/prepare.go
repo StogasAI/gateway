@@ -112,8 +112,8 @@ func (s *Server) startRun(ctx *requestContext, startedAt time.Time, preparation 
 		Policy:               keyConfig.Config,
 		AvailableCredentials: keyConfig.AvailableCredentials(),
 		DeploymentEligible:   stogas.CredentialDeploymentFilter(keyConfig, startedAt),
-		CredentialBYOK: func(provider schemas.ModelProvider, index int) bool {
-			return keyConfig.UsesBYOK(string(provider), index)
+		CredentialKind: func(provider schemas.ModelProvider, index int) string {
+			return keyConfig.CredentialKind(string(provider), index)
 		},
 		CredentialOptions: func(provider schemas.ModelProvider, index int) []billing.HeldOption {
 			return keyConfig.AccountOptions(string(provider), index)

@@ -157,6 +157,7 @@ var fieldDomains = map[string]fieldDomain{
 	"request.hostedTools":               oneOf("web_search", "web_fetch", "mcp"),
 	"credential.accountOptions":         catalogID,
 	"credential.declaredAccountOptions": catalogID,
+	"credential.kind":                   oneOf("managed", "stored", "encrypted"),
 	"request.interface":                 interfaces,
 	"request.mcpServers":                mcpServer,
 	"request.mcpServersWithoutApproval": mcpServer,

@@ -133,6 +133,15 @@ func (s *KeyConfigSnapshot) UsesBYOK(provider string, index int) bool {
 	return index >= 0 && index < len(selections) && selections[index].customerOwned()
 }
 
+// CredentialKind gives an assigned credential's kind: managed for Stogas's own, or stored or
+// encrypted for a customer's own.
+func (s *KeyConfigSnapshot) CredentialKind(provider string, index int) string {
+	if s == nil || index < 0 || index >= len(s.Credentials[provider]) {
+		return ""
+	}
+	return s.Credentials[provider][index].Mode
+}
+
 // AccountOptions gives the account options that an assigned customer credential holds. Stogas's
 // own credentials hold none: the catalog states the facts of its accounts.
 func (s *KeyConfigSnapshot) AccountOptions(provider string, index int) []HeldOption {

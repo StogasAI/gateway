@@ -206,7 +206,7 @@ func compileRouting(filter string, order []Sort, compiler *celCompiler) (*Query,
 		case expression.random && criterion.Direction != "":
 			return nil, configError("random() takes no sort direction")
 		case !expression.random && compiler.prepare && !expression.candidate:
-			return nil, configError("routing.sort expressions must read author, model, deployment, route or provider fields")
+			return nil, configError("routing.sort expressions must read author, model, deployment, route, provider or credential fields")
 		case !expression.random && criterion.Direction == "":
 			criterion.Direction = "asc"
 		}

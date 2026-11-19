@@ -128,7 +128,7 @@ func compileRules(documents map[string]ruleDocument, plugins map[[32]byte]*Plugi
 			return nil, configError("rule %q can set routing.sort only with mode default and no when", name)
 		}
 		if rule.When != nil && rule.When.candidate && rule.Value.settings&requestWidePermissions != 0 {
-			return nil, configError("rule %q cannot set routing.fallbacks or timeouts.totalSeconds because its condition reads author, model, deployment, route or provider fields", name)
+			return nil, configError("rule %q cannot set routing.fallbacks or timeouts.totalSeconds because its condition reads author, model, deployment, route, provider or credential fields", name)
 		}
 		if document.source.Encrypted() {
 			// Its condition and readable settings can be evaluated without the

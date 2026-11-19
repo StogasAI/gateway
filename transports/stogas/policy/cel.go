@@ -45,7 +45,8 @@ type CELExpression struct {
 	kind       string
 	bytes      int64
 	// candidate is set on checked expressions that read a candidate's author,
-	// model, deployment, route or provider. Request facts are the same for all.
+	// model, deployment, route, provider or credential. Request facts are the
+	// same for all.
 	candidate bool
 	// random marks a sort criterion that is one random(weight) call.
 	random bool
@@ -405,7 +406,8 @@ func celNodeTypeName(path string) string { return "stogas.policy." + path }
 
 func candidateCELType(value *cel.Type) bool {
 	switch value.TypeName() {
-	case celNodeTypeName("author"), celNodeTypeName("model"), celNodeTypeName("deployment"), celNodeTypeName("route"), celNodeTypeName("provider"):
+	case celNodeTypeName("author"), celNodeTypeName("model"), celNodeTypeName("deployment"), celNodeTypeName("route"),
+		celNodeTypeName("provider"), celNodeTypeName("credential"):
 		return true
 	}
 	return false

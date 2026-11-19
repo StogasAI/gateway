@@ -5,6 +5,7 @@
 	"author.name": "string",
 	"credential.accountOptions": "string_list",
 	"credential.declaredAccountOptions": "string_list",
+	"credential.kind": "string",
 	"deployment.approvalRequired": "boolean",
 	"deployment.capabilities.explicitPromptCaching": "boolean",
 	"deployment.capabilities.functionCalling": "boolean",
