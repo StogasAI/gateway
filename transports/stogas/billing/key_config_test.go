@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -608,6 +609,29 @@ func TestConcurrentSourceMissesInternOnceAndCleanUpPins(t *testing.T) {
 	if _, err := cache.acquireSource(raw, "org", nil); err == nil {
 		t.Fatal("closed cache accepted a source")
 	}
+}
+
+// A source that redacts shares its redaction section with equal sources and keeps the other
+// plugins that it sets.
+func TestSourceSharingRedactionKeepsItsOtherPlugins(t *testing.T) {
+	var cache keyConfigCache
+	defer cache.close()
+	alone, err := cache.acquireSource([]byte(`{"plugins":{"redaction":{"presets":["email_address"]}}}`), "org", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	others, err := cache.acquireSource([]byte(`{"plugins":{"redaction":{"presets":["email_address"]},"classification":["language"],"promptCaching":"1h"}}`), "org", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := others.value.Config
+	if !slices.Equal(config.Classification(), []string{"language"}) || config.PromptCaching() != "1h" {
+		t.Fatalf("the source lost its other plugins: %+v", config.Plugins)
+	}
+	if config.Plugins.Redaction != alone.value.Config.Plugins.Redaction {
+		t.Fatal("equal redaction sections were not shared")
+	}
+	cache.releaseSources([]*sharedPolicySource{alone, others})
 }
 
 func TestSourceRevisionSharesPIIAndKeepsInFlightSnapshotAfterClose(t *testing.T) {

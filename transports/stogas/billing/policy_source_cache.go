@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"runtime"
 	"strconv"
 
@@ -367,9 +368,10 @@ func (c *keyConfigCache) internSourcePluginsLocked(config *policy.Config) *share
 	plan.refs++
 	// Keep one copy of a dictionary: a limits-only revision drops its own. A
 	// section of redaction alone is the plan's section, so that composition
-	// also counts equal sections of different policies once.
+	// also counts equal sections of different policies once. The comparison
+	// covers every plugin field, so a section that sets any other plugin keeps it.
 	shared := plan.config.Plugins
-	if config.Plugins.Export == nil && config.Plugins.TextExtraction == nil {
+	if reflect.DeepEqual(*config.Plugins, policy.Plugins{Redaction: config.Plugins.Redaction}) {
 		config.Plugins = shared
 	} else if config.Plugins.Redaction != shared.Redaction {
 		plugins := *config.Plugins
