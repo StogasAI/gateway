@@ -1,0 +1,30 @@
+deployments:
+  modelId: mistral-large-4
+  routeIds: [azure-chat-completions]
+  upstream:
+    model: mistral-large-4-latest
+    modelFormat: Mistral AI
+    modelVersion: '1'
+    deploymentType: global_standard
+  # ARM lists the model as a preview.
+  preview: true
+  # Microsoft documents only Chat Completions for this model, through which the gateway serves
+  # Responses requests too.
+  retirementDate: 2127-10-27
+  overrides:
+    # Probed 2026-11-19 (capture azure/other-model-formats-tool-choice): Mistral Large 4 answers in
+    # text under tool_choice required.
+    capabilities:
+      explicitPromptCaching: false
+      toolChoice: false
+    # Azure refuses logit_bias for Mistral's models (probed 2026-11-19, capture
+    # azure/other-model-formats-sampling).
+    sampling:
+      logitBias: false
+  pricing:
+    input_tokens:
+      per_mill_tokens: '0.7'
+    cached_input_tokens:
+      per_mill_tokens: '0.07'
+    output_tokens:
+      per_mill_tokens: '2.1'

@@ -1,0 +1,19 @@
+# Moonshot AI's model card and quickstart state the 1M window, image and video input, that the
+# model always reasons, with the efforts low, high and max, and that a request can ask for up to
+# 1,048,576 output tokens. Moonshot released it in its API on October 23, 2026, and its weights on
+# November 4. Reviewed 2026-11-19: https://huggingface.co/moonshotai/Kimi-K3.1-Pro and
+# https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart
+models:
+  authorId: moonshot-ai
+  name: Kimi K3.1 Pro
+  groupIds: [kimi-k3.1, kimi-pro]
+  contextWindowTokens: 1048576
+  maxOutputTokens: 1048576
+  inputModalities: [text, image, video]
+  outputModalities: [text]
+  reasoning: required
+  reasoningEfforts: [low, high, max]
+  openWeights: true
+  weightsUrl: https://huggingface.co/moonshotai/Kimi-K3.1-Pro
+  releaseDate: 2026-10-23
+  succeeds: kimi-k3

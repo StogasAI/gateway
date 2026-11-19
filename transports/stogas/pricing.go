@@ -20,7 +20,7 @@ func baseHoldEstimate(state *State) (HoldEstimate, error) {
 	resolution := state.Resolution
 	deployment := resolution.Deployment
 	inputTokenLimit := resolution.InputTokenLimit()
-	outputTokenLimit := resolution.OutputTokenLimit()
+	outputTokenLimit := resolution.HeldOutputTokens()
 	if deployment.ContextWindowTokens > 0 && inputTokenLimit > deployment.ContextWindowTokens {
 		inputTokenLimit = deployment.ContextWindowTokens
 	}

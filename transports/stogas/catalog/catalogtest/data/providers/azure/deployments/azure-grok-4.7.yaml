@@ -1,0 +1,33 @@
+deployments:
+  modelId: grok-4.7
+  routeIds: [azure-chat-completions]
+  upstream:
+    model: grok-4.7
+    modelFormat: xAI
+    modelVersion: '1'
+    deploymentType: global_standard
+  # Microsoft documents Chat Completions and Responses for Grok, but Azure's Responses API answered
+  # without reasoning, even at effort high (probed 2026-11-19, capture azure/grok-responses), so Grok
+  # takes Chat Completions, through which the gateway serves Responses requests too.
+  # Grok calls the tool that tool_choice requires or names (probed 2026-11-19, capture
+  # azure/other-model-formats-tool-choice).
+  # Microsoft lists the 500,000-token window for input and output together. SpaceXSI bills all
+  # tokens of a request whose prompt reaches 200,000 tokens at the higher rate, which Azure's
+  # long context meters price. Reviewed 2026-11-19:
+  # https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure
+  # and https://docs.x.ai/docs/models/grok-4.7
+  retirementDate: 2127-10-05
+  notes: Grok on Azure applies max_tokens and max_completion_tokens to the answer alone and reasons past them, up to the deployment's output limit, so a request can produce more tokens than its limit.
+  overrides:
+    capabilities:
+      explicitPromptCaching: false
+  pricing:
+    input_tokens:
+      per_mill_tokens: '2'
+      per_mill_context_gt_200k: '4'
+    cached_input_tokens:
+      per_mill_tokens: '0.5'
+      per_mill_context_gt_200k: '1'
+    output_tokens:
+      per_mill_tokens: '6'
+      per_mill_context_gt_200k: '12'

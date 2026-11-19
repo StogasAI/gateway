@@ -1217,8 +1217,19 @@ func validateOptionalChatMessageName(state *State, message map[string]json.RawMe
 	if responsesUsesAnthropicWire(state) {
 		return invalidRequest(path + ".name is not supported for Anthropic-format history")
 	}
+	// Mistral's models take a name only on a tool result, as Mistral's own API does, and Azure
+	// refuses one elsewhere (capture azure/other-model-formats-request-fields).
+	if role, _ := rawStringValue(message["role"]); role != string(schemas.ChatMessageRoleTool) && rawJSONValueSet(message["name"]) && azureMistralModel(state) {
+		return invalidRequest(path + ".name is supported for Mistral's models only on a tool message")
+	}
 	_, err := requiredInputString(message, "name", path, false)
 	return err
+}
+
+// azureMistralModel reports a request to one of Mistral's models on Azure.
+func azureMistralModel(state *State) bool {
+	return state != nil && state.Resolution != nil && state.Resolution.Provider == schemas.Azure &&
+		state.Resolution.Deployment.Upstream.ModelFormat == "Mistral AI"
 }
 
 func chatAnnotationsInputSupported(state *State) bool {

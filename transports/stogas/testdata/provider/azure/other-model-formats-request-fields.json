@@ -1,0 +1,804 @@
+{
+	"shows": "Azure's Grok, Kimi and Mistral deployments take max_tokens and system messages on Chat Completions and refuse safety_identifier. Mistral's also refuse store, user, a message's name, reasoning in an assistant message under either name, and developer messages, and Mistral Large 3 refuses max_completion_tokens.",
+	"recorded": "2026-11-19",
+	"exchanges": [
+		{
+			"name": "grok-4.7 max_tokens and a system message",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "grok-4.7",
+					"messages": [
+						{
+							"role": "system",
+							"content": "Answer in one word."
+						},
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "0df76923-474e-47e2-a53e-a7eb77211e4f",
+					"model": "grok-4.7",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "OK"
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 15,
+						"completion_tokens": 1,
+						"total_tokens": 95,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 0,
+							"audio_tokens": 0,
+							"text_tokens": 15,
+							"image_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 79,
+							"audio_tokens": 0,
+							"accepted_prediction_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"num_sources_used": 0
+					},
+					"created": 1795054283,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "grok-4.7 safety_identifier",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "grok-4.7",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400,
+					"safety_identifier": "user-hash"
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": "unrecognized_request_argument",
+						"message": "Unrecognized request argument supplied: safety_identifier",
+						"details": "Unrecognized request argument supplied: safety_identifier"
+					}
+				}
+			}
+		},
+		{
+			"name": "kimi-k3.1-pro max_tokens and a system message",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "kimi-k3.1-pro",
+					"messages": [
+						{
+							"role": "system",
+							"content": "Answer in one word."
+						},
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "chatcmpl-6afe5ad16d897b9ea7cd347c",
+					"model": "Kimi-K3.1",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "OK",
+								"reasoning_content": "Kimi needs to respond one word \"OK.\" Should consider system? User says say OK instructions respond one word. I should respond OK. No need analysis much. Ensure no extra."
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 104,
+						"completion_tokens": 51,
+						"total_tokens": 155,
+						"reasoning_tokens": 40,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 40
+						}
+					},
+					"created": 1795054289,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "kimi-k3.1-pro safety_identifier",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "kimi-k3.1-pro",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400,
+					"safety_identifier": "user-hash"
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": "unrecognized_request_argument",
+						"message": "Unrecognized request argument supplied: safety_identifier",
+						"details": "Unrecognized request argument supplied: safety_identifier"
+					}
+				}
+			}
+		},
+		{
+			"name": "mistral-large-3 max_tokens and a system message",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral-large-3",
+					"messages": [
+						{
+							"role": "system",
+							"content": "Answer in one word."
+						},
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "603e4697dba1424682c77d4c29dcc07e",
+					"model": "mistral-large-3",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "OK."
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 13,
+						"completion_tokens": 3,
+						"total_tokens": 16,
+						"audio_prompt_tokens": 0
+					},
+					"created": 1795054295,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "mistral-large-3 safety_identifier",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral-large-3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400,
+					"safety_identifier": "user-hash"
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": "unrecognized_request_argument",
+						"message": "Unrecognized request argument supplied: safety_identifier",
+						"details": "Unrecognized request argument supplied: safety_identifier"
+					}
+				}
+			}
+		},
+		{
+			"name": "mistral-large-3 store",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral-large-3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400,
+					"store": false
+				}
+			},
+			"response": {
+				"status": 422,
+				"body": {
+					"error": {
+						"code": "Invalid input",
+						"message": "{\"detail\":[{\"type\":\"extra_forbidden\",\"loc\":[\"body\",\"store\"],\"msg\":\"Extra inputs are not permitted\",\"input\":false}]}",
+						"status": 422
+					}
+				}
+			}
+		},
+		{
+			"name": "mistral-large-3 user",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral-large-3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400,
+					"user": "user-1"
+				}
+			},
+			"response": {
+				"status": 422,
+				"body": {
+					"error": {
+						"code": "Invalid input",
+						"message": "{\"detail\":[{\"type\":\"extra_forbidden\",\"loc\":[\"body\",\"user\"],\"msg\":\"Extra inputs are not permitted\",\"input\":\"user-1\"}]}",
+						"status": 422
+					}
+				}
+			}
+		},
+		{
+			"name": "mistral-large-3 name",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral-large-3",
+					"messages": [
+						{
+							"role": "user",
+							"name": "ada",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400
+				}
+			},
+			"response": {
+				"status": 422,
+				"body": {
+					"error": {
+						"code": "Invalid input",
+						"message": "{\"detail\":[{\"type\":\"extra_forbidden\",\"loc\":[\"body\",\"messages\",0,\"user\",\"name\"],\"msg\":\"Extra inputs are not permitted\",\"input\":\"ada\"}]}",
+						"status": 422
+					}
+				}
+			}
+		},
+		{
+			"name": "mistral-large-3 developer message",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral-large-3",
+					"messages": [
+						{
+							"role": "developer",
+							"content": "Answer in one word."
+						},
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400
+				}
+			},
+			"response": {
+				"status": 422,
+				"body": {
+					"error": {
+						"code": "Invalid input",
+						"status": 422,
+						"message": "invalid input error",
+						"details": [
+							{
+								"type": "enum",
+								"loc": [
+									"body",
+									"messages",
+									0,
+									"role"
+								],
+								"msg": "Input should be 'system', 'user', 'assistant' or 'tool'",
+								"input": "developer",
+								"ctx": {
+									"expected": "'system', 'user', 'assistant' or 'tool'"
+								}
+							}
+						]
+					}
+				}
+			}
+		},
+		{
+			"name": "mistral-large-3 assistant reasoning_content",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral-large-3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 2+2?"
+						},
+						{
+							"role": "assistant",
+							"content": "4",
+							"reasoning_content": "Two plus two is four."
+						},
+						{
+							"role": "user",
+							"content": "And 3+3?"
+						}
+					],
+					"max_tokens": 400
+				}
+			},
+			"response": {
+				"status": 422,
+				"body": {
+					"error": {
+						"code": "Invalid input",
+						"message": "{\"detail\":[{\"type\":\"extra_forbidden\",\"loc\":[\"body\",\"messages\",1,\"assistant\",\"reasoning_content\"],\"msg\":\"Extra inputs are not permitted\",\"input\":\"Two plus two is four.\"}]}",
+						"status": 422
+					}
+				}
+			}
+		},
+		{
+			"name": "mistral-large-3 assistant reasoning",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral-large-3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 2+2?"
+						},
+						{
+							"role": "assistant",
+							"content": "4",
+							"reasoning": "Two plus two is four."
+						},
+						{
+							"role": "user",
+							"content": "And 3+3?"
+						}
+					],
+					"max_tokens": 400
+				}
+			},
+			"response": {
+				"status": 422,
+				"body": {
+					"error": {
+						"code": "Invalid input",
+						"message": "{\"detail\":[{\"type\":\"extra_forbidden\",\"loc\":[\"body\",\"messages\",1,\"assistant\",\"reasoning\"],\"msg\":\"Extra inputs are not permitted\",\"input\":\"Two plus two is four.\"}]}",
+						"status": 422
+					}
+				}
+			}
+		},
+		{
+			"name": "mistral-large-4 max_tokens and a system message",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral-large-4",
+					"messages": [
+						{
+							"role": "system",
+							"content": "Answer in one word."
+						},
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "83183bface3847e89ca014085f037392",
+					"model": "mistral-large-4-latest",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "OK"
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 25,
+						"completion_tokens": 34,
+						"total_tokens": 59,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 30
+						}
+					},
+					"created": 1795054316,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "mistral-large-4 safety_identifier",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral-large-4",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400,
+					"safety_identifier": "user-hash"
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": "unrecognized_request_argument",
+						"message": "Unrecognized request argument supplied: safety_identifier",
+						"details": "Unrecognized request argument supplied: safety_identifier"
+					}
+				}
+			}
+		},
+		{
+			"name": "mistral-large-4 store",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral-large-4",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400,
+					"store": false
+				}
+			},
+			"response": {
+				"status": 422,
+				"body": {
+					"detail": [
+						{
+							"type": "extra_forbidden",
+							"loc": [
+								"body",
+								"store"
+							],
+							"msg": "Extra inputs are not permitted",
+							"input": false
+						}
+					]
+				}
+			}
+		},
+		{
+			"name": "mistral-large-4 user",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral-large-4",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400,
+					"user": "user-1"
+				}
+			},
+			"response": {
+				"status": 422,
+				"body": {
+					"detail": [
+						{
+							"type": "extra_forbidden",
+							"loc": [
+								"body",
+								"user"
+							],
+							"msg": "Extra inputs are not permitted",
+							"input": "user-1"
+						}
+					]
+				}
+			}
+		},
+		{
+			"name": "mistral-large-4 name",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral-large-4",
+					"messages": [
+						{
+							"role": "user",
+							"name": "ada",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400
+				}
+			},
+			"response": {
+				"status": 422,
+				"body": {
+					"detail": [
+						{
+							"type": "extra_forbidden",
+							"loc": [
+								"body",
+								"messages",
+								0,
+								"user",
+								"name"
+							],
+							"msg": "Extra inputs are not permitted",
+							"input": "ada"
+						}
+					]
+				}
+			}
+		},
+		{
+			"name": "mistral-large-4 developer message",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral-large-4",
+					"messages": [
+						{
+							"role": "developer",
+							"content": "Answer in one word."
+						},
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400
+				}
+			},
+			"response": {
+				"status": 422,
+				"body": {
+					"detail": [
+						{
+							"type": "union_tag_invalid",
+							"loc": [
+								"body",
+								"messages",
+								0
+							],
+							"msg": "Input tag 'developer' found using 'role' does not match any of the expected tags: <Roles.system: 'system'>, <Roles.user: 'user'>, <Roles.assistant: 'assistant'>, <Roles.tool: 'tool'>",
+							"input": {
+								"role": "developer",
+								"content": "Answer in one word."
+							},
+							"ctx": {
+								"discriminator": "'role'",
+								"tag": "developer",
+								"expected_tags": "<Roles.system: 'system'>, <Roles.user: 'user'>, <Roles.assistant: 'assistant'>, <Roles.tool: 'tool'>"
+							}
+						}
+					]
+				}
+			}
+		},
+		{
+			"name": "mistral-large-4 assistant reasoning_content",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral-large-4",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 2+2?"
+						},
+						{
+							"role": "assistant",
+							"content": "4",
+							"reasoning_content": "Two plus two is four."
+						},
+						{
+							"role": "user",
+							"content": "And 3+3?"
+						}
+					],
+					"max_tokens": 400
+				}
+			},
+			"response": {
+				"status": 422,
+				"body": {
+					"detail": [
+						{
+							"type": "extra_forbidden",
+							"loc": [
+								"body",
+								"messages",
+								1,
+								"assistant",
+								"reasoning_content"
+							],
+							"msg": "Extra inputs are not permitted",
+							"input": "Two plus two is four."
+						}
+					]
+				}
+			}
+		},
+		{
+			"name": "mistral-large-4 assistant reasoning",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral-large-4",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 2+2?"
+						},
+						{
+							"role": "assistant",
+							"content": "4",
+							"reasoning": "Two plus two is four."
+						},
+						{
+							"role": "user",
+							"content": "And 3+3?"
+						}
+					],
+					"max_tokens": 400
+				}
+			},
+			"response": {
+				"status": 422,
+				"body": {
+					"detail": [
+						{
+							"type": "extra_forbidden",
+							"loc": [
+								"body",
+								"messages",
+								1,
+								"assistant",
+								"reasoning"
+							],
+							"msg": "Extra inputs are not permitted",
+							"input": "Two plus two is four."
+						}
+					]
+				}
+			}
+		},
+		{
+			"name": "mistral-large-3 max_completion_tokens",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral-large-3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_completion_tokens": 400
+				}
+			},
+			"response": {
+				"status": 422,
+				"body": {
+					"error": {
+						"code": "Invalid input",
+						"message": "{\"detail\":[{\"type\":\"extra_forbidden\",\"loc\":[\"body\",\"max_completion_tokens\"],\"msg\":\"Extra inputs are not permitted\",\"input\":400}]}",
+						"status": 422
+					}
+				}
+			}
+		}
+	]
+}

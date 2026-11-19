@@ -46,8 +46,12 @@ func (r *ResolvedRequest) ReadsReasoning(format ReasoningFormat) bool {
 		// answer and beside a tool call (testdata/provider/azure/open-model-reasoning-history.json,
 		// testdata/provider/chutes/reasoning-history.json). Models that think between tool calls,
 		// such as DeepSeek's, read it, and the others ignore it
-		// (testdata/provider/azure/open-model-reasoning-tool-loop.json).
-		return !UsesClaudeWire(r.Provider, r.Deployment.ModelID) && !r.RunsOpenAIModel()
+		// (testdata/provider/azure/open-model-reasoning-tool-loop.json). Azure's Mistral models refuse
+		// it in an assistant message under either name
+		// (testdata/provider/azure/other-model-formats-request-fields.json) and return none to take
+		// back.
+		return !UsesClaudeWire(r.Provider, r.Deployment.ModelID) && !r.RunsOpenAIModel() &&
+			!(r.Provider == schemas.Azure && r.Deployment.Upstream.ModelFormat == "Mistral AI")
 	}
 	return false
 }

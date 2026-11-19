@@ -264,12 +264,32 @@ func bindEncryptedReasoning(resolution *catalog.ResolvedRequest, item *schemas.R
 }
 
 func ingestReportedUsage(state *State, usage *schemas.BifrostLLMUsage) error {
+	includeReasoningInCompletion(usage)
 	metadataErr := validateReportedUsageMetadata(state, usage)
 	setSignalsFromUsage(state, usage)
 	if metadataErr == nil {
 		observeUsageExecution(state, usage)
 	}
 	return metadataErr
+}
+
+// includeReasoningInCompletion gives completion_tokens the meaning that Chat Completions defines,
+// with reasoning tokens included, when a provider counts them apart, as xAI's models do on xAI and
+// on Azure (capture azure/other-model-formats-output-limits). A total equal to prompt, completion
+// and reasoning tokens together shows such a report, which is the check Bifrost's xAI provider
+// makes, so a report that already includes them stays unchanged. The usage changes in place, so
+// the client reads the count that billing uses.
+func includeReasoningInCompletion(usage *schemas.BifrostLLMUsage) {
+	if usage == nil || usage.CompletionTokensDetails == nil {
+		return
+	}
+	reasoning := usage.CompletionTokensDetails.ReasoningTokens
+	if reasoning <= 0 {
+		return
+	}
+	if total, ok := addTokenCounts(usage.PromptTokens, usage.CompletionTokens, reasoning); ok && total == usage.TotalTokens {
+		usage.CompletionTokens += reasoning
+	}
 }
 
 func unambiguousResponseUsage(resp *schemas.BifrostResponse) *schemas.BifrostLLMUsage {

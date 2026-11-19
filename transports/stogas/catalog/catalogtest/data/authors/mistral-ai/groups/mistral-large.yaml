@@ -1,0 +1,4 @@
+groups:
+  authorId: mistral-ai
+  name: 'Mistral Large'
+  parentIds: [mistral]

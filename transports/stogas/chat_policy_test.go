@@ -2274,10 +2274,18 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 							if bifrostErr != nil {
 								t.Fatalf("build Anthropic-family Responses wire request: %v", bifrostErr)
 							}
-						case (provider == schemas.OpenAI || provider == schemas.Azure) && interfaceName == "chat_completions":
-							wireBytes, err = json.Marshal(openaiprovider.ToOpenAIChatRequest(ctx, request.ChatRequest))
-						case (provider == schemas.OpenAI || provider == schemas.Azure) && interfaceName == "responses":
-							wireBytes, err = json.Marshal(openaiprovider.ToOpenAIResponsesRequest(ctx, request.ResponsesRequest))
+						case provider == schemas.OpenAI || provider == schemas.Azure:
+							// The gateway writes these bodies itself, which can change what core
+							// converts, such as the effort of a model that Azure hosts for another author.
+							ctx.SetValue(schemas.BifrostContextKeyHTTPRequestType, request.RequestType)
+							if err := PrepareProviderRequest(ctx, state, request); err != nil {
+								t.Fatalf("prepare provider body: %v", err)
+							}
+							if interfaceName == "chat_completions" {
+								wireBytes = preparedProviderBody(t, ctx, request.ChatRequest)
+							} else {
+								wireBytes = preparedProviderBody(t, ctx, request.ResponsesRequest)
+							}
 						case provider == catalog.ProviderChutes && interfaceName == "chat_completions":
 							var bifrostErr *schemas.BifrostError
 							wireBytes, bifrostErr = prepareChutesChatBody(ctx, request.ChatRequest, false)

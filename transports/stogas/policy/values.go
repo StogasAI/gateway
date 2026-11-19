@@ -144,7 +144,7 @@ var fieldDomains = map[string]fieldDomain{
 	"deployment.upstream.deploymentType": oneOf("global_standard", "data_zone_standard_us", "data_zone_standard_eu",
 		"data_zone_standard_apac", "instant"),
 	"deployment.upstream.inferenceGeo":  oneOf("global", "us", "eu", "jp", "au", "in", "ca"),
-	"deployment.upstream.modelFormat":   oneOf("OpenAI", "OpenAI-OSS", "Anthropic", "DeepSeek", "Fireworks"),
+	"deployment.upstream.modelFormat":   oneOf("OpenAI", "OpenAI-OSS", "Anthropic", "DeepSeek", "Fireworks", "Mistral AI", "MoonshotAI", "xAI"),
 	"deployment.upstream.reasoningMode": oneOf("pro"),
 	"deployment.upstream.serviceTier":   oneOf("standard", "flex", "fast", "ultrafast"),
 	"route.id":                          catalogID,

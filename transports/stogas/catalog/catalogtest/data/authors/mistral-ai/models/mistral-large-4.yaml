@@ -1,0 +1,20 @@
+# Mistral AI made the model available in its preview API on October 6, 2026. Its model page states
+# the API names and text and image input, and the model card the 1M window as 1,048,576 positions
+# and the efforts low, medium and high, of which low took the place of turning reasoning off.
+# Reviewed 2026-11-19: https://mistral.ai/news/mistral-large-4,
+# https://docs.mistral.ai/models/mistral-large-4-0 and
+# https://huggingface.co/mistralai/Mistral-Large-4-1T-A52B
+models:
+  authorId: mistral-ai
+  name: Mistral Large 4
+  groupIds: [mistral-large, mistral-4]
+  contextWindowTokens: 1048576
+  maxOutputTokens: 1048576
+  inputModalities: [text, image]
+  outputModalities: [text]
+  reasoning: required
+  reasoningEfforts: [low, medium, high]
+  openWeights: true
+  weightsUrl: https://huggingface.co/mistralai/Mistral-Large-4-1T-A52B
+  releaseDate: 2026-10-06
+  succeeds: mistral-large-2512

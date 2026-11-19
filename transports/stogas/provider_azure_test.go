@@ -16,6 +16,7 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"github.com/maximhq/bifrost/transports/stogas/catalog/catalogtest"
 )
 
 func TestAzureGPT56CacheFieldsReachBothReviewedWireFormats(t *testing.T) {
@@ -407,6 +408,303 @@ func TestAzureClaudeBillsWebSearchCallsAsAnthropicDoes(t *testing.T) {
 	if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD) < 0 {
 		t.Fatalf("hold %s does not cover the cost %s", state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD)
 	}
+}
+
+// TestAzureOtherFormatsSendWhatAzureTook prepares a client's request in OpenAI's own fields, with
+// the customer's own credential, for each recorded Azure model format. Azure OpenAI models would
+// receive user, safety_identifier and store from it, but the body must equal the request that Azure
+// took in the recording (capture azure/other-model-formats-request-fields).
+func TestAzureOtherFormatsSendWhatAzureTook(t *testing.T) {
+	recorded := providerCapture(t, "azure/other-model-formats-request-fields")
+	for deployment, model := range map[string]string{
+		"azure-grok-4.7":           "grok-4.7",
+		"azure-kimi-k3.1-pro":      "kimi-k3.1-pro",
+		"azure-mistral-large-2512": "mistral-large-3",
+		"azure-mistral-large-4":    "mistral-large-4",
+	} {
+		t.Run(model, func(t *testing.T) {
+			took := exchange(t, recorded, model+" max_tokens and a system message")
+			body := azureCustomerChatBody(t, `{"model":"`+deployment+`","messages":[{"role":"developer","content":"Answer in one word."},{"role":"user","content":"Say OK."}],"max_completion_tokens":400,"user":"user-1","safety_identifier":"user-hash","store":false}`)
+			if sent, accepted := withoutModel(t, body), withoutModel(t, took.Request.Body); sent != accepted {
+				t.Fatalf("sent %s, Azure took %s", sent, accepted)
+			}
+		})
+	}
+}
+
+// TestAzureMistralRequestsLeaveOutWhatAzureRefused sends each request that Azure refused for a
+// Mistral model as a client's request, with the customer's own credential. The gateway leaves the
+// refused field out of the body, or refuses a request that names a message other than a tool
+// result, whose name the model would otherwise not see.
+func TestAzureMistralRequestsLeaveOutWhatAzureRefused(t *testing.T) {
+	recorded := providerCapture(t, "azure/other-model-formats-request-fields")
+	for deployment, model := range map[string]string{"azure-mistral-large-2512": "mistral-large-3", "azure-mistral-large-4": "mistral-large-4"} {
+		names := []string{"safety_identifier", "store", "user", "name", "developer message", "assistant reasoning_content", "assistant reasoning"}
+		if model == "mistral-large-3" {
+			names = append(names, "max_completion_tokens")
+		}
+		for _, name := range names {
+			t.Run(model+" "+name, func(t *testing.T) {
+				refused := exchange(t, recorded, model+" "+name)
+				if refused.Response.Status < 400 || len(refusedChatFields(t, refused.Request.Body)) == 0 {
+					t.Fatalf("the recording shows no refused field: %d %s", refused.Response.Status, refused.Request.Body)
+				}
+				request := map[string]json.RawMessage{}
+				if err := json.Unmarshal(refused.Request.Body, &request); err != nil {
+					t.Fatal(err)
+				}
+				request["model"], _ = json.Marshal(deployment)
+				client, _ := json.Marshal(request)
+				if name == "name" {
+					resolution, err := catalog.ResolveRequest(catalog.RequestInput{Body: client, Method: http.MethodPost, Path: "/v1/chat/completions"})
+					if err != nil {
+						t.Fatal(err)
+					}
+					state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
+					if err := state.Adapter.ValidateRequest(state); err == nil || !strings.Contains(err.Error(), "messages[0].name") {
+						t.Fatalf("ValidateRequest = %v, want a refusal of the message's name", err)
+					}
+					return
+				}
+				if fields := refusedChatFields(t, azureCustomerChatBody(t, string(client))); len(fields) > 0 {
+					t.Fatalf("the body keeps %v", fields)
+				}
+			})
+		}
+	}
+}
+
+// TestAzureOtherFormatsHoldWhatTheyGenerate replays the recorded replies of Azure's reasoning
+// models of other formats to an output limit of 12 (capture azure/other-model-formats-output-limits).
+// Grok reasons past either limit field, so its hold is the deployment's output limit, while Kimi and
+// Mistral stay within the limit, so theirs is the client's. Billing counts every generated token.
+func TestAzureOtherFormatsHoldWhatTheyGenerate(t *testing.T) {
+	for name, reply := range providerCapture(t, "azure/other-model-formats-output-limits") {
+		t.Run(name, func(t *testing.T) {
+			response := &schemas.BifrostChatResponse{}
+			if err := sonic.Unmarshal(reply.Response.Body, response); err != nil {
+				t.Fatal(err)
+			}
+			usage := response.Usage
+			generated := usage.TotalTokens - usage.PromptTokens
+			request := map[string]json.RawMessage{}
+			var model string
+			if err := json.Unmarshal(reply.Request.Body, &request); err != nil || json.Unmarshal(request["model"], &model) != nil {
+				t.Fatalf("decode request: %v", err)
+			}
+			request["model"], _ = json.Marshal("azure-" + model)
+			body, _ := json.Marshal(request)
+			state := resolveAzureState(t, "/v1/chat/completions", string(body))
+			if err := state.Adapter.EstimateHold(state); err != nil {
+				t.Fatal(err)
+			}
+			want := 12
+			if strings.HasPrefix(model, "grok") {
+				want = state.Resolution.Deployment.MaxOutputTokens
+			}
+			held := findMeterEstimate(state.Hold.Meters, billing.MeterOutputTokens)
+			if held == nil || held.Quantity != strconv.Itoa(want) || want < generated {
+				t.Fatalf("output hold = %#v, want %d tokens, at least the %d generated", held, want, generated)
+			}
+			if err := ingestReportedUsage(state, usage); err != nil {
+				t.Fatal(err)
+			}
+			if got := state.Signals.CompletionTokens(); got != generated {
+				t.Fatalf("completion tokens = %d billed, want the %d generated", got, generated)
+			}
+		})
+	}
+}
+
+// azureOtherFormatDeployments names the catalog deployment of each model that the recordings of
+// Azure's other model formats call by its Azure deployment name.
+var azureOtherFormatDeployments = map[string]string{
+	"grok-4.6":           "azure-grok-4.6",
+	"grok-4.7":           "azure-grok-4.7",
+	"kimi-k3.1-pro":      "azure-kimi-k3.1-pro",
+	"mistral-large-3":    "azure-mistral-large-2512",
+	"mistral-large-4":    "azure-mistral-large-4",
+	"mistral-medium-3-5": "azure-mistral-medium-3-5",
+}
+
+// resolveRecordedAzureRequest resolves a recorded request to Azure as a client's request for the
+// catalog deployment of its model.
+func resolveRecordedAzureRequest(t *testing.T, recorded providerExchange) (*catalog.ResolvedRequest, error) {
+	t.Helper()
+	request := map[string]json.RawMessage{}
+	var model string
+	if err := json.Unmarshal(recorded.Request.Body, &request); err != nil || json.Unmarshal(request["model"], &model) != nil {
+		t.Fatalf("decode request: %v", err)
+	}
+	deployment, ok := azureOtherFormatDeployments[model]
+	if !ok {
+		t.Fatalf("no catalog deployment for %q", model)
+	}
+	request["model"], _ = json.Marshal(deployment)
+	body, _ := json.Marshal(request)
+	return catalog.ResolveRequest(catalog.RequestInput{Method: http.MethodPost, Path: "/v1/chat/completions", Body: body})
+}
+
+// TestAzureOtherFormatsStateWhatAzureTook compares the sampling fields that the catalog states for
+// each Azure deployment of another model format with what Azure took in the recording (capture
+// azure/other-model-formats-sampling). The gateway forwards sampling fields unchanged and leaves
+// their refusal to the provider, so the catalog's statement is what policies and clients rely on.
+// Mistral Medium 3.5 states no reasoning, because Azure returns its reasoning at effort high in a
+// shape that Chat Completions does not have, so the gateway takes only effort none.
+func TestAzureOtherFormatsStateWhatAzureTook(t *testing.T) {
+	catalogtest.UseFallback(t)
+	var deployments map[string]struct {
+		Routes map[string]struct {
+			Sampling catalog.Sampling `json:"sampling"`
+		} `json:"routes"`
+	}
+	if err := json.Unmarshal(activeCatalogRecords(t, "deployments"), &deployments); err != nil {
+		t.Fatal(err)
+	}
+	stated := map[string]func(catalog.Sampling) bool{
+		"presence_penalty":  func(s catalog.Sampling) bool { return s.PresencePenalty },
+		"frequency_penalty": func(s catalog.Sampling) bool { return s.FrequencyPenalty },
+		"logit_bias":        func(s catalog.Sampling) bool { return s.LogitBias },
+		"seed":              func(s catalog.Sampling) bool { return s.Seed },
+		"temperature":       func(s catalog.Sampling) bool { return s.Temperature },
+		"top_p":             func(s catalog.Sampling) bool { return s.TopP },
+	}
+	for name, recorded := range providerCapture(t, "azure/other-model-formats-sampling") {
+		t.Run(name, func(t *testing.T) {
+			model, field, _ := strings.Cut(name, " ")
+			took := recorded.Response.Status == http.StatusOK
+			if effort, ok := strings.CutPrefix(field, "reasoning_effort "); ok {
+				if _, err := resolveRecordedAzureRequest(t, recorded); (err == nil) != (effort == "none") {
+					t.Fatalf("resolve error = %v, Azure answered %d", err, recorded.Response.Status)
+				}
+				return
+			}
+			route, ok := deployments[azureOtherFormatDeployments[model]].Routes["azure-chat-completions"]
+			if !ok {
+				t.Fatalf("the catalog has no Chat Completions route for %s", model)
+			}
+			if got := stated[field](route.Sampling); got != took {
+				t.Fatalf("the catalog states %s as %t, and Azure took it: %t", field, got, took)
+			}
+		})
+	}
+}
+
+// TestAzureOtherFormatsSendOnlyEffortsThatAzureTook sends each recorded request with
+// reasoning_effort as a client's request for its deployment (capture
+// azure/other-model-formats-efforts). The gateway refuses none exactly where Azure refused it, and
+// sends every other effort as one that Azure took.
+func TestAzureOtherFormatsSendOnlyEffortsThatAzureTook(t *testing.T) {
+	catalogtest.UseFallback(t)
+	recorded := providerCapture(t, "azure/other-model-formats-efforts")
+	for name, exchange := range recorded {
+		t.Run(name, func(t *testing.T) {
+			model, effort, _ := strings.Cut(name, " reasoning_effort ")
+			if _, err := resolveRecordedAzureRequest(t, exchange); err != nil {
+				if effort != "none" || exchange.Response.Status == http.StatusOK {
+					t.Fatalf("resolve error = %v, Azure answered %d", err, exchange.Response.Status)
+				}
+				return
+			}
+			request := map[string]json.RawMessage{}
+			if err := json.Unmarshal(exchange.Request.Body, &request); err != nil {
+				t.Fatal(err)
+			}
+			request["model"], _ = json.Marshal(azureOtherFormatDeployments[model])
+			body, _ := json.Marshal(request)
+			var sent struct {
+				ReasoningEffort string `json:"reasoning_effort"`
+			}
+			if err := json.Unmarshal(azureCustomerChatBody(t, string(body)), &sent); err != nil {
+				t.Fatal(err)
+			}
+			if took := recorded[model+" reasoning_effort "+sent.ReasoningEffort]; took.Response.Status != http.StatusOK {
+				t.Fatalf("sent reasoning_effort %q, which Azure answered with %d", sent.ReasoningEffort, took.Response.Status)
+			}
+		})
+	}
+}
+
+// TestAzureOtherFormatsForceToolsOnlyWhereAzureDoes resolves each recorded request with tool_choice
+// for its deployment (capture azure/other-model-formats-tool-choice). Only Grok called the tool
+// that every forced choice asked for, so only Grok's deployment takes a forced choice.
+func TestAzureOtherFormatsForceToolsOnlyWhereAzureDoes(t *testing.T) {
+	catalogtest.UseFallback(t)
+	for name, recorded := range providerCapture(t, "azure/other-model-formats-tool-choice") {
+		t.Run(name, func(t *testing.T) {
+			_, err := resolveRecordedAzureRequest(t, recorded)
+			refuse := !strings.HasSuffix(name, " auto") && !strings.HasPrefix(name, "grok-")
+			if (err != nil) != refuse {
+				t.Fatalf("resolve error = %v, want refused %t", err, refuse)
+			}
+		})
+	}
+}
+
+// azureCustomerChatBody prepares a client's Chat Completions request with the customer's own
+// credential and returns the body that the provider receives.
+func azureCustomerChatBody(t *testing.T, body string) []byte {
+	t.Helper()
+	_, customer := customerOpenAICredential(t)
+	state := resolveAzureState(t, "/v1/chat/completions", body)
+	state.PreparedCredential = customer
+	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	ctx.SetValue(schemas.BifrostContextKeyHTTPRequestType, state.Resolution.RequestType)
+	request, err := state.Resolution.ToBifrost(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := PrepareProviderRequest(ctx, state, request); err != nil {
+		t.Fatal(err)
+	}
+	return preparedProviderBody(t, ctx, request.ChatRequest)
+}
+
+// withoutModel returns a body as canonical JSON without its model field, which names a deployment.
+func withoutModel(t *testing.T, body []byte) string {
+	t.Helper()
+	fields := map[string]any{}
+	if err := json.Unmarshal(body, &fields); err != nil {
+		t.Fatal(err)
+	}
+	delete(fields, "model")
+	canonical, _ := json.Marshal(fields)
+	return string(canonical)
+}
+
+// refusedChatFields lists the parts of a Chat Completions body that Azure refused for Mistral's
+// models.
+func refusedChatFields(t *testing.T, body []byte) []string {
+	t.Helper()
+	var request struct {
+		Fields   map[string]json.RawMessage
+		Messages []map[string]json.RawMessage `json:"messages"`
+	}
+	if err := json.Unmarshal(body, &request); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(body, &request.Fields); err != nil {
+		t.Fatal(err)
+	}
+	var found []string
+	for _, field := range []string{"safety_identifier", "store", "user", "max_completion_tokens"} {
+		if _, ok := request.Fields[field]; ok {
+			found = append(found, field)
+		}
+	}
+	for _, message := range request.Messages {
+		var role string
+		_ = json.Unmarshal(message["role"], &role)
+		if role == "developer" {
+			found = append(found, "developer message")
+		}
+		for _, field := range []string{"name", "reasoning_content", "reasoning"} {
+			if _, ok := message[field]; ok && role != "tool" {
+				found = append(found, role+" "+field)
+			}
+		}
+	}
+	return found
 }
 
 // MiniMax M3 on Azure only turns reasoning on and off. The OpenAI format carries reasoning only as

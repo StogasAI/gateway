@@ -1537,7 +1537,7 @@ func TestEveryActiveCatalogDeploymentHoldCoversEveryTokenCategory(t *testing.T) 
 				}
 
 				inputTokens := resolution.InputTokenLimit()
-				outputTokens := resolution.OutputTokenLimit()
+				outputTokens := resolution.HeldOutputTokens()
 				if state.Hold.ReservedTokens != int64(inputTokens)+int64(outputTokens) {
 					t.Fatalf("%s/%s: reserved tokens = %d, want %d input + %d output", deploymentID, interfaceName, state.Hold.ReservedTokens, inputTokens, outputTokens)
 				}

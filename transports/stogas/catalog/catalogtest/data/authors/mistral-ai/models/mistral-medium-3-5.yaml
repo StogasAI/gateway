@@ -1,0 +1,18 @@
+# Mistral AI's model page states the API names, the release date, the 256k window, which the
+# configuration gives as 262,144 positions, and text and image input. The model card turns
+# reasoning on with the effort high and off with none, and states no output ceiling. Reviewed
+# 2026-11-19: https://docs.mistral.ai/models/mistral-medium-3-5-26-04 and
+# https://huggingface.co/mistralai/Mistral-Medium-3.5-128B
+models:
+  authorId: mistral-ai
+  name: Mistral Medium 3.5
+  groupIds: [mistral-medium-3]
+  contextWindowTokens: 262144
+  maxOutputTokens: 262144
+  inputModalities: [text, image]
+  outputModalities: [text]
+  reasoning: optional
+  reasoningEfforts: [high]
+  openWeights: true
+  weightsUrl: https://huggingface.co/mistralai/Mistral-Medium-3.5-128B
+  releaseDate: 2026-04-28

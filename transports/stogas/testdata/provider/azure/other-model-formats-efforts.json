@@ -1,0 +1,1309 @@
+{
+	"shows": "On Azure, Grok 4.6 and 4.7 take reasoning_effort minimal, low, medium, high and xhigh and refuse none and max, and Mistral Large 4 takes only low, medium and high. Kimi K3.1 Pro takes every value and answers without reasoning at none.",
+	"recorded": "2026-11-19",
+	"exchanges": [
+		{
+			"name": "grok-4.6 reasoning_effort none",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "grok-4.6",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 2000,
+					"reasoning_effort": "none"
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"type": "Bad Request",
+						"code": "decode_bad_request",
+						"message": "{\"code\":\"invalid-argument\",\"error\":\"This model does not support `reasoning_effort` value `none`.\"}"
+					}
+				}
+			}
+		},
+		{
+			"name": "grok-4.6 reasoning_effort minimal",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "grok-4.6",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 2000,
+					"reasoning_effort": "minimal"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "9d8f7167-925d-4c14-9cf1-18499c7af7be",
+					"model": "grok-4.6",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "OK"
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 7,
+						"completion_tokens": 1,
+						"total_tokens": 35,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 0,
+							"audio_tokens": 0,
+							"text_tokens": 7,
+							"image_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 27,
+							"audio_tokens": 0,
+							"accepted_prediction_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"num_sources_used": 0
+					},
+					"created": 1795071038,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "grok-4.6 reasoning_effort low",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "grok-4.6",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 2000,
+					"reasoning_effort": "low"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "8950fde3-f69b-46d6-a434-525f0a7904ec",
+					"model": "grok-4.6",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "OK"
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 7,
+						"completion_tokens": 1,
+						"total_tokens": 52,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 0,
+							"audio_tokens": 0,
+							"text_tokens": 7,
+							"image_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 44,
+							"audio_tokens": 0,
+							"accepted_prediction_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"num_sources_used": 0
+					},
+					"created": 1795071041,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "grok-4.6 reasoning_effort medium",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "grok-4.6",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 2000,
+					"reasoning_effort": "medium"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "d629e804-7502-4cb7-b31d-e2b0c5f73a3e",
+					"model": "grok-4.6",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "OK"
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 7,
+						"completion_tokens": 1,
+						"total_tokens": 108,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 0,
+							"audio_tokens": 0,
+							"text_tokens": 7,
+							"image_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 100,
+							"audio_tokens": 0,
+							"accepted_prediction_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"num_sources_used": 0
+					},
+					"created": 1795071047,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "grok-4.6 reasoning_effort high",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "grok-4.6",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 2000,
+					"reasoning_effort": "high"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "de574fa5-a79a-4f36-abda-f718ab03bf9b",
+					"model": "grok-4.6",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "OK"
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 7,
+						"completion_tokens": 1,
+						"total_tokens": 110,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 0,
+							"audio_tokens": 0,
+							"text_tokens": 7,
+							"image_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 102,
+							"audio_tokens": 0,
+							"accepted_prediction_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"num_sources_used": 0
+					},
+					"created": 1795071051,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "grok-4.6 reasoning_effort xhigh",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "grok-4.6",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 2000,
+					"reasoning_effort": "xhigh"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "59d18c54-e1ef-4147-8d87-f9b4a740d153",
+					"model": "grok-4.6",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "OK"
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 7,
+						"completion_tokens": 1,
+						"total_tokens": 97,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 0,
+							"audio_tokens": 0,
+							"text_tokens": 7,
+							"image_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 89,
+							"audio_tokens": 0,
+							"accepted_prediction_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"num_sources_used": 0
+					},
+					"created": 1795071057,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "grok-4.6 reasoning_effort max",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "grok-4.6",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 2000,
+					"reasoning_effort": "max"
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"type": "Bad Request",
+						"code": "decode_bad_request",
+						"message": "{\"code\":\"invalid-argument\",\"error\":\"Invalid reasoning effort.\"}"
+					}
+				}
+			}
+		},
+		{
+			"name": "grok-4.7 reasoning_effort none",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "grok-4.7",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 2000,
+					"reasoning_effort": "none"
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"type": "Bad Request",
+						"code": "decode_bad_request",
+						"message": "{\"code\":\"invalid-argument\",\"error\":\"This model does not support `reasoning_effort` value `none`.\"}"
+					}
+				}
+			}
+		},
+		{
+			"name": "grok-4.7 reasoning_effort minimal",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "grok-4.7",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 2000,
+					"reasoning_effort": "minimal"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "03d92a5d-603c-452c-b396-43181286f611",
+					"model": "grok-4.7",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "OK"
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 7,
+						"completion_tokens": 1,
+						"total_tokens": 22,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 0,
+							"audio_tokens": 0,
+							"text_tokens": 7,
+							"image_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 14,
+							"audio_tokens": 0,
+							"accepted_prediction_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"num_sources_used": 0
+					},
+					"created": 1795071065,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "grok-4.7 reasoning_effort low",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "grok-4.7",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 2000,
+					"reasoning_effort": "low"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "b676def6-20df-4593-b1c9-75412ca526eb",
+					"model": "grok-4.7",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "OK"
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 7,
+						"completion_tokens": 1,
+						"total_tokens": 22,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 0,
+							"audio_tokens": 0,
+							"text_tokens": 7,
+							"image_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 14,
+							"audio_tokens": 0,
+							"accepted_prediction_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"num_sources_used": 0
+					},
+					"created": 1795071068,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "grok-4.7 reasoning_effort medium",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "grok-4.7",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 2000,
+					"reasoning_effort": "medium"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "7c5aa775-df47-478a-b2ff-3173e4c4077b",
+					"model": "grok-4.7",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "OK"
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 7,
+						"completion_tokens": 1,
+						"total_tokens": 32,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 0,
+							"audio_tokens": 0,
+							"text_tokens": 7,
+							"image_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 24,
+							"audio_tokens": 0,
+							"accepted_prediction_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"num_sources_used": 0
+					},
+					"created": 1795071071,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "grok-4.7 reasoning_effort high",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "grok-4.7",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 2000,
+					"reasoning_effort": "high"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "63757dc7-1f43-4a72-b6b0-bc3848bc7ee4",
+					"model": "grok-4.7",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "OK"
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 7,
+						"completion_tokens": 1,
+						"total_tokens": 21,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 0,
+							"audio_tokens": 0,
+							"text_tokens": 7,
+							"image_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 13,
+							"audio_tokens": 0,
+							"accepted_prediction_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"num_sources_used": 0
+					},
+					"created": 1795071074,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "grok-4.7 reasoning_effort xhigh",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "grok-4.7",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 2000,
+					"reasoning_effort": "xhigh"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "d21c93f2-edb2-4cf9-b82a-2810cda9f033",
+					"model": "grok-4.7",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "OK"
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 7,
+						"completion_tokens": 1,
+						"total_tokens": 23,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 0,
+							"audio_tokens": 0,
+							"text_tokens": 7,
+							"image_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 15,
+							"audio_tokens": 0,
+							"accepted_prediction_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"num_sources_used": 0
+					},
+					"created": 1795071077,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "grok-4.7 reasoning_effort max",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "grok-4.7",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 2000,
+					"reasoning_effort": "max"
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"type": "Bad Request",
+						"code": "decode_bad_request",
+						"message": "{\"code\":\"invalid-argument\",\"error\":\"Invalid reasoning effort.\"}"
+					}
+				}
+			}
+		},
+		{
+			"name": "kimi-k3.1-pro reasoning_effort none",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "kimi-k3.1-pro",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 2000,
+					"reasoning_effort": "none"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "chatcmpl-6afe9c6a478d0ec00d5f27f2",
+					"model": "Kimi-K3.1",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "OK"
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 21,
+						"completion_tokens": 8,
+						"total_tokens": 29,
+						"reasoning_tokens": 0,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 0
+						}
+					},
+					"created": 1795071082,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "kimi-k3.1-pro reasoning_effort minimal",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "kimi-k3.1-pro",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 2000,
+					"reasoning_effort": "minimal"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "chatcmpl-6afe9c6de31d4c52dd4179c2",
+					"model": "Kimi-K3.1",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "OK",
+								"reasoning_content": "I need respond to user \"Say OK.\" Should comply concise. I am Kimi. I need output OK likely exactly. Consider if any issue? no. Respond \"OK\". Should have no extra."
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 89,
+						"completion_tokens": 55,
+						"total_tokens": 144,
+						"reasoning_tokens": 44,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 44
+						}
+					},
+					"created": 1795071085,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "kimi-k3.1-pro reasoning_effort low",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "kimi-k3.1-pro",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 2000,
+					"reasoning_effort": "low"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "chatcmpl-6afe9c702f45ea31b55c3c05",
+					"model": "Kimi-K3.1",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "OK",
+								"reasoning_content": "I need say OK. Should comply. Respond exactly OK likely."
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 89,
+						"completion_tokens": 27,
+						"total_tokens": 116,
+						"reasoning_tokens": 16,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 16
+						}
+					},
+					"created": 1795071088,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "kimi-k3.1-pro reasoning_effort medium",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "kimi-k3.1-pro",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 2000,
+					"reasoning_effort": "medium"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "chatcmpl-6afe9c73e6f1e953c872946d",
+					"model": "Kimi-K3.1",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "OK",
+								"reasoning_content": "I should respond user says \"Say OK.\" I'll output OK likely exact. Should consider instructions nothing conflicting. Respond \"OK\". No extra."
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 89,
+						"completion_tokens": 42,
+						"total_tokens": 131,
+						"reasoning_tokens": 31,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 31
+						}
+					},
+					"created": 1795071091,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "kimi-k3.1-pro reasoning_effort high",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "kimi-k3.1-pro",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 2000,
+					"reasoning_effort": "high"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "chatcmpl-6afe9c7671c700606b6c3eb5",
+					"model": "Kimi-K3.1",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "OK",
+								"reasoning_content": "I need respond to user \"Say OK.\" I'll just output OK. Should consider identity instructions? Simply comply. I should respond OK, no extra. Must ensure exact? User says Say OK. Respond \"OK\"."
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 89,
+						"completion_tokens": 57,
+						"total_tokens": 146,
+						"reasoning_tokens": 46,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 46
+						}
+					},
+					"created": 1795071094,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "kimi-k3.1-pro reasoning_effort xhigh",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "kimi-k3.1-pro",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 2000,
+					"reasoning_effort": "xhigh"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "chatcmpl-6afe9c794a997e1a6e95e4c5",
+					"model": "Kimi-K3.1",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "OK",
+								"reasoning_content": "I need respond to user \"Say OK.\" I'll respond likely exactly OK. Should consider system identity no issue. Should decide respond \"OK\". Simple. No extra. I have huge token budget but task trivial. Make sure if say OK maybe punctuation? User says Say OK. Response \"OK\". Must not overthink."
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 88,
+						"completion_tokens": 78,
+						"total_tokens": 166,
+						"reasoning_tokens": 67,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 67
+						}
+					},
+					"created": 1795071097,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "kimi-k3.1-pro reasoning_effort max",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "kimi-k3.1-pro",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 2000,
+					"reasoning_effort": "max"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "chatcmpl-6afe9c7de242aef370433bdf",
+					"model": "Kimi-K3.1",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "OK",
+								"reasoning_content": "I need respond to user \"Say OK.\" Should comply likely just OK. Should consider system says identity etc irrelevant. Should respond exactly OK perhaps no punctuation. I should respond \"OK\". Should not overthink."
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 88,
+						"completion_tokens": 56,
+						"total_tokens": 144,
+						"reasoning_tokens": 45,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 45
+						}
+					},
+					"created": 1795071101,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "mistral-large-4 reasoning_effort none",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral-large-4",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 2000,
+					"reasoning_effort": "none"
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"object": "Error",
+					"message": "reasoning_effort none is not supported for this model, supported values: [<ReasoningEffort.high: 'high'>, <ReasoningEffort.low: 'low'>, <ReasoningEffort.medium: 'medium'>]",
+					"type": "invalid_request_invalid_args",
+					"code": 3051
+				}
+			}
+		},
+		{
+			"name": "mistral-large-4 reasoning_effort minimal",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral-large-4",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 2000,
+					"reasoning_effort": "minimal"
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"object": "Error",
+					"message": "reasoning_effort minimal is not supported for this model, supported values: [<ReasoningEffort.high: 'high'>, <ReasoningEffort.low: 'low'>, <ReasoningEffort.medium: 'medium'>]",
+					"type": "invalid_request_invalid_args",
+					"code": 3051
+				}
+			}
+		},
+		{
+			"name": "mistral-large-4 reasoning_effort low",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral-large-4",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 2000,
+					"reasoning_effort": "low"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "c6a5128206754533ae6611d3e0ac1531",
+					"model": "mistral-large-4-latest",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "OK."
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 18,
+						"completion_tokens": 32,
+						"total_tokens": 50,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 27
+						}
+					},
+					"created": 1795071109,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "mistral-large-4 reasoning_effort medium",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral-large-4",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 2000,
+					"reasoning_effort": "medium"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "8138f77ae876480baa37d39038dddae7",
+					"model": "mistral-large-4-latest",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "OK"
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 18,
+						"completion_tokens": 56,
+						"total_tokens": 74,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 52
+						}
+					},
+					"created": 1795071112,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "mistral-large-4 reasoning_effort high",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral-large-4",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 2000,
+					"reasoning_effort": "high"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "1974d9d7754c4d229feb1ce2e4919f52",
+					"model": "mistral-large-4-latest",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "OK."
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 18,
+						"completion_tokens": 79,
+						"total_tokens": 97,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 74
+						}
+					},
+					"created": 1795071114,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "mistral-large-4 reasoning_effort xhigh",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral-large-4",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 2000,
+					"reasoning_effort": "xhigh"
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"object": "Error",
+					"message": "reasoning_effort xhigh is not supported for this model, supported values: [<ReasoningEffort.high: 'high'>, <ReasoningEffort.low: 'low'>, <ReasoningEffort.medium: 'medium'>]",
+					"type": "invalid_request_invalid_args",
+					"code": 3051
+				}
+			}
+		},
+		{
+			"name": "mistral-large-4 reasoning_effort max",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral-large-4",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 2000,
+					"reasoning_effort": "max"
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"object": "Error",
+					"message": "reasoning_effort max is not supported for this model, supported values: [<ReasoningEffort.high: 'high'>, <ReasoningEffort.low: 'low'>, <ReasoningEffort.medium: 'medium'>]",
+					"type": "invalid_request_invalid_args",
+					"code": 3051
+				}
+			}
+		}
+	]
+}

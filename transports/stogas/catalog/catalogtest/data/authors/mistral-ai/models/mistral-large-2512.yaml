@@ -1,0 +1,17 @@
+# Mistral AI's model page states the API name, the release date, the 256k window and text and image
+# input, and the model card says that it is not a reasoning model. The configuration's 294,912
+# positions are not the stated window, which the record takes as 262,144 tokens, and no output
+# ceiling is stated. Reviewed 2026-11-19: https://docs.mistral.ai/models/mistral-large-3-25-12 and
+# https://huggingface.co/mistralai/Mistral-Large-3-675B-Instruct-2512
+models:
+  authorId: mistral-ai
+  name: Mistral Large 3
+  groupIds: [mistral-large, mistral-3]
+  contextWindowTokens: 262144
+  maxOutputTokens: 262144
+  inputModalities: [text, image]
+  outputModalities: [text]
+  reasoning: unsupported
+  openWeights: true
+  weightsUrl: https://huggingface.co/mistralai/Mistral-Large-3-675B-Instruct-2512
+  releaseDate: 2025-12-02

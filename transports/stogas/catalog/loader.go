@@ -1480,11 +1480,10 @@ func validateModelReasoning(modelID string, model compiledModel) error {
 }
 
 func validateDeploymentReasoningInheritance(deploymentID string, model compiledModel, deployment *compiledDeployment) error {
+	// A provider decides whether its deployment reasons always, never or at the request's choice,
+	// but it cannot give reasoning to a model that has none.
 	if model.Reasoning == "unsupported" && deployment.Reasoning != "unsupported" {
 		return fmt.Errorf("deployment %s enables model-unsupported reasoning", deploymentID)
-	}
-	if model.Reasoning == "required" && deployment.Reasoning != "required" {
-		return fmt.Errorf("deployment %s weakens required model reasoning", deploymentID)
 	}
 	for _, route := range deployment.Routes {
 		for _, effort := range route.ReasoningEfforts {

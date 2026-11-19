@@ -41,6 +41,9 @@ companies:
   openai:
     name: OpenAI
     headquarteredCountry: US
+  spacex:
+    name: SpaceX
+    headquarteredCountry: US
   z-ai:
     name: Z.ai
     headquarteredCountry: CN

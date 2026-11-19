@@ -1,0 +1,39 @@
+deployments:
+  modelId: mistral-medium-3-5
+  routeIds: [azure-chat-completions]
+  upstream:
+    model: mistral-medium-3-5
+    modelFormat: Mistral AI
+    modelVersion: '1'
+    deploymentType: global_standard
+  # ARM lists the model as a preview.
+  preview: true
+  # Microsoft documents only Chat Completions for this model, through which the gateway serves
+  # Responses requests too.
+  # Microsoft lists 128,000 input tokens and 128,000 output tokens. Reviewed 2026-11-19:
+  # https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure
+  retirementDate: 2127-10-01
+  notes: Azure returns the reasoning of Mistral Medium 3.5 inside the message content in Mistral's own format, so Stogas serves the model without reasoning.
+  overrides:
+    maxInputTokens: 128000
+    maxOutputTokens: 128000
+    # At effort high, Azure returns the model's reasoning as a thinking part of the content array,
+    # which Chat Completions does not have, and it refuses efforts other than none and high (probed
+    # 2026-11-19, capture azure/other-model-formats-sampling).
+    reasoning: unsupported
+    reasoningEfforts: []
+    # Mistral Medium 3.5 calls tools, although Microsoft lists no tool calling, and answers in text
+    # under tool_choice required (probed 2026-11-19, capture azure/other-model-formats-tool-choice).
+    capabilities:
+      implicitPromptCaching: false
+      explicitPromptCaching: false
+      toolChoice: false
+    # Azure refuses logit_bias for Mistral's models (probed 2026-11-19, capture
+    # azure/other-model-formats-sampling).
+    sampling:
+      logitBias: false
+  pricing:
+    input_tokens:
+      per_mill_tokens: '1.5'
+    output_tokens:
+      per_mill_tokens: '7.5'

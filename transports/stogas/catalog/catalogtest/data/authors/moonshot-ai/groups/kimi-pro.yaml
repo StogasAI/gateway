@@ -1,0 +1,4 @@
+groups:
+  authorId: moonshot-ai
+  name: 'Kimi Pro'
+  parentIds: [kimi]

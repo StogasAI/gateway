@@ -129,9 +129,11 @@ func TestSnapshotValidationRejectsInvalidSchedules(t *testing.T) {
 	delete(unpriced["pricing"].(map[string]any), billing.MeterOutputTokens)
 	relinked := promotedDeployment(t, "openai-gpt-5.6-sol")
 	relinked["modelId"] = "gpt-5.6-terra"
-	// The model's deployments all leave reasoning optional.
-	required := catalogNode(t, "models", "gpt-5.6-sol")
-	required["reasoning"] = "required"
+	// The model's deployments all reason.
+	unreasoning := catalogNode(t, "models", "gpt-5.6-sol")
+	unreasoning["reasoning"] = "unsupported"
+	unreasoning["reasoningEfforts"] = []any{}
+	unreasoning["reasoningDefault"] = nil
 	unnamed := promotedDeployment(t, "openai-gpt-5.6-sol")
 	unnamed["weightPrecision"] = "fp99"
 	empty := map[string]any{}
@@ -167,9 +169,9 @@ func TestSnapshotValidationRejectsInvalidSchedules(t *testing.T) {
 		{
 			name: "model that its unchanged deployments contradict",
 			schedule: []map[string]any{{"start": "2026-11-01T00:00:00Z", "graph": map[string]any{"models": map[string]any{
-				"gpt-5.6-sol": required,
+				"gpt-5.6-sol": unreasoning,
 			}}}},
-			message: "weakens required model reasoning",
+			message: "enables model-unsupported reasoning",
 		},
 		{
 			name: "value outside the policy vocabulary",

@@ -1,0 +1,430 @@
+{
+	"shows": "On Azure, Grok reasons past max_tokens and max_completion_tokens, which bound only its answer, and counts its reasoning apart from completion_tokens, while Kimi K3.1 Pro and Mistral Large 4 keep reasoning and answer within either limit and count both in completion_tokens.",
+	"recorded": "2026-11-19",
+	"exchanges": [
+		{
+			"name": "grok-4.6 with max_tokens of 12",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "grok-4.6",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Count from 1 to 300 in words, separated by commas."
+						}
+					],
+					"max_tokens": 12
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "02ede6d3-2fef-4def-a4ef-f3571dfcf47b",
+					"model": "grok-4.6",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "one, two, three, four, five, six,"
+							},
+							"finish_reason": "length"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 18,
+						"completion_tokens": 12,
+						"total_tokens": 3472,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 0,
+							"audio_tokens": 0,
+							"text_tokens": 18,
+							"image_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 3442,
+							"audio_tokens": 0,
+							"accepted_prediction_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"num_sources_used": 0
+					},
+					"created": 1795068937,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "grok-4.6 with max_completion_tokens of 12",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "grok-4.6",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Count from 1 to 300 in words, separated by commas."
+						}
+					],
+					"max_completion_tokens": 12
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "c398597c-4800-4e10-9ba9-4996b1e5e76a",
+					"model": "grok-4.6",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "one, two, three, four, five, six,"
+							},
+							"finish_reason": "length"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 18,
+						"completion_tokens": 12,
+						"total_tokens": 3068,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 0,
+							"audio_tokens": 0,
+							"text_tokens": 18,
+							"image_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 3038,
+							"audio_tokens": 0,
+							"accepted_prediction_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"num_sources_used": 0
+					},
+					"created": 1795069011,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "grok-4.7 with max_tokens of 12",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "grok-4.7",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Count from 1 to 300 in words, separated by commas."
+						}
+					],
+					"max_tokens": 12
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "4dc5fd9d-ae07-4126-82c9-b3727450ace4",
+					"model": "grok-4.7",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "one, two, three, four, five, six,"
+							},
+							"finish_reason": "length"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 18,
+						"completion_tokens": 12,
+						"total_tokens": 3264,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 0,
+							"audio_tokens": 0,
+							"text_tokens": 18,
+							"image_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 3234,
+							"audio_tokens": 0,
+							"accepted_prediction_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"num_sources_used": 0
+					},
+					"created": 1795069040,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "grok-4.7 with max_completion_tokens of 12",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "grok-4.7",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Count from 1 to 300 in words, separated by commas."
+						}
+					],
+					"max_completion_tokens": 12
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "f1445f5f-3c47-470f-b61d-b85d5ff8dff1",
+					"model": "grok-4.7",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "one, two, three, four, five, six,"
+							},
+							"finish_reason": "length"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 18,
+						"completion_tokens": 12,
+						"total_tokens": 3010,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 0,
+							"audio_tokens": 0,
+							"text_tokens": 18,
+							"image_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 2980,
+							"audio_tokens": 0,
+							"accepted_prediction_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"num_sources_used": 0
+					},
+					"created": 1795069076,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "kimi-k3.1-pro with max_tokens of 12",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "kimi-k3.1-pro",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Count from 1 to 300 in words, separated by commas."
+						}
+					],
+					"max_tokens": 12
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "chatcmpl-6afe9496660a9c53cda4748c",
+					"model": "Kimi-K3.1",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "",
+								"reasoning_content": "I need respond count from 1 to 300 in words"
+							},
+							"finish_reason": "length"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 99,
+						"completion_tokens": 12,
+						"total_tokens": 111,
+						"reasoning_tokens": 12,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 12
+						}
+					},
+					"created": 1795069078,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "kimi-k3.1-pro with max_completion_tokens of 12",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "kimi-k3.1-pro",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Count from 1 to 300 in words, separated by commas."
+						}
+					],
+					"max_completion_tokens": 12
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "chatcmpl-6afe949ae2989b56a49bb7ca",
+					"model": "Kimi-K3.1",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "",
+								"reasoning_content": "Kimi needs to answer: the count from 1 to"
+							},
+							"finish_reason": "length"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 99,
+						"completion_tokens": 12,
+						"total_tokens": 111,
+						"reasoning_tokens": 12,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 12
+						}
+					},
+					"created": 1795069082,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "mistral-large-4 with max_tokens of 12",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral-large-4",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Count from 1 to 300 in words, separated by commas."
+						}
+					],
+					"max_tokens": 12
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "10018ce91cbd488b9a540ed8eee17bbc",
+					"model": "mistral-large-4-latest",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": ""
+							},
+							"finish_reason": "length"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 30,
+						"completion_tokens": 12,
+						"total_tokens": 42,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 11
+						}
+					},
+					"created": 1795069086,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "mistral-large-4 with max_completion_tokens of 12",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral-large-4",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Count from 1 to 300 in words, separated by commas."
+						}
+					],
+					"max_completion_tokens": 12
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "3b1ecc190853468f94e777069c90a36d",
+					"model": "mistral-large-4-latest",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": ""
+							},
+							"finish_reason": "length"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 30,
+						"completion_tokens": 12,
+						"total_tokens": 42,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 11
+						}
+					},
+					"created": 1795069089,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		}
+	]
+}

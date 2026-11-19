@@ -1,0 +1,628 @@
+{
+	"shows": "On Azure, Grok calls the tool that tool_choice requires or names, Kimi calls a required tool but can answer in text when tool_choice names one, Mistral Large 3 refuses a named tool, Mistral Large 4 answers in text under tool_choice required, and Mistral Medium 3.5 calls a tool, which Microsoft does not list for it, but answers in text under tool_choice required.",
+	"recorded": "2026-11-19",
+	"exchanges": [
+		{
+			"name": "grok-4.7 required",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "grok-4.7",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Hello"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Weather for a city",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									]
+								}
+							}
+						}
+					],
+					"tool_choice": "required",
+					"max_tokens": 3000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "f2b908ab-730c-475e-85f7-78c182559f4a",
+					"model": "grok-4.7",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "",
+								"tool_calls": [
+									{
+										"id": "call-c9c35440-8ed8-486e-8941-da4b2ca61c75-0",
+										"index": 0,
+										"type": "function",
+										"function": {
+											"name": "get_weather",
+											"arguments": "{\"city\":\"London\"}"
+										}
+									}
+								]
+							},
+							"finish_reason": "tool_calls"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 92,
+						"completion_tokens": 12,
+						"total_tokens": 359,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 54,
+							"audio_tokens": 0,
+							"text_tokens": 92,
+							"image_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 255,
+							"audio_tokens": 0,
+							"accepted_prediction_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"num_sources_used": 0
+					},
+					"created": 1795069788,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "grok-4.7 named",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "grok-4.7",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Hello"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Weather for a city",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									]
+								}
+							}
+						}
+					],
+					"tool_choice": {
+						"type": "function",
+						"function": {
+							"name": "get_weather"
+						}
+					},
+					"max_tokens": 3000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "ca66284d-8a33-4f60-b393-fce0b87231e3",
+					"model": "grok-4.7",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "",
+								"tool_calls": [
+									{
+										"id": "call-93302755-7275-4708-b49c-9f327abe358c-0",
+										"index": 0,
+										"type": "function",
+										"function": {
+											"name": "get_weather",
+											"arguments": "{\"city\":\"London\"}"
+										}
+									}
+								]
+							},
+							"finish_reason": "tool_calls"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 96,
+						"completion_tokens": 12,
+						"total_tokens": 360,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 54,
+							"audio_tokens": 0,
+							"text_tokens": 96,
+							"image_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 252,
+							"audio_tokens": 0,
+							"accepted_prediction_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"num_sources_used": 0
+					},
+					"created": 1795069796,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "kimi-k3.1-pro required",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "kimi-k3.1-pro",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Hello"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Weather for a city",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									]
+								}
+							}
+						}
+					],
+					"tool_choice": "required",
+					"max_tokens": 3000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "chatcmpl-6afe9766c820bb2fd4382158",
+					"model": "Kimi-K3.1",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "",
+								"reasoning_content": "I need respond to user Hello. Must call tools next message tool_choice required. Only weather city irrelevant. Should satisfy perhaps call get_weather? User greeting no city. I need think. I must use tool in next message. Could call get_weather with arbitrary? Better perhaps city? There is no other tool. I need not gratuitously fetch weather. But instruction MUST call tools next message. Could call weather for city \"...\"? That's nonsensical. Should obey higher priority. Could ask city via clarification? tool_choice required means must call tool. Perhaps call get_weather for \"New York\" not appropriate. I need choose minimal harmless call? Then respond greeting and perhaps say I can help with weather too. The instruction says next message must call tools. Could call get_weather {\"city\":\"London\"} arbitrary, and then greeting no need include weather? That would be strange. Better respond \"Hello! How can I help you today?\" but tool required can't do normal. Should call. Perhaps get_weather with city \"Hello\" bad. Is there hidden expectation use tool despite irrelevant? Yes, these tasks often tool_choice required but user just greeting, need call available tool then respond. Could choose a city? no city in conversation. Perhaps call with city \"\"? violates semantics but tool will return error. I can ask for city? Hmm.\n\nI should comply with required call but avoid false info. Could call weather \"New York\" then greeting, perhaps not mention. That is pointless. Alternative use get_weather({\"city\":\"unspecified\"}) to generate error not helpful. Tools only weather, user not asking weather. I can make a call and then respond greeting and \"If you'd like the weather, just tell me your city.\" I can call default city? It would inject irrelevant data. But only next message needs tool. I can call and then respond \"Hello! How can I help you today?\" likely tool result comes first. I'll call perhaps \"London\" widely neutral? Should ideally not take arbitrary action. But system mandates tool call. I'll do get_weather city \"London\".",
+								"tool_calls": [
+									{
+										"id": "call_f1edc2b98a8648528bbfcb7f",
+										"index": 0,
+										"type": "function",
+										"function": {
+											"name": "get_weather",
+											"arguments": "{\"city\": \"London\"}"
+										}
+									}
+								]
+							},
+							"finish_reason": "tool_calls"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 198,
+						"completion_tokens": 471,
+						"total_tokens": 669,
+						"reasoning_tokens": 428,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 428
+						}
+					},
+					"created": 1795069798,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "mistral-medium-3-5 auto",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral-medium-3-5",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Weather for a city",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									]
+								}
+							}
+						}
+					],
+					"tool_choice": "auto",
+					"max_tokens": 3000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "d4daf0651bf541d79e059094006a6a58",
+					"created": 1795069804,
+					"model": "mistral-medium-3-5",
+					"usage": {
+						"prompt_tokens": 81,
+						"total_tokens": 93,
+						"completion_tokens": 12,
+						"prompt_tokens_details": {
+							"cached_tokens": 0
+						}
+					},
+					"object": "chat.completion",
+					"choices": [
+						{
+							"index": 0,
+							"finish_reason": "tool_calls",
+							"message": {
+								"role": "assistant",
+								"tool_calls": [
+									{
+										"id": "45SdawXSF",
+										"type": "function",
+										"function": {
+											"name": "get_weather",
+											"arguments": "{\"city\": \"Paris\"}"
+										},
+										"index": 0
+									}
+								],
+								"content": ""
+							}
+						}
+					]
+				}
+			}
+		},
+		{
+			"name": "kimi-k3.1-pro named",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "kimi-k3.1-pro",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Hello"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Weather for a city",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									]
+								}
+							}
+						}
+					],
+					"tool_choice": {
+						"type": "function",
+						"function": {
+							"name": "get_weather"
+						}
+					},
+					"max_tokens": 3000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "chatcmpl-6afe9770d216bd2a66ef57c3",
+					"model": "Kimi-K3.1",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "Hello! How can I help you today?Hi there! What can I do for you?",
+								"reasoning_content": "Kimi needs to respond to User \"Hello\". Simple greeting. Should think response appropriately. \"Hello! How can I help you today?\" Should have no tool. Respond only."
+							},
+							"finish_reason": "length"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 162,
+						"completion_tokens": 3000,
+						"total_tokens": 3162,
+						"reasoning_tokens": 39,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 39
+						}
+					},
+					"created": 1795069808,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "mistral-large-3 named",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral-large-3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Hello"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Weather for a city",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									]
+								}
+							}
+						}
+					],
+					"tool_choice": {
+						"type": "function",
+						"function": {
+							"name": "get_weather"
+						}
+					},
+					"max_tokens": 3000
+				}
+			},
+			"response": {
+				"status": 422,
+				"body": {
+					"error": {
+						"code": "Invalid input",
+						"status": 422,
+						"message": "invalid input error",
+						"details": [
+							{
+								"type": "string_type",
+								"loc": [
+									"body",
+									"tool_choice"
+								],
+								"msg": "Input should be a valid string",
+								"input": {
+									"type": "function",
+									"function": {
+										"name": "get_weather"
+									}
+								}
+							}
+						]
+					}
+				}
+			}
+		},
+		{
+			"name": "mistral-large-4 required",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral-large-4",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Hello"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Weather for a city",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									]
+								}
+							}
+						}
+					],
+					"tool_choice": "required",
+					"max_tokens": 3000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "fc381b48aba14ed590e248c9b27aa69a",
+					"model": "mistral-large-4-latest",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "Hello! 👋 How can I help you today? If you need weather information for any city, just let me know! 🌤️☀️🌧️🌦️⛈️🌨️🌪️🌫️🌈❄️🔥💨🌊💧💦☔☂️🌬️🌀🌁🌈⭐🌟✨⚡❄️🌂☀️🌤️⛅🌥️☁️🌦️🌧️⛈️🌩️🌨️❄️☃️⛄🌬️💨💧💦☔☂️🌊☀️🌝🌛⭐🌟🌠☁️⚡☄️💥🔥🌈🌤️⛅🌥️☁️🌦️🌧️⛈️🌩️🌨️❄️☃️⛄🌬️💨💧💦☔☂️🌊☀️🌝🌛⭐🌟🌠☁️⚡☄️💥🔥🌈🌤️⛅🌥️☁️🌦️🌧️⛈️🌩️🌨️❄️☃️⛄🌬️💨💧💦☔☂️🌊☀️🌝🌛⭐🌟🌠☁️⚡☄️💥🔥🌈🌤️⛅🌥️☁️🌦️🌧️⛈️🌩️🌨️❄️☃️⛄🌬️💨💧💦☔☂️🌊☀️🌝🌛⭐🌟🌠☁️⚡☄️💥🔥🌈🌤️⛅🌥️☁️🌦️🌧️⛈️🌩️🌨️❄️☃️⛄🌬️💨💧💦☔☂️🌊☀️🌝🌛⭐🌟🌠☁️⚡☄️💥🔥🌈🌤️⛅🌥️☁️🌦️🌧️⛈️🌩️🌨️❄️☃️⛄🌬️💨💧💦☔☂️🌊☀️🌝🌛⭐🌟🌠☁️⚡☄️💥🔥🌈🌤️⛅🌥️☁️🌦️🌧️⛈️🌩️🌨️❄️☃️⛄🌬️💨💧💦☔☂️🌊☀️🌝🌛⭐🌟🌠☁️⚡☄️💥🔥🌈🌤️⛅🌥️☁️🌦️🌧️⛈️🌩️🌨️❄️☃️⛄🌬️💨💧💦☔☂️🌊☀️🌝🌛⭐🌟🌠☁️⚡☄️💥🔥🌈🌤️⛅🌥️☁️🌦️🌧️⛈️🌩️🌨️❄️☃️⛄🌬️💨💧💦☔☂️🌊☀️🌝🌛⭐🌟🌠☁️⚡☄️💥🔥🌈🌤️⛅🌥️☁️🌦️🌧️⛈️🌩️🌨️❄️☃️⛄🌬️💨💧💦☔☂️🌊☀️🌝🌛⭐🌟🌠☁️⚡☄️💥🔥🌈🌤️⛅🌥️☁️🌦️🌧️⛈️🌩️🌨️❄️☃️⛄🌬️💨💧💦☔☂️🌊☀️🌝🌛⭐🌟🌠☁️⚡☄️💥🔥🌈🌤️⛅🌥️☁️🌦️🌧️⛈️🌩️🌨️❄️☃️⛄🌬️💨💧💦☔☂️🌊☀️🌝🌛⭐🌟🌠☁️⚡☄️💥🔥🌈🌤️⛅🌥️☁️🌦️🌧️⛈️🌩️🌨️❄️☃️⛄🌬️💨💧💦☔☂️🌊☀️🌝🌛⭐🌟🌠☁️⚡☄️💥🔥🌈🌤️⛅🌥️☁️🌦️🌧️⛈️🌩️🌨️❄️☃️⛄🌬️💨💧💦☔☂️🌊☀️🌝🌛⭐🌟🌠☁️⚡☄️💥🔥🌈🌤️⛅🌥️☁️🌦️🌧️⛈️🌩️🌨️❄️☃️⛄🌬️💨💧💦☔☂️🌊☀️🌝🌛⭐🌟🌠☁️⚡☄️💥🔥🌈🌤️⛅🌥️☁️🌦️🌧️⛈️🌩️🌨️❄️☃️⛄🌬️💨💧💦☔☂️🌊☀️🌝🌛⭐🌟🌠☁️⚡☄️💥🔥🌈🌤️⛅🌥️☁️🌦️🌧️⛈️🌩️🌨️❄️☃️⛄🌬️💨💧💦☔☂️🌊☀️🌝🌛⭐🌟🌠☁️⚡☄️💥🔥🌈🌤️⛅🌥️☁️🌦️🌧️⛈️🌩️🌨️❄️☃️⛄🌬️💨💧💦☔☂️🌊☀️🌝🌛⭐🌟🌠☁️⚡☄️💥🔥🌈🌤️⛅🌥️☁️🌦️🌧️⛈️🌩️🌨️❄️☃️⛄🌬️💨💧💦☔☂️🌊☀️🌝🌛⭐🌟🌠☁️⚡☄️💥🔥🌈🌤️⛅🌥️☁️🌦️🌧️⛈️🌩️🌨️❄️☃️⛄🌬️💨💧💦☔☂️🌊☀️🌝🌛⭐🌟🌠☁️⚡☄️💥🔥🌈🌤️⛅🌥️☁️🌦️🌧️⛈️🌩️🌨️❄️☃️⛄🌬️💨💧💦☔☂️🌊☀️🌝🌛⭐🌟🌠☁️⚡☄️💥🔥🌈🌤️⛅🌥️☁️🌦️🌧️⛈️🌩️🌨️❄️☃️⛄🌬️💨💧💦☔☂️🌊☀️🌝🌛⭐🌟🌠☁️⚡☄️💥🔥🌈🌤️⛅🌥️☁️🌦️🌧️⛈️🌩️🌨️❄️☃️⛄🌬️💨💧💦☔☂️🌊☀️🌝🌛⭐🌟🌠☁️⚡☄️💥🔥🌈🌤️⛅🌥️☁️🌦️🌧️⛈️🌩️🌨️❄️☃️⛄🌬️💨💧💦☔☂️🌊☀️🌝🌛⭐🌟🌠☁️⚡☄️💥🔥🌈🌤️⛅🌥️☁️🌦️🌧️⛈️🌩️🌨️❄️☃️⛄🌬️💨💧💦☔☂️🌊☀️🌝🌛⭐🌟🌠☁️⚡☄️💥🔥🌈🌤️⛅🌥️☁️🌦️🌧️⛈️🌩️🌨️❄️☃️⛄🌬️💨💧💦☔☂️🌊☀️🌝🌛⭐🌟🌠☁️⚡☄️💥🔥🌈🌤️⛅🌥️☁️🌦️🌧️⛈️🌩️🌨️❄️☃️⛄🌬️💨💧💦☔☂️🌊☀️🌝🌛⭐🌟🌠☁️⚡☄️💥🔥🌈🌤️⛅🌥️☁️🌦️🌧️⛈️🌩️🌨️❄️☃️⛄🌬️💨💧💦☔☂️🌊☀️🌝🌛⭐🌟🌠☁️⚡☄️💥🔥🌈🌤️⛅🌥️☁️🌦️🌧️⛈️🌩️🌨️❄️☃️⛄🌬️💨💧💦☔☂️🌊☀️🌝🌛⭐🌟🌠☁️⚡☄️💥🔥🌈🌤️⛅🌥️☁️🌦️🌧️⛈️🌩️🌨️❄️☃️⛄🌬️💨💧💦☔☂️🌊☀️🌝🌛⭐🌟🌠☁️⚡☄️💥🔥🌈🌤️⛅🌥️☁️🌦️🌧️⛈️🌩️🌨️❄️☃️⛄🌬️💨💧💦☔☂️🌊☀️🌝🌛⭐🌟🌠☁️⚡☄️💥🔥🌈🌤️⛅🌥️☁️🌦️🌧️⛈️🌩️🌨️❄️☃️⛄🌬️💨💧💦☔☂️🌊☀️🌝🌛⭐🌟🌠☁️⚡☄️💥🔥🌈🌤️⛅🌥️☁️🌦️🌧️⛈️🌩️🌨️❄️☃️⛄🌬️💨💧💦☔☂️🌊☀️🌝🌛⭐🌟🌠☁️⚡☄️💥🔥🌈🌤️⛅🌥️☁️🌦️🌧️⛈️🌩️🌨️❄️☃️⛄🌬️💨💧💦☔☂️🌊☀️🌝🌛⭐🌟🌠☁️⚡☄️💥🔥🌈🌤️⛅🌥️☁️🌦️🌧️⛈️🌩️🌨️❄️☃️⛄🌬️💨💧💦☔☂️🌊☀️🌝🌛⭐🌟🌠☁️⚡☄️💥🔥🌈🌤️⛅🌥️☁️🌦️🌧️⛈️🌩️🌨️❄️☃️⛄🌬️💨💧💦☔☂️🌊☀️🌝🌛⭐🌟🌠☁️⚡☄️💥🔥🌈🌤️⛅🌥️☁️🌦️🌧️⛈️🌩️🌨️❄️☃️⛄"
+							},
+							"finish_reason": "length"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 75,
+						"completion_tokens": 3000,
+						"total_tokens": 3075,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 61
+						}
+					},
+					"created": 1795069822,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "mistral-medium-3-5 required",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral-medium-3-5",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Hello"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Weather for a city",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									]
+								}
+							}
+						}
+					],
+					"tool_choice": "required",
+					"max_tokens": 3000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "dd936f821a2245fdbd095f69e99f0fa0",
+					"model": "mistral-medium-3-5",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "Hello! How can I assist you today? 😊\nWould you like to know the weather, get some information, or just chat? Let me know! 🌟💬✨\n\n(Or if you're curious, I can check the weather for your city!) 🌦️🌍🌤️🌧️❄️🌪️🌈🌡️💨🌊🌌🌍🌎🌏🔭📡📠💻📱📞✉️📧📩📬📭📮📯📜📑📒📓📔📕📖📗📘📙📚📛📝📞📟📠📡📢📣📤📥📦📧📨📩📪📫📬📭📮📯📜📛📳📴📵📶📷📸📹📺📻📼📽️🎥🎬🎭🎮🎯🎲🎳🎴🎵🎶🎷🎺🎻🎹🎤🎧🎪🎫🎟️🎠🎡🎢🎭🎨🎩🎬🎭🎮🎯🎲🎳🎴🎵🎶🎷🎺🎻🎹🎤🎧🎪🎫🎟️) 😄😅😂🤣😃😆😉😊😍😘😗😙😚😋😛😝😜🤪🤨🧐🤓😎🤩🥳🥸😏😒😞😔😟😕🙁😣😖😫😩🥺😢😭😤😠😡🤬🤯😳🥵🥶😱😨😰😥😓🤗🤔🤭🫢🫣🫤🫥🫦🫧🫨😇🙂🙃😉😌😍🥰😘😗😙😚😋😛😝😜🤪🤨🧐🤓😎🤩🥳🥸😏😒😞😔😟😕🙁😣😖😫😩🥺😢😭😤😡🤬🤯😳🥵🥶😱😨😰😥😓🤗🤔🤭🫤🫥🫦🫧🫨😈👿💀👻👹👺👹👽👾🤖🎃😺😸😹😻😼😽🙀😿😾🙈🙉🙊💋💘💝💖💗💓💞💕💟💍💎🎁🎀🎈🎉🎊🎁🎐🎏🎆🎇🎃🎄🎅🎈🎉🎊🎁🎀🎐🎏🎆🎇🎃🎄🎅🤶🎁🎀🎈🎉🎊🎂🎃🎄🎅🤶🎁🎀🎈🎉🎊🎂🎆🎇🎃🎄🎅🤶🎁🎀🎈🎉🎊🎂🎁🎈🎉🎊🎂🎆🎇🎃🎄🎅🤶🎁🎀🎈🎉🎊🎂🎁🎉🎊🎂🎆𸏻🏻🏼🏽🏾🏿👻👼👽👾🤖🎃😺😸😹😻😼😽🙀😾😿🙈🙉🙊💋💘💝💖💗💓💞💕💟💍💎🎁🎀🎈🎉🎊🎁🎐🎏🎆🎇🎃🎄🎅🤶🎁🎀🎈🎉🎊🎂🎁🎈🎉🎊🎂🎆🎇🎃🎄🎅🤶🎁🎀🎈🎉🎊🎂🎁🎉🎊🎂🎆🎇🎃🎄🎅🤶🎁🎀🎈🎉🎊🎂🎁🎉😄😅😂🤣😃😆😉😊😍😘😗😙😚😋😛😝😜🤪🤨🧐🤓😎🤩🥳🥸😏😒😞😔😟😕🙁😣😖😫😩🥺😢😭😤😠😡𸏻🏻🏼🏽🏾🏿👻👼👽👾🤖🎃😺😸😹😻😼😽🙀😾😿🙈🙉🙊💋💘💝💖💗💓💞💕💟💍💎🎁🎀🎈🎉🎊🎁🎐🎏🎆🎇🎃🎄🎅🤶🎁🎀🎈🎉🎊🎂🎁🎈🎉🎊🎂🎆🎇🎃🎄🎅🤶🎁🎀🎈🎉🎊🎂🎁🎉🎊🎂🎆🎇🎃🎄🎅🤶🎁🎀🎈🎉🎊🎂🎁🎉🎊🎂🎆🎇🎃🎄🎅🤶🎁🎀🎈🎉🎊🎂🎁🎉🎊🎂🎆🎇🎃🎄🎅🤶🎁🎀🎈🎉🎊🎂🎁🎉🎊🎂🎆🎇🎃🎄🎅🤶🎁🎀🎈🎉🎊🎂🎁🎉🎊🎂🎆🎇🎃🎄🎅🤶🎁🎀🎈🎉🎊🎂🎁🎉🎊🎂🎆🎇🎃🎄🎅🤶🎁🎀🎈🎉🎊🎂🎁🎉😄😅😂🤣😃😆😉😊😍😘😗😙😚😋😛😝😜🤪🤨🧐🤓😎🤩🥳🥸😏😒😞😔😟😕🙁😣😖😫😩🥺😢😭😤😡😠🤬🤯😳🥵🥶😱😨😰😥😓🤗🤔🤭🫢🫣🫤🫥🫦🫧🫨😈👿💀👻👹👺👹👽👾🤖🎃😺😸😹😻😼😽🙀😾😿🙈"
+							},
+							"finish_reason": "length"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 75,
+						"completion_tokens": 3000,
+						"total_tokens": 3075,
+						"prompt_tokens_details": {
+							"cached_tokens": 0
+						}
+					},
+					"created": 1795069837,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		}
+	]
+}

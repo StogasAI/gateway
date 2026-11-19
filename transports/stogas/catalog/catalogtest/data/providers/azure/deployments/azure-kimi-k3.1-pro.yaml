@@ -1,0 +1,32 @@
+deployments:
+  modelId: kimi-k3.1-pro
+  routeIds: [azure-chat-completions]
+  upstream:
+    model: Kimi-K3.1-Pro
+    modelFormat: MoonshotAI
+    modelVersion: '2026-11-04'
+    deploymentType: global_standard
+  # Microsoft documents only Chat Completions for this model, through which the gateway serves
+  # Responses requests too.
+  # Microsoft's model page lists 262,144 output tokens. Reviewed 2026-11-19:
+  # https://ai.azure.com/catalog/models/Kimi-K3.1-Pro
+  retirementDate: 2127-11-04
+  overrides:
+    maxOutputTokens: 262144
+    # Moonshot AI's API always reasons, but the model's own encoding has a mode without reasoning,
+    # which Azure uses at reasoning_effort none: the model then answered without reasoning tokens
+    # (probed 2026-11-19, capture azure/other-model-formats-efforts). Reviewed 2026-11-19:
+    # https://huggingface.co/moonshotai/Kimi-K3.1-Pro/blob/main/encoding_k3.py
+    reasoning: optional
+    # Probed 2026-11-19 (capture azure/other-model-formats-tool-choice): Kimi calls a required tool
+    # but can answer in text when tool_choice names one.
+    capabilities:
+      explicitPromptCaching: false
+      toolChoice: false
+  pricing:
+    input_tokens:
+      per_mill_tokens: '2.3'
+    cached_input_tokens:
+      per_mill_tokens: '0.23'
+    output_tokens:
+      per_mill_tokens: '11.5'

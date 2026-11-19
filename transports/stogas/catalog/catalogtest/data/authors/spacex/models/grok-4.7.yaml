@@ -1,0 +1,22 @@
+# SpaceXSI's model page states the window, text and image input, and the efforts low, medium, high
+# and xhigh with high as the default, and no output ceiling or way to turn reasoning off. Grok
+# refuses presence_penalty, frequency_penalty and logit_bias, as Azure did for Grok 4.7 (capture
+# azure/other-model-formats-sampling). Reviewed 2026-11-19: https://docs.x.ai/docs/models/4.7 and https://x.ai/news/grok-4-7
+models:
+  authorId: spacex
+  name: Grok 4.7
+  groupIds: [grok-4]
+  contextWindowTokens: 500000
+  maxOutputTokens: 500000
+  inputModalities: [text, image]
+  outputModalities: [text]
+  reasoning: required
+  reasoningEfforts: [low, medium, high, xhigh]
+  reasoningDefault: high
+  sampling:
+    frequencyPenalty: false
+    presencePenalty: false
+    logitBias: false
+  openWeights: false
+  releaseDate: 2026-09-21
+  succeeds: grok-4.6

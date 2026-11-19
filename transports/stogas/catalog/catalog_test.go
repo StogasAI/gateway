@@ -1800,25 +1800,22 @@ func TestSnapshotValidationRejectsVerifiedTEEWithoutTEEProcessing(t *testing.T) 
 	}
 }
 
-func TestSnapshotValidationRejectsReasoningThatWeakensTheModel(t *testing.T) {
+func TestSnapshotValidationRejectsReasoningThatTheModelLacks(t *testing.T) {
 	var whole map[string]any
 	if err := json.Unmarshal(testCatalogJSON, &whole); err != nil {
 		t.Fatal(err)
 	}
 	graph := whole["graph"].(map[string]any)
 	deployments := graph["deployments"].(map[string]any)
-	deployment := deployments["chutes-kimi-k3"].(map[string]any)
-	deployment["reasoning"] = "unsupported"
-	for _, route := range deployment["routes"].(map[string]any) {
-		route.(map[string]any)["reasoningEfforts"] = []any{}
-	}
+	deployment := deployments["azure-mistral-large-2512"].(map[string]any)
+	deployment["reasoning"] = "optional"
 	broken, err := json.Marshal(whole)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := snapshotFromCatalogBytes(broken); err == nil ||
-		!strings.Contains(err.Error(), "weakens required model reasoning") {
-		t.Fatalf("catalog that weakens required model reasoning was accepted: %v", err)
+		!strings.Contains(err.Error(), "enables model-unsupported reasoning") {
+		t.Fatalf("catalog that gives reasoning to a model without it was accepted: %v", err)
 	}
 }
 

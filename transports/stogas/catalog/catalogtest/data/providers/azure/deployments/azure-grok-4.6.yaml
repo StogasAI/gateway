@@ -1,0 +1,31 @@
+deployments:
+  modelId: grok-4.6
+  routeIds: [azure-chat-completions]
+  upstream:
+    model: grok-4.6
+    modelFormat: xAI
+    modelVersion: '1'
+    deploymentType: global_standard
+  # ARM lists the model as a preview.
+  preview: true
+  # Microsoft documents Chat Completions and Responses for Grok, but Azure's Responses API answered
+  # without reasoning, even at effort high (probed 2026-11-19, capture azure/grok-responses), so Grok
+  # takes Chat Completions, through which the gateway serves Responses requests too.
+  # Grok 4.7 calls the tool that tool_choice requires or names (probed 2026-11-19, capture
+  # azure/other-model-formats-tool-choice).
+  # Microsoft lists a 200,000-token window and 128,000 output tokens. Reviewed 2026-11-19:
+  # https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure
+  retirementDate: 2127-08-24
+  notes: Grok on Azure applies max_tokens and max_completion_tokens to the answer alone and reasons past them, up to the deployment's output limit, so a request can produce more tokens than its limit.
+  overrides:
+    contextWindowTokens: 200000
+    maxOutputTokens: 128000
+    capabilities:
+      explicitPromptCaching: false
+  pricing:
+    input_tokens:
+      per_mill_tokens: '2'
+    cached_input_tokens:
+      per_mill_tokens: '0.5'
+    output_tokens:
+      per_mill_tokens: '6'

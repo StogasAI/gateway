@@ -1,0 +1,7 @@
+# SpaceXSI, formerly xAI, makes Grok as SpaceX Super Intelligence LLC, a company of SpaceX, and
+# Microsoft calls it SpaceXAI. Clients name it xai, as LiteLLM and Azure's model format do, or x-ai,
+# as OpenRouter does. Reviewed 2026-11-19: https://x.ai/news/grok-4-7
+authors:
+  name: SpaceX
+  aliases: [xai, x-ai, spacexai, spacexsi]
+  companyId: spacex

@@ -1,0 +1,419 @@
+{
+	"shows": "Azure's Responses API serves Grok 4.7 without reasoning: a question that drew reasoning on Chat Completions at the same effort got only its answer, whose tokens usage counts as reasoning. It refuses max_output_tokens below 16, ends at max_output_tokens with status incomplete, and returns no reasoning item, even when a request includes encrypted reasoning.",
+	"recorded": "2026-11-19",
+	"exchanges": [
+		{
+			"name": "grok-4.7 with max_output_tokens of 12",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/responses",
+				"body": {
+					"model": "grok-4.7",
+					"store": false,
+					"input": "Count from 1 to 300 in words, separated by commas.",
+					"max_output_tokens": 12
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Invalid 'max_output_tokens': integer below minimum value. Expected a value >= 16, but got 12 instead.",
+						"type": "invalid_request_error",
+						"param": "max_output_tokens",
+						"code": "integer_below_min_value"
+					}
+				}
+			}
+		},
+		{
+			"name": "grok-4.7 with max_output_tokens of 16",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/responses",
+				"body": {
+					"model": "grok-4.7",
+					"store": false,
+					"input": "Count from 1 to 300 in words, separated by commas.",
+					"max_output_tokens": 16
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_09b11e34b2134104016afe95d450348193b65ac772bb431e82",
+					"object": "response",
+					"created_at": 1795069396,
+					"status": "incomplete",
+					"access_programs": null,
+					"background": false,
+					"completed_at": null,
+					"content_filters": null,
+					"error": null,
+					"frequency_penalty": 0,
+					"incomplete_details": {
+						"reason": "max_output_tokens"
+					},
+					"instructions": null,
+					"max_output_tokens": 16,
+					"max_tool_calls": null,
+					"model": "grok-4.7",
+					"moderation": null,
+					"output": [
+						{
+							"id": "msg_09b11e34b2134104016afe95dc52048193993922d7a4861ed8",
+							"type": "message",
+							"status": "incomplete",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "one, two, three, four, five, six, seven, eight,"
+								}
+							],
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "in_memory",
+					"reasoning": {
+						"context": null,
+						"effort": "medium",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "auto",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [],
+					"top_logprobs": 0,
+					"top_p": 1,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 14,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"output_tokens": 16,
+						"output_tokens_details": {
+							"reasoning_tokens": 16
+						},
+						"total_tokens": 30
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "grok-4.7 with encrypted reasoning",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/responses",
+				"body": {
+					"model": "grok-4.7",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"reasoning": {
+						"effort": "low"
+					},
+					"input": "What is 37*43? Answer with the number only.",
+					"max_output_tokens": 2000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_0f256dd71ed9957c016afe95df0c38819386856226d4b15b00",
+					"object": "response",
+					"created_at": 1795069407,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"completed_at": 1795069410,
+					"content_filters": null,
+					"error": null,
+					"frequency_penalty": 0,
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"max_tool_calls": null,
+					"model": "grok-4.7",
+					"moderation": null,
+					"output": [
+						{
+							"id": "msg_0f256dd71ed9957c016afe95e23ef8819383a4ca6ce8c48106",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "1591"
+								}
+							],
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "in_memory",
+					"reasoning": {
+						"context": null,
+						"effort": "low",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "auto",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [],
+					"top_logprobs": 0,
+					"top_p": 1,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 13,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"output_tokens": 2,
+						"output_tokens_details": {
+							"reasoning_tokens": 2
+						},
+						"total_tokens": 15
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "grok-4.7 on Chat Completions with effort high",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "grok-4.7",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43 - 19*29? Answer with the number only."
+						}
+					],
+					"reasoning_effort": "high",
+					"max_tokens": 2000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "5c0e790c-5b9c-4a2e-87d3-f7c7580162bf",
+					"model": "grok-4.7",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "1040"
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 22,
+						"completion_tokens": 2,
+						"total_tokens": 349,
+						"audio_prompt_tokens": 0,
+						"prompt_tokens_details": {
+							"cached_tokens": 0,
+							"audio_tokens": 0,
+							"text_tokens": 22,
+							"image_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 325,
+							"audio_tokens": 0,
+							"accepted_prediction_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"num_sources_used": 0
+					},
+					"created": 1795069418,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "grok-4.7 on Responses with effort high",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/responses",
+				"body": {
+					"model": "grok-4.7",
+					"store": false,
+					"input": "What is 37*43 - 19*29? Answer with the number only.",
+					"reasoning": {
+						"effort": "high"
+					},
+					"max_output_tokens": 2000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_026e0119788f0afd016afe95edb4b8819696b8d3719192cc8f",
+					"object": "response",
+					"created_at": 1795069421,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"completed_at": 1795069428,
+					"content_filters": null,
+					"error": null,
+					"frequency_penalty": 0,
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"max_tool_calls": null,
+					"model": "grok-4.7",
+					"moderation": null,
+					"output": [
+						{
+							"id": "msg_026e0119788f0afd016afe95f4468881968cce7e77706e2ee8",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "1040"
+								}
+							],
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "in_memory",
+					"reasoning": {
+						"context": null,
+						"effort": "high",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "auto",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [],
+					"top_logprobs": 0,
+					"top_p": 1,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 18,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"output_tokens": 2,
+						"output_tokens_details": {
+							"reasoning_tokens": 2
+						},
+						"total_tokens": 20
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		}
+	]
+}

@@ -1,0 +1,26 @@
+deployments:
+  modelId: mistral-large-2512
+  routeIds: [azure-chat-completions]
+  upstream:
+    model: Mistral-Large-3
+    modelFormat: Mistral AI
+    modelVersion: '1'
+    deploymentType: global_standard
+  # Microsoft documents only Chat Completions for this model, through which the gateway serves
+  # Responses requests too.
+  overrides:
+    # Probed 2026-11-19 (capture azure/other-model-formats-tool-choice): Mistral Large 3 refuses a
+    # named tool.
+    capabilities:
+      implicitPromptCaching: false
+      explicitPromptCaching: false
+      toolChoice: false
+    # Azure refuses logit_bias for Mistral's models (probed 2026-11-19, capture
+    # azure/other-model-formats-sampling).
+    sampling:
+      logitBias: false
+  pricing:
+    input_tokens:
+      per_mill_tokens: '0.5'
+    output_tokens:
+      per_mill_tokens: '1.5'
