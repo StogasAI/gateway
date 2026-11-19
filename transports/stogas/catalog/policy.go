@@ -75,6 +75,12 @@ type policyRequestData struct {
 	MCPServersWithoutApproval []string `json:"mcpServersWithoutApproval"`
 	MCPTools                  []string `json:"mcpTools"`
 	Model                     string   `json:"model"`
+	// Store reports whether the request asks its provider to keep its content: store or
+	// conversation.
+	Store bool `json:"store"`
+	// StoredInput reports whether the model reads input that the provider holds and the gateway
+	// never sees: previous_response_id or conversation.
+	StoredInput bool `json:"storedInput"`
 	// SystemMessages reads the request's messages only when a policy asks.
 	SystemMessages func() bool `json:"systemMessages"`
 }
@@ -485,7 +491,10 @@ func receivingCompanies(provider, hosting string, sharedWith []string) []string 
 // policyRequestData is the request as policies read it. A candidate without a request, as when
 // the catalog checks its values, reads no request facts.
 func (r *ResolvedRequest) policyRequestData(hostedTools []string) policyRequestData {
-	data := policyRequestData{BodyBytes: r.policyBodyBytes, HostedTools: hostedTools, Interface: r.Route.Interface(), Model: r.policyModel}
+	data := policyRequestData{
+		BodyBytes: r.policyBodyBytes, HostedTools: hostedTools, Interface: r.Route.Interface(), Model: r.policyModel,
+		Store: r.providerState.Keeps, StoredInput: r.providerState.Held != "",
+	}
 	if facts := r.policyFacts; facts != nil {
 		data.ClientTools, data.MCPServers, data.MCPTools, data.SystemMessages = facts.clientTools, facts.mcpServers, facts.mcpTools, facts.systemMessages
 		data.MCPServersWithoutApproval = facts.mcpUnattended

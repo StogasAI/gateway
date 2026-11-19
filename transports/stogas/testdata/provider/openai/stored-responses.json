@@ -1,0 +1,899 @@
+{
+	"shows": "With store: true, OpenAI and Azure keep a reply and still return its reasoning encrypted. A request that continues it under previous_response_id and omits store answers its call with the tool result alone, and the reply is stored and echoes the ID. A conversation takes a turn without store and echoes the conversation as an object with its ID.",
+	"recorded": "2026-11-19",
+	"exchanges": [
+		{
+			"name": "openai stored reply",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-5.4-mini",
+					"store": true,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"reasoning": {
+						"effort": "low"
+					},
+					"max_output_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_secret_number",
+							"description": "Returns the secret number.",
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Work out 37*43 - 19*29 in your head first, then call get_secret_number, then tell me the secret number plus your result."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_000c1ba5025bab8d006afe98fd204887d2b6a090ded082514b",
+					"object": "response",
+					"created_at": 1795070205,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795070206,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"max_tool_calls": null,
+					"model": "gpt-5.4-mini-2026-03-17",
+					"moderation": null,
+					"output": [
+						{
+							"id": "rs_000c1ba5025bab8d006afe98fdd56087d290ed5b95e48ae4b7",
+							"type": "reasoning",
+							"content": [],
+							"encrypted_content": "gAAAAABq_pj-kb1dK8Hn8xxJ6CpRLupgZ6CZf-XF6HBzaLWAgLbHMIwKf2XzvRvb5rSDDJMnmKj8p4SgyS7eIeGNxHNKVy6wPJqppD_eZrSAhjH8nMNDCfUQZmrXM1UgxLW888sIPvsDeOKWYFllEuyL6vmiMJKYc5tL8KIHjaS9bnw8AZSM_zJK-3C0ChnpC1aCC8iJNhPLU3EPRo1VUr8nX71642_qmtpccQqxR0okZsbacrP3Rw92q9j4H2vOlEK0J4lpnIoBVIvFArk0quINam09FaofLqJLyJAnMZI8_Dgyf4llMb7AkIwRiJBxP6MIxIPxPOIKf_XCfUYzSLm_bViGyX-T-saAiXtaPqiJ5FRw_zA0a26By9906RYgRCM88qQtdi_MB2NSxy3D7-r7Pec4Dbj6OsAQhQRXsroqz8wtRgVzCxJPVUI37C8D565DzaQokZvIiwJWK6-hy7WoVdqAim2RvVtlIyF1jHNSygl4Nv5GL2LpPByeDOLM0QGxiSQgyUgsKW0Wx0XiK1Of9nY6h6-y6wDiZO2YCop9mxYHI0_oK71XO1_0TJeqZkOmcKnUQWC6NaBX9LnrbUD7F-TjKLoVYRQ8RWI9fZ9aBAgsWd6TmzdxAtg6ko-htmrQrAMy4cZm5CzyKwtFCIMaCwheU3vwC3xrFoHa1Oi6K21btqpyDIVGN0841gTqsP_i8XXQCCjjciTWCX0okeUEY-Yg2nUDngZFQKwpD_e_HlI63nduoS3AkJAuRRBtkjyWwgjK_-GhUtMWddc8Azw-LKRuUiERY8az-Y8b46sF_EA3vkkpsEdfWB961IuWc5YlqfHXnDFwJktJZRSZLaD1tKcTf5CFS5ul5l17TL56bgV7CqUbzxUtmVaY5eUn4bqUCqa7-U0FiTxIbohC43GbiL6q9bPE-GZ4g_5YcEFnlelS_wo6Zw92lEnn7ljNFrFgEaLOC4TwDa7EwOvStwaMIezxWpiIdFLsUFK_UuXjsbJY3JFTTw-5XFYyJEE7gB4MgJPVb-TTKta3bbSJIb0pGx3aBDMFqy6hm8b63d4Uyed0RL_eL5l926r1PKr452c1AdTLNpZPjyXsJvRSk71SDYEtdhm_OCCeUdOvsNv8lT2XDOPHFixudSSt6YgFjktTsZAyr7Io6sbNW6DxQqKpr1139Ji-ConB3SkzurwlwnnPk-apVOztfRs3VwOMCXk-RNirebutejTdk7wA-phHSQ5TcnL6VKkbjhgsToBN9Lrr1PSiuDEbv_mmJCDfQNOliKcbw3hqqwOcikk2W6TU8bKdaBFsR3LQfomULg5w_sg1xN5Fy_wiL2ha4Q8G192HKXlblnjFkGc_rA1a7vI5HCOcQr3grdaTClVN5gPWKFxag4-nCSQ6zGYRmA5Ia4gUkLhal4S0VMh8LfN_4EkbOyv-tBMD-hb1Os3Xpr3D7Ycs0RG57BcRgjpuFlXsAg31xeWPOfG6zFSe3eIQB4nWDHnr3ZezswEydZt-zz1c5TAMtk9c3pOlzXNxXWSe2hllYlbK4gA4msm6uWMr1P-nqe8V5E5e-6fEEXTuykcEp9TZVGqczaxAtihZ4Q0IOf2WK4Wib5zXXXwF7loI_ksGQ4FXq5AYELu7ItqykRXDs6aMh8c6dFadM5tdUjmDWqPZAQ1-VVglsaO7d4HbHChZx01gg8wHdBOPLVuGyd3zEvnjyhiqbtnIxXvwqyygW1TdZpKuKW0fhPWOUvhAc5pM2eNCkDIF3t2GMs0Tke5NwoznKf__u_NDgOOgRxUw5dXQlVaAfS9ZHr2XWf9I2dI0P5_CermgyqGMsGUVOcZeb_0zQnv3IAAZFGTVJ6e_t0oWjFeVfMC1hnT1kXUtgd884U6uVeqcIx-pgPWXBzzhREo6Gdt-qhyRrHeJhvtW4sTRCosIoDfuOuCmEZyGI9jkArLZGkhhnWqlLx_22YaucRG_PW2vkJQ0yPoozrDnoVSWmReKtdej0SHT5-mk9QAYPu794XHQkYD4O8sbA19l9QAyWrhpWMIESsutol5BNsQC1CofqwTojQsfoT9fls3stK66yCHSNw==",
+							"summary": []
+						},
+						{
+							"id": "fc_000c1ba5025bab8d006afe98fe190c87d2bf3a5bb368e8c708",
+							"type": "function_call",
+							"status": "completed",
+							"arguments": "{}",
+							"call_id": "call_94wyikUR0KmmFtxwA0aT2puV",
+							"name": "get_secret_number"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "current_turn",
+						"effort": "low",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": true,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "function",
+							"description": "Returns the secret number.",
+							"name": "get_secret_number",
+							"output_schema": null,
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 68,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 56,
+						"output_tokens_details": {
+							"reasoning_tokens": 39
+						},
+						"total_tokens": 124
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "openai continued reply",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-5.4-mini",
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"reasoning": {
+						"effort": "low"
+					},
+					"max_output_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_secret_number",
+							"description": "Returns the secret number.",
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"input": [
+						{
+							"type": "function_call_output",
+							"call_id": "call_94wyikUR0KmmFtxwA0aT2puV",
+							"output": "41"
+						}
+					],
+					"previous_response_id": "resp_000c1ba5025bab8d006afe98fd204887d2b6a090ded082514b"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_000c1ba5025bab8d006afe98fe588c87d2a1c7bc66294c55a4",
+					"object": "response",
+					"created_at": 1795070206,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795070207,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"max_tool_calls": null,
+					"model": "gpt-5.4-mini-2026-03-17",
+					"moderation": null,
+					"output": [
+						{
+							"id": "rs_000c1ba5025bab8d006afe98feb8f487d290037fab619aadf0",
+							"type": "reasoning",
+							"content": [],
+							"encrypted_content": "gAAAAABq_pj_QpfWFMTGRhTUyA7acy5-_RXKXYJCxIq8mIsDax2_FnZSHcRceP7j-WmdnW4lu9b1g7X8g-C1juBFh2G_gAIDuv77uhDo7kek3JAW6OucmtRT7xdXmfn1JJ5awMmqePgbtShgIC6AAGQojgnkqss7ztni2Eggd03jKTY8v2cq5xzafoFJRQmHTwJYahB6SQas615BRckykuCPE-mKR6-M3MfgSisDEtDqShd7CoBwcQmJd51V1Slt_PWejJM5Zcz_uo7_sV17Z9jfTi62OvXT51l59RTMRbWRGcNTYJmncLh9cM2V5j0obiWeuOYISSspLTcY4HtlsD97jvhqJlcHKoonQTBpm0vwkdEnQZ6R39b78kFG8tL3f5iVpJ-CdKB6z8xqejwcEv_OR_z9F8D0EgpStqt8U804cJCp8lWfv4E8gLRcH-KeFboXUUjBS0ueMtXLXF-KRcwswIItRuOfMu4iVwLtXokBo9hT-I7tFnJiMThRjDjfvawLcKocKf14HFkUc-Twm2XfaXvn2fcbKTaKjOAf46jAb6BZv340skThrN-hhernwB3Ujj1ABaqx2FpVS6_7PCJXlmrLPd6ihF29K6IsaIGkyTx8QSt9FWZQAmLzbJW2tiIMI8AkO7UWo9bFghKMEQZVPzFp0qByBw17VBd02RbOtnPfl6uXNx51PoA7iqTW5ZqpYULfBErawfBxxp9L9RyTRvVcNJWddl_7ELAJhOGxyGS1DnIOUXuaJdRZgcmxuIoPY0Tuh9Lhdt5ZZfDXGvLFimAHXiemAodNB_hdty9ZD2J_L4Ae0a_B7r1zbzfG-h-Dq1EsIFn7Cu8UZF1y9zhrNhKOQ-zpmyi--9WFF82VwjjK4oooUMcYRVkAFQZS47kwGGa0xp4JkfrfD1Wp7hRCVxbqSs5sFZ54AWjlyG3bS--fPoNuRcBv8kU0caoTfHNttApNxj73NSYAgGZ9qHaUgP86k0LjX9LNm5gryjJG641jqf6i9Gd76-kSUnkpQPrZ7BLtXK3ja9yoGzAKQetLb3d29ZH6Hz1NjDnDxHIZUzgc-a9lZZV9J6reiojMSGvTLEt66X7cT0vSfFWtSu1U2lmNgXt3O7-Vmuht9-RRAr8sSC3I6c5GbSIliYwzLk6QpnesqkSdQRopMdsWj-uPJgxzRMsttibhezx__9n04fUQ7g5ZCKx3gLgwWbMywn1SEc84nlP8npbEZpLqJxlTU5c5t2MxNuWkq2JZtmyG27zRTGae62a2EhxhPZ_T9Eaa_H_hy43_Kj_GqM4Xr-IGG9U8iuquf4QGZnA7IvbiXPsMAZpiCsAsB1X5V1Rj3oiqidjBgjRUlVr2lZdQfU1i9PEJnCdU13J9xXT2b_hi-qSGIMe_X0yI21hpSF1PffYGf73WADJPpo2UPjegYouTsCONyjr-EQ300HrnZShEG2cnvB3RYTYAnN_7XxaMEGx_24vkHjvj4rQ2hAHYsprql70nmIaBHZRMENCJV_dy6S--6yrFsLYJybH23Xn0DkK64Qm1DOcGkUZn1n-FppxQIw7iy9mRH2CExhH29jMNMNo5OWnoR8jX35FNraNhfQ1bpIUX08LNdqZnMxU7e_t8BFbDGrU0MpYQ427J8wSU_wBY6aHLKC8iycwQJDEVNc3GOKVKR09VK6IYg7aTKsUK49lEAthdpwqyxHw4T7OTccH_vFHrG9_D4MQYA8SpvlMGH5bbEG590x27GvoGAVh43vDbnm8kApshtkWfWrpjeqbrBY_O6DAmSoaA7QPDs2OEl9l3kRL9",
+							"summary": []
+						},
+						{
+							"id": "msg_000c1ba5025bab8d006afe98fece1087d2b459837876e01289",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "The result is 1040, the secret number is 41, and their sum is **1081**."
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": "resp_000c1ba5025bab8d006afe98fd204887d2b6a090ded082514b",
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "current_turn",
+						"effort": "low",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": true,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "function",
+							"description": "Returns the secret number.",
+							"name": "get_secret_number",
+							"output_schema": null,
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 137,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 44,
+						"output_tokens_details": {
+							"reasoning_tokens": 15
+						},
+						"total_tokens": 181
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "azure stored reply",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/responses",
+				"body": {
+					"model": "gpt-5.6-sol",
+					"store": true,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"reasoning": {
+						"effort": "low"
+					},
+					"max_output_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_secret_number",
+							"description": "Returns the secret number.",
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Work out 37*43 - 19*29 in your head first, then call get_secret_number, then tell me the secret number plus your result."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_0cb26bbf2cb98c40006afe98ff95fc8197ab4aa530fe743755",
+					"object": "response",
+					"created_at": 1795070207,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"completed_at": 1795070208,
+					"content_filters": [
+						{
+							"blocked": false,
+							"source_type": "prompt",
+							"content_filter_raw": [],
+							"content_filter_results": {
+								"hate": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"sexual": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"violence": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"self_harm": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"jailbreak": {
+									"detected": false,
+									"filtered": false
+								}
+							},
+							"content_filter_offsets": {
+								"start_offset": 0,
+								"end_offset": 153,
+								"check_offset": 0
+							}
+						},
+						{
+							"blocked": false,
+							"source_type": "completion",
+							"content_filter_raw": [],
+							"content_filter_results": {
+								"protected_material_code": {
+									"detected": false,
+									"filtered": false
+								},
+								"protected_material_text": {
+									"detected": false,
+									"filtered": false
+								},
+								"hate": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"sexual": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"violence": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"self_harm": {
+									"filtered": false,
+									"severity": "safe"
+								}
+							},
+							"content_filter_offsets": {
+								"start_offset": 0,
+								"end_offset": 57,
+								"check_offset": 0
+							}
+						}
+					],
+					"error": null,
+					"frequency_penalty": 0,
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"max_tool_calls": null,
+					"model": "gpt-5.6-sol",
+					"moderation": null,
+					"output": [
+						{
+							"id": "rs_0cb26bbf2cb98c40006afe99003dc08197861da8a5a74dcbe2",
+							"type": "reasoning",
+							"content": [],
+							"encrypted_content": "gAAAAABq_pkA-JG25kf0OvWN58ZkVhrGZgDsWzTD3HOn9SZlV7KWpjW0m5cFHKTvgjvm6Cw-K0LtMUXVmQMspYe00qzfbsLY8GukZ4zYPQMbDvpxBJOEJY_xB0e2_VWHVaUFIP7sPlAMQos41mmmwcIqvb_exyG_X9fFIpdJYND3uMMlz74hGJm0fY2GSumLwZx8GEkxZ9I7lpaPVUfNIc5tEsQS8p56TEgn4u2WAmiBOy2sR8API6zEsGog4IjE7MD80CBoJ6QQ2sjhLjRgYkoJh_LXKduYX7elR1D4oNw0vlqzwpFhX9ulyknFY4qi5Cl8HHsUy0E-2yV00WtTZ4_kpuep4y6ML-LnupPqN6_QNbwEsMWO8CoI-xkHk4wCPqMqWuM9UgwAuELkMFZKYUXj5tGPNf8dBp-sbqADc0aDA5PRljzSq9LsrhoX1QsAygQlR2M13GSwVk410R0AX56GIpOJAhO9jgnquWg-pVh36mDPUUKQ9Nnh18Jsoa5NyFqFA1eFsjRRsG_0BLIisTeUzi8zS4lVj0wa-0CLxmwA9IYIXrpc0p8McwioLZXXRdMjRj_lZUj8WqYXKVc4k5iyKWbrX2g1FoaZa9tDMxaK-zt2jUVbbU63n9IULeNINXSdua_yA2gEUWDj_cVTJBpq9FAmw8WvMtGb55QWUjUeC6mWBu_NQ8AS-IejGNwitXklD9LlSrriKavMDgBZG9hXsdJc00fINXehVLWG8XwqLM72Q9JD3xn0ocISLGPjyU8aQZqGvc5e0yuyhaYO0K07FZfEm01RWL-H3hIBZHyv6GHTwNWqdt8cqKfvnSaKkhCwgHpAUkyF5_9eCzcj3bzNkCyJHZmhYSubZyvWK0HyWSECZGoelP2tgrpT4b4W1Ul5ArKEIKI-cOFZ11u6bueFk6lDIwtSioXgCYb8G7sy_69ea9Qd60r390pLKNpG4T_jA1bNS1lxPAIPB6OcVqFhVOOUPL3-A6q9WtP3cuT1FMX9qAOt-ifvfZm2A2CAlP85st-_ZFwkIwufQz88f_i4kG6sC4uRsgLcWnqZyUCOQT98Xxrdj_KHEiauXGEcI9cp3_YCN1bV6BkyyRZBPEsRjzLkKXXn8pzo-sRr4JJO5t4aOMp2zDDDCJfGeTlGBYq2OVlov-aFN30BtUJtLCVYJ3v0KG6OXrkcpvtJhpFCUNojgn3yWvMImd-wcHhSOQ-lJO6ZTK8YUcq0jeisMmWekRea9ishAnL6UoypeL_ak_Ycwr43YqG_b67FRuhtAQbOLjEQyffMqzStC926x8M4PZYnuPbPh5BQSl9nzlp11oEKykUcq4ChhkGwl4GJ99Va4MyTYXGjHuXWSSo8aQwpHCFHwysQx5F1lCH5VQNrog9wkahCBZee9HtiFhbj7ZQphr_ZKWhEIndHzjm-MMGp2k42RaRMXuUK79aK4grE8ayzWXrWzqGe6VDoLtu_MPnmfPswlc5YZG0Oa5THW6OZPv0EBrDjlQKqiDYXqh2b3g_K5XetDw2WQDW_n1jPeAoBbtqtk9y6aSVwfw9_UVVVT0w-omxSyqg5COsD1i41WMegOqEmBZ3xUzhUSWQ8LjRteCScr81v",
+							"summary": []
+						},
+						{
+							"id": "fc_0cb26bbf2cb98c40006afe990076d88197a41275a7fcb40d10",
+							"type": "function_call",
+							"status": "completed",
+							"arguments": "{}",
+							"call_id": "call_aFeZMK8icho87Xlms0VE0KYA",
+							"name": "get_secret_number"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "low",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": true,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "function",
+							"description": "Returns the secret number.",
+							"name": "get_secret_number",
+							"output_schema": null,
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 68,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"output_tokens": 39,
+						"output_tokens_details": {
+							"reasoning_tokens": 22
+						},
+						"total_tokens": 107
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "azure continued reply",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/responses",
+				"body": {
+					"model": "gpt-5.6-sol",
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"reasoning": {
+						"effort": "low"
+					},
+					"max_output_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_secret_number",
+							"description": "Returns the secret number.",
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"input": [
+						{
+							"type": "function_call_output",
+							"call_id": "call_aFeZMK8icho87Xlms0VE0KYA",
+							"output": "41"
+						}
+					],
+					"previous_response_id": "resp_0cb26bbf2cb98c40006afe98ff95fc8197ab4aa530fe743755"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_0cb26bbf2cb98c40006afe9900fd0881979e8dca53e35812d1",
+					"object": "response",
+					"created_at": 1795070209,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"completed_at": 1795070210,
+					"content_filters": [
+						{
+							"blocked": false,
+							"source_type": "prompt",
+							"content_filter_raw": [],
+							"content_filter_results": {
+								"hate": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"sexual": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"violence": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"self_harm": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"jailbreak": {
+									"detected": false,
+									"filtered": false
+								}
+							},
+							"content_filter_offsets": {
+								"start_offset": 0,
+								"end_offset": 281,
+								"check_offset": 0
+							}
+						},
+						{
+							"blocked": false,
+							"source_type": "completion",
+							"content_filter_raw": [],
+							"content_filter_results": {
+								"protected_material_code": {
+									"detected": false,
+									"filtered": false
+								},
+								"protected_material_text": {
+									"detected": false,
+									"filtered": false
+								},
+								"hate": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"sexual": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"violence": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"self_harm": {
+									"filtered": false,
+									"severity": "safe"
+								}
+							},
+							"content_filter_offsets": {
+								"start_offset": 0,
+								"end_offset": 4,
+								"check_offset": 0
+							}
+						}
+					],
+					"error": null,
+					"frequency_penalty": 0,
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"max_tool_calls": null,
+					"model": "gpt-5.6-sol",
+					"moderation": null,
+					"output": [
+						{
+							"id": "msg_0cb26bbf2cb98c40006afe990216108197add0b65bc270e6b5",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "1081"
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": "resp_0cb26bbf2cb98c40006afe98ff95fc8197ab4aa530fe743755",
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "low",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": true,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "function",
+							"description": "Returns the secret number.",
+							"name": "get_secret_number",
+							"output_schema": null,
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 120,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"output_tokens": 6,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 126
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "conversation",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/conversations",
+				"body": {}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "conv_6afe9903ae208197b4e1297069fbfd4105bf252cbace0ac9",
+					"object": "conversation",
+					"created_at": 1795070211,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "conversation turn",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-5.4-mini",
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 50,
+					"input": "Say hi.",
+					"conversation": "conv_6afe9903ae208197b4e1297069fbfd4105bf252cbace0ac9"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_05bf252cbace0ac9006afe9903d9708197b61f35e510b5e55e",
+					"object": "response",
+					"created_at": 1795070212,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795070212,
+					"conversation": {
+						"id": "conv_6afe9903ae208197b4e1297069fbfd4105bf252cbace0ac9"
+					},
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 50,
+					"max_tool_calls": null,
+					"model": "gpt-5.4-mini-2026-03-17",
+					"moderation": null,
+					"output": [
+						{
+							"id": "msg_05bf252cbace0ac9006afe99048b148197985649f9132f88e0",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "Hi!"
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "current_turn",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": true,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 9,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 6,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 15
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		}
+	]
+}

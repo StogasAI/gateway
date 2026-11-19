@@ -184,6 +184,9 @@ type RequestSettings struct {
 	// PromptCaching is the lifetime of the cache entries that the gateway's cache marks asked
 	// for, because the request marked nothing to cache.
 	PromptCaching string `json:"prompt_caching,omitempty"`
+	// ProviderState names the fields that kept or read state in the customer's provider account:
+	// store when the provider got store: true, previous_response_id and conversation.
+	ProviderState []string `json:"provider_state,omitempty"`
 }
 
 // A request's metadata follows OpenAI's: up to 16 pairs, with keys up to 64

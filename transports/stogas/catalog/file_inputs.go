@@ -213,6 +213,16 @@ func ManagedFileIDRefusal(path string) error {
 // serve. A file ID names a file in the account that holds it, and nothing tells which credential
 // that is, so routing must not choose one.
 func fileIDAccounts(attachment Attachment, candidates []*ResolvedRequest, credentials map[*ResolvedRequest][]int) error {
+	count, fix := credentialSpread(candidates, credentials)
+	if count <= 1 {
+		return nil
+	}
+	return attachmentRefusal(attachment.Path, fmt.Sprintf(" is a provider file ID, which only the credential of the account that holds the file can read, and this request can use %d credentials; %s", count, fix))
+}
+
+// credentialSpread counts the credentials that the candidates can use, and says how a request
+// narrows them to one.
+func credentialSpread(candidates []*ResolvedRequest, credentials map[*ResolvedRequest][]int) (int, string) {
 	seen := make(map[credentialCandidate]bool)
 	// providers lists the providers of the credentials in candidate order, and counts their
 	// credentials.
@@ -231,15 +241,12 @@ func fileIDAccounts(attachment Attachment, candidates []*ResolvedRequest, creden
 			counts[key.provider]++
 		}
 	}
-	if len(seen) <= 1 {
-		return nil
-	}
 	fix := "use a key with one credential for this model"
 	// Naming a provider helps only where it leaves one credential.
 	if i := slices.IndexFunc(providers, func(provider schemas.ModelProvider) bool { return counts[provider] == 1 }); i >= 0 {
 		fix = "name the provider in the model, such as provider:" + string(providers[i]) + ", or " + fix
 	}
-	return attachmentRefusal(attachment.Path, fmt.Sprintf(" is a provider file ID, which only the credential of the account that holds the file can read, and this request can use %d credentials; %s", len(seen), fix))
+	return len(seen), fix
 }
 
 // inputCheckRefusal refuses the attachment at path, which setting, input.asciiOnly or

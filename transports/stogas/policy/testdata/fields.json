@@ -102,6 +102,8 @@
 	"request.mcpServersWithoutApproval": "string_list",
 	"request.mcpTools": "string_list",
 	"request.model": "string",
+	"request.store": "boolean",
+	"request.storedInput": "boolean",
 	"request.systemMessages": "boolean",
 	"request.time": "timestamp",
 	"route.documentFormats.extensions": "string_list",

@@ -50,9 +50,9 @@ var ChatRefusedFields = []string{
 // deployment refuses: Chat Completions' names of Responses controls, and controls that the
 // gateway does not offer. The Responses checks refuse them, each with its own message.
 var ResponsesRefusedFields = []string{
-	"background", "container", "conversation", "fallbacks", "inference_geo", "max_completion_tokens",
-	"max_tokens", "moderation", "previous_response_id", "prompt", "reasoning_effort",
-	"reasoning_max_tokens", "response_format", "speed", "stop", "verbosity", "web_search_options",
+	"background", "container", "fallbacks", "inference_geo", "max_completion_tokens", "max_tokens",
+	"moderation", "prompt", "reasoning_effort", "reasoning_max_tokens", "response_format", "speed",
+	"stop", "verbosity", "web_search_options",
 }
 
 // chatReasoningFields are the reasoning controls of a Chat Completions body, which the reasoning

@@ -8,29 +8,10 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
 
-func TestRuntimeAccountDisablesOpenAIProviderStorage(t *testing.T) {
+func TestRuntimeAccountProviderConfigs(t *testing.T) {
 	account := newAccount(Config{
 		ChutesAPIKey: "sk-chutes",
 	}, nil)
-
-	config, err := account.GetConfigForProvider(schemas.OpenAI)
-	if err != nil {
-		t.Fatalf("GetConfigForProvider returned error: %v", err)
-	}
-	if config == nil || config.OpenAIConfig == nil || !config.OpenAIConfig.DisableStore {
-		t.Fatalf("expected OpenAI provider config to force store=false, got %#v", config)
-	}
-
-	anthropicConfig, err := account.GetConfigForProvider(schemas.Anthropic)
-	if err != nil {
-		t.Fatalf("GetConfigForProvider Anthropic returned error: %v", err)
-	}
-	if anthropicConfig == nil {
-		t.Fatal("expected Anthropic provider config")
-	}
-	if anthropicConfig.OpenAIConfig != nil {
-		t.Fatalf("Anthropic config must not carry OpenAI retention settings, got %#v", anthropicConfig.OpenAIConfig)
-	}
 
 	chutesConfig, err := account.GetConfigForProvider(catalog.ProviderChutes)
 	if err != nil {

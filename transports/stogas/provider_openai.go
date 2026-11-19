@@ -602,18 +602,14 @@ func openAIUnsupportedResponsesToolMessage(rawType string) string {
 	switch {
 	case rawType == "":
 		return "tools must declare a type"
-	case strings.HasPrefix(normalized, "file_search"):
-		return "file_search is not supported because hosted retrieval and file storage have separate pricing and provider state"
-	case normalized == "code_interpreter" || strings.HasPrefix(normalized, "code_execution"):
-		return "code execution tools are not supported because a hosted container bills by the minute for longer than the request, so the request cannot be priced"
 	case normalized == "local_shell":
 		return "local_shell is not supported because OpenAI no longer serves it; use shell with a local environment"
+	case normalized == "code_interpreter" || strings.HasPrefix(normalized, "code_execution"):
+		return "code execution tools are not supported"
 	case strings.HasPrefix(normalized, "computer"):
-		return "computer tools are not supported because tool results carry only text"
-	case normalized == "image_generation":
-		return "image_generation output and its pricing are not supported"
-	case normalized == "memory":
-		return rawType + " is not supported because it needs provider-held state that we do not offer"
+		return "computer tools are not supported"
+	case strings.HasPrefix(normalized, "file_search"), normalized == "image_generation", normalized == "memory":
+		return rawType + " is not supported"
 	default:
 		return "Only function, custom, namespace, shell, apply_patch, tool_search, remote MCP, and priced hosted web search tools are supported"
 	}

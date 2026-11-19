@@ -82,13 +82,26 @@ func HostedToolForType(kind string) (HostedTool, bool) { return hostedToolForTyp
 // come first and tools join after, so an option cannot hide what a tool does. Inference itself
 // stays where the deployment's own facts say. A name never makes a tool hosted: only a tool's type
 // does (hostedToolForType), so a client's function named web_search changes nothing.
-func (d Deployment) EffectiveDataHandling(options []HeldOption, tools []HostedTool) DataHandling {
+//
+// A request that stores (ProviderState.Keeps) asks the provider to keep its content, which it then
+// keeps for as long as it decides, OpenAI for at least 30 days and a conversation until someone
+// deletes it, where the deployment keeps what it stores. No option or agreement of the account
+// covers that content: OpenAI keeps it under Modified Abuse Monitoring. Zero Data Retention makes
+// OpenAI ignore store, but no option states such a rule, so a request that stores reads as stored
+// on every account.
+func (d Deployment) EffectiveDataHandling(options []HeldOption, tools []HostedTool, stores bool) DataHandling {
 	handling := d.DataHandling
 	var applied []AccountOption
 	for _, option := range d.AccountOptions {
 		if slices.ContainsFunc(options, func(held HeldOption) bool { return held.ID == option.ID }) {
 			option.set(&handling)
 			applied = append(applied, option)
+		}
+	}
+	if stores {
+		handling.RetentionDays, applied = nil, nil
+		if handling.StorageLocation = d.DataHandling.StorageLocation; handling.StorageLocation == "none" {
+			handling.StorageLocation = "unknown"
 		}
 	}
 	for _, tool := range tools {

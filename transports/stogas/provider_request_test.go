@@ -224,21 +224,24 @@ func TestPrepareProviderRequestSendsEndUserIDsOnlyToCustomerAccountsAndAppliesSt
 	// Preparation reads only whether the pair's credential is the customer's
 	// own, so one credential of each kind serves every provider here.
 	for _, tc := range []struct {
-		name, model    string
-		provider       schemas.ModelProvider
-		customer       bool
-		user, safety   string
-		want           endUserIDs
-		openAIWire     bool
+		name, model, format string
+		provider            schemas.ModelProvider
+		customer            bool
+		user, safety        string
+		want                endUserIDs
+		openAIWire          bool
+		// Store reaches only the Responses API, which stores responses by default.
+		responsesStore bool
 		anthropicLimit bool
 	}{
 		{name: "openai managed", provider: schemas.OpenAI, model: "gpt-5.6-terra", user: "caller-user", safety: "caller-safety", openAIWire: true},
 		{name: "openai customer", provider: schemas.OpenAI, model: "gpt-5.6-terra", customer: true, user: "caller-user", safety: "caller-safety", want: endUserIDs{user: "caller-user", safetyIdentifier: "caller-safety"}, openAIWire: true},
-		{name: "azure gpt customer", provider: schemas.Azure, model: "gpt-5.6-terra", customer: true, user: "caller-user", safety: "caller-safety", want: endUserIDs{user: "caller-user", safetyIdentifier: "caller-safety"}, openAIWire: true},
+		{name: "azure gpt customer", provider: schemas.Azure, model: "gpt-5.6-terra", format: "OpenAI", customer: true, user: "caller-user", safety: "caller-safety", want: endUserIDs{user: "caller-user", safetyIdentifier: "caller-safety"}, openAIWire: true},
+		{name: "azure mistral customer", provider: schemas.Azure, model: "mistral-large-3", format: "Mistral AI", customer: true, user: "caller-user", safety: "caller-safety", responsesStore: true},
 		{name: "anthropic managed", provider: schemas.Anthropic, model: "claude-sonnet-4-6", user: "caller-user", safety: "caller-safety", anthropicLimit: true},
 		{name: "anthropic customer", provider: schemas.Anthropic, model: "claude-sonnet-4-6", customer: true, user: "caller-user", safety: "caller-safety", want: endUserIDs{metadataUserID: "caller-safety"}, anthropicLimit: true},
 		{name: "anthropic customer user only", provider: schemas.Anthropic, model: "claude-sonnet-4-6", customer: true, user: "caller-user", want: endUserIDs{metadataUserID: "caller-user"}, anthropicLimit: true},
-		{name: "azure claude customer", provider: schemas.Azure, model: "claude-sonnet-4-6", customer: true, user: "caller-user", safety: "caller-safety", want: endUserIDs{metadataUserID: "caller-safety"}, anthropicLimit: true},
+		{name: "azure claude customer", provider: schemas.Azure, model: "claude-sonnet-4-6", format: "Anthropic", customer: true, user: "caller-user", safety: "caller-safety", want: endUserIDs{metadataUserID: "caller-safety"}, anthropicLimit: true},
 		{name: "chutes managed", provider: catalog.ProviderChutes, model: "deepseek-ai/DeepSeek-V3.2", user: "caller-user", safety: "caller-safety"},
 		{name: "chutes customer", provider: catalog.ProviderChutes, model: "deepseek-ai/DeepSeek-V3.2", customer: true, user: "caller-user", safety: "caller-safety"},
 	} {
@@ -275,6 +278,7 @@ func TestPrepareProviderRequestSendsEndUserIDsOnlyToCustomerAccountsAndAppliesSt
 				ctx.SetValue(schemas.BifrostContextKeyHTTPRequestType, requestType)
 				state := providerRequestTestState(tc.provider, tc.model, requestType, 128000)
 				state.Resolution.Deployment.ModelID = tc.model
+				state.Resolution.Deployment.Upstream.ModelFormat = tc.format
 				state.PreparedCredential = managed
 				if tc.customer {
 					state.PreparedCredential = customer
@@ -307,7 +311,8 @@ func TestPrepareProviderRequestSendsEndUserIDsOnlyToCustomerAccountsAndAppliesSt
 				if _, private := wire.Metadata["private"]; private {
 					t.Fatalf("client metadata reached the provider: %s", body)
 				}
-				if tc.openAIWire != (wire.Store != nil) || wire.Store != nil && *wire.Store {
+				wantStore := tc.openAIWire || tc.responsesStore && requestType == schemas.ResponsesRequest
+				if wantStore != (wire.Store != nil) || wire.Store != nil && *wire.Store {
 					t.Fatalf("store = %#v, want false only on OpenAI wire: %s", wire.Store, body)
 				}
 			})
@@ -315,6 +320,8 @@ func TestPrepareProviderRequestSendsEndUserIDsOnlyToCustomerAccountsAndAppliesSt
 	}
 }
 
+// Azure checks Chat Completions requests to its other model formats against each model's own
+// fields, and Mistral refuses max_completion_tokens and developer messages there.
 func TestCustomerRequestBodyEndUserIDsReachOpenAI(t *testing.T) {
 	_, customer := customerOpenAICredential(t)
 	// OpenAI accepted 4,096 characters in both fields on Oct 17, 2026.
@@ -1036,13 +1043,20 @@ func preparedProviderBody(t *testing.T, ctx *schemas.BifrostContext, request pro
 }
 
 func providerRequestTestState(provider schemas.ModelProvider, model string, requestType schemas.RequestType, maxOutputTokens int) *State {
+	deployment := catalog.Deployment{MaxOutputTokens: maxOutputTokens}
+	if provider == schemas.Azure {
+		deployment.Upstream.ModelFormat = "OpenAI"
+		if schemas.IsAnthropicModel(model) {
+			deployment.Upstream.ModelFormat = "Anthropic"
+		}
+	}
 	return &State{
 		Pair: Pair{
 			Resolution: &catalog.ResolvedRequest{
 				Provider:    provider,
 				Model:       model,
 				RequestType: requestType,
-				Deployment:  catalog.Deployment{MaxOutputTokens: maxOutputTokens},
+				Deployment:  deployment,
 			},
 		},
 	}

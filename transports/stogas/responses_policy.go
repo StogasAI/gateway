@@ -43,6 +43,11 @@ func validateCommonResponsesPolicy(state *State) error {
 			return unsupportedParameterError(name)
 		}
 	}
+	if !state.PreparedCredential.UsesBYOK() {
+		if err := state.Resolution.ProviderState().ManagedRefusal(); err != nil {
+			return err
+		}
+	}
 	if state.Resolution.Bridged() {
 		// Chat Completions takes them as stop, which Responses lacks.
 		if err := validateStopSequenceArray(raw["stop_sequences"], "stop_sequences", maxPortableStopSequences); err != nil {
@@ -63,7 +68,13 @@ func validateCommonResponsesPolicy(state *State) error {
 			return err
 		}
 	}
-	if err := validateFalseOnlyBoolean(raw, "store"); err != nil {
+	if err := validateJSONBool(raw, "store"); err != nil {
+		return err
+	}
+	if err := validateString(raw, "previous_response_id"); err != nil {
+		return err
+	}
+	if err := validateResponsesConversation(raw["conversation"]); err != nil {
 		return err
 	}
 	if err := validateJSONBool(raw, "stream"); err != nil {
@@ -108,6 +119,28 @@ func validateCommonResponsesPolicy(state *State) error {
 		return err
 	}
 	return validateResponsesInput(state, raw["input"])
+}
+
+// validateResponsesConversation checks a conversation that the request adds to: its ID, or an
+// object with only the ID, as OpenAI takes it.
+func validateResponsesConversation(raw json.RawMessage) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	if _, ok := rawStringValue(raw); ok {
+		return nil
+	}
+	object, ok := rawObject(raw)
+	if !ok || object == nil {
+		return invalidRequest("conversation must be a conversation ID or an object with id")
+	}
+	if err := rejectUnsupportedInputKeys(object, "conversation", "id"); err != nil {
+		return err
+	}
+	if _, ok := rawStringValue(object["id"]); !ok {
+		return invalidRequest("conversation.id must be a string")
+	}
+	return nil
 }
 
 // validateBridgedResponsesNamespaces checks the namespaces of a request that its deployment takes
@@ -519,7 +552,7 @@ func validateResponsesShellTool(tool map[string]json.RawMessage, path string) er
 		return invalidRequest(path + " must be an object")
 	}
 	if kind, _ := rawStringValue(environment["type"]); kind != "local" {
-		return invalidRequest(path + ".type must be local; hosted shell containers are not supported because their time is billed outside the request")
+		return invalidRequest(path + ".type must be local; hosted shell containers are not supported")
 	}
 	if err := rejectUnsupportedResponsesToolKeys(environment, path, "type", "skills"); err != nil {
 		return err
@@ -1314,11 +1347,34 @@ func onlyRawKeys(object map[string]json.RawMessage, keys ...string) bool {
 }
 
 type responsesInputValidation struct {
-	calls         map[string]string
+	calls map[string]string
+	// heldCalls reports a request that continues a reply or a conversation that the provider
+	// holds, whose outputs can answer calls that only the provider has. The provider matches
+	// those itself.
+	heldCalls     bool
 	meaningful    bool
 	outputs       map[string]bool
 	pendingCalls  int
 	claudeSystems claudeSystemPlacement
+}
+
+// output records the client's output of the call callID, a call of kind.
+func (v *responsesInputValidation) output(callID, kind, path string) error {
+	callKind, exists := v.calls[callID]
+	switch {
+	case !exists && !v.heldCalls:
+		return invalidRequest(path + ".call_id must match an earlier client tool call")
+	case exists && callKind != kind:
+		return invalidRequest(path + ".call_id selects a different client tool type")
+	case v.outputs[callID]:
+		return invalidRequest(path + ".call_id duplicates a client tool output")
+	}
+	v.outputs[callID] = true
+	if exists {
+		v.pendingCalls--
+	}
+	v.meaningful = true
+	return nil
 }
 
 func validateResponsesInput(state *State, raw json.RawMessage) error {
@@ -1350,8 +1406,9 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 		return invalidRequest("input must contain at least one item")
 	}
 	validation := responsesInputValidation{
-		calls:   make(map[string]string),
-		outputs: make(map[string]bool),
+		calls:     make(map[string]string),
+		outputs:   make(map[string]bool),
+		heldCalls: state != nil && state.Resolution.ProviderState().Held != "",
 	}
 	var turn inputTurn
 	for index, itemRaw := range items {
@@ -1508,7 +1565,7 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 		return invalidRequest("input must contain non-empty text or a client tool result")
 	}
 	if responsesMCPSupported(state) {
-		if err := validateResponsesMCPApprovals(raw, state.Resolution.RawTools()); err != nil {
+		if err := validateResponsesMCPApprovals(raw, state.Resolution.RawTools(), validation.heldCalls); err != nil {
 			return err
 		}
 	}
@@ -1857,17 +1914,9 @@ func validateResponsesToolSearchInput(item map[string]json.RawMessage, path, ite
 		validation.pendingCalls++
 		return callID, nil
 	}
-	switch kind, exists := validation.calls[callID]; {
-	case !exists:
-		return "", invalidRequest(path + ".call_id must match an earlier client tool call")
-	case kind != "tool_search":
-		return "", invalidRequest(path + ".call_id selects a different client tool type")
-	case validation.outputs[callID]:
-		return "", invalidRequest(path + ".call_id duplicates a client tool output")
+	if err := validation.output(callID, "tool_search", path); err != nil {
+		return "", err
 	}
-	validation.outputs[callID] = true
-	validation.pendingCalls--
-	validation.meaningful = true
 	return callID, nil
 }
 
@@ -2005,15 +2054,8 @@ func validateResponsesLocalToolOutputInput(item map[string]json.RawMessage, path
 	if err != nil {
 		return err
 	}
-	callKind, exists := validation.calls[callID]
-	if !exists {
-		return invalidRequest(path + ".call_id must match an earlier client tool call")
-	}
-	if callKind != kind {
-		return invalidRequest(path + ".call_id selects a different client tool type")
-	}
-	if validation.outputs[callID] {
-		return invalidRequest(path + ".call_id duplicates a client tool output")
+	if err := validation.output(callID, kind, path); err != nil {
+		return err
 	}
 	if kind == "apply_patch" {
 		if raw, ok := item["output"]; ok {
@@ -2058,9 +2100,6 @@ func validateResponsesLocalToolOutputInput(item map[string]json.RawMessage, path
 			}
 		}
 	}
-	validation.outputs[callID] = true
-	validation.pendingCalls--
-	validation.meaningful = true
 	return nil
 }
 
@@ -2096,22 +2135,12 @@ func validateResponsesToolCallOutputInput(state *State, item map[string]json.Raw
 	if err != nil {
 		return err
 	}
-	callKind, exists := validation.calls[callID]
-	if !exists {
-		return invalidRequest(path + ".call_id must match an earlier client tool call")
-	}
-	if callKind != kind {
-		return invalidRequest(path + ".call_id selects a different client tool type")
-	}
-	if validation.outputs[callID] {
-		return invalidRequest(path + ".call_id duplicates a client tool output")
+	if err := validation.output(callID, kind, path); err != nil {
+		return err
 	}
 	if err := validateResponsesToolOutput(state, item["output"], path+".output"); err != nil {
 		return err
 	}
-	validation.outputs[callID] = true
-	validation.pendingCalls--
-	validation.meaningful = true
 	return nil
 }
 

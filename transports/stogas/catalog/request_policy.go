@@ -59,6 +59,8 @@ type requestVariants struct {
 	// hostedTools are the hosted tools that the request lets the model call, whose data
 	// handling joins each candidate's.
 	hostedTools []HostedTool
+	// providerState is what the request keeps or reads in its provider account.
+	providerState ProviderState
 	// facts are what policies read about the request's tools and messages.
 	facts *requestFacts
 	// ruledOut are the deployments that the request's parameters or hosted tools ruled out.
@@ -131,6 +133,9 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 		fileID = &variants.attachments[i]
 	}
 	fileIDManaged := false
+	// Provider state lives in a customer's provider account, so Stogas's credentials leave a
+	// request that keeps or reads it, and stateManaged records that one did.
+	stateManaged := false
 	// keep records why a pair left. A pair whose deployment cannot read an attachment counts as
 	// one that cannot read it, since waiting or another policy cannot change that. Otherwise the
 	// input's preference keeps one error, as in take.
@@ -178,7 +183,7 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 		template := ResolvedRequest{
 			Route: route, policyModel: model, Provider: selection.provider, Deployment: selection.deployment,
 			policyTime: input.now, policyBudget: input.policyBudget, policyBodyBytes: len(input.Body),
-			hostedTools: variants.hostedTools, policyFacts: variants.facts,
+			hostedTools: variants.hostedTools, policyFacts: variants.facts, providerState: variants.providerState,
 		}
 		retained := 0
 		indexes := []int{0}
@@ -222,6 +227,10 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 			targetPassed = true
 			if fileID != nil && !byok {
 				fileIDManaged = true
+				continue
+			}
+			if len(variants.providerState.Fields) > 0 && !byok {
+				stateManaged = true
 				continue
 			}
 			value, err := variants.policyFor(selection.provider, index)
@@ -314,6 +323,13 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 					continue
 				}
 			}
+			// Nor does it send provider state, whose held content no input check reads.
+			if held := variants.providerState.Held; held != "" {
+				if check := value.Config.InputCheck(); check != "" {
+					keep(selection, heldInputCheckRefusal(held, check))
+					continue
+				}
+			}
 			// A deny period removes only a pair that could otherwise serve the request, so a client
 			// that waits for it to end is not refused for another reason afterwards.
 			if value.Config.DeniedAt(input.now) {
@@ -364,8 +380,16 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 	if len(candidates.filtered) == 0 && fileIDManaged {
 		return nil, ManagedFileIDRefusal(fileID.Path)
 	}
+	if len(candidates.filtered) == 0 && stateManaged {
+		return nil, variants.providerState.ManagedRefusal()
+	}
 	if fileID != nil {
 		if err := fileIDAccounts(*fileID, candidates.filtered, credentials); err != nil {
+			return nil, err
+		}
+	}
+	if held := variants.providerState.Held; held != "" {
+		if err := heldStateAccounts(held, candidates.filtered, credentials); err != nil {
 			return nil, err
 		}
 	}
@@ -744,7 +768,9 @@ func (v *requestVariants) prepareBody(selection routingSelection, value RequestP
 	}
 	variant := &requestBodyVariant{exports: exports, body: body, fields: fields, summary: redactor.Summary(), textBytes: redactor.InputTextBytes()}
 	variant.files = files
-	if files.Opaque != "" {
+	// The gateway cannot count an opaque file or content that the provider holds, so the hold
+	// covers the deployment's whole input.
+	if files.Opaque != "" || v.providerState.Held != "" {
 		variant.estimate = func(deployment Deployment) (int, error) { return deployment.MaxInputTokens, nil }
 	} else {
 		variant.estimate = requestTokenEstimator(fields, fileTexts, v.route, v.selections)

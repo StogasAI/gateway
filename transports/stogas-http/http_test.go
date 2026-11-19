@@ -2083,13 +2083,18 @@ func TestPrepareProviderRequestCoversPublicProvidersAndRoutes(t *testing.T) {
 			defer cancel()
 			bifrostCtx.SetValue(schemas.BifrostContextKeyHTTPRequestType, tt.req.RequestType)
 			provider, model, _ := tt.req.GetRequestFields()
+			// Azure serves each model in its author's format, and these models are OpenAI's.
+			deployment := catalog.Deployment{}
+			if provider == schemas.Azure {
+				deployment.Upstream.ModelFormat = "OpenAI"
+			}
 			state := &stogas.State{
 				Pair: stogas.Pair{
 					Resolution: &catalog.ResolvedRequest{
 						Provider:    provider,
 						Model:       model,
 						RequestType: tt.req.RequestType,
-						Deployment:  catalog.Deployment{},
+						Deployment:  deployment,
 					},
 				},
 			}

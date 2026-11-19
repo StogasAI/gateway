@@ -46,7 +46,7 @@ var (
 	ErrProviderSelection        = APIError{Code: "provider_not_allowed", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is not available for the requested provider"}
 	ErrServiceTierUnavailable   = APIError{Code: "service_tier_unavailable", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is not available for the requested service_tier"}
 	ErrReasoningModeUnavailable = APIError{Code: "reasoning_mode_unavailable", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is not available for the requested reasoning.mode"}
-	ErrUnsupportedTool          = APIError{Code: "unsupported_tool", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "We cannot price this tool"}
+	ErrUnsupportedTool          = APIError{Code: "unsupported_tool", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Tool is not supported"}
 	ErrUnsupportedServiceTier   = APIError{Code: "unsupported_service_tier", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "service_tier must be auto, default, standard, flex, fast, priority, or ultrafast"}
 	ErrUnsupportedReasoningMode = APIError{Code: "unsupported_reasoning_mode", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "reasoning.mode must be standard or pro"}
 )
@@ -250,6 +250,8 @@ type ResolvedRequest struct {
 	accountOptions []HeldOption
 	// credentialKind is the kind of the pair's credential (RequestInput.CredentialKind).
 	credentialKind string
+	// providerState is what the request keeps or reads in its provider account.
+	providerState ProviderState
 
 	chat               *openaiprovider.OpenAIChatRequest
 	inputTokenLimit    int
@@ -303,7 +305,15 @@ func (r *ResolvedRequest) AccountOptions() []HeldOption {
 // EffectiveDataHandling is the deployment's data handling with the facts that the credential's
 // account options set, joined with that of each hosted tool that the request lets the model call.
 func (r *ResolvedRequest) EffectiveDataHandling() DataHandling {
-	return r.Deployment.EffectiveDataHandling(r.accountOptions, r.hostedTools)
+	return r.Deployment.EffectiveDataHandling(r.accountOptions, r.hostedTools, r.providerState.Keeps)
+}
+
+// ProviderState is what the request keeps or reads in its provider account.
+func (r *ResolvedRequest) ProviderState() ProviderState {
+	if r == nil {
+		return ProviderState{}
+	}
+	return r.providerState
 }
 
 // ActivePolicyRules carries only matched counter names into the financial hold.
@@ -604,6 +614,21 @@ func (r *ResolvedRequest) OutputTokenLimit() int {
 	return r.outputTokenLimit
 }
 
+// HeldOutputTokens is the most output that the request can produce. On Azure, xAI's models apply
+// max_tokens and max_completion_tokens to the answer alone and reason past them: Grok 4.6 and 4.7
+// reasoned for thousands of tokens beside an answer limited to 12 (capture
+// azure/other-model-formats-output-limits). Their requests can therefore produce the deployment's
+// maximum output whatever limit they set.
+func (r *ResolvedRequest) HeldOutputTokens() int {
+	if r == nil {
+		return 0
+	}
+	if r.Provider == schemas.Azure && r.Deployment.Upstream.ModelFormat == "xAI" {
+		return r.Deployment.MaxOutputTokens
+	}
+	return r.outputTokenLimit
+}
+
 func (r *ResolvedRequest) StructuredPIIRedactionSummary() *redaction.Summary {
 	if r == nil {
 		return nil
@@ -730,8 +755,10 @@ func (r *ResolvedRequest) ToolTypes() []string {
 	return r.pricing.ToolTypes
 }
 
+// SanitizeClientMetadata keeps the client's metadata from the provider, which reads it only to
+// label what it stores, so a request that stores keeps it.
 func (r *ResolvedRequest) SanitizeClientMetadata() {
-	if r == nil {
+	if r == nil || r.providerState.Store {
 		return
 	}
 	if r.chat != nil {
@@ -1033,6 +1060,11 @@ func planRoutes(input RequestInput, route Route, rawData map[string]json.RawMess
 	if err != nil {
 		return nil, err
 	}
+	providerState := readProviderState(route, rawData)
+	selections, withoutState, err := filterProviderState(selections, providerState, route)
+	if err != nil {
+		return nil, err
+	}
 	selections, ruledOut, err := filterRequestParameters(selections, rawData, route, bridgeGap, tokenFields...)
 	if err != nil {
 		return nil, err
@@ -1048,7 +1080,8 @@ func planRoutes(input RequestInput, route Route, rawData map[string]json.RawMess
 	variants := &requestVariants{
 		base: RequestPolicy{Config: input.Policy, RedactionPolicy: input.RedactionPolicy, LoadRedactionPolicy: input.LoadRedactionPolicy},
 		load: input.CredentialPolicy, requestPolicy: requestPolicy, fields: rawData, route: route, selections: selections, reserveBody: input.ReserveBody, inputBytes: len(input.Body),
-		attachments: requestAttachments(rawData, route), hostedTools: tools.hosted.enabled, facts: tools.facts, ruledOut: append(ruledOut, withoutTools...),
+		attachments: requestAttachments(rawData, route), hostedTools: tools.hosted.enabled, facts: tools.facts, providerState: providerState,
+		ruledOut: slices.Concat(withoutState, ruledOut, withoutTools),
 	}
 	return planRequest(input, route, requested, providerPreference, variants)
 }
@@ -1096,6 +1129,7 @@ func resolveChatRequests(input RequestInput, route Route) (*ResolvedRequest, err
 		}
 		resolution.chat = &request
 		resolution.hostedTools = variants.hostedTools
+		resolution.providerState = variants.providerState
 		resolution.retainVariant(variant, candidatePolicy.Config, input)
 		return resolution, nil
 	}
@@ -1169,6 +1203,7 @@ func resolveResponsesRequests(input RequestInput, route Route) (*ResolvedRequest
 		request.ResponsesParameters.Include = resolution.includeEncryptedReasoning(request.ResponsesParameters.Include)
 		resolution.responses = &request
 		resolution.hostedTools = variants.hostedTools
+		resolution.providerState = variants.providerState
 		resolution.retainVariant(variant, candidatePolicy.Config, input)
 		return resolution, nil
 	}
@@ -1652,6 +1687,7 @@ func dropNoOpCompatibilityFields(rawData map[string]json.RawMessage, route Route
 	case RouteResponses:
 		dropRawFieldIf(rawData, "background", rawJSONFalse)
 		dropRawFieldIf(rawData, "previous_response_id", rawJSONNullOrEmptyString)
+		dropRawFieldIf(rawData, "conversation", rawJSONNullOrEmptyString)
 		dropRawFieldIf(rawData, "text", func(raw json.RawMessage) bool {
 			var text map[string]json.RawMessage
 			return json.Unmarshal(raw, &text) == nil && len(text) == 1 && rawJSONTextFormat(text["format"])

@@ -52,9 +52,8 @@ func validateProviderResponsesOutput(state *State, response *schemas.BifrostResp
 	if terminal && state != nil && state.responsesStreamSeen && len(response.Output) != len(state.responsesItems) {
 		return ErrProviderResponseMalformed
 	}
-	if response.Background != nil && *response.Background || response.Store != nil && *response.Store ||
-		response.Conversation != nil || response.PreviousResponseID != nil || response.Prompt != nil ||
-		response.Container != nil || response.Error != nil {
+	if response.Background != nil && *response.Background || response.Prompt != nil || response.Container != nil ||
+		response.Error != nil || !providerResponsesStateEchoed(state, response) {
 		return ErrProviderResponseMalformed
 	}
 	if response.MaxToolCalls != nil {
@@ -102,6 +101,19 @@ func validateProviderResponsesOutput(state *State, response *schemas.BifrostResp
 		}
 	}
 	return sanitizeProviderResponsesEcho(state, response)
+}
+
+// providerResponsesStateEchoed reports a reply that keeps only the provider state that the request
+// asked for: a stored reply only when the provider got store: true, and a conversation or a
+// previous reply only when the request named one.
+func providerResponsesStateEchoed(state *State, response *schemas.BifrostResponsesResponse) bool {
+	var asked catalog.ProviderState
+	if state != nil {
+		asked = state.Resolution.ProviderState()
+	}
+	return (response.Store == nil || !*response.Store || asked.Store) &&
+		(response.Conversation == nil || slices.Contains(asked.Fields, "conversation")) &&
+		(response.PreviousResponseID == nil || slices.Contains(asked.Fields, "previous_response_id"))
 }
 
 func providerResponsesToolCallRequired(state *State) bool {
@@ -195,29 +207,30 @@ func validOptionalProviderASCII(value *string, maxBytes int) bool {
 }
 
 type trustedResponsesEcho struct {
-	Background           *bool                                 `json:"background"`
-	Include              []string                              `json:"include"`
-	Instructions         *string                               `json:"instructions"`
-	MaxOutputTokens      *int                                  `json:"max_output_tokens"`
-	MaxToolCalls         *int                                  `json:"max_tool_calls"`
-	Metadata             *map[string]any                       `json:"metadata"`
-	ParallelToolCalls    *bool                                 `json:"parallel_tool_calls"`
-	PromptCacheKey       *string                               `json:"prompt_cache_key"`
-	PromptCacheRetention *string                               `json:"prompt_cache_retention"`
-	PromptCacheOptions   *schemas.PromptCacheOptions           `json:"prompt_cache_options"`
-	PresencePenalty      *float64                              `json:"presence_penalty"`
-	FrequencyPenalty     *float64                              `json:"frequency_penalty"`
-	Reasoning            *schemas.ResponsesParametersReasoning `json:"reasoning"`
-	SafetyIdentifier     *string                               `json:"safety_identifier"`
-	StreamOptions        *schemas.ResponsesStreamOptions       `json:"stream_options"`
-	Store                *bool                                 `json:"store"`
-	Temperature          *float64                              `json:"temperature"`
-	Text                 *schemas.ResponsesTextConfig          `json:"text"`
-	TopLogProbs          *int                                  `json:"top_logprobs"`
-	TopP                 *float64                              `json:"top_p"`
-	ToolChoice           *schemas.ResponsesToolChoice          `json:"tool_choice"`
-	Tools                []schemas.ResponsesTool               `json:"tools"`
-	Truncation           *string                               `json:"truncation"`
+	Background           *bool                                  `json:"background"`
+	Conversation         *schemas.ResponsesResponseConversation `json:"conversation"`
+	PreviousResponseID   *string                                `json:"previous_response_id"`
+	Include              []string                               `json:"include"`
+	Instructions         *string                                `json:"instructions"`
+	MaxOutputTokens      *int                                   `json:"max_output_tokens"`
+	MaxToolCalls         *int                                   `json:"max_tool_calls"`
+	Metadata             *map[string]any                        `json:"metadata"`
+	ParallelToolCalls    *bool                                  `json:"parallel_tool_calls"`
+	PromptCacheKey       *string                                `json:"prompt_cache_key"`
+	PromptCacheRetention *string                                `json:"prompt_cache_retention"`
+	PromptCacheOptions   *schemas.PromptCacheOptions            `json:"prompt_cache_options"`
+	PresencePenalty      *float64                               `json:"presence_penalty"`
+	FrequencyPenalty     *float64                               `json:"frequency_penalty"`
+	Reasoning            *schemas.ResponsesParametersReasoning  `json:"reasoning"`
+	SafetyIdentifier     *string                                `json:"safety_identifier"`
+	StreamOptions        *schemas.ResponsesStreamOptions        `json:"stream_options"`
+	Temperature          *float64                               `json:"temperature"`
+	Text                 *schemas.ResponsesTextConfig           `json:"text"`
+	TopLogProbs          *int                                   `json:"top_logprobs"`
+	TopP                 *float64                               `json:"top_p"`
+	ToolChoice           *schemas.ResponsesToolChoice           `json:"tool_choice"`
+	Tools                []schemas.ResponsesTool                `json:"tools"`
+	Truncation           *string                                `json:"truncation"`
 }
 
 func sanitizeProviderResponsesEcho(state *State, response *schemas.BifrostResponsesResponse) error {
@@ -242,7 +255,19 @@ func sanitizeProviderResponsesEcho(state *State, response *schemas.BifrostRespon
 		}
 	}
 	response.Background = schemas.Ptr(false)
-	response.Store = schemas.Ptr(false)
+	response.Store = schemas.Ptr(state != nil && state.Resolution.ProviderState().Store)
+	response.PreviousResponseID = trusted.PreviousResponseID
+	response.Conversation = nil
+	if trusted.Conversation != nil {
+		// OpenAI gives the conversation as an object, whichever form the request named it in.
+		id := trusted.Conversation.ResponsesResponseConversationStr
+		if trusted.Conversation.ResponsesResponseConversationStruct != nil {
+			id = &trusted.Conversation.ResponsesResponseConversationStruct.ID
+		}
+		response.Conversation = &schemas.ResponsesResponseConversation{
+			ResponsesResponseConversationStruct: &schemas.ResponsesResponseConversationStruct{ID: *id},
+		}
+	}
 	response.Include = trusted.Include
 	response.Instructions = nil
 	if trusted.Instructions != nil {

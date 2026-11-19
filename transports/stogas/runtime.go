@@ -250,7 +250,6 @@ func newAccount(config Config, chutesE2EE *chutese2ee.Transport) *account {
 		config.AllowPrivateProviderNetwork,
 		requirePostQuantumTLS,
 	)
-	openAIConfig.OpenAIConfig = &schemas.OpenAIConfig{DisableStore: true}
 	anthropicConfig := newProviderConfig(
 		config.AnthropicBaseURL,
 		config.AllowPrivateProviderNetwork,

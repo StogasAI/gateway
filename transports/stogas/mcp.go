@@ -250,8 +250,10 @@ func mcpApprovedCalls(rawInput json.RawMessage) []mcpApprovedCall {
 
 // validateResponsesMCPApprovals checks that each approved call that a request lets run answers
 // an approval request in the same input, from a server that the request declares. OpenAI needs
-// both to run the call, and the hold covers only such calls.
-func validateResponsesMCPApprovals(rawInput json.RawMessage, rawTools []map[string]json.RawMessage) error {
+// both to run the call, and the hold covers only such calls. A request that continues what the
+// provider holds (held) can approve a request that only the provider has, whose server OpenAI
+// finds among the declared ones.
+func validateResponsesMCPApprovals(rawInput json.RawMessage, rawTools []map[string]json.RawMessage, held bool) error {
 	approved := mcpApprovedCalls(rawInput)
 	if len(approved) == 0 {
 		return nil
@@ -265,6 +267,9 @@ func validateResponsesMCPApprovals(rawInput json.RawMessage, rawTools []map[stri
 	for _, call := range approved {
 		path := "input[" + strconv.Itoa(call.index) + "]"
 		if call.server == "" {
+			if held {
+				continue
+			}
 			return invalidRequest(path + " must answer an mcp_approval_request in the same input")
 		}
 		if !declared[call.server] {

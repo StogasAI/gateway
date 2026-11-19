@@ -392,7 +392,7 @@ func validateAnthropicChatCompletionPolicy(state *State) error {
 	}
 	for _, rawTool := range state.Resolution.RawTools() {
 		if rawString(rawTool["type"]) == "mcp_toolset" {
-			return invalidRequest("Anthropic MCP connectors are not supported because provider execution cannot be bounded per request")
+			return invalidRequest("Anthropic MCP connectors are not supported")
 		}
 	}
 	tools, err := validateChatTools(raw["tools"])
@@ -790,7 +790,7 @@ func anthropicRefusal(response *schemas.BifrostResponse) (*schemas.ResponsesStop
 func (AnthropicAdapter) ValidateRawResponsesToolType(state *State, tool map[string]json.RawMessage) error {
 	rawType := rawString(tool["type"])
 	if rawType == "mcp" {
-		return invalidRequest("Remote MCP tools are not supported because provider execution cannot be bounded or approved per request")
+		return invalidRequest("Remote MCP tools are supported only for OpenAI deployments")
 	}
 	if rawType == "custom" {
 		return invalidRequest("Custom tools are not supported for Anthropic-format deployments because free-form input formats are not preserved by the provider translation")
@@ -819,10 +819,10 @@ func (AnthropicAdapter) ValidateRawResponsesToolType(state *State, tool map[stri
 		return invalidRequest("Claude takes " + catalog.AnthropicBashToolType + " and " + catalog.AnthropicTextEditorToolType + "; name one of them")
 	}
 	if strings.HasPrefix(rawType, "computer") {
-		return invalidRequest("computer tools are not supported because tool results carry only text")
+		return invalidRequest("computer tools are not supported")
 	}
 	if strings.HasPrefix(rawType, "memory") {
-		return invalidRequest("memory tools are not supported because the instructions that Anthropic adds for them are not measured")
+		return invalidRequest("memory tools are not supported")
 	}
 	return invalidRequest("Only function, namespace, " + catalog.AnthropicBashToolType + ", " + catalog.AnthropicTextEditorToolType + ", web_fetch, and priced hosted web search tools are supported")
 }

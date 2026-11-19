@@ -41,7 +41,12 @@ func validateCommonChatCompletionPolicy(state *State) error {
 			return unsupportedParameterError(name)
 		}
 	}
-	if err := validateFalseOnlyBoolean(raw, "store"); err != nil {
+	if !state.PreparedCredential.UsesBYOK() {
+		if err := state.Resolution.ProviderState().ManagedRefusal(); err != nil {
+			return err
+		}
+	}
+	if err := validateJSONBool(raw, "store"); err != nil {
 		return err
 	}
 	if err := validateJSONBool(raw, "stream"); err != nil {
@@ -366,24 +371,6 @@ func validateRawJSONBool(raw json.RawMessage, name string) error {
 	var value bool
 	if err := sonic.Unmarshal(raw, &value); err != nil {
 		return invalidRequest(name + " must be a boolean")
-	}
-	return nil
-}
-
-func validateFalseOnlyBoolean(raw map[string]json.RawMessage, name string) error {
-	valueRaw, ok := raw[name]
-	if !ok {
-		return nil
-	}
-	if strings.TrimSpace(string(valueRaw)) == "null" {
-		return invalidRequest(name + " must be a boolean")
-	}
-	var value bool
-	if err := sonic.Unmarshal(valueRaw, &value); err != nil {
-		return invalidRequest(name + " must be a boolean")
-	}
-	if value {
-		return invalidRequest(name + "=true is not supported; omit " + name + " or set it to false")
 	}
 	return nil
 }

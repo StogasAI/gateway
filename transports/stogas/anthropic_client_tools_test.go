@@ -138,7 +138,7 @@ func TestResponsesPolicyChecksAnthropicClientTools(t *testing.T) {
 		"a function of its name":     {claude + `"tools":[{"type":"function","name":"bash"},` + anthropicBashTool + `]}`, "tools[1].name duplicates another client tool"},
 		"an older bash":              {claude + `"tools":[{"type":"bash_20241022","name":"bash"}]}`, "Claude takes bash_20250124 and text_editor_20250728"},
 		"an older editor":            {claude + `"tools":[{"type":"text_editor_20250124","name":"str_replace_editor"}]}`, "Claude takes bash_20250124 and text_editor_20250728"},
-		"computer use":               {claude + `"tools":[{"type":"computer_20250124","name":"computer","display_width_px":1024,"display_height_px":768}]}`, "computer tools are not supported because tool results carry only text"},
+		"computer use":               {claude + `"tools":[{"type":"computer_20250124","name":"computer","display_width_px":1024,"display_height_px":768}]}`, "computer tools are not supported"},
 		"memory":                     {claude + `"tools":[{"type":"memory_20250818","name":"memory"}]}`, "memory tools are not supported"},
 		"a selector by type":         {claude + `"tools":[` + anthropicBashTool + `],"tool_choice":{"type":"bash_20250124"}}`, "only string tool_choice modes or named function selectors"},
 		"a forced undeclared tool":   {claude + `"tools":[` + anthropicBashTool + `],"tool_choice":{"type":"function","name":"str_replace_based_edit_tool"}}`, "tool_choice selects an unknown function tool"},

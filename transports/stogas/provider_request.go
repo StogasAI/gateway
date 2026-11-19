@@ -62,22 +62,31 @@ func PrepareProviderRequest(ctx *schemas.BifrostContext, state *State, request *
 		settings   billing.RequestSettings
 	)
 	customerAccount := state.PreparedCredential.UsesBYOK()
+	otherFormat := azureOtherModelFormat(resolution)
+	store := resolution.ProviderState().Store
 	switch {
 	case request.ChatRequest != nil && request.ResponsesRequest == nil:
 		chat := request.ChatRequest
 		if !isChatRequestType(request.RequestType) || chat.Provider != resolution.Provider || chat.Model != resolution.Model {
 			return catalog.ErrUnsupportedRequest
 		}
-		sanitizeChatProviderFields(ctx, chat, customerAccount)
+		sanitizeChatProviderFields(ctx, chat, customerAccount, otherFormat, store)
 		applyRequiredChatOutputLimit(ctx, resolution, chat)
 		body, bifrostErr = prepareChatProviderBody(ctx, chat, request.RequestType == schemas.ChatCompletionStreamRequest, resolution.Deployment.Hosting)
+		if bifrostErr == nil && otherFormat {
+			var effort *string
+			if chat.Params != nil && chat.Params.Reasoning != nil {
+				effort = chat.Params.Reasoning.Effort
+			}
+			body, bifrostErr = useModelChatFields(body, effort)
+		}
 		settings = billing.ChatRequestSettings(chat.Params)
 	case request.ResponsesRequest != nil && request.ChatRequest == nil:
 		responses := request.ResponsesRequest
 		if !isResponsesRequestType(request.RequestType) || responses.Provider != resolution.Provider || responses.Model != resolution.Model {
 			return catalog.ErrUnsupportedRequest
 		}
-		sanitizeResponsesProviderFields(ctx, responses, customerAccount)
+		sanitizeResponsesProviderFields(ctx, responses, customerAccount, otherFormat, store)
 		applyRequiredResponsesOutputLimit(ctx, resolution, responses)
 		// Every interface takes the tools of the namespace functions as top-level tools. Anthropic's
 		// has no namespaces, so their tools get flat names, which core turns back into the namespace
@@ -125,6 +134,7 @@ func PrepareProviderRequest(ctx *schemas.BifrostContext, state *State, request *
 		return catalog.ErrUnsupportedRequest
 	}
 	prepared = true
+	settings.ProviderState = resolution.ProviderState().Fields
 	state.RequestSettings = settings
 	return nil
 }
@@ -177,27 +187,37 @@ func isResponsesRequestType(requestType schemas.RequestType) bool {
 	return requestType == schemas.ResponsesRequest || requestType == schemas.ResponsesStreamRequest
 }
 
-func sanitizeChatProviderFields(ctx *schemas.BifrostContext, request *schemas.BifrostChatRequest, customerAccount bool) {
+// sanitizeChatProviderFields sends the request's store value to OpenAI and to Azure OpenAI models,
+// the only models whose Chat Completions Azure can store, and metadata only with a request that
+// stores, which it labels.
+func sanitizeChatProviderFields(ctx *schemas.BifrostContext, request *schemas.BifrostChatRequest, customerAccount, otherFormat, store bool) {
 	if request.Params == nil {
 		request.Params = &schemas.ChatParameters{}
 	}
-	request.Params.Metadata = nil
-	request.Params.User, request.Params.SafetyIdentifier = providerEndUserIDs(ctx, request.Provider, request.Model, customerAccount, request.Params.User, request.Params.SafetyIdentifier)
+	if !store {
+		request.Params.Metadata = nil
+	}
+	request.Params.User, request.Params.SafetyIdentifier = providerEndUserIDs(ctx, request.Provider, request.Model, customerAccount, otherFormat, request.Params.User, request.Params.SafetyIdentifier)
 	request.Params.Store = nil
-	if request.Provider == schemas.OpenAI || (request.Provider == schemas.Azure && !schemas.IsAnthropicModelFamily(ctx, request.Model)) {
-		request.Params.Store = schemas.Ptr(false)
+	if request.Provider == schemas.OpenAI || (request.Provider == schemas.Azure && !otherFormat && !schemas.IsAnthropicModelFamily(ctx, request.Model)) {
+		request.Params.Store = schemas.Ptr(store)
 	}
 }
 
-func sanitizeResponsesProviderFields(ctx *schemas.BifrostContext, request *schemas.BifrostResponsesRequest, customerAccount bool) {
+// sanitizeResponsesProviderFields sends the request's store value to every model on OpenAI's and
+// Azure's Responses API, which stores responses unless a request turns it off, and metadata only
+// with a request that stores, which it labels.
+func sanitizeResponsesProviderFields(ctx *schemas.BifrostContext, request *schemas.BifrostResponsesRequest, customerAccount, otherFormat, store bool) {
 	if request.Params == nil {
 		request.Params = &schemas.ResponsesParameters{}
 	}
-	request.Params.Metadata = nil
-	request.Params.User, request.Params.SafetyIdentifier = providerEndUserIDs(ctx, request.Provider, request.Model, customerAccount, request.Params.User, request.Params.SafetyIdentifier)
+	if !store {
+		request.Params.Metadata = nil
+	}
+	request.Params.User, request.Params.SafetyIdentifier = providerEndUserIDs(ctx, request.Provider, request.Model, customerAccount, otherFormat, request.Params.User, request.Params.SafetyIdentifier)
 	request.Params.Store = nil
 	if request.Provider == schemas.OpenAI || (request.Provider == schemas.Azure && !schemas.IsAnthropicModelFamily(ctx, request.Model)) {
-		request.Params.Store = schemas.Ptr(false)
+		request.Params.Store = schemas.Ptr(store)
 	}
 }
 
@@ -206,8 +226,9 @@ func sanitizeResponsesProviderFields(ctx *schemas.BifrostContext, request *schem
 // instead of the whole account, so only the customer's own account receives
 // them: on our managed accounts, a client could name another customer's users.
 // Anthropic's one field, metadata.user_id, is filled by core from user, so
-// safety_identifier takes it when both are set. Chutes documents no such field.
-func providerEndUserIDs(ctx *schemas.BifrostContext, provider schemas.ModelProvider, model string, customerAccount bool, user, safetyIdentifier *string) (*string, *string) {
+// safety_identifier takes it when both are set. Chutes documents no such field, and Azure's other
+// model formats refuse them.
+func providerEndUserIDs(ctx *schemas.BifrostContext, provider schemas.ModelProvider, model string, customerAccount, otherFormat bool, user, safetyIdentifier *string) (*string, *string) {
 	switch {
 	case !customerAccount:
 		return nil, nil
@@ -216,11 +237,54 @@ func providerEndUserIDs(ctx *schemas.BifrostContext, provider schemas.ModelProvi
 			return safetyIdentifier, nil
 		}
 		return user, nil
-	case provider == schemas.OpenAI || provider == schemas.Azure:
+	case provider == schemas.OpenAI || provider == schemas.Azure && !otherFormat:
 		return user, safetyIdentifier
 	default:
 		return nil, nil
 	}
+}
+
+// azureOtherModelFormat reports an Azure deployment of a model outside Azure OpenAI and Claude,
+// such as Grok, Kimi or Mistral. Azure checks a request to such a model against the model's own
+// fields (capture azure/other-model-formats-request-fields): Grok, Kimi and Mistral refused
+// safety_identifier, and Mistral also refused store, user, a message's name, developer messages
+// and, for Mistral Large 3, max_completion_tokens.
+func azureOtherModelFormat(resolution *catalog.ResolvedRequest) bool {
+	if resolution.Provider != schemas.Azure {
+		return false
+	}
+	switch resolution.Deployment.Upstream.ModelFormat {
+	case "Anthropic", "OpenAI", "OpenAI-OSS":
+		return false
+	}
+	return true
+}
+
+// useModelChatFields writes a Chat Completions body in the fields that every other Azure model
+// format takes: the output limit as max_tokens, because Mistral Large 3 refuses
+// max_completion_tokens; developer messages as system messages, because Mistral's models refuse the
+// developer role; and the reasoning effort that the deployment's catalog record chose. Core
+// corrects an effort on Azure against the efforts of OpenAI's models, which would send Kimi's max
+// as high.
+func useModelChatFields(body []byte, effort *string) ([]byte, *schemas.BifrostError) {
+	var err error
+	if limit := providerutils.GetJSONField(body, "max_completion_tokens"); limit.Exists() {
+		if body, err = providerutils.SetJSONField(body, "max_tokens", limit.Int()); err == nil {
+			body, err = providerutils.DeleteJSONField(body, "max_completion_tokens")
+		}
+	}
+	if err == nil && effort != nil && providerutils.GetJSONField(body, "reasoning_effort").Exists() {
+		body, err = providerutils.SetJSONField(body, "reasoning_effort", *effort)
+	}
+	for index, message := range providerutils.GetJSONField(body, "messages").Array() {
+		if err == nil && message.Get("role").String() == string(schemas.ChatMessageRoleDeveloper) {
+			body, err = providerutils.SetJSONField(body, "messages."+strconv.Itoa(index)+".role", string(schemas.ChatMessageRoleSystem))
+		}
+	}
+	if err != nil {
+		return nil, providerutils.NewBifrostOperationError(schemas.ErrProviderRequestMarshal, err)
+	}
+	return body, nil
 }
 
 func prepareChatProviderBody(ctx *schemas.BifrostContext, request *schemas.BifrostChatRequest, streaming bool, hosting string) ([]byte, *schemas.BifrostError) {
