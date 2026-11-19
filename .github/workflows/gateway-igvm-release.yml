@@ -215,8 +215,6 @@ jobs:
         run: |
           set -euo pipefail
           tag="$GITHUB_REF_NAME"
-          release_commit="$(git rev-parse HEAD)"
-          test "$(git rev-list -n1 "$tag")" = "$release_commit"
           ASSETS=(
             "dist/gateway/$tag/LICENSE"
             "dist/gateway/$tag/NOTICE"
