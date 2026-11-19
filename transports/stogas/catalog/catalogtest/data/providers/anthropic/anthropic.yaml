@@ -2,6 +2,11 @@ providers:
   name: Anthropic
   stogasByok: true
   companyId: anthropic
+  accountOptions:
+    - id: business-associate-agreement
+      name: Business associate agreement
+      routes: [anthropic-messages]
+      grants: [hipaa]
   dataHandling:
     processingLocation: world
     storageLocation: none

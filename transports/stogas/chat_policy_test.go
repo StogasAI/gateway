@@ -165,6 +165,7 @@ func TestChatPolicyRejectsUnsupportedFields(t *testing.T) {
 		{"stream options without stream", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream_options":{"include_usage":false}}`, "stream_options requires stream=true"},
 		{"stream options unknown key", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true,"stream_options":{"unknown":true}}`, "stream_options.unknown is not supported"},
 		{"chat stream obfuscation", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true,"stream_options":{"include_obfuscation":true}}`, "stream_options.include_obfuscation is not supported for Chat Completions"},
+		{"anthropic mcp toolset", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"remote"}]}`, "provider execution cannot be bounded"},
 		{"openai mcp toolset", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"remote"}]}`, "Only function tools"},
 	}
 
@@ -1884,11 +1885,9 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 		{"anthropic namespace custom tool", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"namespace","name":"crm","description":"CRM","tools":[{"type":"custom","name":"note"}]}]}`, "Custom tools are not supported for Anthropic-format deployments"},
 		{"anthropic call to an undeclared namespace", `{"model":"anthropic-claude-sonnet-4-6","input":[{"type":"function_call","call_id":"call_1","namespace":"erp","name":"find","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":"none"}],"tools":[{"type":"namespace","name":"crm","description":"CRM","tools":[{"type":"function","name":"find"}]}]}`, "input[0].name must name a tool in namespace erp in tools for Anthropic-format deployments"},
 		{"openai memory", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"memory"}]}`, "memory is not supported because it needs provider-held state"},
-		{"openai programmatic tool calling", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"programmatic_tool_calling"}]}`, "Only function, custom, namespace, shell, apply_patch, tool_search, and priced hosted web search tools are supported"},
+		{"openai programmatic tool calling", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"programmatic_tool_calling"}]}`, "Only function, custom, namespace, shell, apply_patch, tool_search, remote MCP, and priced hosted web search tools are supported"},
 		{"openai computer without preview", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"computer"}]}`, "not supported"},
-		{"openai remote mcp", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","require_approval":"always"}]}`, "Remote MCP servers are not supported"},
-		{"openai mcp approval", `{"model":"provider:openai gpt-5.5","input":[{"role":"user","content":"hi"},{"type":"mcp_approval_response","approval_request_id":"mcpr_1","approve":true}]}`, "Remote MCP servers are not supported"},
-		{"anthropic remote mcp", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","allowed_tools":["search"]}]}`, "Remote MCP servers are not supported"},
+		{"anthropic remote mcp", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","allowed_tools":["search"]}]}`, "No deployment for this request runs mcp. Remove the tool or choose another model."},
 		{"anthropic custom", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"custom","name":"shell"}]}`, "free-form input formats are not preserved"},
 		{"anthropic local shell", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"local_shell"}]}`, "Only function, namespace, bash_20250124, text_editor_20250728, web_fetch"},
 		{"anthropic max uses too large", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search","max_uses":129}]}`, "max_uses is outside the supported range"},
@@ -3825,6 +3824,18 @@ func TestAnthropicTaskBudgetReachesProviderRequest(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestAnthropicChatMCPToolsetFailsBeforeProviderRequest(t *testing.T) {
+	body := `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"remote"}]}`
+	resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/chat/completions", Body: []byte(body)})
+	if err == nil {
+		state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
+		err = state.Adapter.ValidateRequest(state)
+	}
+	if err == nil || !strings.Contains(err.Error(), "provider execution cannot be bounded") {
+		t.Fatalf("expected MCP toolset rejection, got %v", err)
 	}
 }
 

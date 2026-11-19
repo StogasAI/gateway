@@ -54,6 +54,8 @@ const (
 	jsonContextContent
 	jsonContextContentBlock
 	jsonContextFile
+	jsonContextResponsesTools
+	jsonContextResponsesTool
 	jsonContextReasoningDetails
 	jsonContextReasoningDetail
 	jsonContextSearchAction
@@ -100,6 +102,8 @@ func (r *Redactor) RedactRequestFields(raw map[string]json.RawMessage, surface S
 			context = jsonContextChatMessages
 		} else if surface == SurfaceResponses && field == "input" {
 			context = jsonContextResponsesInput
+		} else if surface == SurfaceResponses && field == "tools" {
+			context = jsonContextResponsesTools
 		}
 		redacted, changed, err := r.redactJSONContext(value, context)
 		if err != nil {
@@ -203,6 +207,9 @@ func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, repla
 	sealedDetails := r.sealedDetails
 	var reasoningTexts []jsonSpan
 	itemType := ""
+	// An MCP tool's connection settings reach the provider as the client sent them: its
+	// credentials and server address are not prompt text, and a redacted token would fail.
+	var mcpSettings []jsonSpan
 	// A web search that a reply returned holds Claude's encrypted results, which Claude refuses
 	// changed. Their spans wait for the item's type.
 	searchResults := len(r.searchResults)
@@ -302,16 +309,19 @@ func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, repla
 				valueAllowed = false
 			}
 		}
-		valueStart, valueBytes := position, r.inputTextBytes
+		settingStart, settingBytes := position, r.inputTextBytes
 		position, err = r.walkJSONValue(source, position, valueAllowed, replacements, depth, valueContext)
 		if err != nil {
 			return position, err
 		}
-		if context == jsonContextChatMessage && key == jsonKeyReasoning {
-			reasoningTexts = append(reasoningTexts, jsonSpan{start: valueStart, end: position, textBytes: r.inputTextBytes - valueBytes})
+		if context == jsonContextResponsesTool && key == jsonKeyMCPSetting {
+			mcpSettings = append(mcpSettings, jsonSpan{start: settingStart, end: position, textBytes: r.inputTextBytes - settingBytes})
 		}
-		if context == jsonContextSearchResult && key == jsonKeyEncryptedContent && source[valueStart] == '"' {
-			r.searchResults = append(r.searchResults, jsonSpan{start: valueStart, end: position, textBytes: r.inputTextBytes - valueBytes})
+		if context == jsonContextChatMessage && key == jsonKeyReasoning {
+			reasoningTexts = append(reasoningTexts, jsonSpan{start: settingStart, end: position, textBytes: r.inputTextBytes - settingBytes})
+		}
+		if context == jsonContextSearchResult && key == jsonKeyEncryptedContent && source[settingStart] == '"' {
+			r.searchResults = append(r.searchResults, jsonSpan{start: settingStart, end: position, textBytes: r.inputTextBytes - settingBytes})
 		}
 		position = skipJSONSpace(source, position)
 		if position >= len(source) {
@@ -335,6 +345,12 @@ func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, repla
 					}
 				}
 				r.searchResults = r.searchResults[:searchResults]
+			}
+			if context == jsonContextResponsesTool && itemType == "mcp" {
+				for _, setting := range mcpSettings {
+					r.discardJSONReplacements(replacements, baseReplacements, setting.start, setting.end)
+					r.inputTextBytes -= setting.textBytes
+				}
 			}
 			sealed := context == jsonContextReasoningDetail && (hasSignature || hasData)
 			if sealed {
@@ -365,6 +381,8 @@ func (r *Redactor) walkJSONArray(source []byte, position int, allow bool, replac
 			childContext = jsonContextChatMessage
 		case jsonContextResponsesInput:
 			childContext = jsonContextResponsesInputItem
+		case jsonContextResponsesTools:
+			childContext = jsonContextResponsesTool
 		case jsonContextContent:
 			childContext = jsonContextContentBlock
 		case jsonContextReasoningDetails:
@@ -600,6 +618,7 @@ type jsonKeyKind uint8
 const (
 	jsonKeyOther jsonKeyKind = iota
 	jsonKeySkipScalar
+	jsonKeyMCPSetting
 	jsonKeyEncryptedContent
 	jsonKeySignature
 	jsonKeyData
@@ -650,9 +669,12 @@ func classifyJSONKey(encoded []byte, escaped bool) (jsonKeyKind, error) {
 		return jsonKeyReasoning, nil
 	case "reasoning_details":
 		return jsonKeyReasoningDetails, nil
+	case "server_url", "connector_id", "tunnel_id", "authorization", "headers",
+		"allowed_tools", "allowed_callers", "require_approval":
+		return jsonKeyMCPSetting, nil
 	case "id", "item_id", "call_id", "tool_call_id", "file_id", "container_id", "conversation_id",
 		"request_id", "session_id", "previous_response_id", "prompt_cache_key", "prompt_cache_isolation_key",
-		"model", "name", "namespace", "role":
+		"model", "name", "namespace", "role", "server_label", "approval_request_id":
 		return jsonKeySkipScalar, nil
 	default:
 		return jsonKeyOther, nil

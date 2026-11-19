@@ -37,6 +37,7 @@ func (s *Server) writeProviderError(ctx *requestContext, state *stogas.State, bi
 // they wait their randomized backoff. A wait over a minute tells them not to
 // retry, as the gateway's own refusals do (billingErrorResponse).
 func providerErrorResponse(state *stogas.State, bifrostErr *schemas.BifrostError, bifrostCtx *schemas.BifrostContext) errorResponse {
+	bifrostErr = withoutMCPCredentials(state, bifrostErr)
 	statusCode, payload := publicProviderError(bifrostErr, providerMessageUseFor(state, bifrostErr))
 	attributeProvider(payload, bifrostErr, callProvider(state))
 	response := errorResponse{status: statusCode, payload: payload}
@@ -157,6 +158,7 @@ func spreadRetryAfter(wait time.Duration) string {
 }
 
 func bifrostErrorPayload(state *stogas.State, bifrostErr *schemas.BifrostError) any {
+	bifrostErr = withoutMCPCredentials(state, bifrostErr)
 	_, payload := publicProviderError(bifrostErr, providerMessageUseFor(state, bifrostErr))
 	attributeProvider(payload, bifrostErr, callProvider(state))
 	return payload
@@ -203,6 +205,30 @@ func providerMessageUseFor(state *stogas.State, bifrostErr *schemas.BifrostError
 		return passProviderMessage
 	}
 	return filterProviderMessage
+}
+
+// withoutMCPCredentials returns the failure with each credential of a remote
+// MCP server replaced in its message. The client sent those values, so the
+// message keeps the provider's words, but an export of the failure must hold
+// none of them, as it holds none from the request.
+func withoutMCPCredentials(state *stogas.State, bifrostErr *schemas.BifrostError) *schemas.BifrostError {
+	if state == nil || state.Resolution == nil || bifrostErr == nil || bifrostErr.Error == nil {
+		return bifrostErr
+	}
+	const minimum = 8
+	message := bifrostErr.Error.Message
+	for _, secret := range stogas.MCPToolSecrets(state.Resolution.RawTools()) {
+		if len(secret) >= minimum {
+			message = strings.ReplaceAll(message, secret, "[omitted]")
+		}
+	}
+	if message == bifrostErr.Error.Message {
+		return bifrostErr
+	}
+	masked, field := *bifrostErr, *bifrostErr.Error
+	field.Message = message
+	masked.Error = &field
+	return &masked
 }
 
 // messageNamesCredential reports whether message repeats the credential: the

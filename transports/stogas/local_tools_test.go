@@ -2,12 +2,10 @@ package stogas
 
 import (
 	"errors"
-	"math/big"
 	"testing"
 
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
-	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
 
 const (
@@ -219,37 +217,6 @@ func TestProviderResponsesStreamRefusesInconsistentShellAndPatchCalls(t *testing
 			}
 		})
 	}
-}
-
-// heldInputTokens sums the input tokens of every hold meter, at any rate.
-func heldInputTokens(t *testing.T, body string) (int64, *State) {
-	t.Helper()
-	resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/responses", Body: []byte(body)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
-	if err := state.Adapter.ValidateRequest(state); err != nil {
-		t.Fatal(err)
-	}
-	if err := state.Adapter.SanitizeRequest(state); err != nil {
-		t.Fatal(err)
-	}
-	if err := state.Adapter.EstimateHold(state); err != nil {
-		t.Fatal(err)
-	}
-	total := new(big.Int)
-	for _, meter := range state.Hold.Meters {
-		if meter.MeterKey != billing.MeterInputTokens {
-			continue
-		}
-		quantity, ok := new(big.Int).SetString(meter.Quantity, 10)
-		if !ok {
-			t.Fatalf("bad quantity %q", meter.Quantity)
-		}
-		total.Add(total, quantity)
-	}
-	return total.Int64(), state
 }
 
 // OpenAI adds its own instructions for each tool, which the request does not show, so the hold

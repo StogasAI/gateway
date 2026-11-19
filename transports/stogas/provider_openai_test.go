@@ -75,11 +75,26 @@ func TestValidateToolsRejectsOpenAINativeToolsAndBadShapes(t *testing.T) {
 		t.Fatalf("expected malformed tools to fail closed, got %v", err)
 	}
 
-	for _, rawType := range []string{"mcp", "web_search_20260209", "web_search_2026_01_01", "web_search_latest", "web_search_preview_20250311", "web_search_preview_2026_01_01", "web_search_preview_latest"} {
+	for _, rawType := range []string{"web_search_20260209", "web_search_2026_01_01", "web_search_latest", "web_search_preview_20250311", "web_search_preview_2026_01_01", "web_search_preview_latest"} {
 		err := validateOpenAIGuardrails(toolAdapterContext(t, openAIAdapterRouteResponses, `{"tools":[{"type":"`+rawType+`"}]}`))
 		if !errors.Is(err, errOpenAIUnsupportedTool) {
 			t.Fatalf("expected unknown Responses tool type %q to fail closed, got %v", rawType, err)
 		}
+	}
+}
+
+// The guardrails check each tool's type. The Responses policy checks each MCP server's settings.
+func TestValidateResponsesGuardrailsAcceptRemoteMCP(t *testing.T) {
+	for _, body := range []string{
+		`{"tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","require_approval":"never"}]}`,
+		`{"tools":[{"type":"mcp","server_label":"calendar","connector_id":"connector_googlecalendar","require_approval":"never"}]}`,
+	} {
+		if err := validateOpenAIGuardrails(toolAdapterContext(t, openAIAdapterRouteResponses, body)); err != nil {
+			t.Fatalf("guardrails refused %s: %v", body, err)
+		}
+	}
+	if err := validateOpenAIGuardrails(toolAdapterContext(t, openAIAdapterRouteChat, `{"tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp"}]}`)); !errors.Is(err, errOpenAIUnsupportedTool) {
+		t.Fatalf("expected remote MCP on chat completions to fail closed, got %v", err)
 	}
 }
 

@@ -22,18 +22,22 @@ type observedToolCall struct {
 }
 
 // responsesLoggedToolCall reports whether the request log records an output item as a tool call,
-// and the ID that answers it. The client answers its own calls, and the provider runs the rest.
+// and the ID that answers it. The client answers its own calls and the provider's approval
+// requests; the provider runs the rest.
 func responsesLoggedToolCall(item providerResponsesItem) (string, bool) {
 	switch item.itemType {
 	case schemas.ResponsesMessageTypeFunctionCall, schemas.ResponsesMessageTypeCustomToolCall,
 		schemas.ResponsesMessageTypeShellCall, schemas.ResponsesMessageTypeApplyPatchCall:
 		return item.callID, true
+	case schemas.ResponsesMessageTypeMCPApprovalRequest:
+		return item.id, true
 	case schemas.ResponsesMessageTypeToolSearchCall:
 		if item.execution == schemas.ToolSearchExecutionClient {
 			return item.callID, true
 		}
 		return "", true
-	case schemas.ResponsesMessageTypeWebSearchCall, schemas.ResponsesMessageTypeWebFetchCall:
+	case schemas.ResponsesMessageTypeWebSearchCall, schemas.ResponsesMessageTypeWebFetchCall,
+		schemas.ResponsesMessageTypeMCPCall, schemas.ResponsesMessageTypeMCPListTools:
 		return "", true
 	default:
 		return "", false

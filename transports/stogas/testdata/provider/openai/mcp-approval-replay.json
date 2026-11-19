@@ -1,0 +1,397 @@
+{
+	"shows": "With store: false, OpenAI lists a remote MCP server's tools and asks for approval of a call, returns the tool with <redacted> for its authorization and for each header value and with its server_url as sent, and makes the call when the next request replays the listing and the approval request with an approval. The public server takes no credentials, so the call item is a failed one.",
+	"recorded": "2026-11-19",
+	"exchanges": [
+		{
+			"name": "approval request",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 300,
+					"tools": [
+						{
+							"type": "mcp",
+							"server_label": "wiki",
+							"server_url": "https://mcp.deepwiki.com/mcp?contract=query-value-of-the-contract",
+							"allowed_tools": [
+								"read_wiki_structure"
+							],
+							"authorization": "authorization-value-of-the-contract",
+							"headers": {
+								"x-contract": "header-value-of-the-contract"
+							}
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Read the wiki structure of the GitHub repository openai/tiktoken with the tool."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_070df259d0cf99e5016afe5ae6ed6487d2979b5337ab03c7e3",
+					"object": "response",
+					"created_at": 1795054311,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795054312,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 300,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "mcpl_070df259d0cf99e5016afe5ae7421087d28ab0cc8c391aa778",
+							"type": "mcp_list_tools",
+							"server_label": "wiki",
+							"tools": [
+								{
+									"annotations": {
+										"read_only": false
+									},
+									"description": "Get a list of documentation topics for a GitHub repository.",
+									"input_schema": {
+										"type": "object",
+										"additionalProperties": false,
+										"properties": {
+											"repoName": {
+												"description": "GitHub repository in owner/repo format (e.g. \"facebook/react\").",
+												"type": "string"
+											}
+										},
+										"required": [
+											"repoName"
+										]
+									},
+									"name": "read_wiki_structure"
+								}
+							]
+						},
+						{
+							"id": "mcpr_070df259d0cf99e5016afe5ae8ca5487d2b2e1a5cd71bd1274",
+							"type": "mcp_approval_request",
+							"arguments": "{\"repoName\":\"openai/tiktoken\"}",
+							"name": "read_wiki_structure",
+							"server_label": "wiki"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "mcp",
+							"allowed_tools": [
+								"read_wiki_structure"
+							],
+							"authorization": "<redacted>",
+							"headers": {
+								"x-contract": "<redacted>"
+							},
+							"require_approval": "always",
+							"server_description": null,
+							"server_label": "wiki",
+							"server_url": "https://mcp.deepwiki.com/mcp?contract=query-value-of-the-contract"
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 167,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 27,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 194
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "approved call",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 300,
+					"tools": [
+						{
+							"type": "mcp",
+							"server_label": "wiki",
+							"server_url": "https://mcp.deepwiki.com/mcp?contract=query-value-of-the-contract",
+							"allowed_tools": [
+								"read_wiki_structure"
+							],
+							"authorization": "authorization-value-of-the-contract",
+							"headers": {
+								"x-contract": "header-value-of-the-contract"
+							}
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Read the wiki structure of the GitHub repository openai/tiktoken with the tool."
+						},
+						{
+							"id": "mcpl_070df259d0cf99e5016afe5ae7421087d28ab0cc8c391aa778",
+							"type": "mcp_list_tools",
+							"server_label": "wiki",
+							"tools": [
+								{
+									"annotations": {
+										"read_only": false
+									},
+									"description": "Get a list of documentation topics for a GitHub repository.",
+									"input_schema": {
+										"type": "object",
+										"additionalProperties": false,
+										"properties": {
+											"repoName": {
+												"description": "GitHub repository in owner/repo format (e.g. \"facebook/react\").",
+												"type": "string"
+											}
+										},
+										"required": [
+											"repoName"
+										]
+									},
+									"name": "read_wiki_structure"
+								}
+							]
+						},
+						{
+							"id": "mcpr_070df259d0cf99e5016afe5ae8ca5487d2b2e1a5cd71bd1274",
+							"type": "mcp_approval_request",
+							"arguments": "{\"repoName\":\"openai/tiktoken\"}",
+							"name": "read_wiki_structure",
+							"server_label": "wiki"
+						},
+						{
+							"type": "mcp_approval_response",
+							"approval_request_id": "mcpr_070df259d0cf99e5016afe5ae8ca5487d2b2e1a5cd71bd1274",
+							"approve": true
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_070df259d0cf99e5016afe5ae8f78c87d29b39b3a061b4ed41",
+					"object": "response",
+					"created_at": 1795054313,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795054314,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 300,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "mcp_070df259d0cf99e5016afe5ae91ff087d28c968aa2ac4912cc",
+							"type": "mcp_call",
+							"status": "failed",
+							"approval_request_id": "mcpr_070df259d0cf99e5016afe5ae8ca5487d2b2e1a5cd71bd1274",
+							"arguments": "{\"repoName\":\"openai/tiktoken\"}",
+							"error": {
+								"type": "mcp_tool_execution_error",
+								"content": [
+									{
+										"type": "text",
+										"text": "Authentication is not allowed on the public DeepWiki endpoint (mcp.deepwiki.com). This endpoint is for public repositories only. Please use the Devin MCP endpoint (mcp.devin.ai) for private repositories.",
+										"annotations": null,
+										"meta": null
+									}
+								]
+							},
+							"name": "read_wiki_structure",
+							"output": null,
+							"server_label": "wiki"
+						},
+						{
+							"id": "msg_070df259d0cf99e5016afe5aea6ed887d2b003e869aab32a49",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "I couldn’t retrieve the wiki structure: the tool rejected the request because authentication isn’t allowed on the public DeepWiki endpoint."
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "mcp",
+							"allowed_tools": [
+								"read_wiki_structure"
+							],
+							"authorization": "<redacted>",
+							"headers": {
+								"x-contract": "<redacted>"
+							},
+							"require_approval": "always",
+							"server_description": null,
+							"server_label": "wiki",
+							"server_url": "https://mcp.deepwiki.com/mcp?contract=query-value-of-the-contract"
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 283,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 29,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 312
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		}
+	]
+}

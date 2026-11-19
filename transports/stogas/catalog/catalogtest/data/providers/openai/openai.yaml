@@ -3,6 +3,20 @@ providers:
   aliases: [open-ai]
   stogasByok: true
   companyId: openai
+  accountOptions:
+    - id: zero-data-retention
+      name: Zero Data Retention
+      group: data-retention
+      routes: [openai-chat-completions, openai-responses]
+      dataHandling:
+        storageLocation: none
+        retentionDays: 0
+        zeroDataRetention: true
+    - id: data-sharing
+      name: Data sharing
+      routes: [openai-chat-completions, openai-responses]
+      dataHandling:
+        trainingUse: true
   dataHandling:
     processingLocation: world
     storageLocation: unknown

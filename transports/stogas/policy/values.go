@@ -92,6 +92,12 @@ var (
 		return err == nil
 	}, "a date such as '2027-01-31'", nil}
 	interfaces = oneOf("chat_completions", "responses")
+	// A remote MCP server reads as its URL's lowercase host, or as connector: or tunnel: and the
+	// lowercase ID, and each of its tools as the server, a slash and the tool's name, or * for every
+	// tool.
+	mcpServer = patternDomain(`^[a-z0-9:][a-z0-9._:-]*$`, "a lowercase host, such as 'mcp.example.com', or an ID, such as 'connector:connector_gmail'")
+	mcpTool   = patternDomain(`^[a-z0-9:][a-z0-9._:-]*/.+$`,
+		"a server and one of its tools, such as 'mcp.example.com/search', or 'mcp.example.com/*' for every tool")
 	// A company that receives requests: one that the catalog lists, or unknown for one that the
 	// provider does not name.
 	company = fieldDomain{func(value string) bool {
@@ -148,10 +154,13 @@ var fieldDomains = map[string]fieldDomain{
 	"route.documentFormats.mediaTypes":  patternDomain(`^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$`, "a lowercase media type, such as 'application/pdf'"),
 	"provider.id":                       catalogID,
 	"provider.headquarteredCountry":     country,
-	"request.hostedTools":               oneOf("web_search", "web_fetch"),
+	"request.hostedTools":               oneOf("web_search", "web_fetch", "mcp"),
 	"credential.accountOptions":         catalogID,
 	"credential.declaredAccountOptions": catalogID,
 	"request.interface":                 interfaces,
+	"request.mcpServers":                mcpServer,
+	"request.mcpServersWithoutApproval": mcpServer,
+	"request.mcpTools":                  mcpTool,
 	"request.model":                     selection,
 }
 

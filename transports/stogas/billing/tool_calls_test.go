@@ -12,7 +12,7 @@ func TestToolCallIDHashIsTheStartOfItsSHA256(t *testing.T) {
 	for id, want := range map[string]string{
 		"call_1":                        "74196fe72e4cdc13",
 		"toolu_01A09q90qw90lq917835lq9": "5163f0072184f895",
-		"call_3":                        "259d356229cfbf19",
+		"mcpr_1":                        "27eecee3bcc71568",
 	} {
 		if got := ToolCallIDHash(id); got != want {
 			t.Errorf("ToolCallIDHash(%q) = %s, want %s", id, got, want)
@@ -30,21 +30,21 @@ func TestRequestLogPlacesToolCallsOnTheRequestClock(t *testing.T) {
 		// A whole response has no times.
 		{Type: "function_call", CallID: "call_2"},
 		// A call that never finished keeps its start.
-		{Type: "web_search_call", StartedAt: at(800)},
+		{Type: "mcp_call", StartedAt: at(800)},
 		// A time before the request cannot be placed.
-		{Type: "tool_search_call", StartedAt: at(-5), DoneAt: at(10)},
+		{Type: "mcp_list_tools", StartedAt: at(-5), DoneAt: at(10)},
 		// The clock ends with the request.
 		{Type: "web_fetch_call", StartedAt: at(900), DoneAt: at(5000)},
-		{Type: "custom_tool_call", CallID: "call_3", StartedAt: at(5000), DoneAt: at(6000)},
+		{Type: "mcp_approval_request", CallID: "mcpr_1", StartedAt: at(5000), DoneAt: at(6000)},
 	}, start, 1000)
 	want := []ToolCall{
 		{Type: "web_search_call", StartMS: ms(100), LatencyMS: ms(500)},
 		{Type: "function_call", StartMS: ms(700), LatencyMS: ms(50), CallIDHash: "74196fe72e4cdc13"},
 		{Type: "function_call", CallIDHash: ToolCallIDHash("call_2")},
-		{Type: "web_search_call", StartMS: ms(800)},
-		{Type: "tool_search_call"},
+		{Type: "mcp_call", StartMS: ms(800)},
+		{Type: "mcp_list_tools"},
 		{Type: "web_fetch_call", StartMS: ms(900), LatencyMS: ms(100)},
-		{Type: "custom_tool_call", StartMS: ms(1000), LatencyMS: ms(0), CallIDHash: "259d356229cfbf19"},
+		{Type: "mcp_approval_request", StartMS: ms(1000), LatencyMS: ms(0), CallIDHash: "27eecee3bcc71568"},
 	}
 	if !slices.EqualFunc(logged, want, func(a, b ToolCall) bool {
 		return a.Type == b.Type && a.CallIDHash == b.CallIDHash && equalMS(a.StartMS, b.StartMS) && equalMS(a.LatencyMS, b.LatencyMS)

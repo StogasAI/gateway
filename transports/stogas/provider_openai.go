@@ -477,6 +477,12 @@ func (OpenAIAdapter) ValidateRawResponsesToolType(state *State, tool map[string]
 	if err := hostedToolOffered(state, rawType); err != nil {
 		return err
 	}
+	if rawType == "mcp" {
+		if !responsesMCPSupported(state) {
+			return invalidRequest("Remote MCP tools are supported only for OpenAI deployments")
+		}
+		return nil
+	}
 	if openAIResponsesToolTypeSupported(rawType) {
 		if openAIWebSearchToolType(rawType) {
 			if state != nil && state.Resolution != nil && !responsesHostedToolChoiceAllowsCalls(state.Resolution.RawBody()) {
@@ -583,7 +589,7 @@ func validateOpenAIGuardrails(req openAIAdapterContext) error {
 
 func openAIResponsesToolTypeSupported(rawType string) bool {
 	switch strings.TrimSpace(rawType) {
-	case "function", "custom", "namespace", "shell", "apply_patch", "tool_search":
+	case "function", "custom", "namespace", "mcp", "shell", "apply_patch", "tool_search":
 		return true
 	default:
 		return openAIWebSearchToolType(rawType)
@@ -609,7 +615,7 @@ func openAIUnsupportedResponsesToolMessage(rawType string) string {
 	case normalized == "memory":
 		return rawType + " is not supported because it needs provider-held state that we do not offer"
 	default:
-		return "Only function, custom, namespace, shell, apply_patch, tool_search, and priced hosted web search tools are supported"
+		return "Only function, custom, namespace, shell, apply_patch, tool_search, remote MCP, and priced hosted web search tools are supported"
 	}
 }
 
@@ -638,6 +644,7 @@ func openAIHoldMeters(req openAIAdapterContext) []billing.MeterEstimate {
 	meters := []billing.MeterEstimate{}
 	if req.Route == openAIAdapterRouteResponses {
 		meters = append(meters, openAIResponsesHostedToolHoldMeters(req)...)
+		meters = append(meters, openAIResponsesMCPHoldMeters(req)...)
 	}
 	if req.Route == openAIAdapterRouteChat {
 		meters = append(meters, openAIChatSearchModelHoldMeters(req)...)
@@ -839,6 +846,7 @@ func validateTool(route openAIAdapterRoute, tool map[string]json.RawMessage) err
 			schemas.ResponsesToolTypeNamespace,
 			schemas.ResponsesToolTypeWebSearch,
 			schemas.ResponsesToolTypeWebSearchPreview,
+			schemas.ResponsesToolTypeMCP,
 			schemas.ResponsesToolTypeApplyPatch,
 			schemas.ResponsesToolTypeToolSearch:
 			return nil

@@ -724,6 +724,7 @@ func responsesEventHasOutput(response *schemas.BifrostResponsesStreamResponse) b
 		schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDelta,
 		schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta,
 		schemas.ResponsesStreamResponseTypeReasoningTextDelta,
+		schemas.ResponsesStreamResponseTypeMCPCallArgumentsDelta,
 		schemas.ResponsesStreamResponseTypeCustomToolCallInputDelta,
 		schemas.ResponsesStreamResponseTypeShellCallCommandDelta,
 		schemas.ResponsesStreamResponseTypeApplyPatchCallOperationDiffDelta:
@@ -734,7 +735,8 @@ func responsesEventHasOutput(response *schemas.BifrostResponsesStreamResponse) b
 		return nonEmptyString(response.Text)
 	case schemas.ResponsesStreamResponseTypeRefusalDone:
 		return nonEmptyString(response.Refusal)
-	case schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDone:
+	case schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDone,
+		schemas.ResponsesStreamResponseTypeMCPCallArgumentsDone:
 		return nonEmptyString(response.Arguments)
 	case schemas.ResponsesStreamResponseTypeCustomToolCallInputDone:
 		return nonEmptyString(response.Input)
@@ -777,6 +779,7 @@ func responsesEventHasToken(response *schemas.BifrostResponsesStreamResponse) bo
 		schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDelta,
 		schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta,
 		schemas.ResponsesStreamResponseTypeReasoningTextDelta,
+		schemas.ResponsesStreamResponseTypeMCPCallArgumentsDelta,
 		schemas.ResponsesStreamResponseTypeCustomToolCallInputDelta,
 		schemas.ResponsesStreamResponseTypeShellCallCommandDelta,
 		schemas.ResponsesStreamResponseTypeApplyPatchCallOperationDiffDelta:
@@ -787,7 +790,8 @@ func responsesEventHasToken(response *schemas.BifrostResponsesStreamResponse) bo
 		return nonEmptyString(response.Text)
 	case schemas.ResponsesStreamResponseTypeRefusalDone:
 		return nonEmptyString(response.Refusal)
-	case schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDone:
+	case schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDone,
+		schemas.ResponsesStreamResponseTypeMCPCallArgumentsDone:
 		return nonEmptyString(response.Arguments)
 	case schemas.ResponsesStreamResponseTypeCustomToolCallInputDone:
 		return nonEmptyString(response.Input)
@@ -968,6 +972,9 @@ func responsesToolActionHasToken(action *schemas.ResponsesToolMessageActionStruc
 	if shell := action.ResponsesShellToolCallAction; shell != nil && len(shell.Commands) > 0 {
 		return true
 	}
+	if approval := action.ResponsesMCPApprovalRequestAction; approval != nil {
+		return approval.Name != "" || approval.ServerLabel != "" || approval.Arguments != ""
+	}
 	return false
 }
 
@@ -997,6 +1004,10 @@ func responsesToolActionHasOutput(action *schemas.ResponsesToolMessageActionStru
 	}
 	if shell := action.ResponsesShellToolCallAction; shell != nil && len(shell.Commands) > 0 {
 		return true
+	}
+	if approval := action.ResponsesMCPApprovalRequestAction; approval != nil {
+		return approval.ID != "" || approval.Type != "" || approval.Name != "" ||
+			approval.ServerLabel != "" || approval.Arguments != ""
 	}
 	return false
 }

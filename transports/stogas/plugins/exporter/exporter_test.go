@@ -912,3 +912,40 @@ func TestHeldExportFollowsTheSample(t *testing.T) {
 		t.Fatalf("deliveries = %v, diagnostics = %+v", paths, d)
 	}
 }
+
+// A remote MCP tool's credentials reach the provider but never an export, including a token
+// in the server URL's user information, path or query.
+func TestCapturedInputOmitsToolCredentials(t *testing.T) {
+	e := New(context.Background(), testOptions(true, 16<<20))
+	defer e.Close()
+	c := e.Start(testConfig("https://example.com/webhook"), "id")
+	defer c.Discard()
+	tools := json.RawMessage(`[{"type":"mcp","server_label":"wiki","server_url":"https://user:pass@mcp.example.com:8443/s/path-secret/mcp?api_key=query-secret#x","authorization":"token-secret","headers":{"X-Api-Key":"header-secret"}},{"type":"mcp","server_label":"odd","server_url":"not a url"},{"type":"function","name":"lookup"}]`)
+	body := map[string]json.RawMessage{"input": json.RawMessage(`"hi"`), "tools": tools}
+	c.Input(body, true)
+	if string(body["tools"]) != string(tools) {
+		t.Fatal("capture changed the request that the provider receives")
+	}
+	var captured struct {
+		Tools []map[string]any `json:"tools"`
+	}
+	if err := json.Unmarshal(c.request, &captured); err != nil {
+		t.Fatal(err)
+	}
+	want := []map[string]any{
+		{"type": "mcp", "server_label": "wiki", "server_url": "https://mcp.example.com:8443", "authorization": "[omitted]", "headers": map[string]any{"X-Api-Key": "[omitted]"}},
+		{"type": "mcp", "server_label": "odd", "server_url": "[omitted]"},
+		{"type": "function", "name": "lookup"},
+	}
+	if !reflect.DeepEqual(captured.Tools, want) {
+		t.Fatalf("captured tools = %#v", captured.Tools)
+	}
+
+	plain := json.RawMessage(`[{"type":"function","name":"lookup"}]`)
+	if got, ok := omitToolCredentials(plain); !ok || string(got) != string(plain) {
+		t.Fatalf("tools without credentials changed: %s", got)
+	}
+	if _, ok := omitToolCredentials(json.RawMessage(`{"type":"mcp","authorization":"token-secret"}`)); ok {
+		t.Fatal("unreadable tools were kept")
+	}
+}

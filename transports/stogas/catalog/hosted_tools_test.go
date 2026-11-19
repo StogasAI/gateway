@@ -68,10 +68,11 @@ func TestEffectiveDataHandlingOnlyWorsens(t *testing.T) {
 			Certifications: []string{"soc2-type2", "iso-27001", "hipaa-eligible"}},
 		Locations: places,
 		HostedTools: map[HostedTool]HostedToolOffer{
-			HostedToolWebSearch: {DataHandling: HostedToolDataHandling{ProcessingLocation: "DE", RetentionDays: RetentionEffect{Set: true, Days: days(30)}}},
+			HostedToolWebSearch: {DataHandling: HostedToolDataHandling{ProcessingLocation: "DE", RetentionDays: Stated[int]{Set: true, Value: days(30)}}},
 			HostedToolWebFetch: {DataHandling: HostedToolDataHandling{ProcessingLocation: "unknown", StorageLocation: "unknown",
-				RetentionDays: RetentionEffect{Set: true}, ZeroDataRetention: &no, TrainingUse: &yes, EndToEndEncrypted: &no, TEE: &no, TEEVerified: &no,
+				RetentionDays: Stated[int]{Set: true}, ZeroDataRetention: &no, TrainingUse: Stated[bool]{Set: true, Value: &yes}, EndToEndEncrypted: &no, TEE: &no, TEEVerified: &no,
 				SharedWith: []string{"anthropic", "openai", "unknown"}, WithoutCertifications: []string{"hipaa-eligible", "fedramp-high"}}},
+			HostedToolMCP: {DataHandling: HostedToolDataHandling{TrainingUse: Stated[bool]{Set: true}}},
 		},
 	}
 	if got := deployment.EffectiveDataHandling(nil, nil); !reflect.DeepEqual(got, deployment.DataHandling) {
@@ -101,8 +102,15 @@ func TestEffectiveDataHandlingOnlyWorsens(t *testing.T) {
 		!slices.Equal(search.Certifications, deployment.DataHandling.Certifications) || len(deployment.DataHandling.Certifications) != 3 {
 		t.Fatalf("certifications: web fetch %v, web search %v, deployment %v", fetch.Certifications, search.Certifications, deployment.DataHandling.Certifications)
 	}
-	if *deployment.DataHandling.RetentionDays != 0 {
-		t.Fatal("the join changed the deployment's own retention")
+	// Unknown training use replaces false and ends zero data retention, and never replaces true.
+	if got := deployment.EffectiveDataHandling(nil, []HostedTool{HostedToolMCP}); got.TrainingUse != nil || got.ZeroDataRetention {
+		t.Fatalf("a tool whose training use is unknown: %+v", got)
+	}
+	if got := deployment.EffectiveDataHandling(nil, []HostedTool{HostedToolWebFetch, HostedToolMCP}); got.TrainingUse == nil || !*got.TrainingUse {
+		t.Fatalf("unknown training use replaced true: %+v", got)
+	}
+	if *deployment.DataHandling.RetentionDays != 0 || deployment.DataHandling.TrainingUse == nil {
+		t.Fatal("the join changed the deployment's own facts")
 	}
 	offered := deployment
 	delete(offered.HostedTools, HostedToolWebFetch)

@@ -41,11 +41,14 @@ func TestRequestLogFindsTheResultsOfTheLatestTurn(t *testing.T) {
 		})
 	}
 
-	const responsesTools = `"tools":[{"type":"function","name":"lookup"}]`
+	const responsesTools = `"tools":[` + mcpServerTool + `,{"type":"function","name":"lookup"}]`
 	call := func(id string) string {
 		return `{"type":"function_call","call_id":"` + id + `","name":"lookup","arguments":"{}"}`
 	}
 	output := func(id string) string { return `{"type":"function_call_output","call_id":"` + id + `","output":"x"}` }
+	const listing = `{"type":"mcp_list_tools","id":"mcpl_1","server_label":"wiki","tools":[{"name":"ask","input_schema":{"type":"object"}}]}`
+	const approvalRequest = `{"type":"mcp_approval_request","id":"mcpr_1","server_label":"wiki","name":"ask","arguments":"{}"}`
+	const approval = `{"type":"mcp_approval_response","approval_request_id":"mcpr_1","approve":true}`
 	for name, test := range map[string]struct {
 		input string
 		want  []string
@@ -57,7 +60,9 @@ func TestRequestLogFindsTheResultsOfTheLatestTurn(t *testing.T) {
 			call("c2") + "," + output("c2") + `,{"role":"user","content":"more"}]`, []string{"c2"}},
 		"a message between turns": {`[` + user + "," + call("c1") + "," + output("c1") + `,{"role":"user","content":"again"},` +
 			call("c2") + "," + output("c2") + `]`, []string{"c2"}},
-		"a reply after results": {`[` + user + "," + call("c1") + "," + output("c1") + `,{"role":"assistant","content":"done"}]`, nil},
+		"an approval":            {`[` + user + "," + listing + "," + approvalRequest + "," + approval + `]`, []string{"mcpr_1"}},
+		"a call and an approval": {`[` + user + "," + call("c1") + "," + approvalRequest + "," + output("c1") + "," + approval + `]`, []string{"c1", "mcpr_1"}},
+		"a reply after results":  {`[` + user + "," + call("c1") + "," + output("c1") + `,{"role":"assistant","content":"done"}]`, nil},
 	} {
 		t.Run("responses "+name, func(t *testing.T) {
 			state := resolvedResponseValidationState(t, `{"model":"provider:openai gpt-5.5",`+responsesTools+`,"input":`+test.input+`}`)
@@ -71,7 +76,7 @@ func TestRequestLogFindsTheResultsOfTheLatestTurn(t *testing.T) {
 // A streamed call runs from the event that adds it to the one that ends it, and a call that the
 // client answers keeps the ID that its result names.
 func TestRequestLogTimesStreamedToolCalls(t *testing.T) {
-	state := resolvedResponseValidationState(t, `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"web_search"},{"type":"function","name":"lookup"}]}`)
+	state := resolvedResponseValidationState(t, `{"model":"provider:openai gpt-5.5","input":"hi","tools":[`+mcpServerTool+`,{"type":"function","name":"lookup"}]}`)
 	sequence := 0
 	send := func(event *schemas.BifrostResponsesStreamResponse) {
 		t.Helper()
@@ -82,23 +87,16 @@ func TestRequestLogTimesStreamedToolCalls(t *testing.T) {
 		}
 	}
 	send(validResponsesProviderEvent(schemas.ResponsesStreamResponseTypeCreated, 0, "resp_tools"))
-	searchIndex, callIndex := 0, 1
-	search := providerWebSearchOutputItem("ws_1", "https://example.com/one")
-	searchType, inProgress, completed := schemas.ResponsesMessageTypeWebSearchCall, "in_progress", "completed"
-	addedSearch := schemas.ResponsesMessage{ID: search.ID, Type: &searchType, Status: &inProgress, ResponsesToolMessage: &schemas.ResponsesToolMessage{CallID: search.ID}}
-	send(&schemas.BifrostResponsesStreamResponse{Type: schemas.ResponsesStreamResponseTypeOutputItemAdded, OutputIndex: &searchIndex, Item: &addedSearch})
+	listIndex, callIndex := 0, 1
+	listing := mcpListing("mcpl_1", "wiki")
+	addedListing := listing
+	addedListing.ResponsesToolMessage = &schemas.ResponsesToolMessage{ServerLabel: schemas.Ptr("wiki"), ResponsesMCPListTools: &schemas.ResponsesMCPListTools{Tools: []schemas.ResponsesMCPTool{}}}
+	send(&schemas.BifrostResponsesStreamResponse{Type: schemas.ResponsesStreamResponseTypeOutputItemAdded, OutputIndex: &listIndex, Item: &addedListing})
 	if len(state.toolCalls) != 1 || state.toolCalls[0].startedAt.IsZero() || !state.toolCalls[0].doneAt.IsZero() {
-		t.Fatalf("search after it was added = %+v, want started and not done", state.toolCalls)
+		t.Fatalf("listing after it was added = %+v, want started and not done", state.toolCalls)
 	}
-	for _, eventType := range []schemas.ResponsesStreamResponseType{
-		schemas.ResponsesStreamResponseTypeWebSearchCallInProgress,
-		schemas.ResponsesStreamResponseTypeWebSearchCallSearching,
-		schemas.ResponsesStreamResponseTypeWebSearchCallCompleted,
-	} {
-		send(&schemas.BifrostResponsesStreamResponse{Type: eventType, OutputIndex: &searchIndex, ItemID: search.ID})
-	}
-	send(&schemas.BifrostResponsesStreamResponse{Type: schemas.ResponsesStreamResponseTypeOutputItemDone, OutputIndex: &searchIndex, Item: &search})
-	itemType := schemas.ResponsesMessageTypeFunctionCall
+	send(&schemas.BifrostResponsesStreamResponse{Type: schemas.ResponsesStreamResponseTypeOutputItemDone, OutputIndex: &listIndex, Item: &listing})
+	itemType, inProgress, completed := schemas.ResponsesMessageTypeFunctionCall, "in_progress", "completed"
 	added := schemas.ResponsesMessage{
 		ID: schemas.Ptr("fc_1"), Type: &itemType, Status: &inProgress,
 		ResponsesToolMessage: &schemas.ResponsesToolMessage{CallID: schemas.Ptr("call_1"), Name: schemas.Ptr("lookup"), Arguments: schemas.Ptr("")},
@@ -111,13 +109,13 @@ func TestRequestLogTimesStreamedToolCalls(t *testing.T) {
 	done.ResponsesToolMessage = &schemas.ResponsesToolMessage{CallID: schemas.Ptr("call_1"), Name: schemas.Ptr("lookup"), Arguments: schemas.Ptr("{}")}
 	send(&schemas.BifrostResponsesStreamResponse{Type: schemas.ResponsesStreamResponseTypeOutputItemDone, OutputIndex: &callIndex, Item: &done})
 	terminal := validResponsesProviderEvent(schemas.ResponsesStreamResponseTypeCompleted, sequence, "resp_tools")
-	terminal.Response.Output = []schemas.ResponsesMessage{search, done}
+	terminal.Response.Output = []schemas.ResponsesMessage{listing, done}
 	send(terminal)
 
 	calls := state.loggedToolCalls()
-	if len(calls) != 2 || calls[0].Type != "web_search_call" || calls[0].CallID != "" ||
+	if len(calls) != 2 || calls[0].Type != "mcp_list_tools" || calls[0].CallID != "" ||
 		calls[1].Type != "function_call" || calls[1].CallID != "call_1" {
-		t.Fatalf("logged calls = %+v, want the search and the function call", calls)
+		t.Fatalf("logged calls = %+v, want the listing and the function call", calls)
 	}
 	for _, call := range calls {
 		if call.StartedAt.IsZero() || call.DoneAt.Before(call.StartedAt) {
@@ -125,14 +123,14 @@ func TestRequestLogTimesStreamedToolCalls(t *testing.T) {
 		}
 	}
 	if calls[1].StartedAt.Before(calls[0].DoneAt) {
-		t.Fatal("the call started before the search ended")
+		t.Fatal("the call started before the listing ended")
 	}
 }
 
 func TestRequestLogKeepsWholeResponsesUntimed(t *testing.T) {
-	state := resolvedResponseValidationState(t, `{"model":"provider:openai gpt-5.5","input":"hi","tool_choice":"required","tools":[{"type":"web_search"},{"type":"function","name":"lookup"}]}`)
-	response := validUnaryResponsesProviderResponse("resp_search_and_call")
-	response.Output = []schemas.ResponsesMessage{providerWebSearchOutputItem("ws_1", "https://example.com/one"), providerFunctionOutputItem("fc_1", "call_1", "lookup")}
+	state := resolvedResponseValidationState(t, `{"model":"provider:openai gpt-5.5","input":"hi","tool_choice":"required","tools":[`+mcpServerTool+`]}`)
+	response := validUnaryResponsesProviderResponse("resp_mcp_approval")
+	response.Output = []schemas.ResponsesMessage{mcpListing("mcpl_1", "wiki"), mcpApprovalRequest("mcpr_1", "wiki")}
 	if err := validateProviderResponsesResponse(state, response); err != nil {
 		t.Fatal(err)
 	}
@@ -141,8 +139,8 @@ func TestRequestLogKeepsWholeResponsesUntimed(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls := state.loggedToolCalls()
-	if len(calls) != 2 || calls[0].Type != "web_search_call" || calls[1].Type != "function_call" || calls[1].CallID != "call_1" {
-		t.Fatalf("logged calls = %+v, want the search and the function call", calls)
+	if len(calls) != 2 || calls[0].Type != "mcp_list_tools" || calls[1].Type != "mcp_approval_request" || calls[1].CallID != "mcpr_1" {
+		t.Fatalf("logged calls = %+v, want the listing and the approval request", calls)
 	}
 	for _, call := range calls {
 		if !call.StartedAt.IsZero() || !call.DoneAt.IsZero() {

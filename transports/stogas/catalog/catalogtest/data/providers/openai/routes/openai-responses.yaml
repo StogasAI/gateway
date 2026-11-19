@@ -230,3 +230,14 @@ routes:
         openai_responses_web_search_preview_non_reasoning_calls:
           per_1k_calls: '25'
       dataHandling: {}
+    - tool: mcp
+      dataHandling:
+        processingLocation: unknown
+        storageLocation: unknown
+        retentionDays: null
+        trainingUse: null
+        zeroDataRetention: false
+        endToEndEncrypted: false
+        tee: false
+        teeVerified: false
+        sharedWith: [unknown]

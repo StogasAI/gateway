@@ -309,6 +309,32 @@ func TestOutcomeUnknownNamesTheProviderFailure(t *testing.T) {
 	}
 }
 
+// A provider's error that repeats a remote MCP server's token, header value or the part of its
+// URL beside the origin keeps the provider's words without the value, so no export of the
+// failure holds one.
+func TestProviderErrorOmitsMCPCredentials(t *testing.T) {
+	resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: http.MethodPost, Path: "/v1/responses", Body: []byte(
+		`{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"wiki",` +
+			`"server_url":"https://user:url-password@mcp.example.com/s/path-secret/mcp?api_key=query-secret",` +
+			`"authorization":"token-secret","headers":{"X-Api-Key":"header-secret"}}]}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := &stogas.State{Resolution: resolution, Authorization: &billing.Authorization{UpstreamByok: "byok_1", UpstreamByokSecret: testProviderSecret}}
+	for message, want := range map[string]string{
+		"Error retrieving tool list from MCP server: 'wiki'. Http status code: 424": "Error retrieving tool list from MCP server: 'wiki'. Http status code: 424",
+		"The server at mcp.example.com refused the token token-secret":              "The server at mcp.example.com refused the token [omitted]",
+		"The server refused the header value header-secret":                         "The server refused the header value [omitted]",
+		"GET /s/path-secret/mcp?api_key=query-secret returned 404":                  "GET [omitted]?[omitted] returned 404",
+		"The server refused user:url-password":                                      "The server refused [omitted]",
+	} {
+		payload := bifrostErrorPayload(state, testBifrostError(http.StatusBadRequest, message, "invalid_request_error", ""))
+		if got := publicErrorObject(t, payload)["message"]; got != want {
+			t.Fatalf("message %q became %q, want %q", message, got, want)
+		}
+	}
+}
+
 // A JSON credential's secret fields never pass, while a provider's error may name its
 // identifiers, as Entra ID names the tenant and the application.
 func TestMessageNamesCredential(t *testing.T) {

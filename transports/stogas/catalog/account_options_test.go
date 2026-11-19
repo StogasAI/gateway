@@ -22,7 +22,7 @@ func TestAccountOptionsSetFactsBeforeToolsJoin(t *testing.T) {
 		Locations:      activeState().places,
 		AccountOptions: []AccountOption{zeroRetention, agreement},
 		HostedTools: map[HostedTool]HostedToolOffer{
-			HostedToolWebSearch: {DataHandling: HostedToolDataHandling{RetentionDays: RetentionEffect{Set: true, Days: days(30)}}},
+			HostedToolWebSearch: {DataHandling: HostedToolDataHandling{RetentionDays: Stated[int]{Set: true, Value: days(30)}}},
 			HostedToolWebFetch:  {DataHandling: HostedToolDataHandling{WithoutCertifications: []string{"hipaa-eligible"}}},
 		},
 	}

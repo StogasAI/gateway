@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/maximhq/bifrost/core/schemas"
@@ -22,10 +21,11 @@ type HostedTool string
 const (
 	HostedToolWebSearch HostedTool = "web_search"
 	HostedToolWebFetch  HostedTool = "web_fetch"
+	HostedToolMCP       HostedTool = "mcp"
 )
 
 // HostedTools lists every hosted tool in canonical order.
-var HostedTools = []HostedTool{HostedToolWebSearch, HostedToolWebFetch}
+var HostedTools = []HostedTool{HostedToolWebSearch, HostedToolWebFetch, HostedToolMCP}
 
 func hostedToolRank(tool HostedTool) int { return slices.Index(HostedTools, tool) }
 
@@ -39,40 +39,36 @@ type HostedToolOffer struct {
 // HostedToolDataHandling is where a tool's own processing sends request content and what it
 // keeps. Each set field can only make the deployment's value worse.
 type HostedToolDataHandling struct {
-	ProcessingLocation string          `json:"processingLocation,omitzero"`
-	StorageLocation    string          `json:"storageLocation,omitzero"`
-	RetentionDays      RetentionEffect `json:"retentionDays,omitzero"`
-	TrainingUse        *bool           `json:"trainingUse,omitzero"`
-	ZeroDataRetention  *bool           `json:"zeroDataRetention,omitzero"`
-	EndToEndEncrypted  *bool           `json:"endToEndEncrypted,omitzero"`
-	TEE                *bool           `json:"tee,omitzero"`
-	TEEVerified        *bool           `json:"teeVerified,omitzero"`
+	ProcessingLocation string       `json:"processingLocation,omitzero"`
+	StorageLocation    string       `json:"storageLocation,omitzero"`
+	RetentionDays      Stated[int]  `json:"retentionDays,omitzero"`
+	TrainingUse        Stated[bool] `json:"trainingUse,omitzero"`
+	ZeroDataRetention  *bool        `json:"zeroDataRetention,omitzero"`
+	EndToEndEncrypted  *bool        `json:"endToEndEncrypted,omitzero"`
+	TEE                *bool        `json:"tee,omitzero"`
+	TEEVerified        *bool        `json:"teeVerified,omitzero"`
 	// SharedWith lists the companies that the tool sends request content to.
 	SharedWith []string `json:"sharedWith,omitzero"`
 	// WithoutCertifications lists the deployment's certifications that do not cover the tool.
 	WithoutCertifications []string `json:"withoutCertifications,omitzero"`
 }
 
-// RetentionEffect is a tool's retention. Unset leaves the deployment's; a nil Days is unknown.
-type RetentionEffect struct {
-	Set  bool
-	Days *int
+// Stated is a tool's retention or training use, which the catalog can state as unknown. Unset
+// leaves the deployment's value; a nil Value is unknown.
+type Stated[T any] struct {
+	Set   bool
+	Value *T
 }
 
-// MarshalJSON writes a set retention as the catalog states it: its days, or null when unknown.
-func (r RetentionEffect) MarshalJSON() ([]byte, error) {
-	if r.Days == nil {
-		return []byte("null"), nil
-	}
-	return strconv.AppendInt(nil, int64(*r.Days), 10), nil
-}
+// MarshalJSON writes a set fact as the catalog states it: its value, or null when unknown.
+func (s Stated[T]) MarshalJSON() ([]byte, error) { return jsonv2.Marshal(s.Value) }
 
-func (r *RetentionEffect) UnmarshalJSONFrom(decoder *jsontext.Decoder) error {
-	var days *int
-	if err := jsonv2.UnmarshalDecode(decoder, &days); err != nil {
+func (s *Stated[T]) UnmarshalJSONFrom(decoder *jsontext.Decoder) error {
+	var value *T
+	if err := jsonv2.UnmarshalDecode(decoder, &value); err != nil {
 		return err
 	}
-	r.Set, r.Days = true, days
+	s.Set, s.Value = true, value
 	return nil
 }
 
@@ -110,15 +106,16 @@ func (d Deployment) EffectiveDataHandling(options []HeldOption, tools []HostedTo
 		if effect.RetentionDays.Set {
 			switch {
 			case handling.RetentionDays == nil:
-			case effect.RetentionDays.Days == nil:
+			case effect.RetentionDays.Value == nil:
 				handling.RetentionDays = nil
-			case *effect.RetentionDays.Days > *handling.RetentionDays:
-				days := *effect.RetentionDays.Days
+			case *effect.RetentionDays.Value > *handling.RetentionDays:
+				days := *effect.RetentionDays.Value
 				handling.RetentionDays = &days
 			}
 		}
-		if isTrue(effect.TrainingUse) {
-			handling.TrainingUse = schemas.Ptr(true)
+		// Training use only worsens: false, then unknown, then true.
+		if effect.TrainingUse.Set && !isTrue(handling.TrainingUse) {
+			handling.TrainingUse = effect.TrainingUse.Value
 		}
 		handling.ZeroDataRetention = handling.ZeroDataRetention && !isFalse(effect.ZeroDataRetention)
 		handling.EndToEndEncrypted = handling.EndToEndEncrypted && !isFalse(effect.EndToEndEncrypted)
@@ -160,8 +157,8 @@ func validateHostedTools(owner string, claudeWire bool, tools map[HostedTool]Hos
 		if !certificationsInOrder(effect.WithoutCertifications) {
 			return fmt.Errorf("%s has an invalid list of certifications that do not cover %s", owner, tool)
 		}
-		if effect.RetentionDays.Set && effect.RetentionDays.Days != nil && *effect.RetentionDays.Days < 0 ||
-			isFalse(effect.TrainingUse) || isTrue(effect.ZeroDataRetention) || isTrue(effect.EndToEndEncrypted) ||
+		if effect.RetentionDays.Set && effect.RetentionDays.Value != nil && *effect.RetentionDays.Value < 0 ||
+			isFalse(effect.TrainingUse.Value) || isTrue(effect.ZeroDataRetention) || isTrue(effect.EndToEndEncrypted) ||
 			isTrue(effect.TEE) || isTrue(effect.TEEVerified) {
 			return fmt.Errorf("%s has %s data handling that would improve the deployment's", owner, tool)
 		}
@@ -279,6 +276,8 @@ func hostedToolForType(kind string) (HostedTool, bool) {
 		return HostedToolWebSearch, true
 	case schemas.ResponsesToolTypeWebFetch:
 		return HostedToolWebFetch, true
+	case schemas.ResponsesToolTypeMCP:
+		return HostedToolMCP, true
 	}
 	return "", false
 }

@@ -1,0 +1,360 @@
+{
+	"shows": "OpenAI fetches a remote MCP server's tool list under tool_choice none too, and fetches none when the input replays the listing.",
+	"recorded": "2026-11-19",
+	"exchanges": [
+		{
+			"name": "tool_choice none",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 300,
+					"tool_choice": "none",
+					"tools": [
+						{
+							"type": "mcp",
+							"server_label": "wiki",
+							"server_url": "https://mcp.deepwiki.com/mcp",
+							"allowed_tools": [
+								"read_wiki_structure"
+							]
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Reply with OK."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_0fff1f23aa9d646a016afe5941d68487d2b907496dfc53910c",
+					"object": "response",
+					"created_at": 1795053889,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795053891,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 300,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "mcpl_0fff1f23aa9d646a016afe5941eb4487d29a2356207c545a1a",
+							"type": "mcp_list_tools",
+							"server_label": "wiki",
+							"tools": [
+								{
+									"annotations": {
+										"read_only": false
+									},
+									"description": "Get a list of documentation topics for a GitHub repository.",
+									"input_schema": {
+										"type": "object",
+										"additionalProperties": false,
+										"properties": {
+											"repoName": {
+												"description": "GitHub repository in owner/repo format (e.g. \"facebook/react\").",
+												"type": "string"
+											}
+										},
+										"required": [
+											"repoName"
+										]
+									},
+									"name": "read_wiki_structure"
+								}
+							]
+						},
+						{
+							"id": "msg_0fff1f23aa9d646a016afe594339e087d2af197eaa9b0e9ba3",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "OK"
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "none",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "mcp",
+							"allowed_tools": [
+								"read_wiki_structure"
+							],
+							"headers": null,
+							"require_approval": "always",
+							"server_description": null,
+							"server_label": "wiki",
+							"server_url": "https://mcp.deepwiki.com/mcp"
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 153,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 5,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 158
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "replayed listing",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 300,
+					"tool_choice": "none",
+					"tools": [
+						{
+							"type": "mcp",
+							"server_label": "wiki",
+							"server_url": "https://mcp.deepwiki.com/mcp",
+							"allowed_tools": [
+								"read_wiki_structure"
+							]
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Reply with OK."
+						},
+						{
+							"id": "mcpl_0fff1f23aa9d646a016afe5941eb4487d29a2356207c545a1a",
+							"type": "mcp_list_tools",
+							"server_label": "wiki",
+							"tools": [
+								{
+									"annotations": {
+										"read_only": false
+									},
+									"description": "Get a list of documentation topics for a GitHub repository.",
+									"input_schema": {
+										"type": "object",
+										"additionalProperties": false,
+										"properties": {
+											"repoName": {
+												"description": "GitHub repository in owner/repo format (e.g. \"facebook/react\").",
+												"type": "string"
+											}
+										},
+										"required": [
+											"repoName"
+										]
+									},
+									"name": "read_wiki_structure"
+								}
+							]
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_0fff1f23aa9d646a016afe5943731c87d287e13014e76c60d8",
+					"object": "response",
+					"created_at": 1795053891,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795053892,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 300,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "msg_0fff1f23aa9d646a016afe5944467487d28149cead073e4441",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "OK"
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "none",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "mcp",
+							"allowed_tools": [
+								"read_wiki_structure"
+							],
+							"headers": null,
+							"require_approval": "always",
+							"server_description": null,
+							"server_label": "wiki",
+							"server_url": "https://mcp.deepwiki.com/mcp"
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 153,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 5,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 158
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		}
+	]
+}

@@ -400,12 +400,12 @@ func TestPrepareProviderRequestRecordsSettingsWithoutContent(t *testing.T) {
 				"parallel_tool_calls":false,"truncation":"auto"}`,
 		},
 		{
-			name:  "responses records the hosted tools that the model may call",
+			name:  "responses records the hosted tools that the request can use",
 			route: "responses",
 			body: `{"model":"provider:openai gpt-5.5","input":"secret prompt","max_output_tokens":64,
-				"tools":[{"type":"web_search"},{"type":"function","name":"secret_tool","parameters":{"type":"object"}}],
+				"tools":[{"type":"web_search"},{"type":"mcp","server_label":"secret","server_url":"https://mcp.example.com"}],
 				"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_search"}]}}`,
-			want: `{"max_output_tokens":64,"include":["reasoning.encrypted_content"],"tool_choice":"allowed_tools","hosted_tools":["web_search"]}`,
+			want: `{"max_output_tokens":64,"include":["reasoning.encrypted_content"],"tool_choice":"allowed_tools","hosted_tools":["web_search","mcp"]}`,
 		},
 		{
 			name:  "responses to Anthropic reads extra parameters",

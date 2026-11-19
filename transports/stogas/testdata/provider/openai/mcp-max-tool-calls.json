@@ -1,0 +1,195 @@
+{
+	"shows": "max_tool_calls counts the calls of a remote MCP server that run without approval: with a cap of 1, a request that asks for three calls runs one.",
+	"recorded": "2026-11-19",
+	"exchanges": [
+		{
+			"name": "three calls under a cap of one",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 600,
+					"max_tool_calls": 1,
+					"tools": [
+						{
+							"type": "mcp",
+							"server_label": "wiki",
+							"server_url": "https://mcp.deepwiki.com/mcp",
+							"allowed_tools": [
+								"read_wiki_structure"
+							],
+							"require_approval": "never"
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Read the wiki structure of three GitHub repositories with the tool, one call for each: openai/tiktoken, openai/evals and openai/whisper. Then name the three repositories."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_0ae2db89944b1dcb016afe5944b18c87d2a5d8ae56fce4e48f",
+					"object": "response",
+					"created_at": 1795053892,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795053897,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 600,
+					"max_tool_calls": 1,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "mcpl_0ae2db89944b1dcb016afe5944cd1887d2b8f91ed86935830d",
+							"type": "mcp_list_tools",
+							"server_label": "wiki",
+							"tools": [
+								{
+									"annotations": {
+										"read_only": false
+									},
+									"description": "Get a list of documentation topics for a GitHub repository.",
+									"input_schema": {
+										"type": "object",
+										"additionalProperties": false,
+										"properties": {
+											"repoName": {
+												"description": "GitHub repository in owner/repo format (e.g. \"facebook/react\").",
+												"type": "string"
+											}
+										},
+										"required": [
+											"repoName"
+										]
+									},
+									"name": "read_wiki_structure"
+								}
+							]
+						},
+						{
+							"id": "mcp_0ae2db89944b1dcb016afe59471f4487d29f0e0a1b46ae90ef",
+							"type": "mcp_call",
+							"status": "completed",
+							"approval_request_id": null,
+							"arguments": "{\"repoName\":\"openai/tiktoken\"}",
+							"error": null,
+							"name": "read_wiki_structure",
+							"output": "Available pages for openai/tiktoken:\n\n- 1 Overview\n- 2 Architecture\n  - 2.1 Core BPE Implementation\n  - 2.2 Python-Rust Bridge (PyO3 Bindings)\n  - 2.3 Python Encoding Wrapper\n  - 2.4 Encoding Registry and Model Mapping\n  - 2.5 Plugin System and Encoding Definitions\n- 3 API Reference\n  - 3.1 Core Encoding API\n  - 3.2 Model and Registry Functions\n  - 3.3 Working with Special Tokens\n  - 3.4 Data Loading and Format Conversion\n- 4 Build System and Distribution\n  - 4.1 Python Package Configuration\n  - 4.2 Rust Crate Configuration\n  - 4.3 Cross-Platform CI/CD\n  - 4.4 Python-Rust Integration Details\n- 5 Data Loading and Caching\n  - 5.1 Caching Strategy and Configuration\n  - 5.2 Multi-Protocol File Loading\n  - 5.3 Format Conversion and Compatibility\n- 6 Educational Tools\n- 7 Testing Strategy\n  - 7.1 Test Infrastructure and Helpers\n  - 7.2 Core Functionality Tests\n  - 7.3 Serialization and Persistence\n  - 7.4 Offset Calculation and Unicode Handling\n- 8 Development and Contributing\n- 9 Performance and Benchmarking\n- 10 Glossary",
+							"server_label": "wiki"
+						},
+						{
+							"id": "msg_0ae2db89944b1dcb016afe5948c6fc87d292f56a37d990bf55",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "The three repositories are `openai/tiktoken`, `openai/evals`, and `openai/whisper`. I was able to read the wiki structure for `openai/tiktoken`, but the tool limit prevented me from reading the other two."
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "mcp",
+							"allowed_tools": [
+								"read_wiki_structure"
+							],
+							"headers": null,
+							"require_approval": "never",
+							"server_description": null,
+							"server_label": "wiki",
+							"server_url": "https://mcp.deepwiki.com/mcp"
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 619,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 84,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 703
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		}
+	]
+}
