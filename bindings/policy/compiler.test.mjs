@@ -92,7 +92,9 @@ test('the JavaScript binding returns combined policies and typed edit failures',
 		sources,
 		edit: { scope: 'key', id: 'key', previous: sources[1].config }
 	});
-	assert.deepEqual(kept.notes, [{ kind: 'kept', scope: 'organization', sections: ['input'] }]);
+	assert.deepEqual(kept.notes, [
+		{ kind: 'kept', scope: 'organization', sections: ['input.asciiOnly'] }
+	]);
 });
 
 test('conditional opaque rules preserve their source identity without retaining output aliases', () => {
