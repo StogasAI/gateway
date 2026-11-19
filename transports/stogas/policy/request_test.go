@@ -42,13 +42,13 @@ func requestParent(t *testing.T, raw string) *Config {
 }
 
 func TestRequestPolicyIntersectionAndIsolation(t *testing.T) {
-	parent := requestParent(t, `{"delegation":{"request":true},"routing":{"allowedCatalogNodes":{"providers":["openai"]},"filter":"deployment.capabilities.streaming == false"},"rules":{"baseline":{"mode":"default","routing":{"sort":[{"by":"provider.id","direction":"desc"}]}}}}`)
+	parent := requestParent(t, `{"delegation":{"requests":true},"routing":{"providers":{"allow":["openai"]},"filter":"deployment.capabilities.streaming == false"},"rules":{"baseline":{"mode":"default","routing":{"sort":[{"by":"provider.id","direction":"desc"}]}}}}`)
 	before, _ := json.Marshal(parent)
-	child, err := applyRequestJSON(parent, []byte(`{"routing":{"filter": "provider.id == \"anthropic\"", "sort": [{"by":"provider.id","direction":"asc"},{"by":"model.id","direction":"asc"}],"allowedCatalogNodes":{"providers":["anthropic"]}}}`))
+	child, err := applyRequestJSON(parent, []byte(`{"routing":{"filter": "provider.id == \"anthropic\"", "sort": [{"by":"provider.id","direction":"asc"},{"by":"model.id","direction":"asc"}],"providers":{"allow":["anthropic"]}}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if child.Routing.AllowedCatalogNodes.Allows("a", "m", "d", "r", "openai") || child.Routing.AllowedCatalogNodes.Allows("a", "m", "d", "r", "anthropic") {
+	if child.Routing.Admits("a", "m", "d", "r", "openai") || child.Routing.Admits("a", "m", "d", "r", "anthropic") {
 		t.Fatal("empty intersection must deny every provider")
 	}
 	if len(child.Routing.Query.Filters) != 2 {
@@ -65,14 +65,14 @@ func TestRequestPolicyIntersectionAndIsolation(t *testing.T) {
 	if string(before) != string(after) {
 		t.Fatal("request changed cached parent")
 	}
-	next, err := applyRequestJSON(parent, []byte(`{"routing":{"allowedCatalogNodes":{"models":["gpt"]}}}`))
-	if err != nil || !next.Routing.AllowedCatalogNodes.Allows("a", "gpt", "d", "r", "openai") {
+	next, err := applyRequestJSON(parent, []byte(`{"routing":{"models":{"allow":["gpt"]}}}`))
+	if err != nil || !next.Routing.Admits("a", "gpt", "d", "r", "openai") {
 		t.Fatalf("request restriction leaked: %v", err)
 	}
 }
 
 func TestRequestPolicyPermissionsAndClosedDocument(t *testing.T) {
-	parent := requestParent(t, `{"delegation":{"request":true}}`)
+	parent := requestParent(t, `{"delegation":{"requests":true}}`)
 	filter := []byte(`{"routing":{"filter": "has(provider.id)"}}`)
 	for _, allowed := range []Permission{0, permissionFilter, permissionFilter | permissionSort} {
 		parent.RequestPermission = RequestPermission(allowed)
@@ -93,9 +93,11 @@ func TestRequestPolicyPermissionsAndClosedDocument(t *testing.T) {
 	for _, raw := range []string{
 		`null`, `{"version":1}`, `{"version":2,"routing":{"filter": "has(provider.id)"}}`,
 		`{"routing":{"filter":null}}`,
-		`{"routing":{"filter":""}}`, `{"routing":{"allowedCatalogNodes":{"unknown":[]}}}`,
-		`{"routing":{"allowedCatalogNodes":{"providers":null}}}`,
-		`{"routing":{"allowedCatalogNodes":{"Providers":["openai"]}}}`,
+		`{"routing":{"filter":""}}`, `{"routing":{"unknown":{"allow":["openai"]}}}`,
+		`{"routing":{"providers":null}}`, `{"routing":{"providers":{}}}`, `{"routing":{"providers":{"allow":[]}}}`,
+		`{"routing":{"providers":{"allow":["openai"],"only":["openai"]}}}`, `{"routing":{"providers":["openai"]}}`,
+		`{"routing":{"providers":{"allow":["openai"],"deny":["openai"]}}}`, `{"routing":{"models":{"deny":["GPT"]}}}`,
+		`{"routing":{"Providers":{"allow":["openai"]}}}`,
 		`{"Version":1,"routing":{"filter": "has(provider.id)"}}`,
 		`{"routing":{"Query":"where exists(provider.id)"}}`,
 		`{"routing":{"filter": "has(provider.id)"},"plugins":{}}`,
@@ -106,7 +108,7 @@ func TestRequestPolicyPermissionsAndClosedDocument(t *testing.T) {
 			t.Fatalf("accepted invalid request: %s", raw)
 		}
 	}
-	if _, err := applyRequestJSON(parent, []byte(`{"routing":{"allowedCatalogNodes":{"providers":[]}}}`)); err != nil {
+	if _, err := applyRequestJSON(parent, []byte(`{"routing":{"providers":{"deny":[]}}}`)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -114,7 +116,7 @@ func TestRequestPolicyPermissionsAndClosedDocument(t *testing.T) {
 // A request's sort orders the ties that the saved requirements leave, ahead of
 // saved defaults.
 func TestRequestSortsFollowRequiredSorts(t *testing.T) {
-	parent := requestParent(t, `{"delegation":{"request":true},"routing":{"sort":[{"by":"provider.id","direction":"desc"}]},"rules":{"d":{"mode":"default","routing":{"sort":[{"by":"random()"}]}}}}`)
+	parent := requestParent(t, `{"delegation":{"requests":true},"routing":{"sort":[{"by":"provider.id","direction":"desc"}]},"rules":{"d":{"mode":"default","routing":{"sort":[{"by":"random()"}]}}}}`)
 	before, _ := json.Marshal(parent)
 	for _, sortBy := range []string{"model.id", "blendedPrice(3, 1)"} {
 		raw, _ := json.Marshal(map[string]any{"routing": map[string]any{"sort": []Sort{{By: sortBy, Direction: "desc"}}}})
@@ -172,7 +174,7 @@ func TestEncryptedRequestPolicyIsDecryptedOnlyAfterPermission(t *testing.T) {
 	for name, permission := range map[string][]string{"denied": {"routing.filter"}, "permitted": {"plugins.redaction", "plugins.encrypted"}} {
 		t.Run(name, func(t *testing.T) {
 			parent, _ := json.Marshal(map[string]any{
-				"delegation": map[string]any{"request": permission},
+				"delegation": map[string]any{"requests": permission},
 			})
 			base, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: ruleSource(t, string(parent))}})
 			if err != nil {
@@ -203,7 +205,7 @@ func TestEncryptedRequestPolicyIsDecryptedOnlyAfterPermission(t *testing.T) {
 func TestEncryptedRequestPolicyReportsReadableErrors(t *testing.T) {
 	fixture, key := loadWebcryptoFixture(t)
 	parent, _ := json.Marshal(map[string]any{
-		"delegation": map[string]any{"request": []string{"routing.retries", "plugins.redaction", "plugins.encrypted"}},
+		"delegation": map[string]any{"requests": []string{"routing.retries", "plugins.redaction", "plugins.encrypted"}},
 	})
 	base, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: ruleSource(t, string(parent))}})
 	if err != nil {

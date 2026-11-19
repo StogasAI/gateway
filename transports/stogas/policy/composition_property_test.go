@@ -93,7 +93,7 @@ func scalarSourceJSON(t *testing.T, top scalarPart, rules []scalarPart, organiza
 	t.Helper()
 	doc := top.fields()
 	if organization {
-		doc["delegation"] = map[string]any{"request": true}
+		doc["delegation"] = map[string]any{"requests": true}
 	}
 	if len(rules) > 0 {
 		named := map[string]any{}
@@ -259,7 +259,8 @@ func TestEverySettingDeclaresItsScopeAndCombination(t *testing.T) {
 		"access.networks":               {"candidate", "allowed networks intersect and denied networks join"},
 		"access.countries":              {"candidate", "allowed countries intersect and denied countries join"},
 		"access.transports":             {"candidate", "allowed modes intersect and denied modes join"},
-		"input":                         {"candidate", "any true requires ASCII; allowed types intersect and denied types join"},
+		"input.asciiOnly":               {"candidate", "any true requires ASCII"},
+		"input.mediaTypes":              {"candidate", "allowed types intersect and denied types join"},
 		"limits":                        {"saved", "every limit applies"},
 		"plugins.redaction":             {"candidate", "union of presets and expressions"},
 		"plugins.encrypted":             {"candidate", "hides an export or redaction, which then combines as readable"},
@@ -269,7 +270,11 @@ func TestEverySettingDeclaresItsScopeAndCombination(t *testing.T) {
 		"plugins.export":                {"candidate", "union of destinations"},
 		"plugins.promptCaching":         {"candidate", "the strongest mode: 1h, then 5m, then off"},
 		"routing.filter":                {"candidate", "every filter must match"},
-		"routing.allowedCatalogNodes":   {"candidate", "intersection"},
+		"routing.authors":               {"candidate", "allowed IDs intersect and denied IDs join"},
+		"routing.models":                {"candidate", "allowed IDs intersect and denied IDs join"},
+		"routing.deployments":           {"candidate", "allowed IDs intersect and denied IDs join"},
+		"routing.routes":                {"candidate", "allowed IDs intersect and denied IDs join"},
+		"routing.providers":             {"candidate", "allowed IDs intersect and denied IDs join"},
 		"routing.retries":               {"candidate", "minimum"},
 		"routing.missingEncryptionKeys": {"candidate", "fail wins"},
 		"timeouts.outputIdleSeconds":    {"candidate", "minimum"},

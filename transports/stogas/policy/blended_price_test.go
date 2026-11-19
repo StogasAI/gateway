@@ -163,7 +163,7 @@ func TestBlendedPriceSortingAndIntersection(t *testing.T) {
 	expensive, _ := DecimalValue("9")
 	left := testValues{"deployment.pricing.input_tokens.per_mill_tokens": cheap, "deployment.pricing.output_tokens.per_mill_tokens": expensive}
 	right := testValues{"deployment.pricing.input_tokens.per_mill_tokens": expensive, "deployment.pricing.output_tokens.per_mill_tokens": cheap}
-	parent := requestParent(t, `{"delegation":{"request":true},"rules":{"baseline":{"mode":"default","routing":{"sort":[{"by":"blendedPrice(3, 1)","direction":"asc"}]}}}}`)
+	parent := requestParent(t, `{"delegation":{"requests":true},"rules":{"baseline":{"mode":"default","routing":{"sort":[{"by":"blendedPrice(3, 1)","direction":"asc"}]}}}}`)
 	child, err := applyRequestJSON(parent, []byte(`{"routing":{"sort":[{"by":"blendedPrice(6, 2)","direction":"desc"},{"by":"blendedPrice(1, 3)","direction":"desc"}]}}`))
 	if err != nil {
 		t.Fatal(err)

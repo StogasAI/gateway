@@ -50,7 +50,7 @@ func TestRoutingRejectionsPrecedeRedactionWorkForBothSurfaces(t *testing.T) {
 		t.Fatal(err)
 	}
 	denied := policyConfig(1)
-	denied.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Models: []string{}}
+	denied.Routing.Models = &policy.Lists{Allow: []string{}}
 	filtered := policyConfig(1)
 	filtered.Routing.Query = mustRouting(t, `provider.id == 'not-a-provider'`, nil)
 	for _, path := range []string{"/v1/chat/completions", "/v1/responses"} {

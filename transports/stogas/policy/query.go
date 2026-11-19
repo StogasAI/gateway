@@ -40,7 +40,7 @@ type Sort struct {
 }
 
 // sortLists names each list a criterion can hold and the candidate field it
-// ranks. Lists name the same nodes as routing.allowedCatalogNodes.
+// ranks. Lists name the same catalog IDs as the allow and deny lists of routing.
 var sortLists = [...]struct {
 	name, field string
 	ids         func(*Sort) []string
@@ -119,20 +119,13 @@ func (c *Config) CompositionBytes() int64 {
 	if c.Routing.Query != nil {
 		total += int64(unsafe.Sizeof(*c.Routing.Query)) + int64(cap(c.Routing.Query.Filters))*8
 	}
-	if nodes := c.Routing.AllowedCatalogNodes; nodes != nil {
-		borrowed := false
-		for _, entry := range c.sources {
-			if entry.Value.Config.Routing.AllowedCatalogNodes == nodes {
-				borrowed = true
-				break
-			}
+	// A list that one policy alone sets is that policy's, which counts its own.
+	for _, list := range routingLists {
+		lists := *list.lists(&c.Routing)
+		if lists == nil || slices.ContainsFunc(c.sources, func(entry ScopedSource) bool { return *list.lists(&entry.Value.Config.Routing) == lists }) {
+			continue
 		}
-		if !borrowed {
-			total += int64(unsafe.Sizeof(*nodes))
-			for _, list := range [][]string{nodes.Authors, nodes.Deployments, nodes.Models, nodes.Providers, nodes.Routes} {
-				total += int64(cap(list)) * 16
-			}
-		}
+		total += int64(unsafe.Sizeof(*lists)) + int64(cap(lists.Allow)+cap(lists.Deny))*16
 	}
 	return total
 }

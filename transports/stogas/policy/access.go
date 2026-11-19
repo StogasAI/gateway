@@ -18,15 +18,13 @@ const (
 
 var transports = []string{TransportHTTPS, TransportAttestedTLS, TransportE2EE}
 
-// Transports limits requests by their connection mode, as Networks limits them
-// by where they come from.
-type Transports struct {
-	// Allow, when present, admits only requests over its modes. A composed
-	// config holds the modes that every policy allows, so an empty list
-	// admits none.
+// Lists admits a value that allow, when present, lists and that deny does not.
+// Countries, connection modes and each kind of catalog ID use them. A composed
+// config holds the values that every policy allows, so an empty allow list
+// admits none, and the values that any policy denies.
+type Lists struct {
 	Allow []string `json:"allow,omitzero"`
-	// Deny refuses requests over its modes.
-	Deny []string `json:"deny,omitzero"`
+	Deny  []string `json:"deny,omitzero"`
 }
 
 // Networks limits requests by where they come from. Both lists take
@@ -42,19 +40,6 @@ type Networks struct {
 	Deny []string `json:"deny,omitzero"`
 
 	allow, deny networkSet
-}
-
-// Countries limits requests by the country that the gateway's lists place
-// the client's address in. A client without an address, such as one of the
-// onion service, and an address that the lists place nowhere are in no
-// country.
-type Countries struct {
-	// Allow, when present, admits only clients in its countries. A composed
-	// config holds the countries that every policy allows, so an empty list
-	// admits none.
-	Allow []string `json:"allow,omitzero"`
-	// Deny refuses clients in its countries.
-	Deny []string `json:"deny,omitzero"`
 }
 
 // Client is where a request came from, with what the gateway's network lists
@@ -161,7 +146,7 @@ func (c *Config) ClientRefusal(client Client) Refusal {
 // TransportDenied reports whether the policies refuse requests over the
 // connection mode.
 func (c *Config) TransportDenied(transport string) bool {
-	return c != nil && c.Access != nil && c.Access.Transports != nil && !c.Access.Transports.admits(transport)
+	return c != nil && c.Access != nil && !c.Access.Transports.admits(transport)
 }
 
 func (n *Networks) validate() error {
@@ -436,66 +421,74 @@ func subtractNetworks(a, b []netip.Prefix) []netip.Prefix {
 	return out
 }
 
-// validate reads the lists of countries as Networks.validate reads networks.
-func (c *Countries) validate() error {
-	if c == nil {
+// validate checks the lists of a setting, whose entries are each a noun that
+// valid accepts and that expected describes. An empty deny list replaces a
+// default and refuses nothing, and a deny list of every value, as a default,
+// refuses until a nearer scope sets its own lists. An allow list that admits
+// nothing would refuse every request, which disabling the resource already
+// says.
+func (l *Lists) validate(setting, noun, expected string, valid func(string) bool) error {
+	if l == nil {
 		return nil
 	}
-	if c.Allow == nil && c.Deny == nil {
-		return configError("access.countries requires allow or deny")
+	if l.Allow == nil && l.Deny == nil {
+		return configError("%s requires allow or deny", setting)
 	}
-	if c.Allow != nil && len(c.Allow) == 0 {
-		return configError("access.countries.allow requires at least one country")
+	if l.Allow != nil && len(l.Allow) == 0 {
+		return configError("%s.allow requires at least one %s", setting, noun)
 	}
 	for _, list := range [2]struct {
-		name  string
-		codes []string
-	}{{"allow", c.Allow}, {"deny", c.Deny}} {
-		for index, code := range list.codes {
-			if _, ok := slices.BinarySearch(countryCodes, code); !ok {
-				return configError("access.countries.%s has %q, which is not an ISO 3166-1 alpha-2 country code", list.name, code)
+		name   string
+		values []string
+	}{{"allow", l.Allow}, {"deny", l.Deny}} {
+		for index, value := range list.values {
+			if !valid(value) {
+				return configError("%s.%s has %q, which is not %s", setting, list.name, value, expected)
 			}
-			if slices.Contains(list.codes[:index], code) {
-				return configError("access.countries.%s lists %s twice", list.name, code)
+			if slices.Contains(list.values[:index], value) {
+				return configError("%s.%s lists %s twice", setting, list.name, value)
 			}
 		}
 	}
-	if c.Allow != nil && !slices.ContainsFunc(c.Allow, c.admits) {
-		return configError("access.countries.deny holds every country that allow lists")
+	if l.Allow != nil && !slices.ContainsFunc(l.Allow, l.admits) {
+		return configError("%s.deny holds every %s that allow lists", setting, noun)
 	}
 	return nil
 }
 
-// admits reports whether the lists accept a client in the country, which is
-// empty for a client in none.
-func (c *Countries) admits(country string) bool {
-	return (c.Allow == nil || slices.Contains(c.Allow, country)) && !slices.Contains(c.Deny, country)
+// admits reports whether the lists accept value. Absent lists accept every
+// value, and a country of a client in none is empty.
+func (l *Lists) admits(value string) bool {
+	return l == nil || (l.Allow == nil || slices.Contains(l.Allow, value)) && !slices.Contains(l.Deny, value)
 }
 
-// combine returns the countries that both allow and the countries that either
-// denies, in alphabetical order.
-func (c *Countries) combine(other *Countries) *Countries {
-	if c == nil {
+// combine returns the values that both allow and the values that either
+// denies, in order.
+func (l *Lists) combine(other *Lists) *Lists {
+	if l == nil {
 		return other
 	}
-	out := &Countries{}
+	if other == nil {
+		return l
+	}
+	out := &Lists{}
 	switch {
-	case c.Allow == nil:
+	case l.Allow == nil:
 		out.Allow = slices.Clone(other.Allow)
 	case other.Allow == nil:
-		out.Allow = slices.Clone(c.Allow)
+		out.Allow = slices.Clone(l.Allow)
 	default:
 		out.Allow = []string{}
-		for _, code := range c.Allow {
-			if slices.Contains(other.Allow, code) {
-				out.Allow = append(out.Allow, code)
+		for _, value := range l.Allow {
+			if slices.Contains(other.Allow, value) {
+				out.Allow = append(out.Allow, value)
 			}
 		}
 	}
-	if c.Deny != nil || other.Deny != nil {
-		out.Deny = slices.Compact(slices.Sorted(slices.Values(slices.Concat(c.Deny, other.Deny))))
-	}
 	slices.Sort(out.Allow)
+	if l.Deny != nil || other.Deny != nil {
+		out.Deny = slices.Compact(slices.Sorted(slices.Values(slices.Concat(l.Deny, other.Deny))))
+	}
 	return out
 }
 
@@ -515,72 +508,4 @@ var countryCodes = strings.Fields(`
 func CountryCode(code string) bool {
 	_, ok := slices.BinarySearch(countryCodes, code)
 	return ok
-}
-
-// validate reads the lists of connection modes as Networks.validate reads
-// networks. An empty deny list replaces a default and refuses nothing, and a
-// deny list of every mode, as a default, refuses requests until a nearer
-// scope sets its own lists. An allow list that admits nothing would refuse
-// every request, which disabling the resource already says.
-func (t *Transports) validate() error {
-	if t == nil {
-		return nil
-	}
-	if t.Allow == nil && t.Deny == nil {
-		return configError("access.transports requires allow or deny")
-	}
-	if t.Allow != nil && len(t.Allow) == 0 {
-		return configError("access.transports.allow requires at least one connection mode")
-	}
-	if err := validateModes("allow", t.Allow); err != nil {
-		return err
-	}
-	if err := validateModes("deny", t.Deny); err != nil {
-		return err
-	}
-	if t.Allow != nil && !slices.ContainsFunc(t.Allow, t.admits) {
-		return configError("access.transports.deny holds every mode that allow lists")
-	}
-	return nil
-}
-
-func validateModes(list string, modes []string) error {
-	for index, mode := range modes {
-		if !slices.Contains(transports, mode) {
-			return configError("access.transports.%s has %q, which is not https, attested_tls or e2ee", list, mode)
-		}
-		if slices.Contains(modes[:index], mode) {
-			return configError("access.transports.%s lists %s twice", list, mode)
-		}
-	}
-	return nil
-}
-
-// admits reports whether the lists accept requests over the mode.
-func (t *Transports) admits(mode string) bool {
-	return (t.Allow == nil || slices.Contains(t.Allow, mode)) && !slices.Contains(t.Deny, mode)
-}
-
-// combine returns the modes that both allow and the modes that either denies,
-// in a fixed order.
-func (t *Transports) combine(other *Transports) *Transports {
-	if t == nil {
-		return other
-	}
-	out := &Transports{}
-	if t.Allow != nil || other.Allow != nil {
-		out.Allow = []string{}
-	}
-	if t.Deny != nil || other.Deny != nil {
-		out.Deny = []string{}
-	}
-	for _, mode := range transports {
-		if out.Allow != nil && (t.Allow == nil || slices.Contains(t.Allow, mode)) && (other.Allow == nil || slices.Contains(other.Allow, mode)) {
-			out.Allow = append(out.Allow, mode)
-		}
-		if slices.Contains(t.Deny, mode) || slices.Contains(other.Deny, mode) {
-			out.Deny = append(out.Deny, mode)
-		}
-	}
-	return out
 }

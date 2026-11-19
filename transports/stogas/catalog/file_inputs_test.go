@@ -104,7 +104,7 @@ func TestRoutingSkipsDeploymentsThatCannotReadTheAttachments(t *testing.T) {
 				setModalities(order[1], "text", "image", "audio")
 			}
 			config := policyConfig(1)
-			config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Deployments: order}
+			config.Routing.Deployments = &policy.Lists{Allow: order}
 			config.Routing.Query = orderedQuery(t, "", order...)
 			if tc.extraction != nil {
 				config.Plugins = &policy.Plugins{TextExtraction: tc.extraction}
@@ -142,7 +142,7 @@ func TestRoutingRefusesAnAttachmentThatNoCandidateCanRead(t *testing.T) {
 	route.DocumentFormats = DocumentFormats{MediaTypes: []string{"text/plain"}, Extensions: []string{".txt"}}
 	snap.graph.Routes["openai-chat-completions"] = route
 	config := policyConfig(3)
-	config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Deployments: []string{"azure-gpt-5.6-sol", "openai-gpt-5.6-sol"}}
+	config.Routing.Deployments = &policy.Lists{Allow: []string{"azure-gpt-5.6-sol", "openai-gpt-5.6-sol"}}
 	checks := 0
 	_, err := ResolveRequest(RequestInput{
 		Body:   []byte(`{"model":"gpt-5.6-sol","messages":[{"role":"user","content":[{"type":"text","text":"x"},{"type":"file","file":{"file_data":"data:application/pdf;base64,JVBERi0xLjcK"}}]}]}`),
@@ -304,7 +304,7 @@ func TestRoutingSkipsPairsWhosePolicyRefusesOpaqueAttachments(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			configure := func(settings []setting) *policy.Config {
 				config := policyConfig(1)
-				config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Deployments: gpt}
+				config.Routing.Deployments = &policy.Lists{Allow: gpt}
 				config.Routing.Query = orderedQuery(t, "", gpt...)
 				for _, set := range settings {
 					set(config)
@@ -373,7 +373,7 @@ func TestRoutingSkipsPairsWhosePolicyRefusesMediaTypes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			configure := func(input *policy.Input) *policy.Config {
 				config := policyConfig(1)
-				config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Deployments: gpt}
+				config.Routing.Deployments = &policy.Lists{Allow: gpt}
 				config.Routing.Query = orderedQuery(t, "", gpt...)
 				config.Input = input
 				return config
@@ -436,7 +436,7 @@ func TestRoutingNamesAttachmentsThatNoDeploymentReadsTogether(t *testing.T) {
 		}
 	}
 	config := policyConfig(2)
-	config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Deployments: gpt}
+	config.Routing.Deployments = &policy.Lists{Allow: gpt}
 	_, err := ResolveRequest(RequestInput{
 		Body: []byte(`{"model":"gpt-5.6-sol","messages":[{"role":"user","content":[{"type":"text","text":"x"},` +
 			`{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgo="}},` +
@@ -477,7 +477,7 @@ func TestRoutingReportsTheErrorOfAPairThatCouldReadTheAttachments(t *testing.T) 
 				}
 			}
 			config := policyConfig(2)
-			config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Deployments: gpt}
+			config.Routing.Deployments = &policy.Lists{Allow: gpt}
 			_, err := ResolveRequest(RequestInput{
 				Body:   []byte(`{"model":"gpt-5.6-sol","messages":[{"role":"user","content":[{"type":"input_audio","input_audio":{"data":"AAAA","format":"wav"}}]}]}`),
 				Method: "POST", Path: "/v1/chat/completions", Policy: config,

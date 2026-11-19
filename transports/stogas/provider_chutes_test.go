@@ -485,7 +485,7 @@ func TestChutesFieldPolicyIsClosedOverTheSharedChatSurface(t *testing.T) {
 }
 
 func TestChutesRequestMetadataIsConsumedBeforeProviderValidation(t *testing.T) {
-	source, err := policy.CompileSource([]byte(`{"delegation":{"request":["routing.filter"]}}`))
+	source, err := policy.CompileSource([]byte(`{"delegation":{"requests":["routing.filter"]}}`))
 	if err != nil {
 		t.Fatal(err)
 	}

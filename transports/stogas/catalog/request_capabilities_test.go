@@ -33,7 +33,7 @@ func TestCatalogCapabilitiesFilterBeforeCredentialPreparation(t *testing.T) {
 					setTestCapabilities(snap.graph.Deployments["openai-gpt-5.6-sol"], lacking)
 					setTestCapabilities(snap.graph.Deployments["anthropic-claude-sonnet-4-6"], capable)
 					config := policyConfig(1)
-					config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Deployments: []string{"openai-gpt-5.6-sol", "anthropic-claude-sonnet-4-6"}}
+					config.Routing.Deployments = &policy.Lists{Allow: []string{"openai-gpt-5.6-sol", "anthropic-claude-sonnet-4-6"}}
 					fields := map[string]json.RawMessage{}
 					extra, path := tc.chat, "/v1/chat/completions"
 					fields["messages"] = json.RawMessage(`[{"role":"user","content":"hello"}]`)

@@ -184,7 +184,7 @@ func TestSavedSourceRejectsMalformedRuntimePolicy(t *testing.T) {
 		`{"routing":{"filter":"random() == 1"}}`, `{"rules":{"r":{"when":"random() > 0","routing":{"retries":1}}}}`,
 		`{"timeouts":{"totalSeconds":0}}`, `{"timeouts":{"outputIdleSeconds":3601}}`,
 		`{"timeouts":{"totalSeconds":1.5}}`, `{"timeouts":{"outputIdleSeconds":null}}`,
-		`{"delegation":{"request":"yes"}}`,
+		`{"delegation":{"requests":"yes"}}`,
 		`{"plugins":{"redaction":{"literals":[]}}}`,
 		`{"plugins":{"redaction":{"literals":[{"values":[]}]}}}`,
 		`{"plugins":{"redaction":{"literals":[{"values":["abcdefgh","short"],"fuzzy":true}]}}}`,
@@ -207,7 +207,7 @@ func TestCompositionKeepsParentsImmutableAndChecksCombinedLimits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	key, err := CompileSource([]byte(`{"delegation":{"request":["routing"]},"routing":{"filter": "model.id == \"model\"", "sort": [{"by":"provider.id","direction":"asc"}]}}`))
+	key, err := CompileSource([]byte(`{"delegation":{"requests":["routing"]},"routing":{"filter": "model.id == \"model\"", "sort": [{"by":"provider.id","direction":"asc"}]}}`))
 	if err != nil {
 		t.Fatal(err)
 	}

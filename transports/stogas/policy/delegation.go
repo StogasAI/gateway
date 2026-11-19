@@ -14,13 +14,18 @@ type Permission uint32
 
 const (
 	permissionSchedule Permission = 1 << iota
-	permissionInput
+	permissionASCIIOnly
+	permissionMediaTypes
 	permissionLimits
 	permissionRedaction
 	permissionEncryptedPlugins
 	permissionFilter
 	permissionSort
-	permissionNodes
+	permissionAuthors
+	permissionModels
+	permissionDeployments
+	permissionRoutes
+	permissionProviders
 	permissionRetries
 	permissionFallbacks
 	permissionDelegation
@@ -39,13 +44,19 @@ const (
 	requestPermissions = allPermissions &^ (permissionLimits | permissionDelegation)
 )
 
+// routingListUnits are the lists of each kind of catalog ID.
+const routingListUnits = permissionAuthors | permissionModels | permissionDeployments | permissionRoutes | permissionProviders
+
 var permissionSections = map[string]Permission{
-	"access":            permissionSchedule | permissionNetworks | permissionCountries | permissionTransports,
-	"access.schedule":   permissionSchedule,
-	"access.networks":   permissionNetworks,
-	"access.countries":  permissionCountries,
-	"access.transports": permissionTransports,
-	"input":             permissionInput, "limits": permissionLimits,
+	"access":                        permissionSchedule | permissionNetworks | permissionCountries | permissionTransports,
+	"access.schedule":               permissionSchedule,
+	"access.networks":               permissionNetworks,
+	"access.countries":              permissionCountries,
+	"access.transports":             permissionTransports,
+	"input":                         permissionASCIIOnly | permissionMediaTypes,
+	"input.asciiOnly":               permissionASCIIOnly,
+	"input.mediaTypes":              permissionMediaTypes,
+	"limits":                        permissionLimits,
 	"timeouts":                      permissionTotalTimeout | permissionOutputIdleTimeout,
 	"timeouts.totalSeconds":         permissionTotalTimeout,
 	"timeouts.outputIdleSeconds":    permissionOutputIdleTimeout,
@@ -56,10 +67,17 @@ var permissionSections = map[string]Permission{
 	"plugins.textExtraction.text":   permissionTextExtraction,
 	"plugins.textExtraction.office": permissionOfficeExtraction,
 	"plugins.textExtraction.pdf":    permissionPDFExtraction,
-	"plugins.redaction":             permissionRedaction, "plugins.encrypted": permissionEncryptedPlugins,
-	"routing":        permissionFilter | permissionSort | permissionNodes | permissionRetries | permissionFallbacks | permissionMissingKeys,
-	"routing.filter": permissionFilter, "routing.sort": permissionSort,
-	"routing.allowedCatalogNodes": permissionNodes, "routing.retries": permissionRetries,
+	"plugins.redaction":             permissionRedaction,
+	"plugins.encrypted":             permissionEncryptedPlugins,
+	"routing":                       permissionFilter | permissionSort | routingListUnits | permissionRetries | permissionFallbacks | permissionMissingKeys,
+	"routing.filter":                permissionFilter,
+	"routing.sort":                  permissionSort,
+	"routing.authors":               permissionAuthors,
+	"routing.models":                permissionModels,
+	"routing.deployments":           permissionDeployments,
+	"routing.routes":                permissionRoutes,
+	"routing.providers":             permissionProviders,
+	"routing.retries":               permissionRetries,
 	"routing.fallbacks":             permissionFallbacks,
 	"routing.missingEncryptionKeys": permissionMissingKeys,
 	"delegation":                    permissionDelegation,
@@ -84,7 +102,7 @@ func sectionPermission(setting string) Permission {
 // sectionGroups name several settings. Text extraction is a group of its
 // families, because each family combines on its own.
 var sectionGroups = map[string]bool{
-	"access": true, "routing": true, "plugins": true, "timeouts": true, "plugins.textExtraction": true,
+	"access": true, "input": true, "routing": true, "plugins": true, "timeouts": true, "plugins.textExtraction": true,
 }
 
 // eachSetting visits the settings of one top-level field with their values.
@@ -227,7 +245,7 @@ type Delegation struct {
 	Members     *DelegationRule    `json:"members"`
 	Credentials *DelegationRule    `json:"credentials"`
 	Keys        *DelegationRule    `json:"keys"`
-	Request     *RequestPermission `json:"request"`
+	Requests    *RequestPermission `json:"requests"`
 }
 
 func (d *Delegation) saved() map[Scope]*DelegationRule {

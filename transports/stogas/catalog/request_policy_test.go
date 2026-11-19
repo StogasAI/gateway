@@ -105,7 +105,7 @@ func TestReasoningCompatibilityFiltersBeforeCredentialPreparationAndRedaction(t 
 			t.Run(path+"/"+test.name, func(t *testing.T) {
 				loadTestCatalog(t)
 				config := policyConfig(1)
-				config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Deployments: []string{"openai-gpt-5.6-sol", "anthropic-claude-sonnet-4-6"}}
+				config.Routing.Deployments = &policy.Lists{Allow: []string{"openai-gpt-5.6-sol", "anthropic-claude-sonnet-4-6"}}
 				content := `"messages":[{"role":"user","content":"private@example.com"}],"max_completion_tokens":4096`
 				if path == "/v1/responses" {
 					content = `"input":"private@example.com","max_output_tokens":4096`
@@ -350,13 +350,13 @@ func TestOnlyTheSelectedCredentialTransformsInput(t *testing.T) {
 func TestCredentialFilteringRunsBeforeItsDictionaryAndCannotWeakenTheKey(t *testing.T) {
 	loadTestCatalog(t)
 	base := policyConfig(2)
-	base.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Providers: []string{"openai", "azure"}}
+	base.Routing.Providers = &policy.Lists{Allow: []string{"openai", "azure"}}
 	loads := 0
 	resolved, err := ResolveRequest(RequestInput{Body: policyChatBody(""), Method: "POST", Path: "/v1/chat/completions", Policy: base, CredentialPolicy: func(provider schemas.ModelProvider, _ int) (RequestPolicy, error) {
 		config := policyConfig(2)
-		config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Deployments: []string{"azure-gpt-5.6-sol"}}
+		config.Routing.Deployments = &policy.Lists{Allow: []string{"azure-gpt-5.6-sol"}}
 		if provider == schemas.OpenAI {
-			config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Models: []string{}}
+			config.Routing.Models = &policy.Lists{Allow: []string{}}
 		}
 		return RequestPolicy{Config: config, LoadRedactionPolicy: func() (*redaction.Policy, error) {
 			if provider == schemas.OpenAI {
@@ -388,7 +388,7 @@ func TestRequestPolicyCompilesOnceAndCombinesRedactionBeforeScanning(t *testing.
 			if err != nil {
 				t.Fatal(err)
 			}
-			credential, err := policy.CompileSource([]byte(`{"delegation":{"request":["plugins","input"]}}`))
+			credential, err := policy.CompileSource([]byte(`{"delegation":{"requests":["plugins","input"]}}`))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -723,7 +723,7 @@ func TestRequestCompositionBudgetCannotSkipAnEarlierCredential(t *testing.T) {
 		}
 		document := map[string]any{"rules": definitions}
 		if !request {
-			document["delegation"] = map[string]bool{"request": true}
+			document["delegation"] = map[string]bool{"requests": true}
 		}
 		raw, err := json.Marshal(document)
 		if err != nil {

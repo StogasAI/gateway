@@ -12,7 +12,7 @@ func BenchmarkCredentialPolicyAlternatives(b *testing.B) {
 	for index := range models {
 		models[index] = fmt.Sprintf("model-%08d-abcdefghijkl", index)
 	}
-	large, err := json.Marshal(map[string]any{"routing": map[string]any{"allowedCatalogNodes": map[string]any{"models": models}}})
+	large, err := json.Marshal(map[string]any{"routing": map[string]any{"models": map[string]any{"allow": models}}})
 	if err != nil {
 		b.Fatal(err)
 	}

@@ -289,7 +289,7 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 			}
 			if !policyAllowsSelection(value.Config, selection) {
 				if trace != nil {
-					trace.removePair(selection, index, original, RemovedCandidate{Reason: RemovedAllowedNodes, Origin: nodesOrigin(value.Config, selection.deployment)})
+					trace.removePair(selection, index, original, RemovedCandidate{Reason: RemovedLists, Origin: listsOrigin(value.Config, selection.deployment)})
 				}
 				continue
 			}

@@ -232,7 +232,7 @@ func (v *Inspector) Finish() (*Inspection, error) {
 	if err != nil {
 		return nil, err
 	}
-	delegation["request"] = compiled.RequestPermission
+	delegation["requests"] = compiled.RequestPermission
 	effective := map[string]any{"delegation": delegation}
 	if compiled.Input != nil {
 		effective["input"] = compiled.Input
@@ -244,8 +244,10 @@ func (v *Inspector) Finish() (*Inspection, error) {
 		effective["access"] = compiled.Access
 	}
 	routing := map[string]any{}
-	if compiled.Routing.AllowedCatalogNodes != nil {
-		routing["allowedCatalogNodes"] = sortedAllowedNodes(compiled.Routing.AllowedCatalogNodes)
+	for _, list := range routingLists {
+		if lists := *list.lists(&compiled.Routing); lists != nil {
+			routing[list.kind] = sortedLists(lists)
+		}
 	}
 	if compiled.Routing.Query != nil {
 		if len(compiled.Routing.Query.Filters) > 0 {
@@ -438,15 +440,15 @@ func inspectionPlugins(parts []*Plugins) (*Plugins, error) {
 	return plugins, validateInspectionPlugins(plugins)
 }
 
-func sortedAllowedNodes(value *AllowedCatalogNodes) *AllowedCatalogNodes {
-	copy := *value
-	for _, ids := range []*[]string{&copy.Authors, &copy.Models, &copy.Deployments, &copy.Routes, &copy.Providers} {
-		if *ids != nil {
-			*ids = append([]string{}, (*ids)...)
-			sort.Strings(*ids)
-		}
+func sortedLists(value *Lists) *Lists {
+	return &Lists{Allow: sortedCopy(value.Allow), Deny: sortedCopy(value.Deny)}
+}
+
+func sortedCopy(values []string) []string {
+	if values == nil {
+		return nil
 	}
-	return &copy
+	return slices.Sorted(slices.Values(values))
 }
 
 // inspectionSetBy names the policies that set each combined setting outside
@@ -480,8 +482,11 @@ func inspectionSetBy(entries []InspectionSource, sources []ScopedSource, compile
 	if compiled.Access != nil && compiled.Access.Transports != nil {
 		add("access.transports", permissionTransports, true, func(c *Config) bool { return c.Access != nil && c.Access.Transports != nil })
 	}
-	if compiled.Input != nil {
-		add("input", permissionInput, true, func(c *Config) bool { return c.Input.applies() })
+	if compiled.Input != nil && compiled.Input.ASCIIOnly {
+		add("input.asciiOnly", permissionASCIIOnly, true, func(c *Config) bool { return c.Input != nil && c.Input.ASCIIOnly })
+	}
+	if compiled.Input != nil && compiled.Input.MediaTypes != nil {
+		add("input.mediaTypes", permissionMediaTypes, true, func(c *Config) bool { return c.Input != nil && c.Input.MediaTypes != nil })
 	}
 	// Export and redaction name the policies whose settings for them combine. A
 	// required plugin replaces the defaults of that plugin alone.
@@ -524,8 +529,10 @@ func inspectionSetBy(entries []InspectionSource, sources []ScopedSource, compile
 	if mode := combinePromptCaching(compiled.PluginSources); mode != "" {
 		add("plugins.promptCaching", permissionPromptCaching, false, func(c *Config) bool { return c.Plugins != nil && c.Plugins.PromptCaching == mode })
 	}
-	if compiled.Routing.AllowedCatalogNodes != nil {
-		add("routing.allowedCatalogNodes", permissionNodes, true, func(c *Config) bool { return c.Routing.AllowedCatalogNodes != nil })
+	for _, list := range routingLists {
+		if *list.lists(&compiled.Routing) != nil {
+			add("routing."+list.kind, list.permission, true, func(c *Config) bool { return *list.lists(&c.Routing) != nil })
+		}
 	}
 	add("routing.fallbacks", permissionFallbacks, false, func(c *Config) bool { return c.Routing.Fallbacks == compiled.Routing.Fallbacks })
 	if query := compiled.Routing.Query; query != nil && len(query.Filters) > 0 {

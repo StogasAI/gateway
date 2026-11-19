@@ -126,7 +126,7 @@ func TestRoutingOrderNeverWidensCatalogAuthorizationOrPinnedSelectors(t *testing
 	loadTestCatalog(t)
 	for _, model := range []string{"", "gpt-5.6-sol", "provider:openai gpt-5.6-sol", "openai-gpt-5.6-sol"} {
 		config := policyConfig(3)
-		config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Providers: []string{"anthropic"}}
+		config.Routing.Providers = &policy.Lists{Allow: []string{"anthropic"}}
 		config.Routing.Query = orderedQuery(t, "", "openai-gpt-5.6-sol", "anthropic-claude-sonnet-4-6")
 		body := map[string]any{"input": "hello"}
 		if model != "" {
@@ -157,7 +157,7 @@ func TestRandomSortTriesEachDeploymentOnceAndStopsOnTerminalCredentialErrors(t *
 	loadTestCatalog(t)
 	for _, terminal := range []bool{false, true} {
 		config := policyConfig(3)
-		config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Deployments: []string{"openai-gpt-5.6-sol", "anthropic-claude-sonnet-4-6", "azure-gpt-5.6-sol"}}
+		config.Routing.Deployments = &policy.Lists{Allow: []string{"openai-gpt-5.6-sol", "anthropic-claude-sonnet-4-6", "azure-gpt-5.6-sol"}}
 		config.Routing.Query = mustRouting(t, "", []policy.Sort{{By: "random()"}})
 		seen := map[string]bool{}
 		_, err := ResolveRequest(RequestInput{Body: []byte(`{"input":"hello"}`), Method: "POST", Path: "/v1/responses", Policy: config,
@@ -187,7 +187,7 @@ func TestRandomSortTriesEachDeploymentOnceAndStopsOnTerminalCredentialErrors(t *
 func TestWeightedRandomSortSplitsFirstAttemptsByWeight(t *testing.T) {
 	loadTestCatalog(t)
 	config := policyConfig(3)
-	config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Deployments: []string{"openai-gpt-5.6-sol", "azure-gpt-5.6-sol"}}
+	config.Routing.Deployments = &policy.Lists{Allow: []string{"openai-gpt-5.6-sol", "azure-gpt-5.6-sol"}}
 	config.Routing.Query = mustRouting(t, "", []policy.Sort{{By: `random(provider.id == "openai" ? 3 : 1)`}})
 	const runs = 4000
 	first := map[string]int{}

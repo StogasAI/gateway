@@ -21,8 +21,9 @@ const (
 	RemovedServiceTier = "service_tier"
 	// The deployment needs a request that names it exactly.
 	RemovedApproval = "approval"
-	// routing.allowedCatalogNodes excludes the deployment.
-	RemovedAllowedNodes = "allowed_nodes"
+	// An allow or deny list of routing excludes the deployment's author, model,
+	// deployment, route or provider.
+	RemovedLists = "lists"
 	// Stogas does not serve the deployment with the credential's kind: a customer's own, or
 	// Stogas's account.
 	RemovedCredentialKind = "credential_kind"
@@ -285,9 +286,9 @@ func (p *providerSkips) record() {
 	}
 }
 
-func nodesOrigin(config *policy.Config, deployment Deployment) *policy.Origin {
+func listsOrigin(config *policy.Config, deployment Deployment) *policy.Origin {
 	ids := candidatePolicyIDs(&ResolvedRequest{Deployment: deployment})
-	if origin, ok := config.NodesOrigin(ids.author, ids.model, ids.deployment, ids.route, ids.provider); ok {
+	if origin, ok := config.ListsOrigin(ids.author, ids.model, ids.deployment, ids.route, ids.provider); ok {
 		return &origin
 	}
 	return nil

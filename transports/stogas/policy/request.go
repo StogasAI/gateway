@@ -92,36 +92,3 @@ func (r *Request) CompileRedaction() (*redaction.Policy, error) {
 	}
 	return CompileRedaction(source.Config)
 }
-
-func intersectAllowedNodes(parent, child *AllowedCatalogNodes) *AllowedCatalogNodes {
-	if child == nil {
-		return parent
-	}
-	if parent == nil {
-		return child
-	}
-	return &AllowedCatalogNodes{
-		Authors: intersectIDs(parent.Authors, child.Authors), Models: intersectIDs(parent.Models, child.Models),
-		Deployments: intersectIDs(parent.Deployments, child.Deployments), Routes: intersectIDs(parent.Routes, child.Routes),
-		Providers: intersectIDs(parent.Providers, child.Providers),
-	}
-}
-func intersectIDs(parent, child []string) []string {
-	if child == nil {
-		return parent
-	}
-	if parent == nil {
-		return child
-	}
-	allowed := make(map[string]bool, len(child))
-	for _, id := range child {
-		allowed[id] = true
-	}
-	out := make([]string, 0, len(parent))
-	for _, id := range parent {
-		if allowed[id] {
-			out = append(out, id)
-		}
-	}
-	return out
-}

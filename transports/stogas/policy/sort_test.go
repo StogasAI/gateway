@@ -88,3 +88,38 @@ func TestSortCriteriaTakeOneKind(t *testing.T) {
 		}
 	}
 }
+
+// Each kind of catalog ID takes allow and deny lists, which validate as access lists do and
+// combine across policies: allowed IDs intersect and denied IDs join.
+func TestRoutingListsValidateAndCombineByKind(t *testing.T) {
+	for raw, message := range map[string]string{
+		`{"routing":{"providers":{}}}`:                                      "routing.providers requires allow or deny",
+		`{"routing":{"models":{"allow":[]}}}`:                               "routing.models.allow requires at least one model ID",
+		`{"routing":{"routes":{"deny":["Azure"]}}}`:                         `routing.routes.deny has "Azure", which is not a catalog ID`,
+		`{"routing":{"authors":{"allow":["openai","openai"]}}}`:             "routing.authors.allow lists openai twice",
+		`{"routing":{"deployments":{"allow":["a","b"],"deny":["b","a"]}}}`:  "routing.deployments.deny holds every deployment ID that allow lists",
+		`{"routing":{"providers":{"allow":["openai"],"except":["azure"]}}}`: "unknown field",
+	} {
+		if _, err := CompileSource([]byte(raw)); err == nil || !strings.Contains(err.Error(), message) {
+			t.Errorf("%s: %v, want %q", raw, err, message)
+		}
+	}
+	org := ruleSource(t, `{"routing":{"providers":{"allow":["openai","azure"],"deny":["chutes"]},"models":{"deny":["gpt-a"]}}}`)
+	key := ruleSource(t, `{"routing":{"providers":{"allow":["azure","anthropic"]},"models":{"deny":["gpt-b"]}}}`)
+	config, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: org}, {Scope: KeyScope, Value: key}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if providers, models := config.Routing.Providers, config.Routing.Models; !slices.Equal(providers.Allow, []string{"azure"}) ||
+		!slices.Equal(providers.Deny, []string{"chutes"}) || models.Allow != nil || !slices.Equal(models.Deny, []string{"gpt-a", "gpt-b"}) {
+		t.Fatalf("combined lists %+v %+v", providers, models)
+	}
+	for _, test := range []struct {
+		model, provider string
+		admitted        bool
+	}{{"gpt-c", "azure", true}, {"gpt-c", "openai", false}, {"gpt-b", "azure", false}, {"gpt-a", "azure", false}} {
+		if config.Routing.Admits("author", test.model, "deployment", "route", test.provider) != test.admitted {
+			t.Errorf("%s on %s admitted=%v", test.model, test.provider, !test.admitted)
+		}
+	}
+}

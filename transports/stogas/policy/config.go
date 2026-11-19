@@ -252,36 +252,70 @@ func (t *Timeouts) OutputIdle() time.Duration {
 	return time.Duration(*t.OutputIdleSeconds) * time.Second
 }
 
-// Retries repeat a call to the same deployment and credential. Fallbacks move
-// to the next pair in routing order, so a request calls at most three pairs.
-// Query sorts candidates. Sorting never adds a deployment that selectors,
-// filters or credentials exclude.
+// The lists admit candidates by the catalog IDs of their author, model,
+// deployment, route and provider. Retries repeat a call to the same
+// deployment and credential. Fallbacks move to the next pair in routing
+// order, so a request calls at most three pairs. Query sorts candidates.
+// Sorting never adds a deployment that lists, filters or credentials exclude.
 // MissingEncryptionKeys is empty when no policy sets it, which fails.
 type Routing struct {
-	AllowedCatalogNodes   *AllowedCatalogNodes `json:"allowedCatalogNodes"`
-	Fallbacks             int                  `json:"fallbacks"`
-	MissingEncryptionKeys string               `json:"missingEncryptionKeys,omitempty"`
-	Query                 *Query               `json:"query"`
-	Retries               int                  `json:"retries"`
+	Authors               *Lists `json:"authors,omitempty"`
+	Models                *Lists `json:"models,omitempty"`
+	Deployments           *Lists `json:"deployments,omitempty"`
+	Routes                *Lists `json:"routes,omitempty"`
+	Providers             *Lists `json:"providers,omitempty"`
+	Fallbacks             int    `json:"fallbacks"`
+	MissingEncryptionKeys string `json:"missingEncryptionKeys,omitempty"`
+	Query                 *Query `json:"query"`
+	Retries               int    `json:"retries"`
 }
 
 // SkipsMissingKeys reports whether a candidate whose encryption key the
 // request did not send leaves only itself out.
 func (r Routing) SkipsMissingKeys() bool { return r.MissingEncryptionKeys == MissingKeysSkip }
 
-type AllowedCatalogNodes struct {
-	Authors     []string `json:"authors,omitzero"`
-	Deployments []string `json:"deployments,omitzero"`
-	Models      []string `json:"models,omitzero"`
-	Providers   []string `json:"providers,omitzero"`
-	Routes      []string `json:"routes,omitzero"`
+// routingList is one kind of catalog ID that routing lists take, with the
+// permission that sets it.
+type routingList struct {
+	kind, noun string
+	permission Permission
+	lists      func(*Routing) **Lists
+}
+
+var routingLists = [...]routingList{
+	{"authors", "author", permissionAuthors, func(r *Routing) **Lists { return &r.Authors }},
+	{"models", "model", permissionModels, func(r *Routing) **Lists { return &r.Models }},
+	{"deployments", "deployment", permissionDeployments, func(r *Routing) **Lists { return &r.Deployments }},
+	{"routes", "route", permissionRoutes, func(r *Routing) **Lists { return &r.Routes }},
+	{"providers", "provider", permissionProviders, func(r *Routing) **Lists { return &r.Providers }},
+}
+
+// HasLists reports whether any list of catalog IDs applies.
+func (r *Routing) HasLists() bool {
+	return r.Authors != nil || r.Models != nil || r.Deployments != nil || r.Routes != nil || r.Providers != nil
+}
+
+// Admits reports whether the lists accept a candidate with these catalog IDs.
+// An ID that the catalog in effect does not list matches nothing.
+func (r *Routing) Admits(authorID, modelID, deploymentID, routeID, providerID string) bool {
+	return r.Authors.admits(authorID) && r.Models.admits(modelID) && r.Deployments.admits(deploymentID) &&
+		r.Routes.admits(routeID) && r.Providers.admits(providerID)
+}
+
+func (r *Routing) validateLists() error {
+	for _, list := range routingLists {
+		if err := (*list.lists(r)).validate("routing."+list.kind, list.noun+" ID", "a catalog ID", nodeIDPattern.MatchString); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type Access struct {
-	Schedule   *Schedule   `json:"schedule,omitempty"`
-	Networks   *Networks   `json:"networks,omitempty"`
-	Countries  *Countries  `json:"countries,omitempty"`
-	Transports *Transports `json:"transports,omitempty"`
+	Schedule   *Schedule `json:"schedule,omitempty"`
+	Networks   *Networks `json:"networks,omitempty"`
+	Countries  *Lists    `json:"countries,omitempty"`
+	Transports *Lists    `json:"transports,omitempty"`
 }
 
 // Schedule refuses requests during weekly periods. It has no allow list,
@@ -501,7 +535,7 @@ func (c *Config) validate() error {
 			}
 		}
 	}
-	if err := c.Routing.AllowedCatalogNodes.validate(); err != nil {
+	if err := c.Routing.validateLists(); err != nil {
 		return err
 	}
 	if err := c.Routing.Query.validate(); err != nil {
@@ -516,26 +550,6 @@ func (c *Config) validate() error {
 	}
 	if err := c.Plugins.validate(); err != nil {
 		return err
-	}
-	return nil
-}
-
-func (a *AllowedCatalogNodes) validate() error {
-	if a == nil {
-		return nil
-	}
-	lists := [][]string{a.Authors, a.Deployments, a.Models, a.Providers, a.Routes}
-	for _, values := range lists {
-		seen := make(map[string]struct{}, len(values))
-		for _, value := range values {
-			if !nodeIDPattern.MatchString(value) {
-				return configError("allowed catalog node ID is invalid")
-			}
-			if _, exists := seen[value]; exists {
-				return configError("allowed catalog node IDs are not unique")
-			}
-			seen[value] = struct{}{}
-		}
 	}
 	return nil
 }
@@ -565,10 +579,12 @@ func (a *Access) validate() error {
 	if err := a.Networks.validate(); err != nil {
 		return err
 	}
-	if err := a.Countries.validate(); err != nil {
+	if err := a.Countries.validate("access.countries", "country", "an ISO 3166-1 alpha-2 country code", CountryCode); err != nil {
 		return err
 	}
-	if err := a.Transports.validate(); err != nil {
+	if err := a.Transports.validate("access.transports", "connection mode", "https, attested_tls or e2ee", func(mode string) bool {
+		return slices.Contains(transports, mode)
+	}); err != nil {
 		return err
 	}
 	if a.Schedule == nil {
@@ -703,29 +719,6 @@ func (w *DenyWindow) covers(now time.Time) bool {
 	local := now.In(w.location)
 	minute := local.Hour()*60 + local.Minute()
 	return w.weekdays[local.Weekday()] && minute >= w.startMinute && minute < w.endMinute
-}
-
-func (a *AllowedCatalogNodes) Allows(authorID, modelID, deploymentID, routeID, providerID string) bool {
-	if a == nil {
-		return true
-	}
-	return allowedNode(a.Authors, authorID) &&
-		allowedNode(a.Models, modelID) &&
-		allowedNode(a.Deployments, deploymentID) &&
-		allowedNode(a.Routes, routeID) &&
-		allowedNode(a.Providers, providerID)
-}
-
-func allowedNode(allowed []string, value string) bool {
-	if allowed == nil {
-		return true
-	}
-	for _, candidate := range allowed {
-		if candidate == value {
-			return true
-		}
-	}
-	return false
 }
 
 type Value struct {

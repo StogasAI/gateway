@@ -298,7 +298,7 @@ func TestAccessSettingsAreDelegatedApart(t *testing.T) {
 	if err := json.Unmarshal([]byte(`["access"]`), &permission); err != nil || permission != permissionSchedule|permissionNetworks|permissionCountries|permissionTransports {
 		t.Fatalf("access section %b %v", permission, err)
 	}
-	if raw, _ := json.Marshal(permission | permissionInput); string(raw) != `["access.countries","access.networks","access.schedule","access.transports","input"]` {
+	if raw, _ := json.Marshal(permission | permissionASCIIOnly | permissionMediaTypes); string(raw) != `["access.countries","access.networks","access.schedule","access.transports","input.asciiOnly","input.mediaTypes"]` {
 		t.Fatalf("access permission names %s", raw)
 	}
 }

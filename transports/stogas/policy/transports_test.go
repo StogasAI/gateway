@@ -28,7 +28,7 @@ func TestTransportsAdmitOnlyTheirConnectionModes(t *testing.T) {
 		`{"access":{"transports":{"allow":["tls"]}}}`:                  `access.transports.allow has "tls", which is not https, attested_tls or e2ee`,
 		`{"access":{"transports":{"deny":["e2ee","e2ee"]}}}`:           "access.transports.deny lists e2ee twice",
 		`{"access":{"transports":{"allow":[]}}}`:                       "allow requires at least one connection mode",
-		`{"access":{"transports":{"allow":["e2ee"],"deny":["e2ee"]}}}`: "deny holds every mode that allow lists",
+		`{"access":{"transports":{"allow":["e2ee"],"deny":["e2ee"]}}}`: "deny holds every connection mode that allow lists",
 	} {
 		if _, err := CompileSource([]byte(raw)); err == nil || !strings.Contains(err.Error(), message) {
 			t.Errorf("%s: %v, want %q", raw, err, message)
@@ -46,7 +46,7 @@ func TestEveryPolicysTransportsApply(t *testing.T) {
 		return config
 	}
 	config := compose(`{"access":{"transports":{"allow":["e2ee","attested_tls","https"],"deny":["https"]}}}`, `{"access":{"transports":{"allow":["https","e2ee"]}}}`)
-	if lists := config.Access.Transports; !slices.Equal(lists.Allow, []string{TransportHTTPS, TransportE2EE}) || !slices.Equal(lists.Deny, []string{TransportHTTPS}) {
+	if lists := config.Access.Transports; !slices.Equal(lists.Allow, []string{TransportE2EE, TransportHTTPS}) || !slices.Equal(lists.Deny, []string{TransportHTTPS}) {
 		t.Fatalf("combined transports %+v", lists)
 	}
 	for index, admitted := range [3]bool{false, false, true} {

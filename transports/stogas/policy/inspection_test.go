@@ -326,7 +326,7 @@ func TestInspectionBudgetsDistinctSettingsBeforeCompilation(t *testing.T) {
 		for j := range ids {
 			ids[j] = fmt.Sprintf("model-%d-%05d", index, j)
 		}
-		raw, _ := json.Marshal(map[string]any{"routing": map[string]any{"allowedCatalogNodes": map[string]any{"models": ids}}})
+		raw, _ := json.Marshal(map[string]any{"routing": map[string]any{"models": map[string]any{"allow": ids}}})
 		source, err := CompileSource(raw)
 		if err != nil {
 			t.Fatal(err)
@@ -663,7 +663,7 @@ func TestInspectionNamesWhoSetsEachSetting(t *testing.T) {
 	// The smallest value names the policy that sets it, and filters combine
 	// from both.
 	want := []map[string]any{
-		{"setting": "input", "policy": organization},
+		{"setting": "input.asciiOnly", "policy": organization},
 		{"setting": "routing.fallbacks", "policy": own},
 		{"setting": "routing.filter", "policy": organization},
 		{"setting": "routing.filter", "policy": own},
@@ -688,7 +688,9 @@ func TestReplacedDefaultsAgreeWithActivation(t *testing.T) {
 		{"timeouts", "outputIdleSeconds", "60"},
 		{"routing", "retries", "1"},
 		{"routing", "filter", `"provider.id != 'x'"`},
-		{"routing", "allowedCatalogNodes", `{"providers":["openai"]}`},
+		{"routing", "providers", `{"allow":["openai"]}`},
+		{"routing", "models", `{"deny":["gpt"]}`},
+		{"input", "mediaTypes", `{"deny":["image/svg+xml"]}`},
 		{"plugins", "textExtraction", `{"text":"off"}`},
 		{"plugins", "redaction", `{"presets":["email_address"]}`},
 	}

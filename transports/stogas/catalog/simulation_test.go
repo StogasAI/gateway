@@ -63,9 +63,9 @@ func TestRoutingSimulationNamesWhatRemovedEachCandidate(t *testing.T) {
 			credentials: map[string][]int{"azure": {0}}, pairs: 5, tried: 3},
 		// A policy removes a deployment from its Responses route. It does not send the request
 		// through the deployment's Chat Completions route.
-		{name: "allowed nodes without the Responses route", route: RouteResponses, model: "azure-gpt-5.6-sol", credentials: map[string][]int{"azure": {0}},
-			base:    compose(`{}`, `{"routing":{"allowedCatalogNodes":{"routes":["azure-chat-completions"]}}}`),
-			removed: []string{"allowed_nodes azure/azure-gpt-5.6-sol @1"}, code: "model_unavailable"},
+		{name: "a routes list without the Responses route", route: RouteResponses, model: "azure-gpt-5.6-sol", credentials: map[string][]int{"azure": {0}},
+			base:    compose(`{}`, `{"routing":{"routes":{"allow":["azure-chat-completions"]}}}`),
+			removed: []string{"lists azure/azure-gpt-5.6-sol @1"}, code: "model_unavailable"},
 		{name: "a missing credential outranks another interface", model: "gpt-5.6-sol", credentials: map[string][]int{"openai": {0}},
 			removed: []string{"no_credential azure"}, pairs: 1, tried: 1},
 		{name: "exact deployment without a credential", model: "azure-gpt-5.6-sol-us", credentials: map[string][]int{"openai": {0}},
@@ -90,11 +90,17 @@ func TestRoutingSimulationNamesWhatRemovedEachCandidate(t *testing.T) {
 		// group leads and the older ones follow.
 		{name: "every model of a group", model: "group:gpt-6", credentials: map[string][]int{"openai": {0}},
 			removed: []string{"no_credential azure"}, pairs: 4, tried: 3},
-		{name: "allowed nodes of the key", model: "gpt-5.6-sol", credentials: map[string][]int{"azure": {0}, "openai": {0}},
-			base: compose(`{}`, `{"routing":{"allowedCatalogNodes":{"deployments":["azure-gpt-5.6-sol-eu"]}}}`),
+		{name: "a deployments list of the key", model: "gpt-5.6-sol", credentials: map[string][]int{"azure": {0}, "openai": {0}},
+			base: compose(`{}`, `{"routing":{"deployments":{"allow":["azure-gpt-5.6-sol-eu"]}}}`),
 			removed: []string{
-				"allowed_nodes azure/azure-gpt-5.6-sol @1", "allowed_nodes azure/azure-gpt-5.6-sol-apac @1", "allowed_nodes azure/azure-gpt-5.6-sol-instant @1",
-				"allowed_nodes azure/azure-gpt-5.6-sol-us @1", "allowed_nodes openai/openai-gpt-5.6-sol @1",
+				"lists azure/azure-gpt-5.6-sol @1", "lists azure/azure-gpt-5.6-sol-apac @1", "lists azure/azure-gpt-5.6-sol-instant @1",
+				"lists azure/azure-gpt-5.6-sol-us @1", "lists openai/openai-gpt-5.6-sol @1",
+			}, pairs: 1, tried: 1},
+		{name: "a providers deny list of the key", model: "gpt-5.6-sol", credentials: map[string][]int{"azure": {0}, "openai": {0}},
+			base: compose(`{}`, `{"routing":{"providers":{"deny":["azure"]}}}`),
+			removed: []string{
+				"lists azure/azure-gpt-5.6-sol @1", "lists azure/azure-gpt-5.6-sol-apac @1", "lists azure/azure-gpt-5.6-sol-eu @1",
+				"lists azure/azure-gpt-5.6-sol-instant @1", "lists azure/azure-gpt-5.6-sol-us @1",
 			}, pairs: 1, tried: 1},
 		{name: "credential targets", model: "gpt-5.6-sol", credentials: map[string][]int{"azure": {0, 1}},
 			eligible: func(index int, deployment string) bool { return index == 1 || deployment == "azure-gpt-5.6-sol-us" },

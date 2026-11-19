@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -131,14 +132,13 @@ func TestInspectionShowsCombinedMediaTypesAndEveryPolicyThatSetsThem(t *testing.
 	if string(effective) != `{"asciiOnly":true,"mediaTypes":{"allow":["image/*"],"deny":["audio/*"]}}` {
 		t.Fatalf("effective input %s", effective)
 	}
+	// Each input field names the policies that set it.
 	var setBy []string
 	entries, _ := result.Effective["setBy"].([]map[string]any)
 	for _, entry := range entries {
-		if entry["setting"] == "input" {
-			setBy = append(setBy, fmt.Sprint(entry["policy"]))
-		}
+		setBy = append(setBy, fmt.Sprint(entry["setting"], " ", entry["policy"]))
 	}
-	if len(setBy) != 2 {
-		t.Fatalf("input set by %v", setBy)
+	if want := []string{"input.asciiOnly map[id:key scope:key]", "input.mediaTypes map[id:org scope:organization]", "input.mediaTypes map[id:key scope:key]"}; !slices.Equal(setBy, want) {
+		t.Fatalf("input set by %q", setBy)
 	}
 }

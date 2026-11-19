@@ -5230,7 +5230,7 @@ func TestSavedSelectionReachesProviderValidationWithoutRequestModel(t *testing.T
 			resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 				Method: "POST", Path: path, Body: body,
 				Policy: &policy.Config{Routing: policy.Routing{
-					AllowedCatalogNodes: &policy.AllowedCatalogNodes{Deployments: []string{explicit.Deployment.ID}},
+					Deployments: &policy.Lists{Allow: []string{explicit.Deployment.ID}},
 				}},
 			})
 			if err != nil {

@@ -50,7 +50,7 @@ func BenchmarkRequestThreeMillionContext(b *testing.B) {
 			predicates[n] = fmt.Sprintf("provider.id != 'blocked_%d_%d'", i, n)
 		}
 		document := map[string]any{
-			"delegation": map[string]any{"request": true},
+			"delegation": map[string]any{"requests": true},
 			"routing":    map[string]any{"filter": strings.Join(predicates, " && "), "sort": []map[string]any{{"by": "deployment.id", "direction": "asc"}}},
 			"limits": map[string]any{
 				"spend":    map[string]any{"usd": "1000000"},

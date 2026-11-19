@@ -12,7 +12,6 @@
       "compilerVersion": 1,
       "plugins": null,
       "routing": {
-        "allowedCatalogNodes": null,
         "query": null,
         "retries": 0,
         "fallbacks": 2
@@ -34,7 +33,6 @@
       "compilerVersion": 1,
       "plugins": null,
       "routing": {
-        "allowedCatalogNodes": null,
         "query": null,
         "retries": 0,
         "fallbacks": 2
@@ -48,15 +46,15 @@
     "sources": [
       {
         "delegation": {
-          "request": [
-            "routing.allowedCatalogNodes",
+          "requests": [
+            "routing.providers",
             "routing.filter"
           ]
         }
       },
       {
         "delegation": {
-          "request": [
+          "requests": [
             "routing"
           ]
         }
@@ -67,13 +65,12 @@
         }
       }
     ],
-    "digest": "bda0259e88f7eb147b4b968bf997a669fa10f7b8db2d5334cb3940efbcb4b1f9",
+    "digest": "586d264eda0d2c2278433efc324950fb257e61d726b4b2abfa162b3bad3fe541",
     "compiled": {
       "access": null,
       "compilerVersion": 1,
       "plugins": null,
       "routing": {
-        "allowedCatalogNodes": null,
         "query": {
           "filters": [
             "(!(has(deployment.contextWindowTokens))) || (deployment.contextWindowTokens < 1000)"
@@ -84,21 +81,26 @@
         "fallbacks": 2
       },
       "requestPermission": [
-        "routing.allowedCatalogNodes",
-        "routing.filter"
+        "routing.filter",
+        "routing.providers"
       ],
       "schema": "stogas.key-config.compiled.v1"
     }
   },
   {
-    "name": "allowed nodes intersection",
+    "name": "allow lists intersect and deny lists join",
     "sources": [
       {
         "routing": {
-          "allowedCatalogNodes": {
-            "providers": [
+          "providers": {
+            "allow": [
               "azure",
               "openai"
+            ]
+          },
+          "models": {
+            "deny": [
+              "gpt-a"
             ]
           }
         }
@@ -106,22 +108,40 @@
       null,
       {
         "routing": {
-          "allowedCatalogNodes": {
-            "providers": [
+          "providers": {
+            "allow": [
               "chutes"
+            ],
+            "deny": [
+              "azure"
+            ]
+          },
+          "models": {
+            "deny": [
+              "gpt-b",
+              "gpt-a"
             ]
           }
         }
       }
     ],
-    "digest": "09357ce5fb2827ba634b17188c1a5407a043e5226c61c70350736d5628593ca2",
+    "digest": "930550373b8edfa2f0d7d8b754d00f60edc39a8fde6e4f306393561eaa6c34ce",
     "compiled": {
       "access": null,
       "compilerVersion": 1,
       "plugins": null,
       "routing": {
-        "allowedCatalogNodes": {
-          "providers": []
+        "providers": {
+          "allow": [],
+          "deny": [
+            "azure"
+          ]
+        },
+        "models": {
+          "deny": [
+            "gpt-a",
+            "gpt-b"
+          ]
         },
         "query": null,
         "retries": 0,
@@ -173,7 +193,6 @@
         }
       },
       "routing": {
-        "allowedCatalogNodes": null,
         "query": {
           "filters": [
             "blendedPrice(3, 1) <= decimal(\"5\")"
@@ -219,7 +238,6 @@
       "compilerVersion": 1,
       "plugins": null,
       "routing": {
-        "allowedCatalogNodes": null,
         "query": null,
         "retries": 2,
         "fallbacks": 1
@@ -333,7 +351,6 @@
         }
       },
       "routing": {
-        "allowedCatalogNodes": null,
         "query": null,
         "retries": 0,
         "fallbacks": 2
@@ -384,7 +401,6 @@
       "compilerVersion": 1,
       "plugins": null,
       "routing": {
-        "allowedCatalogNodes": null,
         "query": null,
         "retries": 0,
         "fallbacks": 2
@@ -457,7 +473,6 @@
       "compilerVersion": 1,
       "plugins": null,
       "routing": {
-        "allowedCatalogNodes": null,
         "query": null,
         "retries": 0,
         "fallbacks": 2
@@ -510,7 +525,6 @@
       "compilerVersion": 1,
       "plugins": null,
       "routing": {
-        "allowedCatalogNodes": null,
         "query": {
           "orderBy": [
             {
@@ -565,7 +579,6 @@
       "compilerVersion": 1,
       "plugins": null,
       "routing": {
-        "allowedCatalogNodes": null,
         "query": {
           "orderBy": [
             {
@@ -639,7 +652,6 @@
       "compilerVersion": 1,
       "plugins": null,
       "routing": {
-        "allowedCatalogNodes": null,
         "query": {
           "orderBy": [
             {
@@ -709,7 +721,6 @@
       "compilerVersion": 1,
       "plugins": null,
       "routing": {
-        "allowedCatalogNodes": null,
         "query": {
           "orderBy": [
             {
@@ -768,7 +779,6 @@
       "compilerVersion": 1,
       "plugins": null,
       "routing": {
-        "allowedCatalogNodes": null,
         "query": null,
         "retries": 0,
         "fallbacks": 2
@@ -804,7 +814,6 @@
       "compilerVersion": 1,
       "plugins": null,
       "routing": {
-        "allowedCatalogNodes": null,
         "query": null,
         "retries": 0,
         "fallbacks": 2
@@ -838,7 +847,6 @@
       "compilerVersion": 1,
       "plugins": null,
       "routing": {
-        "allowedCatalogNodes": null,
         "query": null,
         "retries": 0,
         "fallbacks": 2
@@ -892,7 +900,6 @@
       "compilerVersion": 1,
       "plugins": null,
       "routing": {
-        "allowedCatalogNodes": null,
         "query": {
           "orderBy": [
             {

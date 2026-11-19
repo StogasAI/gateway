@@ -126,7 +126,7 @@ func TestTextExtractionRequiresItsOwnRequestPermission(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, section := range []string{"plugins.redaction", "plugins.textExtraction", "plugins"} {
-		source := ruleSource(t, `{"delegation":{"request":["`+section+`"]}}`)
+		source := ruleSource(t, `{"delegation":{"requests":["`+section+`"]}}`)
 		base, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: source}})
 		if err != nil {
 			t.Fatal(err)

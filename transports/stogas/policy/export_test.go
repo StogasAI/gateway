@@ -98,7 +98,7 @@ func TestExportCompositionRulesAndInspection(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, section := range []string{"plugins.redaction", "plugins.export", "plugins"} {
-		base, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: ruleSource(t, `{"delegation":{"request":["`+section+`"]}}`)}})
+		base, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: ruleSource(t, `{"delegation":{"requests":["`+section+`"]}}`)}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -155,7 +155,7 @@ func TestExportSamplesWidenAcrossPolicies(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			org := tc.org
 			if tc.request != "" {
-				org = `{"delegation":{"request":["plugins.export"]},` + org[1:]
+				org = `{"delegation":{"requests":["plugins.export"]},` + org[1:]
 			}
 			base, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: ruleSource(t, org)}, {Scope: KeyScope, Value: ruleSource(t, tc.key)}})
 			if err != nil {

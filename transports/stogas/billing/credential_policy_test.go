@@ -290,7 +290,7 @@ func TestCredentialAlternativesShareOneCompilationBudget(t *testing.T) {
 		for index := range models {
 			models[index] = fmt.Sprintf("model-%d-%08d-abcdefghij", choice, index)
 		}
-		raw, err := json.Marshal(map[string]any{"routing": map[string]any{"allowedCatalogNodes": map[string]any{"models": models}}})
+		raw, err := json.Marshal(map[string]any{"routing": map[string]any{"models": map[string]any{"allow": models}}})
 		if err != nil {
 			t.Fatal(err)
 		}

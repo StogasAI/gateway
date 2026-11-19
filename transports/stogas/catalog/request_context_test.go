@@ -94,7 +94,7 @@ func TestExpandedBodyMemoryDenialDoesNotRestartSelection(t *testing.T) {
 	for _, path := range []string{"/v1/chat/completions", "/v1/responses"} {
 		t.Run(path, func(t *testing.T) {
 			config := policyConfig(2)
-			config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Deployments: []string{"openai-gpt-5.6-sol", "anthropic-claude-sonnet-4-6"}}
+			config.Routing.Deployments = &policy.Lists{Allow: []string{"openai-gpt-5.6-sol", "anthropic-claude-sonnet-4-6"}}
 			config.Routing.Query = mustRouting(t, "", []policy.Sort{{By: "provider.id", Direction: "desc"}})
 			body := map[string]any{}
 			text := strings.Repeat("~ ", 1024)

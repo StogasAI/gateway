@@ -682,7 +682,7 @@ func TestServiceTierSpellingsSelectOneTier(t *testing.T) {
 	loadTestCatalog(t)
 	// Claude runs in several regions, so the request must choose one.
 	multiRegion := `"policy":{"routing":{"filter":"deployment.upstream.inferenceGeo == 'global'"}}`
-	source, err := policy.CompileSource([]byte(`{"delegation":{"request":["routing.filter"]},"routing":{"sort":[{"by":"model.releaseDate","direction":"desc"},{"by":"blendedPrice(3, 1)"},{"by":"deployment.id"}]}}`))
+	source, err := policy.CompileSource([]byte(`{"delegation":{"requests":["routing.filter"]},"routing":{"sort":[{"by":"model.releaseDate","direction":"desc"},{"by":"blendedPrice(3, 1)"},{"by":"deployment.id"}]}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -736,7 +736,7 @@ func TestReasoningModeSelectsDeployments(t *testing.T) {
 	loadTestCatalog(t)
 	allowing := func(deployments ...string) *policy.Config {
 		config := policyConfig(2)
-		config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Deployments: deployments}
+		config.Routing.Deployments = &policy.Lists{Allow: deployments}
 		return config
 	}
 	for _, test := range []struct {

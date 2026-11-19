@@ -166,7 +166,7 @@ func ruleSource(t *testing.T, raw string) *Source {
 }
 
 func TestRulesDefaultsAndRequirementsAreOrderIndependent(t *testing.T) {
-	org := ruleSource(t, `{"delegation":{"request":true},"rules":{"baseline":{"mode":"default","input":{"asciiOnly":true},"plugins":{"redaction":{"presets":["email_address"]}},"routing":{"sort":[{"by":"provider.id","direction":"asc"}]}}}}`)
+	org := ruleSource(t, `{"delegation":{"requests":true},"rules":{"baseline":{"mode":"default","input":{"asciiOnly":true},"plugins":{"redaction":{"presets":["email_address"]}},"routing":{"sort":[{"by":"provider.id","direction":"asc"}]}}}}`)
 	role := ruleSource(t, `{"rules":{"chat":{"when":"request.interface == 'chat_completions'","input":{"asciiOnly":false},"plugins":{"redaction":{"presets":["credit_card_number"]}}}}}`)
 	other := ruleSource(t, `{"routing":{"filter":"provider.id != 'blocked'"}}`)
 	for _, sources := range [][]ScopedSource{
@@ -206,7 +206,7 @@ func TestRulesDefaultsAndRequirementsAreOrderIndependent(t *testing.T) {
 }
 
 func TestRulesRequestOverridesOnlyDefaults(t *testing.T) {
-	org := ruleSource(t, `{"delegation":{"request":["routing.sort"]},"routing":{"filter":"provider.id == 'openai'"},"rules":{"default_sort":{"mode":"default","routing":{"sort":[{"by":"provider.id","direction":"asc"}]}}}}`)
+	org := ruleSource(t, `{"delegation":{"requests":["routing.sort"]},"routing":{"filter":"provider.id == 'openai'"},"rules":{"default_sort":{"mode":"default","routing":{"sort":[{"by":"provider.id","direction":"asc"}]}}}}`)
 	base, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: org}})
 	if err != nil {
 		t.Fatal(err)
@@ -230,7 +230,7 @@ func TestRulesRequestOverridesOnlyDefaults(t *testing.T) {
 	if combined, err = ApplyRequest(base, preferred); err != nil || combined.Routing.Query.OrderBy[0].By != "model.id" {
 		t.Fatalf("request default did not replace the saved default: %+v, %v", combined, err)
 	}
-	strict := ruleSource(t, `{"delegation":{"request":["routing.sort"]},"routing":{"sort":[{"by":"provider.id"}]}}`)
+	strict := ruleSource(t, `{"delegation":{"requests":["routing.sort"]},"routing":{"sort":[{"by":"provider.id"}]}}`)
 	required, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: strict}})
 	if err != nil {
 		t.Fatal(err)
@@ -248,7 +248,7 @@ func TestRulesRequestOverridesOnlyDefaults(t *testing.T) {
 }
 
 func TestTimeoutRulesComposeIndependentlyWithoutMutatingSavedPolicies(t *testing.T) {
-	org := ruleSource(t, `{"delegation":{"request":["timeouts.outputIdleSeconds"]},"timeouts":{"totalSeconds":900},"rules":{"baseline":{"mode":"default","timeouts":{"outputIdleSeconds":90}},"openai":{"when":"provider.id == 'openai'","timeouts":{"outputIdleSeconds":60}}}}`)
+	org := ruleSource(t, `{"delegation":{"requests":["timeouts.outputIdleSeconds"]},"timeouts":{"totalSeconds":900},"rules":{"baseline":{"mode":"default","timeouts":{"outputIdleSeconds":90}},"openai":{"when":"provider.id == 'openai'","timeouts":{"outputIdleSeconds":60}}}}`)
 	key := ruleSource(t, `{"timeouts":{"totalSeconds":1200}}`)
 	base, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: org}, {Scope: KeyScope, Value: key}})
 	if err != nil {
@@ -292,9 +292,9 @@ func TestTimeoutRulesComposeIndependentlyWithoutMutatingSavedPolicies(t *testing
 }
 
 func TestRulesExplicitEmptySettingsReplaceDefaultsWithoutWeakeningRequirements(t *testing.T) {
-	settings := `"access":{"schedule":{"deny":[{"days":["mon"],"start":"09:00","end":"17:00","timeZone":"UTC"}]}},"input":{"asciiOnly":true},"plugins":{"redaction":{"presets":["email_address"]}},"routing":{"allowedCatalogNodes":{"providers":["openai"]},"filter":"provider.id == 'openai'","sort":[{"by":"provider.id","direction":"asc"}],"retries":1,"fallbacks":0}`
+	settings := `"access":{"schedule":{"deny":[{"days":["mon"],"start":"09:00","end":"17:00","timeZone":"UTC"}]}},"input":{"asciiOnly":true,"mediaTypes":{"allow":["image/png"]}},"plugins":{"redaction":{"presets":["email_address"]},"promptCaching":"1h"},"routing":{"providers":{"allow":["openai"]},"filter":"provider.id == 'openai'","sort":[{"by":"provider.id","direction":"asc"}],"retries":1,"fallbacks":0}`
 	org := ruleSource(t, `{"rules":{"baseline":{"mode":"default",`+settings+`}}}`)
-	empty := ruleSource(t, `{"access":{"schedule":{"deny":[]}},"input":{"asciiOnly":false},"plugins":{"redaction":{}},"routing":{"allowedCatalogNodes":{},"filter":"true","sort":[],"retries":3,"fallbacks":2}}`)
+	empty := ruleSource(t, `{"access":{"schedule":{"deny":[]}},"input":{"asciiOnly":false,"mediaTypes":{"deny":[]}},"plugins":{"redaction":{},"promptCaching":"off"},"routing":{"providers":{"deny":[]},"filter":"true","sort":[],"retries":3,"fallbacks":2}}`)
 	required := ruleSource(t, `{`+settings+`}`)
 	for _, withRequired := range []bool{false, true} {
 		for _, reverse := range []bool{false, true} {
@@ -322,8 +322,11 @@ func TestRulesExplicitEmptySettingsReplaceDefaultsWithoutWeakeningRequirements(t
 			if want := map[bool][2]int{false: {3, 2}, true: {1, 0}}[withRequired]; active.Routing.Retries != want[0] || active.Routing.Fallbacks != want[1] {
 				t.Fatalf("required=%v: retries=%d fallbacks=%d, want %v", withRequired, active.Routing.Retries, active.Routing.Fallbacks, want)
 			}
-			if (len(active.Routing.AllowedCatalogNodes.Providers) > 0) != withRequired {
+			if (active.Routing.Providers != nil && len(active.Routing.Providers.Allow) > 0) != withRequired {
 				t.Fatal("wrong catalog restriction")
+			}
+			if (active.MediaTypes() != nil && len(active.MediaTypes().Allow) > 0) != withRequired || (active.PromptCaching() == PromptCaching1h) != withRequired {
+				t.Fatalf("required=%v: media types %+v, prompt caching %s", withRequired, active.MediaTypes(), active.PromptCaching())
 			}
 			hasPreset := false
 			for _, plugins := range active.PluginSources {
@@ -443,9 +446,9 @@ func TestRuleOrderingsAreUnconditionalDefaults(t *testing.T) {
 
 // A routing simulation names the policy, and the rule, behind each decision.
 func TestOriginsLocateTheDecidingPolicyAndRule(t *testing.T) {
-	org := ruleSource(t, `{"routing":{"allowedCatalogNodes":{"providers":["openai","anthropic"]},"filter":"provider.id != 'blocked'","fallbacks":2},"rules":{"order":{"mode":"default","routing":{"sort":[{"by":"provider.id"}]}}}}`)
-	folder := ruleSource(t, `{"access":{"schedule":{"deny":[{"days":["mon"],"start":"09:00","end":"17:00","timeZone":"UTC"}]}},"routing":{"fallbacks":1},"rules":{"loose":{"mode":"default","routing":{"filter":"provider.id == 'never'"}}}}`)
-	key := ruleSource(t, `{"rules":{"chat":{"when":"request.interface == 'chat_completions'","access":{"schedule":{"deny":[{"days":["tue"],"start":"00:00","end":"23:59","timeZone":"UTC"}]}},"routing":{"allowedCatalogNodes":{"deployments":["openai-a"]},"filter":"deployment.id != 'openai-b'"}}}}`)
+	org := ruleSource(t, `{"routing":{"providers":{"allow":["openai","anthropic"]},"filter":"provider.id != 'blocked'","fallbacks":2},"rules":{"order":{"mode":"default","routing":{"sort":[{"by":"provider.id"}]}}}}`)
+	folder := ruleSource(t, `{"access":{"schedule":{"deny":[{"days":["mon"],"start":"09:00","end":"17:00","timeZone":"UTC"}]}},"routing":{"deployments":{"deny":["openai-c"]},"fallbacks":1},"rules":{"loose":{"mode":"default","routing":{"filter":"provider.id == 'never'"}}}}`)
+	key := ruleSource(t, `{"rules":{"chat":{"when":"request.interface == 'chat_completions'","access":{"schedule":{"deny":[{"days":["tue"],"start":"00:00","end":"23:59","timeZone":"UTC"}]}},"routing":{"deployments":{"allow":["openai-a"]},"filter":"deployment.id != 'openai-b'"}}}}`)
 	base, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: org}, {Scope: FolderScope, Value: folder}, {Scope: KeyScope, Value: key}})
 	if err != nil {
 		t.Fatal(err)
@@ -474,9 +477,10 @@ func TestOriginsLocateTheDecidingPolicyAndRule(t *testing.T) {
 		{"policy deny", located(active.DenyOrigin(monday)), "1 true"},
 		{"rule deny", located(active.DenyOrigin(tuesday)), "2chat true"},
 		{"inactive rule deny", located(base.DenyOrigin(tuesday)), "0 false"},
-		{"policy nodes", located(active.NodesOrigin("openai", "gpt", "chutes-gpt", "chutes", "chutes")), "0 true"},
-		{"rule nodes", located(active.NodesOrigin("openai", "gpt", "openai-b", "openai", "openai")), "2chat true"},
-		{"allowed nodes", located(active.NodesOrigin("openai", "gpt", "openai-a", "openai", "openai")), "0 false"},
+		{"policy allow list", located(active.ListsOrigin("openai", "gpt", "chutes-gpt", "chutes", "chutes")), "0 true"},
+		{"policy deny list", located(active.ListsOrigin("openai", "gpt", "openai-c", "openai", "openai")), "1 true"},
+		{"rule lists", located(active.ListsOrigin("openai", "gpt", "openai-b", "openai", "openai")), "2chat true"},
+		{"admitted", located(active.ListsOrigin("openai", "gpt", "openai-a", "openai", "openai")), "0 false"},
 		{"smallest fallbacks", located(active.FallbacksOrigin()), "1 true"},
 	} {
 		if test.got != test.want {
@@ -591,10 +595,11 @@ func TestEveryReplaceableKindHasOneName(t *testing.T) {
 		t.Fatalf("named kinds %b, want %b", kinds, want)
 	}
 	if want := []string{
-		"access.countries", "access.networks", "access.schedule", "access.transports", "input", "plugins.export", "plugins.promptCaching",
-		"plugins.redaction", "plugins.textExtraction.office", "plugins.textExtraction.pdf", "plugins.textExtraction.text",
-		"routing.allowedCatalogNodes", "routing.fallbacks", "routing.filter", "routing.missingEncryptionKeys",
-		"routing.retries", "timeouts.outputIdleSeconds", "timeouts.totalSeconds",
+		"access.countries", "access.networks", "access.schedule", "access.transports", "input.asciiOnly", "input.mediaTypes",
+		"plugins.export", "plugins.promptCaching", "plugins.redaction", "plugins.textExtraction.office", "plugins.textExtraction.pdf",
+		"plugins.textExtraction.text", "routing.authors", "routing.deployments", "routing.fallbacks", "routing.filter",
+		"routing.missingEncryptionKeys", "routing.models", "routing.providers", "routing.retries", "routing.routes",
+		"timeouts.outputIdleSeconds", "timeouts.totalSeconds",
 	}; !slices.Equal(names, want) {
 		t.Fatalf("names %q", names)
 	}
@@ -614,7 +619,7 @@ func TestFallbacksAndTotalTimeoutCannotDependOnTheCandidate(t *testing.T) {
 	}
 	for _, raw := range []string{
 		`{"rules":{"r":{"when":"request.interface == 'chat_completions'","routing":{"fallbacks":0},"timeouts":{"totalSeconds":60}}}}`,
-		`{"rules":{"r":{"when":"provider.id == 'openai'","routing":{"filter":"deployment.id != 'x'","allowedCatalogNodes":{"providers":["openai"]},"retries":2},"timeouts":{"outputIdleSeconds":60}}}}`,
+		`{"rules":{"r":{"when":"provider.id == 'openai'","routing":{"filter":"deployment.id != 'x'","providers":{"allow":["openai"]},"retries":2},"timeouts":{"outputIdleSeconds":60}}}}`,
 	} {
 		if _, err := CompileSource([]byte(raw)); err != nil {
 			t.Fatalf("stable setting rejected: %s: %v", raw, err)
@@ -653,7 +658,7 @@ func TestOnlyTheOrderingChainSetsOrderings(t *testing.T) {
 			t.Fatalf("credential request-wide setting accepted: %s: %v", raw, err)
 		}
 	}
-	allowed := ruleSource(t, `{"routing":{"filter":"provider.id == 'openai'","retries":2},"timeouts":{"outputIdleSeconds":60},"rules":{"r":{"when":"provider.id == 'openai'","routing":{"allowedCatalogNodes":{"providers":["openai"]}}}}}`)
+	allowed := ruleSource(t, `{"routing":{"filter":"provider.id == 'openai'","retries":2},"timeouts":{"outputIdleSeconds":60},"rules":{"r":{"when":"provider.id == 'openai'","routing":{"providers":{"allow":["openai"]}}}}}`)
 	if _, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: org}, {Scope: CredentialScope, Value: allowed}}); err != nil {
 		t.Fatalf("credential restriction rejected: %v", err)
 	}
@@ -697,7 +702,7 @@ func TestRuleShapeRejectsNestedAuthorityAndReplaceableBudgets(t *testing.T) {
 	for _, body := range []string{
 		`{"mode":"default","limits":{"total":{"tokens":1}}}`,
 		`{"when":"true"}`, `{"mode":null,"input":{"asciiOnly":true}}`,
-		`{"delegation":{"request":true}}`, `{"rules":{"again":{"input":{"asciiOnly":true}}}}`,
+		`{"delegation":{"requests":true}}`, `{"rules":{"again":{"input":{"asciiOnly":true}}}}`,
 		`{"version":1,"input":{"asciiOnly":true}}`,
 	} {
 		if _, err := CompileSource([]byte(`{"rules":{"test":` + body + `}}`)); err == nil {

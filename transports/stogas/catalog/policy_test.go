@@ -18,7 +18,7 @@ func TestRequestPoliciesAreConsumedForChatAndResponses(t *testing.T) {
 	loadTestCatalog(t)
 	for _, path := range []string{"/v1/chat/completions", "/v1/responses"} {
 		t.Run(path, func(t *testing.T) {
-			source, err := policy.CompileSource([]byte(`{"delegation":{"request":["routing.filter"]},"routing":{"fallbacks": 1}}`))
+			source, err := policy.CompileSource([]byte(`{"delegation":{"requests":["routing.filter"]},"routing":{"fallbacks": 1}}`))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -194,63 +194,55 @@ func TestRoutingPolicyIntersectsClientAndEveryCatalogNodeRestriction(t *testing.
 	}
 
 	tests := []struct {
-		name    string
-		allowed func(string) *policy.AllowedCatalogNodes
-		actual  func(policyIDs) string
-		value   string
+		name   string
+		lists  func(*policy.Routing) **policy.Lists
+		actual func(policyIDs) string
+		value  string
 	}{
-		{name: "author", value: ids.author, actual: func(ids policyIDs) string { return ids.author }, allowed: func(value string) *policy.AllowedCatalogNodes {
-			return &policy.AllowedCatalogNodes{Authors: []string{value}}
-		}},
-		{name: "model", value: ids.model, actual: func(ids policyIDs) string { return ids.model }, allowed: func(value string) *policy.AllowedCatalogNodes {
-			return &policy.AllowedCatalogNodes{Models: []string{value}}
-		}},
-		{name: "deployment", value: ids.deployment, actual: func(ids policyIDs) string { return ids.deployment }, allowed: func(value string) *policy.AllowedCatalogNodes {
-			return &policy.AllowedCatalogNodes{Deployments: []string{value}}
-		}},
-		{name: "route", value: ids.route, actual: func(ids policyIDs) string { return ids.route }, allowed: func(value string) *policy.AllowedCatalogNodes {
-			return &policy.AllowedCatalogNodes{Routes: []string{value}}
-		}},
-		{name: "provider", value: ids.provider, actual: func(ids policyIDs) string { return ids.provider }, allowed: func(value string) *policy.AllowedCatalogNodes {
-			return &policy.AllowedCatalogNodes{Providers: []string{value}}
-		}},
+		{"author", func(r *policy.Routing) **policy.Lists { return &r.Authors }, func(ids policyIDs) string { return ids.author }, ids.author},
+		{"model", func(r *policy.Routing) **policy.Lists { return &r.Models }, func(ids policyIDs) string { return ids.model }, ids.model},
+		{"deployment", func(r *policy.Routing) **policy.Lists { return &r.Deployments }, func(ids policyIDs) string { return ids.deployment }, ids.deployment},
+		{"route", func(r *policy.Routing) **policy.Lists { return &r.Routes }, func(ids policyIDs) string { return ids.route }, ids.route},
+		{"provider", func(r *policy.Routing) **policy.Lists { return &r.Providers }, func(ids policyIDs) string { return ids.provider }, ids.provider},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			config := policyConfig(2)
 			config.Routing.Query = mustRouting(t, "", []policy.Sort{{By: "deployment.id", Direction: "asc"}})
-			config.Routing.AllowedCatalogNodes = test.allowed(test.value)
-			resolved, err := resolvePolicyChat(t, config, "")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if resolved == nil {
-				t.Fatalf("matching restriction resolved %#v", resolved)
-			}
-			for _, candidate := range []*ResolvedRequest{resolved} {
-				if actual := test.actual(candidatePolicyIDs(candidate)); actual != test.value {
+			for _, lists := range []*policy.Lists{{Allow: []string{test.value}}, {Deny: []string{"not-a-real-node"}}} {
+				*test.lists(&config.Routing) = lists
+				resolved, err := resolvePolicyChat(t, config, "")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if actual := test.actual(candidatePolicyIDs(resolved)); lists.Allow != nil && actual != test.value {
 					t.Fatalf("matching restriction retained %q, want %q", actual, test.value)
 				}
 			}
-
-			config.Routing.AllowedCatalogNodes = test.allowed("not-a-real-node")
-			if _, err := resolvePolicyChat(t, config, ""); !errors.Is(err, ErrModelUnavailable) {
-				t.Fatalf("mismatched restriction error = %v, want ErrModelUnavailable", err)
+			for _, lists := range []*policy.Lists{{Allow: []string{"not-a-real-node"}}, {Deny: []string{test.value}}} {
+				*test.lists(&config.Routing) = lists
+				resolved, err := resolvePolicyChat(t, config, "")
+				if err == nil && test.actual(candidatePolicyIDs(resolved)) == test.value {
+					t.Fatalf("%+v kept %q", lists, test.value)
+				}
+				if err != nil && !errors.Is(err, ErrModelUnavailable) {
+					t.Fatalf("%+v error = %v, want ErrModelUnavailable", lists, err)
+				}
 			}
 		})
 	}
 
 	config := policyConfig(2)
-	config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Providers: []string{"openai"}}
+	config.Routing.Providers = &policy.Lists{Allow: []string{"openai"}}
 	if _, err := resolvePolicyChat(t, config, `,"provider":"azure"`); !errors.Is(err, ErrProviderSelection) {
 		t.Fatalf("client/policy intersection error = %v, want ErrProviderSelection", err)
 	}
 }
 
-func TestAllowedCatalogNodesPrecedeServiceTierCompatibility(t *testing.T) {
+func TestRoutingListsPrecedeServiceTierCompatibility(t *testing.T) {
 	loadTestCatalog(t)
 	config := policyConfig(2)
-	config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Providers: []string{"azure"}}
+	config.Routing.Providers = &policy.Lists{Allow: []string{"azure"}}
 	if _, err := ResolveRequest(RequestInput{
 		Body:   []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"hello"}],"service_tier":"flex"}`),
 		Method: "POST",
@@ -263,17 +255,18 @@ func TestAllowedCatalogNodesPrecedeServiceTierCompatibility(t *testing.T) {
 		t.Fatalf("unknown tier error = %v, want ErrUnsupportedServiceTier", err)
 	}
 
-	config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Deployments: []string{"openai-gpt-5.6-sol"}}
+	config.Routing.Providers = nil
+	config.Routing.Deployments = &policy.Lists{Allow: []string{"openai-gpt-5.6-sol"}}
 	if _, err := resolvePolicyChat(t, config, `,"service_tier":"flex"`); !errors.Is(err, ErrServiceTierUnavailable) {
 		t.Fatalf("default-only deployment Flex error = %v, want ErrServiceTierUnavailable", err)
 	}
-	config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Deployments: []string{"openai-gpt-5.6-sol-flex"}}
+	config.Routing.Deployments = &policy.Lists{Allow: []string{"openai-gpt-5.6-sol-flex"}}
 	resolved, err := resolvePolicyChat(t, config, `,"service_tier":"flex"`)
 	if err != nil || resolved == nil || resolved.Deployment.ID != "openai-gpt-5.6-sol-flex" {
 		t.Fatalf("Flex-only deployment resolution = %#v, err = %v", resolved, err)
 	}
 
-	config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Providers: []string{"not-a-real-provider"}}
+	config.Routing.Providers = &policy.Lists{Allow: []string{"not-a-real-provider"}}
 	if _, err := resolvePolicyChat(t, config, `,"service_tier":"flex"`); !errors.Is(err, ErrModelUnavailable) {
 		t.Fatalf("fully denied policy error = %v, want ErrModelUnavailable", err)
 	}
@@ -285,7 +278,7 @@ func TestServiceTierErrorNeedsAnotherTierThatServes(t *testing.T) {
 	loadTestCatalog(t)
 	allowing := func(deployments ...string) *policy.Config {
 		config := policyConfig(2)
-		config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Deployments: deployments}
+		config.Routing.Deployments = &policy.Lists{Allow: deployments}
 		return config
 	}
 	openAI, anthropic := map[string][]int{"openai": {0}}, map[string][]int{"anthropic": {0}}
@@ -604,7 +597,7 @@ func TestOmittedModelUsesRestrictedAndSortedCandidates(t *testing.T) {
 			}
 			config := policyConfig(3)
 			config.RequestPermission = 0
-			config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Providers: []string{"openai"}}
+			config.Routing.Providers = &policy.Lists{Allow: []string{"openai"}}
 			config.Routing.Query = mustRouting(t, "", []policy.Sort{{Direction: "desc", By: "deployment.id"}})
 			candidates, err := resolve(config, "")
 			if err != nil {
@@ -619,7 +612,7 @@ func TestOmittedModelUsesRestrictedAndSortedCandidates(t *testing.T) {
 			}
 			selected := candidates.Deployment.ID
 			config.Routing.Query = nil
-			config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Deployments: []string{selected}}
+			config.Routing.Deployments = &policy.Lists{Allow: []string{selected}}
 			single, err := resolve(config, "")
 			if err != nil || single == nil || single.Deployment.ID != selected {
 				t.Fatalf("single permitted deployment was not selected: %v", err)
@@ -632,11 +625,12 @@ func TestOmittedModelUsesRestrictedAndSortedCandidates(t *testing.T) {
 			if _, err := resolve(config, `,"model":"missing-deployment"`); err == nil {
 				t.Fatal("explicit selector was ignored")
 			}
-			config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Deployments: []string{}}
+			config.Routing.Deployments = &policy.Lists{Allow: []string{}}
 			if _, err := resolve(config, ""); !errors.Is(err, ErrModelUnavailable) {
 				t.Fatalf("empty allowed set: %v", err)
 			}
-			config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Providers: []string{"openai"}}
+			config.Routing.Deployments = nil
+			config.Routing.Providers = &policy.Lists{Allow: []string{"openai"}}
 			if _, err := resolve(config, ""); PublicError(err).Code != ErrModelAmbiguous.Code {
 				t.Fatalf("multiple models without sorting: %v", err)
 			}

@@ -243,12 +243,16 @@ type sourceBody struct {
 	Timeouts   *Timeouts       `json:"timeouts"`
 	Plugins    json.RawMessage `json:"plugins"`
 	Routing    *struct {
-		Allowed   *AllowedCatalogNodes `json:"allowedCatalogNodes"`
-		Filter    *string              `json:"filter"`
-		Sort      []Sort               `json:"sort"`
-		Retries   *int                 `json:"retries"`
-		Fallbacks *int                 `json:"fallbacks"`
-		Missing   *string              `json:"missingEncryptionKeys"`
+		Authors     *Lists  `json:"authors"`
+		Models      *Lists  `json:"models"`
+		Deployments *Lists  `json:"deployments"`
+		Routes      *Lists  `json:"routes"`
+		Providers   *Lists  `json:"providers"`
+		Filter      *string `json:"filter"`
+		Sort        []Sort  `json:"sort"`
+		Retries     *int    `json:"retries"`
+		Fallbacks   *int    `json:"fallbacks"`
+		Missing     *string `json:"missingEncryptionKeys"`
 	} `json:"routing"`
 }
 
@@ -637,7 +641,7 @@ func (d *SourceDocument) compile(plugins map[[32]byte]*Plugins, compiler *celCom
 	if err := decoder.Decode(&doc); err != nil {
 		return nil, configError("invalid source configuration: %v", err)
 	}
-	if doc.Schema != nil && *doc.Schema != "https://stogas.ai/schemas/key-config-v1.json" {
+	if doc.Schema != nil && *doc.Schema != "https://stogas.ai/schemas/policy-v1.json" {
 		return nil, configError("unsupported source schema")
 	}
 	// Null cannot silently turn an explicitly supplied requirement off.
@@ -666,7 +670,8 @@ func (d *SourceDocument) compile(plugins map[[32]byte]*Plugins, compiler *celCom
 				}
 			}
 		}
-		config.Routing.AllowedCatalogNodes = doc.Routing.Allowed
+		config.Routing.Authors, config.Routing.Models, config.Routing.Deployments = doc.Routing.Authors, doc.Routing.Models, doc.Routing.Deployments
+		config.Routing.Routes, config.Routing.Providers = doc.Routing.Routes, doc.Routing.Providers
 		if doc.Routing.Retries != nil {
 			config.Routing.Retries = *doc.Routing.Retries
 		}
@@ -1052,12 +1057,16 @@ func (c *Config) DenyOrigin(now time.Time) (Origin, bool) {
 	return Origin{}, false
 }
 
-// NodesOrigin locates the first allowed catalog nodes that exclude a candidate.
-func (c *Config) NodesOrigin(authorID, modelID, deploymentID, routeID, providerID string) (Origin, bool) {
+// ListsOrigin locates the first policy whose routing lists exclude a
+// candidate.
+func (c *Config) ListsOrigin(authorID, modelID, deploymentID, routeID, providerID string) (Origin, bool) {
+	ids := [len(routingLists)]string{authorID, modelID, deploymentID, routeID, providerID}
 	for i, entry := range c.sources {
-		if c.allowedSettings(entry.Value)&permissionNodes != 0 &&
-			!entry.Value.Config.Routing.AllowedCatalogNodes.Allows(authorID, modelID, deploymentID, routeID, providerID) {
-			return c.origin(i), true
+		allowed := c.allowedSettings(entry.Value)
+		for kind, list := range routingLists {
+			if allowed&list.permission != 0 && !(*list.lists(&entry.Value.Config.Routing)).admits(ids[kind]) {
+				return c.origin(i), true
+			}
 		}
 	}
 	return Origin{}, false
@@ -1228,8 +1237,7 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 	seenPlugins := map[*Plugins]bool{}
 	seenWindows := map[string]bool{}
 	var networks *Networks
-	var countries *Countries
-	var transportLists *Transports
+	var countries, transportLists *Lists
 	for index, entry := range sources {
 		scope, source := entry.Scope, entry.Value
 		if !scope.Valid() && scope != RequestScope || source == nil {
@@ -1262,12 +1270,17 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 		}
 		config := source.Config
 		allowed := out.allowedSettings(source)
-		if source.Delegation != nil && source.Delegation.Request != nil {
+		if source.Delegation != nil && source.Delegation.Requests != nil {
 			hasRequestPermission = true
-			out.RequestPermission &= *source.Delegation.Request
+			out.RequestPermission &= *source.Delegation.Requests
 		}
-		if allowed&permissionInput != 0 && config.Input.applies() {
-			out.Input = out.Input.combine(config.Input)
+		if in := config.Input; in != nil {
+			if allowed&permissionASCIIOnly != 0 && in.ASCIIOnly {
+				out.Input = out.Input.combine(&Input{ASCIIOnly: true})
+			}
+			if allowed&permissionMediaTypes != 0 && in.MediaTypes != nil {
+				out.Input = out.Input.combine(&Input{MediaTypes: in.MediaTypes})
+			}
 		}
 		if config.Timeouts != nil {
 			if out.Timeouts == nil {
@@ -1308,8 +1321,12 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 		if allowed&permissionTransports != 0 && config.Access != nil && config.Access.Transports != nil {
 			transportLists = transportLists.combine(config.Access.Transports)
 		}
-		if allowed&permissionNodes != 0 {
-			out.Routing.AllowedCatalogNodes = intersectAllowedNodes(out.Routing.AllowedCatalogNodes, config.Routing.AllowedCatalogNodes)
+		// A candidate must be in every allow list of a kind and in no deny list.
+		for _, list := range routingLists {
+			if allowed&list.permission != 0 {
+				combined := list.lists(&out.Routing)
+				*combined = (*combined).combine(*list.lists(&config.Routing))
+			}
 		}
 		set := allowed & source.settings
 		if set&permissionRetries != 0 && (retries == nil || *retries > config.Routing.Retries) {
@@ -1467,8 +1484,5 @@ func (c *Config) validateCombined() error {
 	// validate here would mutate shared maps while other requests read them.
 	// Each source checked its own filter and sort; the composed sort may hold
 	// more criteria and several lists of one kind, from different policies.
-	if err := c.Routing.AllowedCatalogNodes.validate(); err != nil {
-		return err
-	}
 	return nil
 }

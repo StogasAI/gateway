@@ -89,12 +89,12 @@ func TestDelegationPermitsTextExtractionByFamily(t *testing.T) {
 func TestDelegationFollowsResourceOwnershipAndRequestPermissionsIntersect(t *testing.T) {
 	for _, owner := range []Scope{OrganizationScope, FolderScope, GrantScope, RoleScope, MemberScope, CredentialScope, KeyScope} {
 		for _, target := range []Scope{FolderScope, GrantScope, RoleScope, MemberScope, CredentialScope, KeyScope} {
-			raw, _ := json.Marshal(map[string]any{"delegation": map[string]any{delegationTarget(target): false, "request": []string{"routing.filter"}}})
+			raw, _ := json.Marshal(map[string]any{"delegation": map[string]any{delegationTarget(target): false, "requests": []string{"routing.filter"}}})
 			source, err := CompileSource(raw)
 			if err != nil {
 				t.Fatal(err)
 			}
-			empty, err := CompileSource([]byte(`{"delegation":{"request":true}}`))
+			empty, err := CompileSource([]byte(`{"delegation":{"requests":true}}`))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -120,8 +120,8 @@ func TestDelegationFollowsResourceOwnershipAndRequestPermissionsIntersect(t *tes
 		}
 	}
 	for _, raw := range []string{
-		`{"delegation":{"request":["limits"]}}`,
-		`{"delegation":{"request":["delegation"]}}`,
+		`{"delegation":{"requests":["limits"]}}`,
+		`{"delegation":{"requests":["delegation"]}}`,
 		`{"delegation":{"keys":["unknown"]}}`,
 		`{"delegation":{"keys":["input","input"]}}`,
 		`{"delegation":{"keys":{"default":true,"exceptions":{}}}}`,
@@ -146,7 +146,7 @@ func TestEncryptedPluginNeedsItsSectionAndEncryptedPlugins(t *testing.T) {
 	} {
 		permission := strings.Fields(permission)
 		parent, _ := json.Marshal(map[string]any{
-			"delegation": map[string]any{"keys": permission, "request": permission},
+			"delegation": map[string]any{"keys": permission, "requests": permission},
 		})
 		for _, child := range []map[string]any{{"plugins": plugins}, {"rules": map[string]any{"private": map[string]any{"plugins": plugins}}}} {
 			config, _ := json.Marshal(child)
@@ -187,12 +187,12 @@ func TestPoliciesKeepSectionsTheirParentsNoLongerPermit(t *testing.T) {
 	}
 	kept := []InspectionNote{
 		{Kind: "kept", Scope: OrganizationScope, Sections: []string{"timeouts.totalSeconds"}},
-		{Kind: "kept", Scope: FolderScope, ID: "folder", Sections: []string{"input"}},
+		{Kind: "kept", Scope: FolderScope, ID: "folder", Sections: []string{"input.asciiOnly"}},
 	}
 	for _, proposal := range []string{
 		previous,
 		strings.Replace(previous, "provider.id != 'a'", "provider.id != 'b'", 1),
-		strings.Replace(previous, `"rules"`, `"$schema":"https://stogas.ai/schemas/key-config-v1.json","rules"`, 1),
+		strings.Replace(previous, `"rules"`, `"$schema":"https://stogas.ai/schemas/policy-v1.json","rules"`, 1),
 	} {
 		inspection, err := inspect(proposal, json.RawMessage(previous))
 		if err != nil || !reflect.DeepEqual(inspection.Notes, kept) {
@@ -204,7 +204,7 @@ func TestPoliciesKeepSectionsTheirParentsNoLongerPermit(t *testing.T) {
 		t.Fatalf("removing a kept section: %+v, %v", inspection, err)
 	}
 	for proposal, message := range map[string]string{
-		strings.Replace(previous, `"asciiOnly":true`, `"asciiOnly":false`, 1):           "The folder policy does not let key policies set input",
+		strings.Replace(previous, `"asciiOnly":true`, `"asciiOnly":false`, 1):           "The folder policy does not let key policies set input.asciiOnly",
 		strings.Replace(previous, `"totalSeconds":60`, `"totalSeconds":30`, 1):          "The organization policy does not let key policies set timeouts.totalSeconds",
 		strings.Replace(previous, `request.interface == 'chat_completions'`, `true`, 1): "The organization policy does not let key policies set timeouts.totalSeconds",
 		strings.Replace(previous, `"chat"`, `"chats"`, 1):                               "The organization policy does not let key policies set timeouts.totalSeconds",

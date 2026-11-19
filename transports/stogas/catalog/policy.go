@@ -162,18 +162,18 @@ func filterRoutingSelectionsByPolicy(selections []routingSelection, config *poli
 		if policyAllowsSelection(config, selection) {
 			filtered = append(filtered, selection)
 		} else if trace != nil {
-			trace.removeSelection(selection, RemovedAllowedNodes, nodesOrigin(config, selection.deployment))
+			trace.removeSelection(selection, RemovedLists, listsOrigin(config, selection.deployment))
 		}
 	}
 	return filtered
 }
 
 func policyAllowsSelection(config *policy.Config, selection routingSelection) bool {
-	if config == nil || config.Routing.AllowedCatalogNodes == nil {
+	if config == nil || !config.Routing.HasLists() {
 		return true
 	}
 	ids := candidatePolicyIDs(&ResolvedRequest{Deployment: selection.deployment})
-	return config.Routing.AllowedCatalogNodes.Allows(ids.author, ids.model, ids.deployment, ids.route, ids.provider)
+	return config.Routing.Admits(ids.author, ids.model, ids.deployment, ids.route, ids.provider)
 }
 
 func policyEvaluationError(err error) error {
