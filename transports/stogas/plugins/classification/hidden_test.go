@@ -75,8 +75,9 @@ func TestHiddenCountsAFlagUntilItEnds(t *testing.T) {
 // DerivedCoreProperties.txt from the properties of the unicode package, and Write decodes every
 // such character.
 func TestDefaultIgnorableMatchesUnicode(t *testing.T) {
+	// A new Unicode version can add default ignorable characters or change their derivation.
 	if unicode.Version != "17.0.0" {
-		t.Skipf("unicode tables are version %s", unicode.Version)
+		t.Fatalf("unicode tables are version %s: check defaultIgnorable and this derivation against that version's DerivedCoreProperties.txt, then update both", unicode.Version)
 	}
 	derived := func(r rune) bool {
 		if unicode.Is(unicode.White_Space, r) || r >= 0xFFF9 && r <= 0xFFFB || r >= 0x13430 && r <= 0x13440 ||
