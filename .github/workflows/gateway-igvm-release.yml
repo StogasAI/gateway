@@ -206,6 +206,9 @@ jobs:
           }
           NODE
 
+      # The draft names no target commit, because GitHub refuses the workflow token a release
+      # whose target has workflow files that no branch has, as once main changes a workflow
+      # during the build. The existing tag still decides the commit.
       - name: Create or update draft release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -233,7 +236,6 @@ jobs:
                 gh release delete-asset "$tag" "$asset" --yes
               done
             gh release upload "$tag" "${ASSETS[@]}" --clobber
-            gh release edit "$tag" --draft=true --target "$release_commit"
           else
-            gh release create "$tag" "${ASSETS[@]}" --draft --verify-tag --target "$release_commit" --title "Gateway $tag"
+            gh release create "$tag" "${ASSETS[@]}" --draft --verify-tag --title "Gateway $tag"
           fi
