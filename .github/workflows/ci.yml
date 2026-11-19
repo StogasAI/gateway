@@ -19,6 +19,14 @@ jobs:
     name: Go Tests
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    # Tests that time their own work run alone after the others and without the race detector,
+    # which makes CPU-bound code about ten times slower. An Azure discovery at its limits must
+    # finish within the gateway's own deadline, settlement calls start a settlement interval apart
+    # unless a full call waits, and upstream core tests tell an immediate end from a wait by
+    # elapsed time.
+    env:
+      TIMING_TESTS: '^(TestAzureDiscoveryAtItsLimits|TestSettlementBatchesRequestsThatFinishDuringACall)$'
+      CORE_TIMING_TESTS: '^(TestAzureListModelsSpeechVoicesTiming|TestChatStreamWaitForUsageAcceptsUsageOnTheFinishFrame|TestChatStreamWaitForUsageTerminatesOnUsageFrameNotIdleTimeout|TestTextCompletionStreamWaitForUsageTerminatesOnUsageFrameNotIdleTimeout)$'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -50,7 +58,7 @@ jobs:
         working-directory: transports
         env:
           CGO_LDFLAGS: ${{ steps.verifier.outputs.cgo-ldflags }}
-        run: GOWORK=off go test -tags=stogas_gateway -race -shuffle=on -count=1 -coverprofile="$RUNNER_TEMP/transports.cover" ./...
+        run: GOWORK=off go test -tags=stogas_gateway -race -shuffle=on -count=1 -skip "$TIMING_TESTS" -coverprofile="$RUNNER_TEMP/transports.cover" ./...
       # The race detector changes allocation; stop-the-world collection exposes short heap peaks.
       - name: Measure request preparation memory
         working-directory: transports
@@ -59,7 +67,15 @@ jobs:
         run: GOWORK=off GODEBUG=gcstoptheworld=1 go test -tags=stogas_gateway -count=1 -run '^TestRequestPreparationFitsItsMemoryCharges$' ./stogas-http
       - name: Test deterministic retained core packages
         working-directory: core
-        run: GOWORK=off go test -shuffle=on -count=1 -coverprofile="$RUNNER_TEMP/core.cover" . ./internal/llmtests ./internal/memtest ./keyselectors ./mcp/... ./network ./providers/... ./schemas
+        run: GOWORK=off go test -shuffle=on -count=1 -skip "$CORE_TIMING_TESTS" -coverprofile="$RUNNER_TEMP/core.cover" . ./internal/llmtests ./internal/memtest ./keyselectors ./mcp/... ./network ./providers/... ./schemas
+      - name: Run Stogas timing tests alone
+        working-directory: transports
+        env:
+          CGO_LDFLAGS: ${{ steps.verifier.outputs.cgo-ldflags }}
+        run: GOWORK=off go test -tags=stogas_gateway -p 1 -shuffle=on -count=1 -run "$TIMING_TESTS" ./stogas ./stogas/billing
+      - name: Run core timing tests alone
+        working-directory: core
+        run: GOWORK=off go test -p 1 -shuffle=on -count=1 -run "$CORE_TIMING_TESTS" ./providers/azure ./providers/openai
       # Coverage shows which statements the tests run, not what they check, so it gates nothing.
       - name: Report coverage
         if: ${{ !cancelled() }}
