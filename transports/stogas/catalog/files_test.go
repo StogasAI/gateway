@@ -638,6 +638,11 @@ func TestReleaseRefusesFilesThatDifferFromTheRoot(t *testing.T) {
 		"a deployment served with Stogas's own account where the gateway holds none": {func(r testRelease) {
 			r.record("deployments", deployment)["stogasManaged"] = true
 		}, "which the gateway does not hold"},
+		"Stogas's own account with a prompt cache for each account": {func(r testRelease) {
+			for _, route := range r.record("deployments", "chutes-kimi-k3")["routes"].(map[string]any) {
+				route.(map[string]any)["dataHandling"].(map[string]any)["isolatedPromptCache"] = true
+			}
+		}, "which every customer shares"},
 		"a change that the root does not list": {func(r testRelease) {
 			r.parts[0]["schedule"] = []any{map[string]any{"start": "2027-01-01T00:00:00Z", "graph": map[string]any{}}}
 		}, "does not list"},

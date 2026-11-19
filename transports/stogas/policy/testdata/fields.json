@@ -20,6 +20,7 @@
 	"deployment.contextWindowTokens": "integer",
 	"deployment.dataHandling.certifications": "string_list",
 	"deployment.dataHandling.endToEndEncrypted": "boolean",
+	"deployment.dataHandling.isolatedPromptCache": "boolean",
 	"deployment.dataHandling.processingLocation": "string",
 	"deployment.dataHandling.processingWithin": "string_list",
 	"deployment.dataHandling.retentionDays": "integer",

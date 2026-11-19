@@ -1029,6 +1029,11 @@ func validateCompiledDeployment(graph compiledGraph, selectors selectorRegistry,
 	for _, routeID := range sortedRouteIDs(deployment) {
 		route := deployment.Routes[routeID]
 		owner := "deployment " + deploymentID + " route " + routeID
+		// Every customer on Stogas's own account shares its prompt cache. A deployment that is also
+		// served with customers' own accounts would need the fact for each kind of credential.
+		if deployment.StogasManaged && route.DataHandling.IsolatedPromptCache {
+			return fmt.Errorf("%s isolates the prompt cache of Stogas's own account, which every customer shares", owner)
+		}
 		if !validSHA256Digest(route.ChainHash) {
 			return fmt.Errorf("%s has an invalid resolved chain", owner)
 		}

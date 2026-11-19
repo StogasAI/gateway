@@ -128,6 +128,9 @@ type DataHandling struct {
 	ZeroDataRetention bool  `json:"zeroDataRetention"`
 	TEE               bool  `json:"tee"`
 	TEEVerified       bool  `json:"teeVerified"`
+	// IsolatedPromptCache says that the provider keeps each account's prompt cache apart, so that
+	// another account cannot learn from cached token counts or response times what this one sent.
+	IsolatedPromptCache bool `json:"isolatedPromptCache"`
 	// SharedWith lists, in order, each company other than the provider's and the hosting that
 	// receives requests, or HostingUnknown for companies that the provider does not name.
 	SharedWith []string `json:"sharedWith"`
