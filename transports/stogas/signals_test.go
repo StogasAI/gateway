@@ -189,6 +189,60 @@ func TestDefaultAdapterSalvagesInconsistentProviderUsage(t *testing.T) {
 	}
 }
 
+// Grok on Azure reports completion_tokens without its reasoning tokens, as captured on
+// 2026-11-19: prompt 7, completion 1, reasoning 15, total 23.
+func TestReasoningCountedApartFromCompletionIsIncluded(t *testing.T) {
+	details := func(reasoning int) *schemas.ChatCompletionTokensDetails {
+		return &schemas.ChatCompletionTokensDetails{ReasoningTokens: reasoning}
+	}
+	tests := map[string]struct {
+		usage                 *schemas.BifrostLLMUsage
+		completion, reasoning int
+	}{
+		"counted apart": {
+			usage:      &schemas.BifrostLLMUsage{PromptTokens: 7, CompletionTokens: 1, TotalTokens: 23, CompletionTokensDetails: details(15)},
+			completion: 16, reasoning: 15,
+		},
+		"counted apart with no visible output": {
+			usage:      &schemas.BifrostLLMUsage{PromptTokens: 7, TotalTokens: 22, CompletionTokensDetails: details(15)},
+			completion: 15, reasoning: 15,
+		},
+		"already included": {
+			usage:      &schemas.BifrostLLMUsage{PromptTokens: 7, CompletionTokens: 16, TotalTokens: 23, CompletionTokensDetails: details(15)},
+			completion: 16, reasoning: 15,
+		},
+		"total that matches neither": {
+			usage:      &schemas.BifrostLLMUsage{PromptTokens: 7, CompletionTokens: 16, TotalTokens: 40, CompletionTokensDetails: details(15)},
+			completion: 16, reasoning: 15,
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			for _, stream := range []bool{false, true} {
+				usage := *tc.usage
+				state := &State{}
+				response := &schemas.BifrostChatResponse{Usage: &usage}
+				var err error
+				if stream {
+					err = (DefaultAdapter{}).IngestChunk(state, &schemas.BifrostStreamChunk{BifrostChatResponse: response})
+				} else {
+					err = (DefaultAdapter{}).IngestResponse(state, &schemas.BifrostResponse{ChatResponse: response}, nil)
+				}
+				if err != nil {
+					t.Fatalf("stream=%v: usage was rejected: %v", stream, err)
+				}
+				signals, ok := state.Signals.(*StandardSignals)
+				if !ok || signals.Completion != tc.completion || signals.Reasoning != tc.reasoning {
+					t.Fatalf("stream=%v: signals = %#v, want completion %d and reasoning %d", stream, state.Signals, tc.completion, tc.reasoning)
+				}
+				if usage.CompletionTokens != tc.completion {
+					t.Fatalf("stream=%v: client reads completion_tokens %d, want %d", stream, usage.CompletionTokens, tc.completion)
+				}
+			}
+		})
+	}
+}
+
 func TestDefaultAdapterDerivesOneMissingUsagePartitionFromTotal(t *testing.T) {
 	state := &State{}
 	usage := &schemas.BifrostLLMUsage{
