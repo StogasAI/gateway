@@ -1034,6 +1034,11 @@ func validateCompiledDeployment(graph compiledGraph, selectors selectorRegistry,
 		if deployment.StogasManaged && route.DataHandling.IsolatedPromptCache {
 			return fmt.Errorf("%s isolates the prompt cache of Stogas's own account, which every customer shares", owner)
 		}
+		// A remote MCP tool makes the provider call any host under the credential's account, and
+		// nothing bounds its results, so Stogas's own account never runs one.
+		if _, offered := route.HostedTools[HostedToolMCP]; offered && deployment.StogasManaged {
+			return fmt.Errorf("%s offers remote MCP on Stogas's own account", owner)
+		}
 		if !validSHA256Digest(route.ChainHash) {
 			return fmt.Errorf("%s has an invalid resolved chain", owner)
 		}
