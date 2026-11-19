@@ -26,12 +26,12 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/googleauth"
 )
 
-// Gateways check every credential: a member checks a customer-encrypted one, which only a gateway
-// can open, and Control checks stored ones when they are saved, on demand and on its schedule. A
-// check makes the cheapest read that the provider answers for the credential. A 2xx answer accepts
-// it, a 4xx answer other than 408, 409, 425 and 429 rejects it, and anything else leaves it
-// unverified. An Azure credential's check signs in to Entra anew and discovers the account's
-// targets.
+// Gateways check every credential and record the result: a member has a customer-encrypted one
+// checked, which only a gateway can open, and Control has stored ones checked on demand and on its
+// schedule, after a probe of each new secret. A check makes the cheapest read that the provider
+// answers for the credential. A 2xx answer accepts it, a 4xx answer other than 408, 409, 425 and
+// 429 rejects it, and anything else leaves it unverified. An Azure credential's check signs in to
+// Entra anew and discovers the account's targets.
 const (
 	byokCheckTimeout = 8 * time.Second
 	// A run of Control's schedule sends four checks at once, which four slots start together, and
@@ -520,15 +520,36 @@ func (c *byokChecker) read(provider string, client *http.Client, request *http.R
 		return unverified(byokUnavailable(provider))
 	}
 	defer response.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, byokCheckResponseLimit))
+	body, _ := io.ReadAll(io.LimitReader(response.Body, byokCheckResponseLimit))
 	switch status := response.StatusCode; {
 	case status >= 200 && status < 300:
+		return byokFailure{}
+	// OpenAI answers a restricted key that may not list models with a 401 that names the missing
+	// permission, which it tells only a key that it knows. Such a key serves the requests that its
+	// permissions allow.
+	case provider == "openai" && status == http.StatusUnauthorized && openAIMissingScope(body):
 		return byokFailure{}
 	case status >= 400 && status < 500 && status != 408 && status != 409 && status != 425 && status != 429:
 		return refusal(byokRejected(provider))
 	default:
 		return unverified(byokUnavailable(provider))
 	}
+}
+
+// openAIMissingScope reports whether OpenAI refused a call only because the key lacks a permission,
+// as requests read the same refusal: by its code, or by its message when OpenAI sends no code.
+func openAIMissingScope(body []byte) bool {
+	var refusal struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &refusal) != nil {
+		return false
+	}
+	return refusal.Error.Code == "missing_scope" ||
+		strings.HasPrefix(strings.ToLower(strings.TrimSpace(refusal.Error.Message)), "you have insufficient permissions for this operation")
 }
 
 // byokCredentialName names what a provider's secret is: AWS and Google Cloud take a credential

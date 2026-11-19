@@ -2,9 +2,7 @@ package stogas
 
 import (
 	"context"
-	"encoding/json"
 	"regexp"
-	"time"
 
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
@@ -20,44 +18,27 @@ const (
 	storedByokUnavailable = "unavailable"
 	// The subscriptions that one listing of Azure accounts may search, as the dashboard bounds them.
 	storedAzureMaxSubscriptions = 64
-	// Control saves a stored credential's discovery in a Worker, which has 128 MB. While it reads an
-	// answer it holds about five times the answer's size, most of all when the answer lists many
-	// small targets, so an answer's targets and deployments take at most 8 MiB as JSON, which Control
-	// reads in about 40 MiB. That holds about 8,000 targets, and Azure allows an account 32 standard
-	// deployments and 10 fine-tuned ones.
-	storedAzureMaxDiscoveryBytes = 8 << 20
 )
 
 // A subscription ID only names a path of Azure Resource Manager, so it takes any UUID that an
 // account's resource ID may hold.
 var azureSubscriptionIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
-// StoredByokCheckRequest checks a stored credential: its secret, sealed as Control stores it, for an
-// AWS or Google Cloud credential the target that Control stores beside it, and for an Azure
-// credential the account that it connects and the database time that the check starts from.
-type StoredByokCheckRequest struct {
+// StoredByokCheck is how a use of a stored credential ended. Message is nil when nothing is wrong.
+// AccountName is the name of the Azure account that a probe read, which the credential shows.
+type StoredByokCheck struct {
+	Outcome     string  `json:"outcome"`
+	Message     *string `json:"message"`
+	AccountName *string `json:"accountName,omitempty"`
+}
+
+// StoredByokProbeRequest probes a secret that Control has not saved: the secret, sealed as Control
+// would store it, for an AWS or Google Cloud credential the target that Control would store beside
+// it, and for an Azure credential the account that it would connect.
+type StoredByokProbeRequest struct {
 	Secret         string               `json:"secret"`
 	Target         *billing.CloudTarget `json:"target,omitempty"`
 	AzureAccountID string               `json:"azureAccountId,omitempty"`
-	StartedAt      *time.Time           `json:"startedAt,omitempty"`
-}
-
-// StoredByokCheck is how a check of a stored credential ended. Message is nil when nothing is
-// wrong. Azure is what the discovery of an Azure credential found when it read the account.
-type StoredByokCheck struct {
-	Outcome string                `json:"outcome"`
-	Message *string               `json:"message"`
-	Azure   *StoredAzureDiscovery `json:"azure"`
-}
-
-// StoredAzureDiscovery is a discovery as Control saves it: the account's name, its targets and
-// every deployment that it lists, each list encoded as JSON, and whether the account holds each
-// account option that Azure reports.
-type StoredAzureDiscovery struct {
-	Name           string          `json:"name"`
-	Bindings       json.RawMessage `json:"bindings"`
-	Deployments    json.RawMessage `json:"deployments"`
-	AccountOptions map[string]bool `json:"accountOptions"`
 }
 
 // StoredAzureAccountsRequest lists the accounts that the application in a sealed secret can read
@@ -88,77 +69,129 @@ type storedByokOpener interface {
 	OpenStoredByok(*billing.StoredByokGrant, string) (string, error)
 }
 
-// CheckStoredByok checks the stored credential that grant names, as checks of customer-encrypted
-// credentials do. Control records the result, so the gateway reads and writes no database row.
-func (r *Runtime) CheckStoredByok(ctx context.Context, grant *billing.StoredByokGrant, request StoredByokCheckRequest) (*StoredByokCheck, error) {
+type storedByokStore interface {
+	storedByokOpener
+	StoredByokCheckTarget(context.Context, *billing.StoredByokGrant) (*billing.ByokCheckTarget, error)
+	RecordByokCheck(context.Context, *billing.ByokCheckTarget, string, *billing.AzureDiscoveryResult) (*billing.ByokCheckRecord, error)
+}
+
+// CheckStoredByok checks the stored credential that grant names and records the result, as a
+// member's check of a customer-encrypted credential does. An Azure credential's check discovers
+// its account's targets, which the gateway saves, so Control never holds a discovery.
+func (r *Runtime) CheckStoredByok(ctx context.Context, grant *billing.StoredByokGrant) (*StoredByokCheck, error) {
 	if r == nil || r.billing == nil || r.byokChecks == nil {
 		return nil, billing.ErrGatewayUnavailable
 	}
-	return checkStoredByok(ctx, r.billing, r.byokChecks, grant, request)
+	return checkStoredByok(ctx, r.billing, r.byokChecks, grant)
 }
 
-func checkStoredByok(ctx context.Context, opener storedByokOpener, checker *byokChecker, grant *billing.StoredByokGrant, request StoredByokCheckRequest) (*StoredByokCheck, error) {
+func checkStoredByok(ctx context.Context, store storedByokStore, checker *byokChecker, grant *billing.StoredByokGrant) (*StoredByokCheck, error) {
 	if grant == nil || grant.Scope != billing.StoredByokCheck {
+		return nil, billing.ErrStoredByokGrant
+	}
+	target, err := store.StoredByokCheckTarget(ctx, grant)
+	if err != nil {
+		return nil, err
+	}
+	secret, err := store.OpenStoredByok(grant, target.EncryptedSecret)
+	if err != nil {
+		return nil, err
+	}
+	// The check holds the secret to the target that requests hold it to.
+	found, failure, err := checker.run(ctx, grant.OrganizationID, target.Provider, secret, target.Target, target.AzureAccountID, target.StartedAt)
+	if err != nil {
+		return nil, err
+	}
+	failure, err = storedByokFailure(grant.Provider, failure)
+	if err != nil {
+		return nil, err
+	}
+	message, discovery := failure.message, (*billing.AzureDiscoveryResult)(nil)
+	if found != nil {
+		message, discovery = azureDiscoveryOutcome(found, nil)
+	}
+	if _, err := store.RecordByokCheck(ctx, target, message, discovery); err != nil {
+		return nil, err
+	}
+	return &StoredByokCheck{Outcome: storedByokOutcome(failure), Message: optionalMessage(message)}, nil
+}
+
+// ProbeStoredByok checks a secret that Control has not saved, so that Control saves only a secret
+// that its provider accepts, and records nothing. An Azure application signs in and reads the
+// account that it would connect; the check that follows the save discovers the account's targets.
+func (r *Runtime) ProbeStoredByok(ctx context.Context, grant *billing.StoredByokGrant, request StoredByokProbeRequest) (*StoredByokCheck, error) {
+	if r == nil || r.billing == nil || r.byokChecks == nil {
+		return nil, billing.ErrGatewayUnavailable
+	}
+	return probeStoredByok(ctx, r.billing, r.byokChecks, grant, request)
+}
+
+func probeStoredByok(ctx context.Context, opener storedByokOpener, checker *byokChecker, grant *billing.StoredByokGrant, request StoredByokProbeRequest) (*StoredByokCheck, error) {
+	if grant == nil || grant.Scope != billing.StoredByokProbe {
 		return nil, billing.ErrStoredByokGrant
 	}
 	azure := grant.Provider == "azure"
 	cloud := grant.Provider == string(catalog.ProviderAWS) || grant.Provider == string(catalog.ProviderGoogleCloud)
-	var startedAt time.Time
-	switch {
-	case request.Secret == "" || cloud != (request.Target != nil):
-		return nil, billing.ErrStoredByokRequest
-	case azure:
-		if request.StartedAt == nil || !azureAccountIDPattern.MatchString(request.AzureAccountID) {
-			return nil, billing.ErrStoredByokRequest
-		}
-		startedAt = request.StartedAt.UTC()
-	case request.AzureAccountID != "" || request.StartedAt != nil:
+	if request.Secret == "" || cloud != (request.Target != nil) || azure != (request.AzureAccountID != "") ||
+		azure && !azureAccountIDPattern.MatchString(request.AzureAccountID) {
 		return nil, billing.ErrStoredByokRequest
 	}
 	secret, err := opener.OpenStoredByok(grant, request.Secret)
 	if err != nil {
 		return nil, err
 	}
-	// The check holds the secret to the target that requests hold it to.
-	found, failure, err := checker.run(ctx, grant.OrganizationID, grant.Provider, secret, request.Target, request.AzureAccountID, startedAt)
+	accountName, failure, err := checker.probe(ctx, grant.OrganizationID, grant.Provider, secret, request.Target, request.AzureAccountID)
 	if err != nil {
 		return nil, err
 	}
+	failure, err = storedByokFailure(grant.Provider, failure)
+	if err != nil {
+		return nil, err
+	}
+	return &StoredByokCheck{Outcome: storedByokOutcome(failure), Message: optionalMessage(failure.message), AccountName: optionalMessage(accountName)}, nil
+}
+
+// storedByokFailure is a check's failure as a stored credential shows it.
+func storedByokFailure(provider string, failure byokFailure) (byokFailure, error) {
 	switch {
 	case failure.invalid:
-		// Control reads only the form of a new secret, so this check is the first to read it as its
+		// Control reads only the form of a new secret, so a gateway is the first to read it as its
 		// provider's credential, and a secret that is not one, such as a Google key that is not RSA,
 		// is the member's to replace, as one that the provider refuses is.
-		failure.message = invalidStoredSecret(grant.Provider)
+		failure.message = invalidStoredSecret(provider)
 	case failure.target:
-		return nil, billing.ErrStoredByokTarget
+		return failure, billing.ErrStoredByokTarget
 	}
-	if found == nil {
-		return &StoredByokCheck{Outcome: storedByokOutcome(failure), Message: optionalMessage(failure.message)}, nil
-	}
-	if found.Bindings == nil {
-		found.Bindings = []azureDiscoveredBinding{}
-	}
-	if found.Deployments == nil {
-		found.Deployments = []billing.AzureDeployment{}
-	}
-	bindings, err := json.Marshal(found.Bindings)
+	return failure, nil
+}
+
+// probe checks a secret that no credential holds yet, while it holds one of the checker's slots.
+// For an Azure application it returns the name of the account accountID, which the application
+// must read.
+func (c *byokChecker) probe(ctx context.Context, organizationID, provider, secret string, registered *billing.CloudTarget, accountID string) (string, byokFailure, error) {
+	release, err := c.slots.take(ctx, organizationID)
 	if err != nil {
-		return nil, err
+		return "", byokFailure{}, err
 	}
-	deployments, err := json.Marshal(found.Deployments)
+	defer release()
+	if provider != "azure" {
+		return "", c.check(ctx, organizationID, provider, secret, registered), nil
+	}
+	app, err := parseAzureByokCredential(secret)
 	if err != nil {
-		return nil, err
+		return "", invalidSecret("azure"), nil
 	}
-	if len(bindings)+len(deployments) > storedAzureMaxDiscoveryBytes {
-		message := azureTooManyTargets
-		return &StoredByokCheck{Outcome: storedByokRejected, Message: &message}, nil
+	ctx, cancel := context.WithTimeout(ctx, azureDiscoveryTimeout)
+	defer cancel()
+	token, failure := c.signIn(ctx, organizationID, app)
+	if failure.message != "" {
+		return "", failure, nil
 	}
-	return &StoredByokCheck{
-		Outcome: storedByokAccepted,
-		Message: optionalMessage(found.CheckError),
-		Azure:   &StoredAzureDiscovery{Name: found.Name, Bindings: bindings, Deployments: deployments, AccountOptions: found.AccountOptions},
-	}, nil
+	account, _, _, err := readModelAccount(ctx, newARMReads(c.arm, token), accountID)
+	if err != nil {
+		return "", azureDiscoveryFailure(err), nil
+	}
+	return trimJS(account.name), byokFailure{}, nil
 }
 
 // ListStoredAzureAccounts lists the Foundry and Azure OpenAI accounts that the application in a

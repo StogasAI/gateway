@@ -734,30 +734,41 @@ func listAzureAccounts(ctx context.Context, client *http.Client, token string, s
 	return accounts, nil
 }
 
+// readModelAccount reads the account accountID with an ARM token and returns it with its Foundry
+// and Azure OpenAI endpoints. It refuses a resource that is no model account, and an account that
+// gateways cannot reach.
+func readModelAccount(ctx context.Context, reads *armReads, accountID string) (account azureAccount, foundry, openAI string, err error) {
+	if !azureAccountIDPattern.MatchString(accountID) {
+		return account, "", "", azureDiscoveryRejected("Use the resource ID of a Foundry or Azure OpenAI account")
+	}
+	accountBody, err := reads.data(ctx, armResource(accountID, armAPIVersion), azureAccountDenied)
+	if err != nil {
+		return account, "", "", err
+	}
+	account, ok := readAzureAccount(accountBody)
+	if !ok || azureAccountResourceID(account.id) != accountID {
+		return account, "", "", azureDiscoveryFailed("Azure returned an invalid account")
+	}
+	if !account.modelAccount() {
+		return account, "", "", azureDiscoveryRejected("This resource is not a Foundry or Azure OpenAI account")
+	}
+	foundry, openAI, problem := azureAccountEndpoints(account.kind, account.properties, account.endpoints)
+	if problem != "" {
+		return account, "", "", azureDiscoveryRejected(azureAccountProblems[problem])
+	}
+	return account, foundry, openAI, nil
+}
+
 // discoverAzure discovers the targets of the account accountID with an ARM token.
 func discoverAzure(ctx context.Context, client *http.Client, token string, accountID string, now time.Time) (*azureDiscovery, error) {
 	ctx, cancel := context.WithTimeout(ctx, azureDiscoveryTimeout)
 	defer cancel()
-	if !azureAccountIDPattern.MatchString(accountID) {
-		return nil, azureDiscoveryRejected("Use the resource ID of a Foundry or Azure OpenAI account")
-	}
 	reads := newARMReads(client, token)
-	subscriptionID := strings.Split(accountID, "/")[2]
-	accountBody, err := reads.data(ctx, armResource(accountID, armAPIVersion), azureAccountDenied)
+	account, foundry, openAI, err := readModelAccount(ctx, reads, accountID)
 	if err != nil {
 		return nil, err
 	}
-	account, ok := readAzureAccount(accountBody)
-	if !ok || azureAccountResourceID(account.id) != accountID {
-		return nil, azureDiscoveryFailed("Azure returned an invalid account")
-	}
-	if !account.modelAccount() {
-		return nil, azureDiscoveryRejected("This resource is not a Foundry or Azure OpenAI account")
-	}
-	foundry, openAI, problem := azureAccountEndpoints(account.kind, account.properties, account.endpoints)
-	if problem != "" {
-		return nil, azureDiscoveryRejected(azureAccountProblems[problem])
-	}
+	subscriptionID := strings.Split(accountID, "/")[2]
 	accountLocation := strings.ToLower(trimJS(account.location))
 	supportsInstant := strings.ToLower(trimJS(account.kind)) == "aiservices" && accountLocation == azureInstantLocation && foundry != ""
 

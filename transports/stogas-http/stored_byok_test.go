@@ -8,8 +8,9 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 )
 
-// A stored credential's request holds only the fields of its use, as one JSON object. Control
-// sends no other, so anything else is a mistake that the gateway refuses before it opens a secret.
+// A stored credential's request holds only the fields of its use, as one JSON object: none for a
+// check, which the grant names whole. Control sends no other, so anything else is a mistake that
+// the gateway refuses before it reads a credential or opens a secret.
 func TestStoredByokRequestsTakeOnlyTheirFields(t *testing.T) {
 	const (
 		account      = `"azureAccountId":"/subscriptions/00000000-0000-4000-8000-000000000003/resourcegroups/stogas/providers/microsoft.cognitiveservices/accounts/stogas-east"`
@@ -23,18 +24,21 @@ func TestStoredByokRequestsTakeOnlyTheirFields(t *testing.T) {
 		name, path, body string
 		valid            bool
 	}{
-		{"a check", storedByokCheckPath, `{"secret":"v1.a.b"}`, true},
-		{"an Azure check", storedByokCheckPath, `{"secret":"v1.a.b",` + account + `,"startedAt":"2026-11-03T12:00:00.123Z"}`, true},
+		{"a check", storedByokCheckPath, `{}`, true},
+		{"a probe", storedByokProbePath, `{"secret":"v1.a.b"}`, true},
+		{"an Azure probe", storedByokProbePath, `{"secret":"v1.a.b",` + account + `}`, true},
 		{"an account listing", storedAzureAccountsPath, `{"secret":"v1.a.b",` + subscription + "}\n", true},
-		{"an unknown field", storedByokCheckPath, `{"secret":"v1.a.b","provider":"openai"}`, false},
-		{"a listing's field in a check", storedByokCheckPath, `{"secret":"v1.a.b",` + subscription + `}`, false},
-		{"a check's field in a listing", storedAzureAccountsPath, `{"secret":"v1.a.b",` + subscription + `,` + account + `}`, false},
-		{"a second value", storedByokCheckPath, `{"secret":"v1.a.b"} {}`, false},
-		{"trailing text", storedByokCheckPath, `{"secret":"v1.a.b"}x`, false},
-		{"an array", storedByokCheckPath, `[{"secret":"v1.a.b"}]`, false},
-		{"a start that is not a time", storedByokCheckPath, `{"secret":"v1.a.b","startedAt":"yesterday"}`, false},
-		{"a query", storedByokCheckPath + "?debug=1", `{"secret":"v1.a.b"}`, false},
-		{"over 16 KiB", storedByokCheckPath, `{"secret":"` + strings.Repeat("a", storedByokMaxBody) + `"}`, false},
+		{"a secret in a check", storedByokCheckPath, `{"secret":"v1.a.b"}`, false},
+		{"an unknown field", storedByokProbePath, `{"secret":"v1.a.b","provider":"openai"}`, false},
+		{"a check's start in a probe", storedByokProbePath, `{"secret":"v1.a.b","startedAt":"2026-11-03T12:00:00.123Z"}`, false},
+		{"a listing's field in a probe", storedByokProbePath, `{"secret":"v1.a.b",` + subscription + `}`, false},
+		{"a probe's field in a listing", storedAzureAccountsPath, `{"secret":"v1.a.b",` + subscription + `,` + account + `}`, false},
+		{"a second value", storedByokCheckPath, `{} {}`, false},
+		{"trailing text", storedByokProbePath, `{"secret":"v1.a.b"}x`, false},
+		{"an array", storedByokProbePath, `[{"secret":"v1.a.b"}]`, false},
+		{"no body", storedByokCheckPath, ``, false},
+		{"a query", storedByokCheckPath + "?debug=1", `{}`, false},
+		{"over 16 KiB", storedByokProbePath, `{"secret":"` + strings.Repeat("a", storedByokMaxBody) + `"}`, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := newTestRequest(t)
@@ -43,9 +47,12 @@ func TestStoredByokRequestsTakeOnlyTheirFields(t *testing.T) {
 			testRequestBody(ctx, test.body)
 			ctx.credential = &apiCredential{Stored: grant}
 			server := &Server{}
-			if strings.HasPrefix(test.path, storedByokCheckPath) {
+			switch path, _, _ := strings.Cut(test.path, "?"); path {
+			case storedByokCheckPath:
 				server.checkStoredByok(ctx)
-			} else {
+			case storedByokProbePath:
+				server.probeStoredByok(ctx)
+			default:
 				server.listStoredAzureAccounts(ctx)
 			}
 			// Without a runtime, a request that parses stops where it needs the gateway's keys.

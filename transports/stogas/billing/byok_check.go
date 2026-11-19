@@ -36,6 +36,7 @@ var (
 )
 
 // ByokCheckGrant names the member, organization and credential that Control allowed to be checked.
+// ActorUserID is empty for Control's own check of a stored credential, which names no member.
 type ByokCheckGrant struct {
 	ActorUserID    string
 	OrganizationID string
@@ -101,8 +102,9 @@ func (s *Service) ParseByokCheckGrant(raw string) (*ByokCheckGrant, error) {
 	return parseByokCheckGrant(raw, s.inferenceTokenPublicKey, time.Now())
 }
 
-// ByokCheckTarget is a customer-encrypted credential that a member asked a gateway to check, as
-// the database showed it. The result is recorded only if no other check finished after checkedAt.
+// ByokCheckTarget is a credential that a gateway was asked to check, as the database showed it: a
+// customer-encrypted one for a member, or a stored one for Control. The result is recorded only if
+// no other check finished after checkedAt.
 // A discovery of an Azure credential's targets reads the account AzureAccountID from StartedAt,
 // the database's time.
 type ByokCheckTarget struct {
@@ -134,7 +136,7 @@ type AzureTargetCounts struct {
 }
 
 // ByokCheckTarget reads the credential that grant names, after the database finds again that its
-// member manages it.
+// member manages it. Control's grant names no member, and reads a stored credential.
 func (s *Service) ByokCheckTarget(ctx context.Context, grant *ByokCheckGrant) (*ByokCheckTarget, error) {
 	if s == nil || s.db == nil || grant == nil {
 		return nil, ErrGatewayUnavailable
@@ -146,7 +148,7 @@ func (s *Service) ByokCheckTarget(ctx context.Context, grant *ByokCheckGrant) (*
 	var cloudTarget, keys []byte
 	var startedAt pgtype.Timestamptz
 	checked := &ByokCheckTarget{Grant: *grant}
-	if err := s.db.pool.QueryRow(queryCtx, s.byokCheckTargetQuery, grant.ActorUserID, grant.OrganizationID, grant.ByokID).
+	if err := s.db.pool.QueryRow(queryCtx, s.byokCheckTargetQuery, optionalText(grant.ActorUserID), grant.OrganizationID, grant.ByokID).
 		Scan(&result, &provider, &encryptedSecret, &encryptionKeyID, &cloudTarget, &azureAccountID, &keys, &checked.checkedAt, &startedAt); err != nil {
 		return nil, fmt.Errorf("%w: read credential check: %v", ErrGatewayUnavailable, err)
 	}
@@ -160,10 +162,13 @@ func (s *Service) ByokCheckTarget(ctx context.Context, grant *ByokCheckGrant) (*
 		return nil, ErrByokCheckForbidden
 	case "stored":
 		return nil, ErrByokCheckStored
+	case "encrypted":
+		return nil, ErrStoredByokEncrypted
 	default:
 		return nil, fmt.Errorf("%w: read credential check: %s", ErrGatewayUnavailable, result)
 	}
-	if !provider.Valid || !encryptedSecret.Valid || !encryptionKeyID.Valid || !startedAt.Valid ||
+	// Only a customer-encrypted credential names the key that sealed it.
+	if !provider.Valid || !encryptedSecret.Valid || encryptionKeyID.Valid != (grant.ActorUserID != "") || !startedAt.Valid ||
 		(provider.String == "azure") != azureAccountID.Valid || json.Unmarshal(keys, &checked.Registered) != nil {
 		return nil, fmt.Errorf("%w: read credential check: incomplete credential", ErrGatewayUnavailable)
 	}
@@ -214,10 +219,6 @@ func (s *Service) RecordByokCheck(ctx context.Context, target *ByokCheckTarget, 
 	if s == nil || s.db == nil || target == nil {
 		return nil, ErrGatewayUnavailable
 	}
-	var message pgtype.Text
-	if failure != "" {
-		message = pgtype.Text{String: failure, Valid: true}
-	}
 	bindings, deployments, accountOptions, err := discovery.parameters()
 	if err != nil {
 		return nil, err
@@ -228,8 +229,8 @@ func (s *Service) RecordByokCheck(ctx context.Context, target *ByokCheckTarget, 
 	var checkedAt pgtype.Timestamptz
 	var targets []byte
 	grant := target.Grant
-	if err := s.db.pool.QueryRow(queryCtx, s.recordByokCheckQuery, grant.ActorUserID, grant.OrganizationID, grant.ByokID,
-		target.EncryptedSecret, target.checkedAt, message, target.StartedAt, bindings, deployments, accountOptions).Scan(&result, &checkedAt, &targets); err != nil {
+	if err := s.db.pool.QueryRow(queryCtx, s.recordByokCheckQuery, optionalText(grant.ActorUserID), grant.OrganizationID, grant.ByokID,
+		target.EncryptedSecret, target.checkedAt, optionalText(failure), target.StartedAt, bindings, deployments, accountOptions).Scan(&result, &checkedAt, &targets); err != nil {
 		return nil, fmt.Errorf("%w: record credential check: %v", ErrGatewayUnavailable, err)
 	}
 	switch result {
@@ -254,4 +255,9 @@ func (s *Service) RecordByokCheck(ctx context.Context, target *ByokCheckTarget, 
 	default:
 		return nil, fmt.Errorf("%w: record credential check: %s", ErrGatewayUnavailable, result)
 	}
+}
+
+// optionalText is null for an empty text.
+func optionalText(text string) pgtype.Text {
+	return pgtype.Text{String: text, Valid: text != ""}
 }

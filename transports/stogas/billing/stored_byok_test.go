@@ -44,6 +44,11 @@ func TestParseStoredByokGrant(t *testing.T) {
 		t.Fatalf("grant issued within the clock skew: %v", err)
 	}
 	accounts := claims
+	probe := claims
+	probe.Scope = StoredByokProbe
+	if grant, err := parseStoredByokGrant(storedByokGrantPrefix+signDashboardToken(t, key, probe), key.public, now); err != nil || grant.Scope != StoredByokProbe {
+		t.Fatalf("probe grant = %+v, %v", grant, err)
+	}
 	accounts.Provider, accounts.Scope = "azure", StoredByokAzureAccounts
 	if grant, err := parseStoredByokGrant(storedByokGrantPrefix+signDashboardToken(t, key, accounts), key.public, now); err != nil || grant.Scope != StoredByokAzureAccounts {
 		t.Fatalf("Azure account listing grant = %#v, %v", grant, err)

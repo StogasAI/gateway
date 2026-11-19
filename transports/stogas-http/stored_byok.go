@@ -13,16 +13,18 @@ import (
 
 // Control uses the credentials that it stores through these paths, so every call to a provider
 // comes from the fleet's addresses. Control sends the grant that it signed for the one use as the
-// API key, and the credential's secret sealed as it stores it.
+// API key. A check names its credential in the grant alone, and a probe and a listing carry a
+// secret that no credential holds yet, sealed as Control would store it.
 const (
 	storedByokCheckPath     = "/v1/byok/stored/check"
+	storedByokProbePath     = "/v1/byok/stored/probe"
 	storedAzureAccountsPath = "/v1/byok/stored/azure-accounts"
 	// A sealed secret of 8 KiB with 64 subscription IDs fits with room to spare.
 	storedByokMaxBody = 16 << 10
 )
 
 func isStoredByokPath(path string) bool {
-	return path == storedByokCheckPath || path == storedAzureAccountsPath
+	return path == storedByokCheckPath || path == storedByokProbePath || path == storedAzureAccountsPath
 }
 
 func (s *Server) checkStoredByok(ctx *requestContext) {
@@ -30,7 +32,7 @@ func (s *Server) checkStoredByok(ctx *requestContext) {
 	if !ok {
 		return
 	}
-	var request stogas.StoredByokCheckRequest
+	var request struct{}
 	if !s.decodeStoredByokRequest(ctx, &request) {
 		return
 	}
@@ -38,7 +40,28 @@ func (s *Server) checkStoredByok(ctx *requestContext) {
 		s.writeBillingError(ctx, billing.ErrGatewayUnavailable)
 		return
 	}
-	result, err := s.runtime.CheckStoredByok(ctx.request.Context(), credential.Stored, request)
+	result, err := s.runtime.CheckStoredByok(ctx.request.Context(), credential.Stored)
+	if err != nil {
+		s.writeBillingError(ctx, err)
+		return
+	}
+	s.writeJSON(ctx, http.StatusOK, result)
+}
+
+func (s *Server) probeStoredByok(ctx *requestContext) {
+	credential, ok := s.requireInferenceEnvelope(ctx)
+	if !ok {
+		return
+	}
+	var request stogas.StoredByokProbeRequest
+	if !s.decodeStoredByokRequest(ctx, &request) {
+		return
+	}
+	if s.runtime == nil || credential.Stored == nil {
+		s.writeBillingError(ctx, billing.ErrGatewayUnavailable)
+		return
+	}
+	result, err := s.runtime.ProbeStoredByok(ctx.request.Context(), credential.Stored, request)
 	if err != nil {
 		s.writeBillingError(ctx, err)
 		return

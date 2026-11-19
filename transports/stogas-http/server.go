@@ -213,6 +213,8 @@ func (s *Server) routes() error {
 			s.checkByok(ctx)
 		case ctx.request.Method == http.MethodPost && ctx.request.URL.Path == storedByokCheckPath:
 			s.checkStoredByok(ctx)
+		case ctx.request.Method == http.MethodPost && ctx.request.URL.Path == storedByokProbePath:
+			s.probeStoredByok(ctx)
 		case ctx.request.Method == http.MethodPost && ctx.request.URL.Path == storedAzureAccountsPath:
 			s.listStoredAzureAccounts(ctx)
 		case ctx.request.Method == http.MethodPost && isInferencePath(ctx.request.URL.Path):
