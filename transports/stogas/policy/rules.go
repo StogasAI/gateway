@@ -12,13 +12,12 @@ import (
 // Rules are unordered, named settings. Names identify conditional counters;
 // neither a rule's name nor its position gives its settings precedence.
 type Rule struct {
-	Name         string
-	When         *CELExpression
-	Default      bool
-	Value        *Source
-	Encrypted    *SourceDocument
-	HasLimits    bool
-	previewBytes int
+	Name      string
+	When      *CELExpression
+	Default   bool
+	Value     *Source
+	Encrypted *SourceDocument
+	HasLimits bool
 }
 
 type RuleMatch struct {
@@ -40,7 +39,6 @@ func (e *UnknownConditionError) Unwrap() error { return ErrUnknownCondition }
 type ruleDocument struct {
 	fields map[string]json.RawMessage
 	source *SourceDocument
-	bytes  int
 }
 
 func parseRuleDocuments(raw json.RawMessage, envelopes map[[32]byte]encryptedPlugin) (map[string]ruleDocument, error) {
@@ -77,7 +75,7 @@ func parseRuleDocuments(raw json.RawMessage, envelopes map[[32]byte]encryptedPlu
 		if err != nil {
 			return nil, err
 		}
-		documents[name] = ruleDocument{fields: fields, source: document, bytes: len(entry) + len(name) - document.envelopeBytes}
+		documents[name] = ruleDocument{fields: fields, source: document}
 	}
 	return documents, nil
 }
@@ -135,7 +133,6 @@ func compileRules(documents map[string]ruleDocument, plugins map[[32]byte]*Plugi
 			// root. Open only the active, selected request's encrypted plugins.
 			rule.Encrypted = document.source
 		}
-		rule.previewBytes = document.bytes
 		rules = append(rules, rule)
 	}
 	return rules, nil
@@ -156,7 +153,7 @@ func (r Rule) ConditionDigest() string {
 }
 
 // Activate resolves one candidate's rules before redaction or token counting.
-// A request budget is shared with filters and sorting through Values. The
+// Each policy's budget is shared with its filters and sorting through Values. The
 // returned configuration belongs to this request; cached sources stay immutable.
 func (c *Config) Activate(values Values) (*Config, error) {
 	if c == nil || !c.hasRules {
@@ -168,13 +165,8 @@ func (c *Config) Activate(values Values) (*Config, error) {
 	for index, entry := range c.sources {
 		for _, rule := range entry.Value.Rules {
 			if rule.When == nil {
-				if bounded, ok := values.(interface{ PolicyCELBudget() *CELBudget }); ok {
-					if budget := bounded.PolicyCELBudget(); budget != nil {
-						if budget.remaining == 0 {
-							return nil, ErrPolicyWorkLimit
-						}
-						budget.remaining--
-					}
+				if err := celBudget(values).charge(entry.Value.work, 1); err != nil {
+					return nil, err
 				}
 			}
 			if rule.When != nil {
@@ -202,12 +194,12 @@ func (c *Config) Activate(values Values) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, entry := range active {
+	for i, entry := range active {
 		// A default's encrypted plugin applies unless a requirement sets the
 		// same plugin, as its readable plugins do.
 		if document := entry.Value.encryptedPlugins; document != nil {
 			if units := out.allowedSettings(entry.Value) & document.EncryptedUnits(); units != 0 {
-				opaque = append(opaque, EncryptedPlugins{Document: document, Units: units})
+				opaque = append(opaque, EncryptedPlugins{Document: document, Units: units, policy: policyPosition(entry, i)})
 			}
 		}
 	}

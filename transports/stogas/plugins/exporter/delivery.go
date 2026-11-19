@@ -40,8 +40,9 @@ const (
 	// multiplexes deliveries within each connection. Connections open only on
 	// demand.
 	maxConnsPerHost = 128
-	// Idle connections stay charged until they close. This keeps one request's
-	// whole fan-out, eight hosts at the per-host limit, ready for reuse.
+	// Idle connections stay charged until they close. This keeps the fan-out of
+	// one policy at its bound, eight hosts at the per-host limit, ready for
+	// reuse.
 	maxIdleConns  = exportconfig.MaxDestinations * maxConnsPerHost
 	shutdownDrain = 5 * time.Second
 	// Go 1.27 measured about 13 KiB per delivery waiting for an HTTP/1.1

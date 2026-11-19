@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -78,9 +79,9 @@ func BenchmarkRoutingManyDeployments(b *testing.B) {
 					variants := &requestVariants{base: RequestPolicy{Config: config}, selections: selections}
 					input := RequestInput{now: time.Now(), policyBudget: policy.NewCELBudget(), Policy: config, AvailableCredentials: map[string][]int{"openai": {0}}}
 					err := planFirstPair(input, base.policyModel, variants)
-					// One request's expression budget bounds the candidates that a filter can read.
-					if err != nil && strings.Contains(err.Error(), policy.ErrPolicyWorkLimit.Error()) {
-						b.Skipf("%d candidates pass the request's expression budget", deployments)
+					// A policy's expression budget bounds the candidates that its filter can read.
+					if errors.Is(err, policy.ErrPolicyWorkLimit) || PublicError(err).Code == "policy_work_limit_exceeded" {
+						b.Skipf("%d candidates pass the policy's expression budget", deployments)
 					}
 					if err != nil {
 						b.Fatalf("unexpected routing result: %v", err)
@@ -274,7 +275,7 @@ func finalizeRoutingCandidates(resolved []*ResolvedRequest, config *policy.Confi
 		if !ok {
 			continue
 		}
-		failed, _, err := policyFilterFailure(config, values)
+		failed, _, err := policyFilterFailure(config, values, nil)
 		if err != nil {
 			return nil, err
 		}

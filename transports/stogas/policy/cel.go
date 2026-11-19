@@ -20,21 +20,75 @@ import (
 )
 
 const (
-	MaxCELBytes         = 16 << 10
-	MaxCELCost          = 10_000
-	MaxRequestCELCost   = 100_000
-	MaxSourceCELNodes   = 4_096
-	MaxCombinedCELNodes = 2 * MaxSourceCELNodes
+	MaxCELBytes = 16 << 10
+	MaxCELCost  = 10_000
+	// MaxPolicyCELCost is what one policy's expressions may cost in one
+	// request. A unit takes about 200 ns, so a policy evaluates for 20 ms at
+	// most, which a policy of the largest size needs on a model with about 37
+	// candidates when every comparison in it reads the candidate.
+	MaxPolicyCELCost = 100_000
+	// MaxRequestCELCost is what all policies of one request may cost together:
+	// the allowances of the longest chain, 36 saved policies and the request's
+	// own, so no chain can reach it. A key can use thousands of credentials,
+	// each with a policy of its own, and without it each of them would add an
+	// allowance to one request.
+	MaxRequestCELCost = 37 * MaxPolicyCELCost
+	MaxSourceCELNodes = 4_096
 )
 
 var ErrPolicyWorkLimit = errors.New("policy evaluation exceeded the work limit")
 
-// CELBudget belongs to one request, including its candidate filters and sorts.
-// Programs have a separate per-expression stop, so one evaluation can exceed
-// the remaining shared allowance only by that bounded amount.
-type CELBudget struct{ remaining uint64 }
+// WorkLimitError holds the policy whose expressions used up its allowance, or
+// none when the request's policies used up theirs together.
+type WorkLimitError struct{ work *policyWork }
 
-func NewCELBudget() *CELBudget { return &CELBudget{remaining: MaxRequestCELCost} }
+func (e *WorkLimitError) Error() string { return ErrPolicyWorkLimit.Error() }
+func (e *WorkLimitError) Unwrap() error { return ErrPolicyWorkLimit }
+
+// policyWork is what the expressions of one compiled policy charge their cost
+// to. It has a size so that each policy's has its own address.
+type policyWork struct{ _ byte }
+
+// CELBudget belongs to one request. Each policy has its own allowance in it,
+// which its conditions, filters and sort criteria share over the request's
+// candidates, so no policy can use up another's and a chain of policies that
+// each pass alone always passes. Policies of equal content compile once and
+// share one allowance. Only the policies of many credentials can use up the
+// request's total. Programs have a separate per-expression stop, so one
+// evaluation can exceed its policy's remaining allowance only by that bounded
+// amount.
+type CELBudget struct {
+	spent map[*policyWork]uint64
+	total uint64
+}
+
+func NewCELBudget() *CELBudget { return &CELBudget{spent: make(map[*policyWork]uint64)} }
+
+// charge takes cost from a policy's allowance, or fails when the allowance
+// holds less.
+func (b *CELBudget) charge(work *policyWork, cost uint64) error {
+	if b == nil {
+		return nil
+	}
+	spent := b.spent[work]
+	if cost > MaxPolicyCELCost-spent {
+		b.spent[work] = MaxPolicyCELCost
+		return &WorkLimitError{work}
+	}
+	if cost > MaxRequestCELCost-b.total {
+		b.total = MaxRequestCELCost
+		return &WorkLimitError{}
+	}
+	b.spent[work], b.total = spent+cost, b.total+cost
+	return nil
+}
+
+func celBudget(values Values) *CELBudget {
+	if bounded, ok := values.(interface{ PolicyCELBudget() *CELBudget }); ok {
+		return bounded.PolicyCELBudget()
+	}
+	return nil
+}
 
 // CELExpression is immutable and can be evaluated concurrently. Source remains
 // the reviewable representation; programs live only in the gateway's cache.
@@ -50,6 +104,8 @@ type CELExpression struct {
 	candidate bool
 	// random marks a sort criterion that is one random(weight) call.
 	random bool
+	// work is the policy that evaluations charge.
+	work *policyWork
 }
 
 var celEnvironment = sync.OnceValues(newCELEnvironment)
@@ -58,6 +114,15 @@ type celCompiler struct {
 	prepare     bool
 	nodes       int
 	expressions map[string]*CELExpression
+	policy      *policyWork
+}
+
+// work is the one identity of everything that this compiler compiles.
+func (c *celCompiler) work() *policyWork {
+	if c.policy == nil {
+		c.policy = new(policyWork)
+	}
+	return c.policy
 }
 
 func CompileCEL(source string) (*CELExpression, error) {
@@ -199,7 +264,7 @@ func (c *celCompiler) compile(source string, condition bool) (*CELExpression, er
 	if err != nil {
 		return nil, configError("cannot normalize CEL expression: %v", err)
 	}
-	expression := &CELExpression{Source: source, normalized: normalized, program: program, kind: kind, bytes: int64(nodes*384 + 512), candidate: candidate, random: randomCall(root)}
+	expression := &CELExpression{Source: source, normalized: normalized, program: program, kind: kind, bytes: int64(nodes*384 + 512), candidate: candidate, random: randomCall(root), work: c.work()}
 	c.expressions[source] = expression
 	return expression, nil
 }
@@ -229,30 +294,28 @@ func (e *CELExpression) evaluate(values Values, now time.Time) (ref.Val, uint64,
 	if e == nil || e.program == nil {
 		return nil, 0, configError("expression has not been compiled")
 	}
-	var budget *CELBudget
-	if bounded, ok := values.(interface{ PolicyCELBudget() *CELBudget }); ok {
-		budget = bounded.PolicyCELBudget()
-	}
-	if budget != nil && budget.remaining == 0 {
-		return nil, 0, ErrPolicyWorkLimit
+	budget := celBudget(values)
+	if budget != nil {
+		if budget.spent[e.work] >= MaxPolicyCELCost {
+			return nil, 0, &WorkLimitError{e.work}
+		}
+		if budget.total >= MaxRequestCELCost {
+			return nil, 0, &WorkLimitError{}
+		}
 	}
 	result, details, err := e.program.Eval(celPolicyActivation{values: values, now: now})
 	var cost uint64
 	if details != nil && details.ActualCost() != nil {
 		cost = *details.ActualCost()
 	}
-	// Constant expressions still consume one evaluation in the request budget.
+	// Constant expressions still consume one evaluation in the policy's budget.
 	cost = max(cost, 1)
-	if budget != nil {
-		if cost > budget.remaining {
-			budget.remaining = 0
-			return nil, cost, ErrPolicyWorkLimit
-		}
-		budget.remaining -= cost
+	if err := budget.charge(e.work, cost); err != nil {
+		return nil, cost, err
 	}
 	var cancelled interpreter.EvalCancelledError
 	if errors.As(err, &cancelled) && cancelled.Cause == interpreter.CostLimitExceeded {
-		return nil, cost, ErrPolicyWorkLimit
+		return nil, cost, &WorkLimitError{e.work}
 	}
 	return result, cost, err
 }

@@ -118,8 +118,6 @@ type Inspector struct {
 	seen           map[[32]byte]int
 	edit           *InspectionEdit
 	omitCiphertext bool
-	ruleBytes      int
-	budget         SourceBudget
 }
 
 // omitCiphertext lets bindings retain input envelopes in their host instead of
@@ -137,19 +135,11 @@ func (v *Inspector) Add(entry InspectionSource) error {
 	var source *Source
 	if prior, ok := v.seen[identity]; ok {
 		document, source = v.documents[prior], v.sources[prior].Value
-		v.ruleBytes += document.previewRuleBytes
 	} else {
 		var err error
 		document, err = parseSourceDocument(entry.Config, v.envelopes)
 		if err != nil {
 			return err
-		}
-		if err := v.budget.add(document.size); err != nil {
-			return err
-		}
-		v.ruleBytes += document.previewRuleBytes
-		if v.ruleBytes > MaxCompiledBytes {
-			return configError("combined policy exceeds the size limit")
 		}
 		// The edited source gets a save's checks, so the preview fails where saving it would.
 		if v.edit.covers(entry) {
@@ -158,9 +148,6 @@ func (v *Inspector) Add(entry InspectionSource) error {
 			source, err = document.compile(v.plugins, &celCompiler{})
 		}
 		if err != nil {
-			return err
-		}
-		if err := v.budget.add(source.size); err != nil {
 			return err
 		}
 		// Execution fields live in Source; only the source limits and rules
@@ -196,9 +183,6 @@ func (v *Inspector) Add(entry InspectionSource) error {
 			}
 		}
 		v.seen[identity] = len(v.entries)
-	}
-	if v.ruleBytes > MaxCompiledBytes {
-		return configError("combined policy exceeds the size limit")
 	}
 	if !v.edit.covers(entry) {
 		entry.Config = nil
@@ -250,7 +234,7 @@ func (v *Inspector) Finish() (*Inspection, error) {
 	routing := map[string]any{}
 	for _, list := range routingLists {
 		if lists := *list.lists(&compiled.Routing); lists != nil {
-			routing[list.kind] = sortedLists(lists)
+			routing[list.kind] = lists.inOrder()
 		}
 	}
 	if compiled.Routing.Query != nil {
@@ -277,7 +261,6 @@ func (v *Inspector) Finish() (*Inspection, error) {
 		}
 	}
 	var limits, opaque, rules []map[string]any
-	opaqueRuleBytes := 0
 	required := requirements(sources)
 	replacements := replacedDefaults(documents, sources, required)
 	notes = append(notes, replacedNotes(entries, documents, sources, required, edit)...)
@@ -298,9 +281,6 @@ func (v *Inspector) Finish() (*Inspection, error) {
 				replaced[len(rules)] = list
 			}
 			rules = append(rules, item)
-			if rule.Encrypted != nil && !v.omitCiphertext {
-				opaqueRuleBytes += rule.Encrypted.envelopeBytes
-			}
 		}
 		if raw := document.fields["limits"]; len(raw) > 0 {
 			limits = append(limits, map[string]any{"policy": inspectionReference(entry), "config": raw})
@@ -346,18 +326,11 @@ func (v *Inspector) Finish() (*Inspection, error) {
 	// The preview may flatten plugin descriptions; runtime composition continues
 	// sharing the original immutable plugin sections and their matchers.
 	compiled.Plugins = plugins
-	raw, err := json.Marshal(effective)
-	if err != nil || len(raw)+1-opaqueRuleBytes > MaxCompiledBytes {
-		return nil, configError("combined policy exceeds the size limit")
-	}
-	// Opaque sections have their own stored-source bounds. Their base64 bytes
-	// are not compiled instructions and cannot be charged to this limit.
 	if len(opaque) > 0 {
 		effective["uncheckedPlugins"] = opaque
 	}
-	// Which defaults a requirement replaces explains the composition rather
-	// than adding to it, so it is not charged to the limit either. Each entry
-	// names a requirement and leaves its condition to the rule's own item.
+	// Each entry names a requirement and leaves its condition to the rule's
+	// own item.
 	for index, list := range replaced {
 		values := make([]map[string]any, len(list))
 		for i, r := range list {
@@ -437,19 +410,10 @@ func inspectionPlugins(parts []*Plugins) (*Plugins, error) {
 	}
 	sort.Strings(selected.Presets)
 	sort.Strings(selected.CustomPatterns)
+	// Each section passed its own bounds when its policy compiled, and the
+	// union of several policies has none.
 	selected.Literals = redaction.NormalizeLiterals(selected.Literals)
-	if err := plugins.validate(); err != nil {
-		return nil, err
-	}
-	return plugins, validateInspectionPlugins(plugins)
-}
-
-// sortedLists keeps an empty allow list, which admits nothing.
-func sortedLists(value *Lists) *Lists {
-	out := &Lists{Allow: slices.Clone(value.Allow), Deny: slices.Clone(value.Deny)}
-	slices.Sort(out.Allow)
-	slices.Sort(out.Deny)
-	return out
+	return plugins, nil
 }
 
 // inspectionSetBy names the policies that set each combined setting outside

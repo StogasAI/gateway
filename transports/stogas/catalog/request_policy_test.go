@@ -680,35 +680,10 @@ func TestCredentialOrderCannotChooseBetweenDeployments(t *testing.T) {
 	}
 }
 
-func TestCredentialCompilationBudgetCannotSelectAnotherCandidate(t *testing.T) {
-	loadTestCatalog(t)
-	for _, path := range []string{"/v1/chat/completions", "/v1/responses"} {
-		t.Run(path, func(t *testing.T) {
-			body := []byte(`{"model":"openai-gpt-5.6-sol","messages":[{"role":"user","content":"hello"}]}`)
-			if path == "/v1/responses" {
-				body = []byte(`{"model":"openai-gpt-5.6-sol","input":"hello"}`)
-			}
-			loads, checks := 0, 0
-			_, err := ResolveRequest(RequestInput{
-				Body: body, Method: "POST", Path: path,
-				AvailableCredentials: map[string][]int{"openai": {0, 1, 2}},
-				CredentialPolicy: func(_ schemas.ModelProvider, index int) (RequestPolicy, error) {
-					loads++
-					if index == 1 {
-						return RequestPolicy{}, policy.ErrSourceBudget
-					}
-					return RequestPolicy{Config: policyConfig(3)}, nil
-				},
-				CheckCandidate: func(schemas.ModelProvider, int, Deployment) error { checks++; return nil },
-			})
-			if PublicError(err).Code != "policy_work_limit_exceeded" || loads != 2 || checks != 0 {
-				t.Fatalf("error=%v loads=%d checks=%d", err, loads, checks)
-			}
-		})
-	}
-}
-
-func TestRequestCompositionBudgetCannotSkipAnEarlierCredential(t *testing.T) {
+// The organization's, a credential's and the request's policies each come
+// near the node limit of one policy. A chain has no total, so they combine and
+// the request resolves.
+func TestPoliciesNearTheirOwnLimitsCombineWithARequestPolicy(t *testing.T) {
 	loadTestCatalog(t)
 	makeSource := func(identity string, rules, terms int, request bool) []byte {
 		definitions := make(map[string]any, rules)
@@ -777,7 +752,7 @@ func TestRequestCompositionBudgetCannotSkipAnEarlierCredential(t *testing.T) {
 				},
 				CheckCandidate: func(schemas.ModelProvider, int, Deployment) error { checks++; return nil },
 			})
-			if PublicError(err).Code != "policy_work_limit_exceeded" || loads != 1 || checks != 0 {
+			if err != nil || loads == 0 || checks != 1 {
 				t.Fatalf("error=%v loads=%d checks=%d", err, loads, checks)
 			}
 		})

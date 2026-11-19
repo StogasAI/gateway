@@ -546,7 +546,7 @@ func (s *Service) authorizeResolvedRequest(ctx context.Context, apiKeyHash strin
 	if selection.Mode == "encrypted" && selection.Credential != nil {
 		credentialKeyID = selection.Credential.EncryptionKeyID
 	}
-	selectedPolicy, err := snapshot.PolicyForCredential(providerKey, prepared.index, encryptionKeys, time.Now(), nil)
+	selectedPolicy, err := snapshot.PolicyForCredential(providerKey, prepared.index, encryptionKeys, time.Now())
 	if err != nil {
 		return nil, err
 	}

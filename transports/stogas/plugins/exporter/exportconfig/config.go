@@ -17,6 +17,9 @@ import (
 )
 
 const (
+	// MaxDestinations bounds one policy, counting its rules. The policies of a
+	// request combine without a total of their own, as GitHub bounds the
+	// webhooks of an organization and of a repository and delivers to both.
 	MaxDestinations = 8
 	MaxHeaderBytes  = 8 << 10
 )
@@ -274,7 +277,8 @@ func (d *Destination) Validate() error {
 // that gets the record sends them. Every destination reads the same position,
 // so the highest rate of each outcome says exactly that, for records and for
 // bodies. A descendant can therefore neither withhold records or bodies from
-// an inherited destination nor alter its credentials.
+// an inherited destination nor alter its credentials. The union has no bound
+// of its own: MaxDestinations bounds each policy.
 func Combine(configs ...*Config) (*Config, error) {
 	result := &Config{Destinations: []Destination{}}
 	seen := map[[32]byte]int{}
@@ -301,9 +305,6 @@ func Combine(configs ...*Config) (*Config, error) {
 			}
 			result.Destinations[i] = result.Destinations[i].withShares(records, bodies)
 		}
-	}
-	if len(result.Destinations) > MaxDestinations {
-		return nil, ErrConfig
 	}
 	return result, nil
 }

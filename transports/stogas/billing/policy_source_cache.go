@@ -132,7 +132,6 @@ func (c *keyConfigCache) acquireSourceDelta(records []policySourceRecord, organi
 		return nil, err
 	}
 	seen := make(map[string]bool, len(records))
-	var budget policy.SourceBudget
 	for _, record := range records {
 		identity := record.identity()
 		if !record.Scope.Valid() || record.ID == "" || record.Revision < 1 || seen[identity] {
@@ -151,9 +150,6 @@ func (c *keyConfigCache) acquireSourceDelta(records []policySourceRecord, organi
 				c.releaseSources(result)
 				return nil, customerkey.ErrKey
 			}
-			if err := budget.AddSource(source.value); err != nil {
-				return fail(err)
-			}
 			c.mu.Lock()
 			source.refs++
 			c.mu.Unlock()
@@ -164,9 +160,6 @@ func (c *keyConfigCache) acquireSourceDelta(records []policySourceRecord, organi
 			document = json.RawMessage(`{}`)
 		}
 		parsed, err := policy.ParseSourceDocument(document)
-		if err == nil {
-			err = budget.AddDocument(parsed)
-		}
 		if err != nil {
 			return fail(err)
 		}
@@ -175,9 +168,6 @@ func (c *keyConfigCache) acquireSourceDelta(records []policySourceRecord, organi
 			return fail(err)
 		}
 		result = append(result, source)
-		if err := budget.AddSource(source.value); err != nil {
-			return fail(err)
-		}
 	}
 	return result, nil
 }

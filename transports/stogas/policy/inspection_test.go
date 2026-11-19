@@ -133,13 +133,11 @@ func TestInspectionPreservesOpaqueSourcesWithoutChargingTheirEncodingToCompiledS
 	if string(before) != string(after) {
 		t.Fatal("inspection mutated stored input")
 	}
-	preview, _ := json.Marshal(result.Effective)
-	if len(preview) <= MaxCompiledBytes {
-		t.Fatal("fixture does not exercise the separate opaque-byte allowance")
-	}
 }
 
-func TestEncryptedSectionsShareTheCombinedByteBudget(t *testing.T) {
+// Each source bounds its own decoded ciphertext. Sources at that bound
+// combine, in the gateway and in the combined view.
+func TestEncryptedSectionsNearTheSourceBoundCombine(t *testing.T) {
 	for _, conditional := range []bool{false, true} {
 		t.Run(fmt.Sprintf("conditional=%v", conditional), func(t *testing.T) {
 			inspector := NewInspector(nil, true)
@@ -169,23 +167,21 @@ func TestEncryptedSectionsShareTheCombinedByteBudget(t *testing.T) {
 					t.Fatal(err)
 				}
 				sources = append(sources, ScopedSource{Scope: scope, Value: source})
-				err = inspector.Add(InspectionSource{Scope: scope, Config: raw})
-				if index < 2 && err != nil || index == 2 && (err == nil || !strings.Contains(err.Error(), "size limit")) {
-					t.Fatalf("source %d: wrong size result: %v", index, err)
+				if err := inspector.Add(InspectionSource{Scope: scope, ID: fmt.Sprint(index), Config: raw}); err != nil {
+					t.Fatalf("source %d did not join the combined view: %v", index, err)
 				}
-				_, err = ComposeSources(sources)
-				if index < 2 && err != nil || index == 2 && (err == nil || !strings.Contains(err.Error(), "size limit")) {
-					t.Fatalf("runtime source %d: wrong size result: %v", index, err)
+				if _, err := ComposeSources(sources); err != nil {
+					t.Fatalf("source %d did not combine: %v", index, err)
 				}
 			}
-			if len(inspector.entries) != 2 {
-				t.Fatal("oversized ciphertext collection was retained")
+			if _, err := inspector.Finish(); err != nil {
+				t.Fatal(err)
 			}
 		})
 	}
 }
 
-func TestOpenedSourceKeepsTheSavedCiphertextBudget(t *testing.T) {
+func TestOpenedSourceKeepsReadableAndDecryptedPlugins(t *testing.T) {
 	fixture, key := loadWebcryptoFixture(t)
 	raw, _ := json.Marshal(map[string]any{"plugins": map[string]any{"textExtraction": map[string]any{"text": "always"}, "redaction": map[string]any{"encrypted": fixture.Envelope}}})
 	document, err := ParseSourceDocument(raw)
@@ -197,8 +193,8 @@ func TestOpenedSourceKeepsTheSavedCiphertextBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	plugins := opened.Config.Plugins
-	if !reflect.DeepEqual(opened.size, document.size) || plugins == nil || plugins.Redaction == nil || plugins.TextExtraction["text"] != TextExtractionAlways {
-		t.Fatal("opening changed the saved budget or lost a readable or decrypted plugin")
+	if plugins == nil || plugins.Redaction == nil || plugins.TextExtraction["text"] != TextExtractionAlways {
+		t.Fatal("opening lost a readable or decrypted plugin")
 	}
 }
 
@@ -268,36 +264,6 @@ func TestInspectionSharesEqualPluginSectionsAcrossDifferentSources(t *testing.T)
 	}
 }
 
-func TestInspectionRejectsRuleOverflowBeforeRetainingAnotherSource(t *testing.T) {
-	rules := make(map[string]any)
-	for i := range 30 {
-		rules[fmt.Sprintf("rule_%d", i)] = map[string]any{"when": "model.id != '" + strings.Repeat("a", 7<<10) + "'", "input": map[string]bool{"asciiOnly": true}}
-	}
-	raw, _ := json.Marshal(map[string]any{"rules": rules})
-	source, err := CompileSource(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	inspector := NewInspector(nil, true)
-	for _, scope := range []Scope{OrganizationScope, RoleScope} {
-		if err := inspector.Add(InspectionSource{Scope: scope, Config: raw}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if _, err := inspector.Finish(); err != nil {
-		t.Fatalf("bounded combination was rejected: %v", err)
-	}
-	if err := inspector.Add(InspectionSource{Scope: KeyScope, Config: raw}); err == nil || !strings.Contains(err.Error(), "size limit") {
-		t.Fatalf("oversized preview was retained: %v", err)
-	}
-	if len(inspector.sources) != 2 {
-		t.Fatal("overflow retained another source")
-	}
-	if _, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: source}, {Scope: RoleScope, Value: source}, {Scope: KeyScope, Value: source}}); err == nil {
-		t.Fatal("runtime accepted the same oversized rule combination")
-	}
-}
-
 func BenchmarkInspectionSharedPolicies(b *testing.B) {
 	values := make([]string, 1000)
 	for i := range values {
@@ -318,13 +284,15 @@ func BenchmarkInspectionSharedPolicies(b *testing.B) {
 	}
 }
 
-func TestInspectionBudgetsDistinctSettingsBeforeCompilation(t *testing.T) {
+// Three policies near the size of one source combine: the combined view and
+// the runtime have no total that another policy's size could pass.
+func TestSourcesNearTheSizeBoundCombine(t *testing.T) {
 	inspector := NewInspector(nil, false)
 	var sources []ScopedSource
 	for index, scope := range []Scope{OrganizationScope, RoleScope, KeyScope} {
 		ids := make([]string, 14_500)
 		for j := range ids {
-			ids[j] = fmt.Sprintf("model-%d-%05d", index, j)
+			ids[j] = fmt.Sprintf("model-%05d", j+index)
 		}
 		raw, _ := json.Marshal(map[string]any{"routing": map[string]any{"models": map[string]any{"allow": ids}}})
 		source, err := CompileSource(raw)
@@ -332,19 +300,19 @@ func TestInspectionBudgetsDistinctSettingsBeforeCompilation(t *testing.T) {
 			t.Fatal(err)
 		}
 		sources = append(sources, ScopedSource{Scope: scope, Value: source})
-		err = inspector.Add(InspectionSource{Scope: scope, Config: raw})
-		if index < 2 && err != nil || index == 2 && (err == nil || !strings.Contains(err.Error(), "size limit")) {
-			t.Fatalf("source %d: wrong size result: %v", index, err)
+		if err := inspector.Add(InspectionSource{Scope: scope, Config: raw}); err != nil {
+			t.Fatalf("source %d did not join the combined view: %v", index, err)
 		}
 	}
-	if len(inspector.sources) != 2 {
-		t.Fatal("oversized source collection was retained")
+	result, err := inspector.Finish()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := inspector.Finish(); err != nil {
-		t.Fatalf("bounded prefix cannot be composed: %v", err)
+	if allowed := result.Effective["routing"].(map[string]any)["models"].(*Lists).Allow; len(allowed) != 14_498 {
+		t.Fatalf("the combined view allows %d models, want the 14,498 that every policy allows", len(allowed))
 	}
-	if _, err := ComposeSources(sources); err == nil {
-		t.Fatal("runtime accepted the same oversized source collection")
+	if _, err := ComposeSources(sources); err != nil {
+		t.Fatalf("policies within their own size did not combine: %v", err)
 	}
 }
 

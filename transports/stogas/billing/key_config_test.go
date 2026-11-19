@@ -516,7 +516,7 @@ func TestSourceDeltaRequiresPinnedIdentityAndRevision(t *testing.T) {
 	}
 }
 
-// A key whose policies do not combine keeps the failure in its cache entry, with the sources that
+// A key with a policy that does not compile keeps the failure in its cache entry, with the sources that
 // compiled, so its retries reach neither PostgreSQL nor the compiler, and a sibling key reuses the
 // organization's policy.
 func TestFailedChainAnswersFromCacheAndSharesItsCompiledSources(t *testing.T) {

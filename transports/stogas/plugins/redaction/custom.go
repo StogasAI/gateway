@@ -11,7 +11,6 @@ import (
 
 type customMatcher struct {
 	expression   string
-	instructions int
 	start, after *regexp.Regexp
 	prefix       []byte
 	firstASCII   [utf8.RuneSelf]bool
@@ -44,8 +43,8 @@ func newCustomMatcher(expression string, program *syntax.Prog) *customMatcher {
 		expression += `\E`
 	}
 	matcher := &customMatcher{
-		expression: expression, instructions: len(program.Inst),
-		start: regexp.MustCompile(`\A(?:` + expression + `)`),
+		expression: expression,
+		start:      regexp.MustCompile(`\A(?:` + expression + `)`),
 		// One real preceding rune preserves ^, \A and word-boundary semantics
 		// at nonzero positions. No synthetic prefix or end-of-input is used.
 		after:       regexp.MustCompile(`\A(?s:.)(?:` + expression + `)`),
@@ -131,12 +130,19 @@ func (r *Redactor) scanCustomPatterns(text []byte, matches []match, expression *
 	if r.scanWork == maxScanWork {
 		return nil, ErrWorkLimit
 	}
+	// The search for a literal prefix reads the text once, at about a unit a
+	// byte on text that often starts the prefix, as a literal pass does. The
+	// number of patterns in a request has no bound of its own, so every pass
+	// must charge its work.
+	if len(expression.prefix) > 0 && !r.chargeScanWork(uint64(len(text))) {
+		return nil, ErrWorkLimit
+	}
 	var reader *customReader
 	for position := 0; position < len(text); {
 		if len(expression.prefix) > 0 {
 			// A required literal prefix proves skipped text cannot start a match.
-			// This advancing byte search is linear; only regex lookahead below
-			// can reread suffixes and consumes the variable-work allowance.
+			// This advancing byte search is linear and charged above; regex
+			// lookahead below can reread suffixes and charges what it reads.
 			next := bytes.Index(text[position:], expression.prefix)
 			if next < 0 {
 				break

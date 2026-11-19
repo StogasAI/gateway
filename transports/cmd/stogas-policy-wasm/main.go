@@ -4,6 +4,7 @@
 package main
 
 import (
+	"bytes"
 	_ "embed"
 	"encoding/json"
 	jsonv2 "encoding/json/v2"
@@ -25,6 +26,10 @@ const maximumInputBytes = 2*policy.MaxStoredSourceBytes + 16<<10
 
 var input, output []byte
 var inspector *policy.Inspector
+
+// received counts the bytes of the sources that a result describes. The result holds their
+// settings twice at most, compiled and as the combined view shows them.
+var received int
 
 // placesJSON is the locations of the catalog that the gateway embeds as its fallback, written
 // beside this file whenever that fallback is synced with the catalog.
@@ -86,10 +91,16 @@ func inspect() uint64 {
 		}
 		response = map[string]any{"error": map[string]any{"message": err.Error(), "status": status}}
 	}
-	output, err = json.Marshal(response)
-	if err != nil {
+	// A chain's result can take megabytes, and this memory never shrinks. So the encoder writes
+	// into one buffer of about the result's size instead of growing its own by doubling.
+	var encoded bytes.Buffer
+	if result != nil {
+		encoded.Grow(2 * received)
+	}
+	if jsonv2.MarshalWrite(&encoded, response, json.DefaultOptionsV1()) != nil {
 		panic("cannot encode policy inspection")
 	}
+	output = encoded.Bytes()
 	return uint64(uintptr(unsafe.Pointer(&output[0])))<<32 | uint64(len(output))
 }
 
@@ -117,17 +128,19 @@ func inspectRequest(raw []byte) (*policy.Inspection, error) {
 		if request.Item != nil || request.Edit != nil {
 			return nil, errors.New("invalid source inspection request")
 		}
+		received = len(request.Source)
 		return policy.InspectSource(request.Source)
 	case "begin":
 		if request.Source != nil || request.Item != nil {
 			return nil, errors.New("invalid combined inspection request")
 		}
-		inspector = policy.NewInspector(request.Edit, true)
+		inspector, received = policy.NewInspector(request.Edit, true), 0
 		return nil, nil
 	case "append":
 		if inspector == nil || request.Item == nil || request.Source != nil || request.Edit != nil {
 			return nil, errors.New("invalid inspection source request")
 		}
+		received += len(request.Item.Config)
 		return nil, inspector.Add(*request.Item)
 	case "finish":
 		if inspector == nil || request.Item != nil || request.Source != nil || request.Edit != nil {

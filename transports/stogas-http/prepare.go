@@ -96,7 +96,6 @@ func (s *Server) startRun(ctx *requestContext, startedAt time.Time, preparation 
 		s.writeCatalogError(ctx, catalog.TransportDenied(transport))
 		return nil
 	}
-	var candidateBudget policy.SourceBudget
 	// The plan's root check covers every pair the request may try, so its
 	// roots are the ones the request needs.
 	var roots []string
@@ -169,11 +168,8 @@ func (s *Server) startRun(ctx *requestContext, startedAt time.Time, preparation 
 			return localFailure(err, -1).replaces(localFailure(kept, -1))
 		},
 		CredentialPolicy: func(provider schemas.ModelProvider, index int) (catalog.RequestPolicy, error) {
-			selected, err := keyConfig.PolicyForCredential(string(provider), index, credential.EncryptionKeys, startedAt, &candidateBudget)
+			selected, err := keyConfig.PolicyForCredential(string(provider), index, credential.EncryptionKeys, startedAt)
 			if err != nil {
-				if errors.Is(err, policy.ErrSourceBudget) {
-					return catalog.RequestPolicy{}, err
-				}
 				public := stogas.PublicBillingErrorFor(err)
 				return catalog.RequestPolicy{}, errors.Join(err, catalog.APIError{Code: public.Code, StatusCode: public.StatusCode, Type: public.Type, Message: public.Message})
 			}

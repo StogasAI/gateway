@@ -47,36 +47,26 @@ func TestCELCompilationBudgetSharesRepeatedExpressionsAndBoundsDistinctWork(t *t
 	if _, err := InspectSource(oversized); err == nil || !strings.Contains(err.Error(), "CEL compilation limit") {
 		t.Fatalf("inspection did not enforce the source work limit: %v", err)
 	}
+	// The node limit bounds each policy. Policies near it combine, since a
+	// chain has no total that another policy's edit could pass.
 	inspector := NewInspector(nil, false)
 	var sources []ScopedSource
-	for i, scope := range []Scope{OrganizationScope, RoleScope, KeyScope} {
+	for i, scope := range []Scope{OrganizationScope, RoleScope, RoleScope, KeyScope} {
 		raw := makeSource(3, i, false)
 		source, err := CompileSource(raw)
 		if err != nil {
 			t.Fatal(err)
 		}
 		sources = append(sources, ScopedSource{Scope: scope, Value: source})
-		err = inspector.Add(InspectionSource{Scope: scope, Config: raw})
-		if i < 2 && err != nil || i == 2 && (err == nil || !strings.Contains(err.Error(), "CEL compilation limit")) {
-			t.Fatalf("source %d: wrong aggregate work result: %v", i, err)
+		if err := inspector.Add(InspectionSource{Scope: scope, ID: fmt.Sprint(i), Config: raw}); err != nil {
+			t.Fatalf("source %d did not join the combined view: %v", i, err)
 		}
 	}
-	if _, err := ComposeSources(sources); err == nil || !strings.Contains(err.Error(), "CEL compilation limit") {
-		t.Fatalf("runtime did not enforce aggregate compilation work: %v", err)
+	if _, err := ComposeSources(sources); err != nil {
+		t.Fatalf("policies within their own limits did not combine: %v", err)
 	}
-	var candidateBudget SourceBudget
-	for index, entry := range sources {
-		err := candidateBudget.AddSource(entry.Value)
-		if index < 2 && err != nil || index == 2 && !errors.Is(err, ErrSourceBudget) {
-			t.Fatalf("candidate %d: compilation budget = %v", index, err)
-		}
-		if index == 0 {
-			for range 1000 {
-				if err := candidateBudget.AddSource(entry.Value); err != nil {
-					t.Fatalf("a shared source consumed more compilation work: %v", err)
-				}
-			}
-		}
+	if _, err := inspector.Finish(); err != nil {
+		t.Fatalf("policies within their own limits have no combined view: %v", err)
 	}
 	// Reusing a sort program must not make a non-boolean condition valid.
 	if _, err := CompileSource([]byte(`{"routing":{"sort":[{"by":"1","direction":"asc"}]},"rules":{"invalid":{"when":"1","input":{"asciiOnly":true}}}}`)); err == nil {
@@ -138,21 +128,56 @@ type budgetRuleValues struct {
 
 func (v budgetRuleValues) PolicyCELBudget() *CELBudget { return v.budget }
 
-func TestConstantRulesConsumeTheSharedRequestBudget(t *testing.T) {
+func TestEachPolicyHasItsOwnExpressionBudget(t *testing.T) {
 	for _, condition := range []string{"", `"when":"true",`} {
-		source := ruleSource(t, `{"rules":{"first":{`+condition+`"input":{"asciiOnly":true}},"second":{`+condition+`"input":{"asciiOnly":true}}}}`)
-		config, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: source}})
+		raw := `{"rules":{"first":{` + condition + `"input":{"asciiOnly":true}},"second":{` + condition + `"input":{"asciiOnly":true}}}}`
+		parent, child := ruleSource(t, raw), ruleSource(t, strings.Replace(raw, "first", "other", 1))
+		config, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: parent}, {Scope: KeyScope, Value: child}})
 		if err != nil {
 			t.Fatal(err)
 		}
-		values := budgetRuleValues{budget: &CELBudget{remaining: 1}}
-		if _, err := config.Activate(values); !errors.Is(err, ErrPolicyWorkLimit) {
-			t.Fatalf("constant rules escaped the shared work limit: %v", err)
+		// The key's policy has one unit left for its two rules. The
+		// organization's own allowance does not help it.
+		values := budgetRuleValues{budget: NewCELBudget()}
+		values.budget.spent[child.work] = MaxPolicyCELCost - 1
+		_, err = config.Activate(values)
+		if origin, scope, ok := config.WorkLimitOrigin(err); !errors.Is(err, ErrPolicyWorkLimit) || !ok || origin.Source != 1 || scope != KeyScope {
+			t.Fatalf("the key policy's rules escaped its work limit or the error names another policy: %v %v %s", err, origin, scope)
 		}
-		values.budget = &CELBudget{remaining: 2}
-		if _, err := config.Activate(values); err != nil || values.budget.remaining != 0 {
-			t.Fatalf("exact rule allowance was not honored: %v", err)
+		// A policy that used its allowance up leaves the other's untouched.
+		values.budget = NewCELBudget()
+		values.budget.spent[parent.work] = MaxPolicyCELCost - 2
+		if _, err := config.Activate(values); err != nil || values.budget.spent[parent.work] != MaxPolicyCELCost || values.budget.spent[child.work] != 2 {
+			t.Fatalf("exact allowance of each policy was not honored: %v %v", err, values.budget.spent)
 		}
+	}
+}
+
+// A key can use thousands of credentials with policies of their own, and each
+// is another policy in the request. Together they stop at what one chain may
+// cost, and the refusal names no single policy.
+func TestPoliciesOfManyCredentialsShareTheRequestTotal(t *testing.T) {
+	budget := NewCELBudget()
+	activate := func(credential int) (*Config, *Source, error) {
+		source := ruleSource(t, fmt.Sprintf(`{"rules":{"rule_%d":{"when":"true","input":{"asciiOnly":true}}}}`, credential))
+		config, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: ruleSource(t, `{}`)}, {Scope: CredentialScope, Value: source}, {Scope: KeyScope, Value: ruleSource(t, `{}`)}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Each policy has one unit left of its own allowance.
+		budget.spent[source.work], budget.total = MaxPolicyCELCost-1, budget.total+MaxPolicyCELCost-1
+		_, err = config.Activate(budgetRuleValues{budget: budget})
+		return config, source, err
+	}
+	for credential := range 37 {
+		if _, _, err := activate(credential); err != nil {
+			t.Fatalf("credential policy %d failed within its own allowance and the total: %v", credential, err)
+		}
+	}
+	budget.total -= MaxPolicyCELCost - 1
+	config, source, err := activate(37)
+	if _, _, named := config.WorkLimitOrigin(err); !errors.Is(err, ErrPolicyWorkLimit) || named || budget.spent[source.work] != MaxPolicyCELCost-1 {
+		t.Fatalf("the request total let another policy run or the error names one policy: %v", err)
 	}
 }
 

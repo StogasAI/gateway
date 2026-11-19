@@ -166,12 +166,9 @@ func (snapshot *KeyConfigSnapshot) ActivePlugins(config *policy.Config, keys cus
 		return nil, err
 	}
 	c := snapshot.owner
-	sections := append([]*policy.Plugins{}, config.PluginSources...)
-	if len(sections) == 0 && config.Plugins != nil {
-		sections = append(sections, config.Plugins)
-	}
 	var opened []*sharedPolicySource
 	defer func() { c.releaseSources(opened) }()
+	plugins := make([]*policy.Plugins, 0, len(config.ActiveEncryptedPlugins))
 	for _, encrypted := range config.ActiveEncryptedPlugins {
 		for _, id := range encrypted.EncryptionKeyIDs() {
 			if !customerkey.Registered(snapshot.EncryptionKeys, id) {
@@ -194,14 +191,17 @@ func (snapshot *KeyConfigSnapshot) ActivePlugins(config *policy.Config, keys cus
 			c.trimLocked()
 		}
 		c.mu.Unlock()
-		sections = append(sections, source.value.Config.Plugins)
+		plugins = append(plugins, source.value.Config.Plugins)
 	}
-	// Decrypted sections must pass the same aggregate bounds before any scan.
-	active := *config
-	active.PluginSources = sections
-	if err := active.ValidatePlugins(); err != nil {
+	active, err := config.WithOpened(plugins)
+	if err != nil {
 		return nil, err
 	}
+	exports, err := active.ExportConfig()
+	if err != nil {
+		return nil, err
+	}
+	sections := active.PluginSources
 	parts := make([]*redaction.Policy, 0, len(sections))
 	for _, plugins := range sections {
 		// Export and text extraction compile to no matcher.
@@ -234,10 +234,6 @@ func (snapshot *KeyConfigSnapshot) ActivePlugins(config *policy.Config, keys cus
 		parts = append(parts, compiled)
 	}
 	combined, err := redaction.CombinePolicies(parts)
-	if err != nil {
-		return nil, err
-	}
-	exports, err := active.ExportConfig()
 	if err != nil {
 		return nil, err
 	}

@@ -32,8 +32,11 @@ func PublicBillingErrorFor(err error) PublicBillingError {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return PublicBillingError{504, "request_timeout", schemas.RequestTimedOut, "The request exceeded its time limit."}
 	}
-	if errors.Is(err, policy.ErrSourceBudget) || errors.Is(err, policy.ErrPolicyWorkLimit) {
-		return PublicBillingError{400, "policy_work_limit_exceeded", "invalid_request_error", "The applicable policies exceed the request's policy work limit. Reduce distinct policy content or expressions."}
+	if errors.Is(err, policy.ErrPolicyWorkLimit) {
+		return PublicBillingError{400, "policy_work_limit_exceeded", "invalid_request_error", "A policy exceeded its expression work limit. Reduce the cost of its conditions, filters and sort expressions."}
+	}
+	if sections := (*policy.SectionsError)(nil); errors.As(err, &sections) && sections.Scope != "" {
+		return PublicBillingError{400, "invalid_request", "invalid_request_error", fmt.Sprintf("The %s policy is invalid: %s.", sections.Scope, sections.Reason())}
 	}
 	if errors.Is(err, policy.ErrInvalidConfig) {
 		return PublicBillingError{400, "invalid_request", "invalid_request_error", "The applicable policy configuration is invalid. Review the saved policies and encrypted plugin content."}

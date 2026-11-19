@@ -268,8 +268,7 @@ func literalBoundary(text []byte, start, end int) bool {
 	return true
 }
 
-func (r *Redactor) scanLiterals(text []byte, matches []match, selection literalSelection) ([]match, error) {
-	m := selection.matcher
+func (r *Redactor) scanLiterals(text []byte, matches []match, m *literalMatcher) ([]match, error) {
 	if m == nil {
 		return matches, nil
 	}
@@ -281,9 +280,6 @@ func (r *Redactor) scanLiterals(text []byte, matches []match, selection literalS
 		state = m.next(state, asciiFold(b))
 		for output := state; output != 0; output = m.nodes[output].output {
 			for _, a := range m.nodes[output].anchors {
-				if selection.enabled != nil && !selection.enabled[a.rule] {
-					continue
-				}
 				rule := m.rules[a.rule]
 				start := index + 1 - a.length - a.offset
 				lo, hi := 0, 0

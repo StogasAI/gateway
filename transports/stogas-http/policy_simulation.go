@@ -283,7 +283,6 @@ func (s *Server) simulatePolicy(ctx *requestContext) {
 		}
 	}
 	chains := map[simulationCandidate]*billing.PolicyVersions{}
-	var budget policy.SourceBudget
 	simulation := catalog.SimulateRouting(catalog.RequestInput{
 		Policy:               config.Config,
 		AvailableCredentials: available,
@@ -295,11 +294,8 @@ func (s *Server) simulatePolicy(ctx *requestContext) {
 			return config.AccountOptions(string(provider), index)
 		},
 		CredentialPolicy: func(provider schemas.ModelProvider, index int) (catalog.RequestPolicy, error) {
-			selected, err := config.SimulatedPolicyForCredential(string(provider), index, now, &budget)
+			selected, err := config.SimulatedPolicyForCredential(string(provider), index, now)
 			if err != nil {
-				if errors.Is(err, policy.ErrSourceBudget) {
-					return catalog.RequestPolicy{}, err
-				}
 				public := stogas.PublicBillingErrorFor(err)
 				return catalog.RequestPolicy{}, errors.Join(err, catalog.APIError{Code: public.Code, StatusCode: public.StatusCode, Type: public.Type, Message: public.Message})
 			}
@@ -347,6 +343,13 @@ func (s *Server) simulatePolicy(ctx *requestContext) {
 		result.Error = &simulationError{Code: public.Code, Message: public.Message}
 		if missing := (*catalog.MissingKeysError)(nil); errors.As(simulation.Err, &missing) {
 			result.Error.Origin, _ = originFor(&missing.Origin, chains[simulationCandidate{missing.Pair.Provider, missing.Pair.Credential}], input.Policy)
+		}
+		if limit := (*catalog.WorkLimitError)(nil); errors.As(simulation.Err, &limit) {
+			versions := config.Versions
+			if limit.Pair != nil {
+				versions = chains[simulationCandidate{limit.Pair.Provider, limit.Pair.Credential}]
+			}
+			result.Error.Origin, _ = originFor(&limit.Origin, versions, input.Policy)
 		}
 		s.writeJSON(ctx, http.StatusOK, result)
 		return

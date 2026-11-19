@@ -83,12 +83,9 @@ func (row *keyConfigRow) replacePolicy(draft PolicyValidationSource) bool {
 
 // SimulatedPolicyForCredential composes the settings of a credential candidate
 // as a request that supplies every registered encryption key would.
-func (s *KeyConfigSnapshot) SimulatedPolicyForCredential(provider string, index int, now time.Time, budget *policy.SourceBudget) (*PolicySnapshot, error) {
+func (s *KeyConfigSnapshot) SimulatedPolicyForCredential(provider string, index int, now time.Time) (*PolicySnapshot, error) {
 	if s == nil || s.Config == nil {
 		return nil, ErrGatewayUnavailable
-	}
-	if err := budget.AddConfig(s.Config); err != nil {
-		return nil, err
 	}
 	selections := s.Credentials[provider]
 	if index < 0 || index >= len(selections) {
@@ -98,5 +95,5 @@ func (s *KeyConfigSnapshot) SimulatedPolicyForCredential(provider string, index 
 	if selection.Mode == "encrypted" && (selection.Credential == nil || !customerkey.Registered(s.EncryptionKeys, selection.Credential.EncryptionKeyID)) {
 		return nil, ErrByokKeyUnregistered
 	}
-	return s.selectionPolicy(selection, now, budget)
+	return s.selectionPolicy(selection, now)
 }

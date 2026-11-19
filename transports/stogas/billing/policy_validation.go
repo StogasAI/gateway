@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/maximhq/bifrost/transports/stogas/customerkey"
-	"github.com/maximhq/bifrost/transports/stogas/plugins/redaction"
 	"github.com/maximhq/bifrost/transports/stogas/policy"
 )
 
@@ -103,8 +102,6 @@ func (s *Service) ValidatePolicySources(raw []PolicyValidationSource, organizati
 	var sources []*sharedPolicySource
 	defer func() { s.keyConfigs.releaseSources(sources) }()
 	values := make([]policy.ScopedSource, 0, len(prepared))
-	var plans []*redaction.Policy
-	var sections []*policy.Plugins
 	for _, entry := range prepared {
 		source := entry.Config
 		if bytes.Equal(bytes.TrimSpace(source), []byte("null")) {
@@ -147,23 +144,22 @@ func (s *Service) ValidatePolicySources(raw []PolicyValidationSource, organizati
 		}
 		sources = append(sources, compiled)
 		values = append(values, policy.ScopedSource{Scope: entry.Scope, Value: compiled.value})
+		// Every bound is the policy's own, so each policy is checked alone:
+		// its matchers build, and its sections, which one request can match
+		// together, keep to the bounds of one policy.
 		if compiled.plan != nil {
-			plan, err := compiled.plan.get()
-			if err != nil {
+			if _, err := compiled.plan.get(); err != nil {
 				return nil, err
 			}
-			plans = append(plans, plan)
 		}
-		sections = appendPluginSection(sections, compiled.value.Config)
+		sections := []*policy.Plugins{compiled.value.Config.Plugins}
 		for _, shared := range compiled.rulePlans {
-			plan, err := shared.get()
-			if err != nil {
+			if _, err := shared.get(); err != nil {
 				return nil, err
 			}
-			plans = append(plans, plan)
 		}
 		for _, rule := range compiled.value.Rules {
-			sections = appendPluginSection(sections, rule.Value.Config)
+			sections = append(sections, rule.Value.Config.Plugins)
 			if rule.Encrypted == nil {
 				continue
 			}
@@ -186,32 +182,18 @@ func (s *Service) ValidatePolicySources(raw []PolicyValidationSource, organizati
 			}
 			sources = append(sources, opened)
 			if opened.plan != nil {
-				plan, err := opened.plan.get()
-				if err != nil {
+				if _, err := opened.plan.get(); err != nil {
 					return nil, err
 				}
-				plans = append(plans, plan)
 			}
-			sections = appendPluginSection(sections, opened.value.Config)
+			sections = append(sections, opened.value.Config.Plugins)
+		}
+		if err := policy.CheckSections(sections); err != nil {
+			return nil, err
 		}
 	}
 	if _, err := policy.ComposeSources(values); err != nil {
 		return nil, err
 	}
-	// One request can match every rule, so combined plugin limits must hold for
-	// all base and rule settings together.
-	if err := (&policy.Config{PluginSources: sections}).ValidatePlugins(); err != nil {
-		return nil, err
-	}
-	if _, err := redaction.CombinePolicies(plans); err != nil {
-		return nil, err
-	}
 	return result, nil
-}
-
-func appendPluginSection(sections []*policy.Plugins, config *policy.Config) []*policy.Plugins {
-	if config == nil || config.Plugins == nil {
-		return sections
-	}
-	return append(sections, config.Plugins)
 }

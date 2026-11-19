@@ -485,18 +485,15 @@ func restoreCredentialPolicySources(credentials map[string][]CredentialSelection
 // PolicyForCredential composes readable settings for one credential candidate.
 // Encrypted dictionaries open only during selected-request transformation.
 // The key cache owns successful combinations; failures are never cached.
-func (s *KeyConfigSnapshot) PolicyForCredential(provider string, index int, key customerkey.Keys, now time.Time, budget *policy.SourceBudget) (*PolicySnapshot, error) {
+func (s *KeyConfigSnapshot) PolicyForCredential(provider string, index int, key customerkey.Keys, now time.Time) (*PolicySnapshot, error) {
 	if s == nil || s.Config == nil {
 		return nil, ErrGatewayUnavailable
-	}
-	if err := budget.AddConfig(s.Config); err != nil {
-		return nil, err
 	}
 	selection, err := s.assignedSelection(provider, index, key)
 	if err != nil {
 		return nil, err
 	}
-	compiled, err := s.selectionPolicy(selection, now, budget)
+	compiled, err := s.selectionPolicy(selection, now)
 	if err != nil {
 		return nil, err
 	}
@@ -505,7 +502,7 @@ func (s *KeyConfigSnapshot) PolicyForCredential(provider string, index int, key 
 
 // selectionPolicy composes the key's policies with the selected credential's
 // policy, which applies just before the key's own.
-func (s *KeyConfigSnapshot) selectionPolicy(selection CredentialSelection, now time.Time, budget *policy.SourceBudget) (*PolicySnapshot, error) {
+func (s *KeyConfigSnapshot) selectionPolicy(selection CredentialSelection, now time.Time) (*PolicySnapshot, error) {
 	if selection.ID == "" {
 		return &s.PolicySnapshot, nil
 	}
@@ -527,7 +524,7 @@ func (s *KeyConfigSnapshot) selectionPolicy(selection CredentialSelection, now t
 	compiled := s.credentialPolicies[selection.ID]
 	c.mu.Unlock()
 	if compiled != nil {
-		return compiled, budget.AddConfig(compiled.Config)
+		return compiled, nil
 	}
 	stored := selection.Credential.policySource
 	if stored == nil {
@@ -535,9 +532,6 @@ func (s *KeyConfigSnapshot) selectionPolicy(selection CredentialSelection, now t
 	}
 	document, err := stored.parse()
 	if err != nil {
-		return nil, err
-	}
-	if err := budget.AddDocument(document); err != nil {
 		return nil, err
 	}
 	source, err := c.acquireSourceDocument(document, record.Source, s.Claims.OrganizationID, nil, true)
@@ -562,9 +556,6 @@ func (s *KeyConfigSnapshot) selectionPolicy(selection CredentialSelection, now t
 	digest := policy.ChainDigest(values)
 	config, err := c.composeSources(values, digest)
 	if err != nil {
-		return nil, err
-	}
-	if err := budget.AddConfig(config); err != nil {
 		return nil, err
 	}
 	compiled = &PolicySnapshot{Versions: &versions, Logged: loggedVersions(versions, refs), Config: config, EncryptionKeys: s.EncryptionKeys, Digest: digest, sourceRefs: refs, cacheBytes: config.CompositionBytes()}

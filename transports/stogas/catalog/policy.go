@@ -182,12 +182,34 @@ func policyAllowsSelection(config *policy.Config, selection routingSelection) bo
 	return config.Routing.Admits(ids.author, ids.model, ids.deployment, ids.route, ids.provider)
 }
 
-func policyEvaluationError(err error) error {
-	code := "invalid_request"
-	if errors.Is(err, policy.ErrPolicyWorkLimit) || errors.Is(err, policy.ErrSourceBudget) {
-		code = "policy_work_limit_exceeded"
+// WorkLimitError is the refusal of a request whose policy used up its
+// expression allowance, with the policy that it names for a simulation.
+type WorkLimitError struct {
+	APIError
+	Origin policy.Origin
+	// Pair is the candidate whose policies Origin counts, or nil for the
+	// key's own policies, which order every candidate.
+	Pair *PlannedPair
+}
+
+func (e *WorkLimitError) Unwrap() error { return e.APIError }
+
+// policyEvaluationError makes an evaluation failure of config a public
+// error. Each policy has its own expression allowance, so a work limit names
+// the one that used its up, which is the one to change.
+func policyEvaluationError(err error, config *policy.Config, pair *PlannedPair) error {
+	public := APIError{StatusCode: 400, Type: ErrorTypeInvalidRequest, Code: "invalid_request", Message: err.Error()}
+	if !errors.Is(err, policy.ErrPolicyWorkLimit) {
+		return public
 	}
-	return APIError{StatusCode: 400, Type: ErrorTypeInvalidRequest, Code: code, Message: err.Error()}
+	public.Code = "policy_work_limit_exceeded"
+	origin, scope, ok := config.WorkLimitOrigin(err)
+	if !ok {
+		public.Message = "The policies of this key and its credentials exceeded their expression work limit together. Reduce the cost of the credential policies' conditions, filters and sort expressions, or assign fewer credentials with policies of their own."
+		return public
+	}
+	public.Message = fmt.Sprintf("The %s policy exceeded its expression work limit. Reduce the cost of its conditions, filters and sort expressions.", scope)
+	return &WorkLimitError{APIError: public, Origin: origin, Pair: pair}
 }
 
 type routingCandidates struct {
@@ -200,13 +222,13 @@ type routingCandidates struct {
 
 // policyFilterFailure returns the index of the first routing filter that
 // removes a candidate, or -1, and whether that filter read only stated facts.
-func policyFilterFailure(config *policy.Config, values *resolvedPolicyValues) (int, bool, error) {
+func policyFilterFailure(config *policy.Config, values *resolvedPolicyValues, pair *PlannedPair) (int, bool, error) {
 	if config == nil || config.Routing.Query == nil {
 		return -1, true, nil
 	}
 	index, known, err := config.Routing.Query.FirstFailure(values)
 	if err != nil {
-		return index, known, policyEvaluationError(err)
+		return index, known, policyEvaluationError(err, config, pair)
 	}
 	return index, known, nil
 }
@@ -257,7 +279,7 @@ func (r *routingCandidates) finish(preference ProviderRoutingPreference) ([][]*R
 	}
 	indexes, ties, err := query.Sort(candidates)
 	if err != nil {
-		return nil, nil, policyEvaluationError(err)
+		return nil, nil, policyEvaluationError(err, filtered[0].policy, nil)
 	}
 	groups := make([][]*ResolvedRequest, 0, len(filtered))
 	groupTies := make([]bool, 0, len(filtered))

@@ -97,6 +97,9 @@ func (s *Server) validatePolicy(ctx *requestContext) {
 // Without keys nothing opened, so the error names only what the caller sent.
 func invalidPolicyMessage(err error, opened bool) string {
 	const message = "Policy configuration is invalid"
+	if sections := (*policy.SectionsError)(nil); errors.As(err, &sections) {
+		return message + ": " + sections.Reason()
+	}
 	detail, ok := strings.CutPrefix(err.Error(), policy.ErrInvalidConfig.Error()+": ")
 	if opened || !errors.Is(err, policy.ErrInvalidConfig) || !ok || detail == "" {
 		return message

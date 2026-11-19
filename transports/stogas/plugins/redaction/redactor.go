@@ -188,17 +188,17 @@ func (r *Redactor) redactBytes(text []byte) ([]byte, bool, error) {
 		}
 	}
 	longestRun, neededRun := 0, 0
-	for _, selection := range policy.literals {
-		neededRun = max(neededRun, selection.matcher.minWordRun)
+	for _, matcher := range policy.literals {
+		neededRun = max(neededRun, matcher.minWordRun)
 	}
 	if neededRun > 0 {
 		longestRun = longestASCIIWordRun(text, neededRun)
 	}
-	for _, selection := range policy.literals {
-		if selection.matcher.minWordRun > longestRun {
+	for _, matcher := range policy.literals {
+		if matcher.minWordRun > longestRun {
 			continue
 		}
-		matches, err = r.scanLiterals(text, matches, selection)
+		matches, err = r.scanLiterals(text, matches, matcher)
 		if err != nil {
 			return nil, false, err
 		}

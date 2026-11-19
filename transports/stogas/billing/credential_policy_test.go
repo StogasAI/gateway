@@ -51,7 +51,7 @@ func TestCredentialPolicyCacheIsolationAndEviction(t *testing.T) {
 		return raw
 	}
 	snapshot := credentialPolicySnapshot(t, &cache, "org", literal("ROOT_PRIVATE"), map[string][]json.RawMessage{"openai": {literal("OPENAI_PRIVATE")}, "azure": {literal("AZURE_PRIVATE")}})
-	selected, err := snapshot.PolicyForCredential("openai", 0, nil, time.Now(), nil)
+	selected, err := snapshot.PolicyForCredential("openai", 0, nil, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +69,7 @@ func TestCredentialPolicyCacheIsolationAndEviction(t *testing.T) {
 	var workers sync.WaitGroup
 	for range 32 {
 		workers.Go(func() {
-			value, err := snapshot.PolicyForCredential("openai", 0, nil, time.Now(), nil)
+			value, err := snapshot.PolicyForCredential("openai", 0, nil, time.Now())
 			if err != nil || value != selected {
 				t.Errorf("warm combination changed: %v", err)
 			}
@@ -86,7 +86,7 @@ func TestCredentialPolicyCacheIsolationAndEviction(t *testing.T) {
 		t.Fatalf("eviction retained %d bytes", cache.bytes)
 	}
 	// A different candidate may be prepared by an already admitted HTTP request.
-	other, err := snapshot.PolicyForCredential("azure", 0, nil, time.Now(), nil)
+	other, err := snapshot.PolicyForCredential("azure", 0, nil, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,11 +105,11 @@ func TestUnusedEncryptedCredentialPolicyDoesNotRequireItsRoot(t *testing.T) {
 	snapshot.EncryptionKeys = registryOf(key)
 	defer cache.close()
 	for _, provider := range []string{"chutes", "azure"} {
-		if _, err := snapshot.PolicyForCredential(provider, 0, nil, time.Now(), nil); err != nil {
+		if _, err := snapshot.PolicyForCredential(provider, 0, nil, time.Now()); err != nil {
 			t.Fatalf("unused encrypted policy blocked %s: %v", provider, err)
 		}
 	}
-	selected, err := snapshot.PolicyForCredential("openai", 0, nil, time.Now(), nil)
+	selected, err := snapshot.PolicyForCredential("openai", 0, nil, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestUnusedEncryptedCredentialPolicyDoesNotRequireItsRoot(t *testing.T) {
 	if cache.planStats.Builds != 1 {
 		t.Fatal("warm selected plugin was rebuilt")
 	}
-	if _, err := snapshot.PolicyForCredential("azure", 0, nil, time.Now(), nil); err != nil {
+	if _, err := snapshot.PolicyForCredential("azure", 0, nil, time.Now()); err != nil {
 		t.Fatal("unlock altered another candidate", err)
 	}
 }
@@ -147,7 +147,7 @@ func TestSameProviderCredentialPolicyIsolationAndSharing(t *testing.T) {
 	defer cache.close()
 	var policies [2]*PolicySnapshot
 	for index := range policies {
-		selected, err := snapshot.PolicyForCredential("openai", index, nil, time.Now(), nil)
+		selected, err := snapshot.PolicyForCredential("openai", index, nil, time.Now())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -180,7 +180,7 @@ func TestSameProviderCredentialPolicyIsolationAndSharing(t *testing.T) {
 		if copy.Credentials["openai"][index].Credential != snapshot.Credentials["openai"][index].Credential {
 			t.Fatal("identical credential ciphertext and metadata were copied between keys")
 		}
-		selected, err := copy.PolicyForCredential("openai", index, nil, time.Now(), nil)
+		selected, err := copy.PolicyForCredential("openai", index, nil, time.Now())
 		if err != nil || selected.Config != policies[index].Config {
 			t.Fatalf("credential %d did not share its immutable compiled policy: %v", index, err)
 		}
@@ -256,7 +256,7 @@ func TestDifferentCredentialIdentitiesShareOnePolicyDocument(t *testing.T) {
 	var workers sync.WaitGroup
 	for index := range policies {
 		workers.Go(func() {
-			value, err := snapshot.PolicyForCredential("openai", index, nil, time.Now(), nil)
+			value, err := snapshot.PolicyForCredential("openai", index, nil, time.Now())
 			if err != nil || value == nil || value.Config.Input == nil || !value.Config.Input.ASCIIOnly {
 				t.Errorf("credential %d policy: %v", index, err)
 			}
@@ -283,7 +283,9 @@ func TestDifferentCredentialIdentitiesShareOnePolicyDocument(t *testing.T) {
 	}
 }
 
-func TestCredentialAlternativesShareOneCompilationBudget(t *testing.T) {
+// A request's credentials can each bring a policy near the size of one
+// source. They have no total, so every alternative composes.
+func TestCredentialAlternativesHaveNoSharedBound(t *testing.T) {
 	var alternatives []json.RawMessage
 	for choice := range 3 {
 		models := make([]string, 8000)
@@ -296,31 +298,12 @@ func TestCredentialAlternativesShareOneCompilationBudget(t *testing.T) {
 		}
 		alternatives = append(alternatives, raw)
 	}
-	for _, warm := range []bool{false, true} {
-		t.Run(fmt.Sprintf("warm_%t", warm), func(t *testing.T) {
-			var cache keyConfigCache
-			defer cache.close()
-			snapshot := credentialPolicySnapshot(t, &cache, "org", json.RawMessage(`null`), map[string][]json.RawMessage{"openai": alternatives})
-			if warm {
-				for index := range alternatives {
-					if _, err := snapshot.PolicyForCredential("openai", index, nil, time.Now(), nil); err != nil {
-						t.Fatal(err)
-					}
-				}
-			}
-			var budget policy.SourceBudget
-			for index := range alternatives {
-				_, err := snapshot.PolicyForCredential("openai", index, nil, time.Now(), &budget)
-				if index < 2 && err != nil || index == 2 && !errors.Is(err, policy.ErrSourceBudget) {
-					t.Fatalf("alternative %d: %v", index, err)
-				}
-			}
-			if !warm && snapshot.credentialPolicies["credential-openai-2"] != nil {
-				t.Fatal("compiled an alternative after the content budget was exhausted")
-			}
-			if _, err := snapshot.PolicyForCredential("chutes", 0, nil, time.Now(), &budget); !errors.Is(err, policy.ErrSourceBudget) {
-				t.Fatalf("an empty alternative bypassed the exhausted budget: %v", err)
-			}
-		})
+	var cache keyConfigCache
+	defer cache.close()
+	snapshot := credentialPolicySnapshot(t, &cache, "org", json.RawMessage(`null`), map[string][]json.RawMessage{"openai": alternatives})
+	for index := range alternatives {
+		if _, err := snapshot.PolicyForCredential("openai", index, nil, time.Now()); err != nil {
+			t.Fatalf("alternative %d: %v", index, err)
+		}
 	}
 }

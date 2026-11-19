@@ -50,7 +50,6 @@ type requestVariants struct {
 	selections    []routingSelection
 	reserveBody   func(int) error
 	inputBytes    int
-	budget        policy.SourceBudget
 	// attachments are the request's attachments, where they can narrow the candidates.
 	attachments []Attachment
 	// files are its inline text files, Office files and PDFs, which stay files where a pair's
@@ -238,9 +237,6 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 				if errors.Is(err, customerkey.ErrKey) || errors.Is(err, customerkey.ErrEnvelope) {
 					return nil, err
 				}
-				if errors.Is(err, policy.ErrSourceBudget) {
-					return nil, policyEvaluationError(err)
-				}
 				keep(selection, err)
 				if trace != nil {
 					trace.removePair(selection, index, nil, RemovedCandidate{Reason: RemovedCredential, Code: PublicError(err).Code})
@@ -285,16 +281,17 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 			groups[group] = nil
 			// An undecided condition or a deny period from a matched rule
 			// excludes only this candidate, as an unmatched filter does.
+			pair := &PlannedPair{Provider: selection.provider, Credential: index}
 			value.Config, err = value.Config.Activate(values)
 			if errors.Is(err, policy.ErrUnknownCondition) {
-				keep(selection, policyEvaluationError(err))
+				keep(selection, policyEvaluationError(err, original, pair))
 				if unknown := (*policy.UnknownConditionError)(nil); trace != nil && errors.As(err, &unknown) {
 					trace.removePair(selection, index, original, RemovedCandidate{Reason: RemovedCondition, Origin: &unknown.Origin, Expression: unknown.Condition})
 				}
 				continue
 			}
 			if err != nil {
-				return nil, policyEvaluationError(err)
+				return nil, policyEvaluationError(err, original, pair)
 			}
 			if !policyAllowsSelection(value.Config, selection) {
 				if trace != nil {
@@ -302,7 +299,7 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 				}
 				continue
 			}
-			failed, known, err := policyFilterFailure(value.Config, values)
+			failed, known, err := policyFilterFailure(value.Config, values, pair)
 			if err != nil {
 				return nil, err
 			}
@@ -598,17 +595,12 @@ func (v *requestVariants) policyFor(provider schemas.ModelProvider, index int) (
 			value.Config, err = applied.value.Config, applied.err
 		} else {
 			value.Config, err = policy.ApplyRequest(value.Config, v.requestPolicy)
-			if !errors.Is(err, policy.ErrSourceBudget) {
-				err = requestPolicyError(err)
-			}
+			err = requestPolicyError(err)
 			if v.applied == nil {
 				v.applied = make(map[*policy.Config]requestPolicyResult)
 			}
 			v.applied[original] = requestPolicyResult{value, err}
 		}
-	}
-	if err == nil {
-		err = v.budget.AddConfig(value.Config)
 	}
 	if v.policies == nil {
 		v.policies = make(map[credentialCandidate]requestPolicyResult)

@@ -108,11 +108,13 @@ func TestCustomSparseLargeInput(t *testing.T) {
 	}
 }
 
+// The search for a pattern's literal prefix costs one unit a byte, once, and
+// only the text that can start a match also spends lookahead.
 func TestCustomPrefixSkipsImpossibleMatchesWithoutSpendingLookaheadBudget(t *testing.T) {
 	policy := mustCompilePolicy(t, Options{CustomPatterns: []CustomPattern{{Expression: `客户-[0-9]{6}\b`}}})
 	redactor := NewWithPolicy(policy)
-	redactor.scanWork = maxScanWork - 1000
 	input := append(bytes.Repeat([]byte("ordinary 客 text "), 100_000), []byte("é客户-123456 end")...)
+	redactor.scanWork = maxScanWork - uint64(len(input)) - 1000
 	out, changed, err := redactor.redactBytes(input)
 	if err != nil || !changed || !bytes.HasSuffix(out, []byte("é<CUSTOM_PII> end")) || redactor.items != 1 {
 		t.Fatalf("changed=%t error=%v items=%d", changed, err, redactor.items)

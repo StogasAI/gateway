@@ -341,7 +341,9 @@ func TestPolicyValidationOpensEachPluginWithItsOwnRoot(t *testing.T) {
 	}
 }
 
-func TestPolicyValidationChecksEveryRuleAgainstCombinedLimits(t *testing.T) {
+// One request can match every rule of a policy, so a policy's bounds count
+// its rules. Two policies never count together.
+func TestPolicyValidationBoundsEachPolicyWithItsRules(t *testing.T) {
 	plugins := func(prefix string) map[string]any {
 		literals := make([]string, 600)
 		for i := range literals {
@@ -357,15 +359,14 @@ func TestPolicyValidationChecksEveryRuleAgainstCombinedLimits(t *testing.T) {
 	two, _ := json.Marshal(map[string]any{"rules": map[string]any{"azure": rule("azure"), "openai": rule("openai")}})
 	empty, none := json.RawMessage(`{}`), json.RawMessage(`null`)
 	s := &Service{}
-	for _, raw := range [][]json.RawMessage{{base, none, empty}, {empty, none, one}} {
+	for _, raw := range [][]json.RawMessage{{base, none, empty}, {empty, none, one}, {base, none, one}} {
 		if _, err := s.ValidatePolicySources(validationSources(raw), "org", nil); err != nil {
 			t.Fatal(err)
 		}
 	}
-	for _, raw := range [][]json.RawMessage{{base, none, one}, {empty, none, two}} {
-		if _, err := s.ValidatePolicySources(validationSources(raw), "org", nil); err == nil {
-			t.Fatal("rules that exceed the combined literal limit together were accepted")
-		}
+	var sections *policy.SectionsError
+	if _, err := s.ValidatePolicySources(validationSources([]json.RawMessage{empty, none, two}), "org", nil); !errors.As(err, &sections) {
+		t.Fatalf("the rules of one policy passed its literal limit together: %v", err)
 	}
 }
 

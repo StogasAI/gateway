@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
-	"fmt"
+	"errors"
 	"io"
 	"maps"
 	"reflect"
@@ -45,8 +45,8 @@ type Source struct {
 	Config                   *Config
 	Digest                   string
 	Delegation               *Delegation
-	previewRuleBytes         int
-	size                     sourceSize
+	// work is what the policy's expressions and rules charge their cost to.
+	work *policyWork
 }
 
 // ordering is a policy's routing.sort. Every ordering applies: each criterion
@@ -87,13 +87,10 @@ type SourceDocument struct {
 	encrypted       []encryptedPlugin
 	readablePlugins json.RawMessage
 	// pluginDelta is how much longer the plugins section is once decrypted.
-	pluginDelta      int
-	fields           map[string]json.RawMessage
-	rules            map[string]ruleDocument
-	usedSections     Permission
-	envelopeBytes    int
-	previewRuleBytes int
-	size             sourceSize
+	pluginDelta  int
+	fields       map[string]json.RawMessage
+	rules        map[string]ruleDocument
+	usedSections Permission
 }
 
 // encryptedPlugin is a plugin that holds values under customer keys: the
@@ -104,8 +101,6 @@ type encryptedPlugin struct {
 	// skeleton is the plugin's value as saved, each sealed value in its place.
 	skeleton jsontext.Value
 	sealed   []sealedValue
-	// bytes counts the envelopes' JSON, which previews leave to their host.
-	bytes int
 	// delta is how much longer the plugin is once opened.
 	delta int
 }
@@ -146,92 +141,12 @@ const exportHeaders = "plugins/export/destinations/headers"
 type EncryptedPlugins struct {
 	Document *SourceDocument
 	Units    Permission
+	// policy is the position of the policy that holds them.
+	policy int
 }
 
 // EncryptionKeyIDs names the roots that open the applied plugins.
 func (e EncryptedPlugins) EncryptionKeyIDs() []string { return e.Document.encryptionKeyIDs(e.Units) }
-
-// Budget distinct source settings and plugin sections. Ciphertext counts by
-// decoded plaintext length; its contents cannot prove equality before opening.
-type sourceSize struct {
-	digest   string
-	settings int
-	nodes    int
-	plugins  map[[32]byte]int
-}
-
-// SourceBudget bounds distinct policy content and compilation across a request's
-// alternatives. Its zero value is ready for use; it is local to one request.
-type SourceBudget struct {
-	bytes   int
-	nodes   int
-	sources map[string]int
-	plugins map[[32]byte]bool
-	err     error
-}
-
-var ErrSourceBudget = fmt.Errorf("%w: combined policy exceeds its compilation budget", ErrInvalidConfig)
-
-func (b *SourceBudget) AddDocument(document *SourceDocument) error {
-	if b == nil || document == nil {
-		return nil
-	}
-	return b.add(document.size)
-}
-
-func (b *SourceBudget) AddConfig(config *Config) error {
-	if b == nil || config == nil {
-		return nil
-	}
-	for _, entry := range config.sources {
-		if err := b.AddSource(entry.Value); err != nil {
-			return err
-		}
-	}
-	return b.err
-}
-
-func (b *SourceBudget) AddSource(source *Source) error {
-	if b == nil || source == nil {
-		return nil
-	}
-	return b.add(source.size)
-}
-
-func (b *SourceBudget) add(size sourceSize) error {
-	if b.err != nil {
-		return b.err
-	}
-	priorNodes, seen := b.sources[size.digest]
-	additional := 0
-	if !seen {
-		additional = size.settings
-		for digest, bytes := range size.plugins {
-			if !b.plugins[digest] {
-				additional += bytes
-			}
-		}
-	}
-	if b.bytes+additional > MaxCompiledBytes {
-		b.err = fmt.Errorf("%w: combined policy exceeds the size limit", ErrSourceBudget)
-		return b.err
-	}
-	additionalNodes := max(0, size.nodes-priorNodes)
-	if b.nodes+additionalNodes > MaxCombinedCELNodes {
-		b.err = fmt.Errorf("%w: combined policy exceeds the %d-node CEL compilation limit", ErrSourceBudget, MaxCombinedCELNodes)
-		return b.err
-	}
-	if b.sources == nil {
-		b.sources, b.plugins = make(map[string]int), make(map[[32]byte]bool)
-	}
-	b.sources[size.digest] = max(priorNodes, size.nodes)
-	b.bytes += additional
-	b.nodes += additionalNodes
-	for digest := range size.plugins {
-		b.plugins[digest] = true
-	}
-	return nil
-}
 
 type sourceBody struct {
 	Schema     *string         `json:"$schema"`
@@ -359,9 +274,7 @@ func sourceDocument(canonical []byte, fields map[string]json.RawMessage, envelop
 	}
 	document := &SourceDocument{fields: fields, canonical: canonical}
 	contentBytes := len(canonical)
-	var pluginIdentity [32]byte
 	if plugins := fields["plugins"]; len(plugins) > 0 {
-		pluginIdentity = sha256.Sum256(plugins)
 		if err := document.parsePlugins(plugins, envelopes); err != nil {
 			return nil, err
 		}
@@ -374,10 +287,8 @@ func sourceDocument(canonical []byte, fields map[string]json.RawMessage, envelop
 	if err != nil {
 		return nil, err
 	}
-	document.previewRuleBytes = len(fields["rules"])
 	for _, rule := range document.rules {
 		contentBytes += rule.source.pluginDelta
-		document.previewRuleBytes -= rule.source.envelopeBytes
 	}
 	if contentBytes > MaxSourceBytes {
 		return nil, configError("source configuration exceeds size limit")
@@ -387,17 +298,6 @@ func sourceDocument(canonical []byte, fields map[string]json.RawMessage, envelop
 	// Customers write this content, so its hash resists collisions at ML-DSA-65's level.
 	sum := sha512.Sum512(bytes.TrimSuffix(canonical, []byte{'\n'}))
 	document.digest = hex.EncodeToString(sum[:])
-	document.size = sourceSize{digest: document.digest, settings: len(canonical), plugins: make(map[[32]byte]int)}
-	if raw := fields["plugins"]; raw != nil {
-		document.size.settings -= len(raw)
-		document.size.plugins[pluginIdentity] = len(raw) + document.pluginDelta
-	}
-	for _, rule := range document.rules {
-		document.size.settings -= len(rule.source.fields["plugins"])
-		for digest, size := range rule.source.size.plugins {
-			document.size.plugins[digest] = size
-		}
-	}
 	document.usedSections = document.sections()
 	return document, nil
 }
@@ -437,7 +337,6 @@ func (d *SourceDocument) parsePlugins(raw json.RawMessage, envelopes map[[32]byt
 		}
 		parsed.name, parsed.unit = plugin.name, plugin.unit
 		d.encrypted = append(d.encrypted, parsed)
-		d.envelopeBytes += parsed.bytes
 		d.pluginDelta += parsed.delta
 		delete(section, plugin.name)
 	}
@@ -470,7 +369,6 @@ func (p *encryptedPlugin) find(raw jsontext.Value, at []string, purpose string) 
 				return configError("invalid encrypted value in %s", purpose)
 			}
 			p.sealed = append(p.sealed, value)
-			p.bytes += len(envelope)
 			p.delta += value.plaintextBytes() - len(raw)
 			return nil
 		}
@@ -626,7 +524,6 @@ func (d *SourceDocument) RoutingSource() (*Source, error) {
 // Compile readable settings. Encrypted plugins keep their separate document
 // and are opened only when the caller has the required customer key.
 func (d *SourceDocument) compile(plugins map[[32]byte]*Plugins, compiler *celCompiler) (*Source, error) {
-	initialNodes := compiler.nodes
 	var err error
 	fields := make(map[string]json.RawMessage, len(d.fields))
 	for name, value := range d.fields {
@@ -650,7 +547,7 @@ func (d *SourceDocument) compile(plugins map[[32]byte]*Plugins, compiler *celCom
 	}
 	config := &Config{Schema: "stogas.key-config.compiled.v1", CompilerVersion: CompilerVersion, Access: doc.Access, Input: doc.Input, Timeouts: doc.Timeouts,
 		Routing: Routing{Fallbacks: DefaultFallbacks}}
-	source := &Source{Config: config, Digest: d.digest, Delegation: doc.Delegation, size: d.size}
+	source := &Source{Config: config, Digest: d.digest, Delegation: doc.Delegation, work: compiler.work()}
 	source.settings = settingsMask(d.ownSections())
 
 	if doc.Routing != nil {
@@ -707,7 +604,6 @@ func (d *SourceDocument) compile(plugins map[[32]byte]*Plugins, compiler *celCom
 		return nil, err
 	}
 	for _, rule := range source.Rules {
-		source.previewRuleBytes += rule.previewBytes
 		if rule.Value.settings&permissionSort == 0 {
 			continue
 		}
@@ -716,7 +612,13 @@ func (d *SourceDocument) compile(plugins map[[32]byte]*Plugins, compiler *celCom
 		}
 		source.defaultOrdering = rule.Value.takeOrdering(rule.Name)
 	}
-	source.size.nodes = compiler.nodes - initialNodes
+	if compiler.prepare {
+		// A stored policy that only a combined view shows passed these bounds
+		// when it was saved.
+		if err := source.checkSections(); err != nil {
+			return nil, err
+		}
+	}
 	return source, nil
 }
 
@@ -833,12 +735,7 @@ func (d *SourceDocument) Open(organizationID string, key customerkey.Keys) (*Sou
 		return nil, err
 	}
 	source.Digest = d.digest
-	// Opening does not change the saved collection's byte accounting. A new
-	// nonce or padding still consumed ciphertext processing before decryption.
-	nodes := source.size.nodes
-	source.size = d.size
-	source.size.nodes = nodes
-	return source, nil
+	return source, source.checkSections()
 }
 
 // OpenPlugins decrypts only the plugins in units, for a request that applies
@@ -850,7 +747,7 @@ func (d *SourceDocument) OpenPlugins(organizationID string, key customerkey.Keys
 		return nil, err
 	}
 	config := &Config{Schema: "stogas.key-config.compiled.v1", CompilerVersion: CompilerVersion, Routing: Routing{Fallbacks: DefaultFallbacks}, Plugins: plugins}
-	return &Source{Config: config, Digest: d.digest, RequiredEncryptionKeyIDs: ids, size: d.size}, nil
+	return &Source{Config: config, Digest: d.digest, RequiredEncryptionKeyIDs: ids}, nil
 }
 
 // openPlugins decrypts each plugin in units with its own purpose and compiles
@@ -1015,6 +912,30 @@ func (c *Config) origin(index int) Origin {
 		return Origin{Source: entry.policy, Rule: entry.rule}
 	}
 	return Origin{Source: index}
+}
+
+// policyPosition is the position of the policy that holds the composed entry
+// at index: the entry itself, or the policy of a rule's settings.
+func policyPosition(entry ScopedSource, index int) int {
+	if entry.rule != "" {
+		return entry.policy
+	}
+	return index
+}
+
+// WorkLimitOrigin locates the policy whose expressions used up their
+// allowance, and its scope.
+func (c *Config) WorkLimitOrigin(err error) (Origin, Scope, bool) {
+	var limit *WorkLimitError
+	if c == nil || !errors.As(err, &limit) {
+		return Origin{}, "", false
+	}
+	for i, entry := range c.sources {
+		if entry.rule == "" && entry.Value != nil && entry.Value.work == limit.work {
+			return Origin{Source: i}, entry.Scope, true
+		}
+	}
+	return Origin{}, "", false
 }
 
 // allowedSettings returns the units a source may set. A default yields each
@@ -1184,15 +1105,9 @@ func ChainDigest(sources []ScopedSource) string {
 
 // ComposeSources shares immutable expression trees, access windows and plugin
 // sections. It never concatenates large inherited PII dictionaries into a key.
+// Policies that each compile always compose: every bound is one policy's own,
+// so no policy's edit can make another's requests fail to combine.
 func ComposeSources(sources []ScopedSource) (*Config, error) {
-	var budget SourceBudget
-	for _, entry := range sources {
-		if entry.Value != nil {
-			if err := budget.add(entry.Value.size); err != nil {
-				return nil, err
-			}
-		}
-	}
 	out, err := composeSettings(sources)
 	if err != nil {
 		return nil, err
@@ -1212,17 +1127,10 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 	if sources[0].Value == nil {
 		return nil, configError("organization source is required")
 	}
-	ruleBytes := 0
 	for _, entry := range sources {
-		if entry.Value != nil {
-			ruleBytes += entry.Value.previewRuleBytes
-		}
 		if entry.Value != nil && !entry.Value.defaultSettings {
 			out.requiredSettings |= entry.Value.settings
 		}
-	}
-	if ruleBytes > MaxCompiledBytes {
-		return nil, configError("combined policy exceeds the size limit")
 	}
 	hasRequestPermission := false
 	var filters []*CELExpression
@@ -1236,8 +1144,9 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 	missingKeys := ""
 	seenPlugins := map[*Plugins]bool{}
 	seenWindows := map[string]bool{}
-	var networks *Networks
-	var countries, transportLists *Lists
+	var networks []*Networks
+	var countries, transportLists []*Lists
+	var catalogLists [len(routingLists)][]*Lists
 	for index, entry := range sources {
 		scope, source := entry.Scope, entry.Value
 		if !scope.Valid() && scope != RequestScope || source == nil {
@@ -1311,21 +1220,20 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 		// A client must be in an allowed network of every policy that lists
 		// them, and in no denied network of any policy.
 		if allowed&permissionNetworks != 0 && config.Access != nil && config.Access.Networks != nil {
-			networks = networks.combine(config.Access.Networks)
+			networks = append(networks, config.Access.Networks)
 		}
 		if allowed&permissionCountries != 0 && config.Access != nil && config.Access.Countries != nil {
-			countries = countries.combine(config.Access.Countries)
+			countries = append(countries, config.Access.Countries)
 		}
 		// A request must use a mode that every policy allows and that no
 		// policy denies.
 		if allowed&permissionTransports != 0 && config.Access != nil && config.Access.Transports != nil {
-			transportLists = transportLists.combine(config.Access.Transports)
+			transportLists = append(transportLists, config.Access.Transports)
 		}
 		// A candidate must be in every allow list of a kind and in no deny list.
-		for _, list := range routingLists {
-			if allowed&list.permission != 0 {
-				combined := list.lists(&out.Routing)
-				*combined = (*combined).combine(*list.lists(&config.Routing))
+		for kind, list := range routingLists {
+			if lists := *list.lists(&config.Routing); lists != nil && allowed&list.permission != 0 {
+				catalogLists[kind] = append(catalogLists[kind], lists)
 			}
 		}
 		set := allowed & source.settings
@@ -1344,29 +1252,23 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 		// A default yields only the plugins that a requirement sets.
 		if plugins := config.Plugins.only(allowed & pluginUnits); plugins != nil && !seenPlugins[plugins] {
 			out.PluginSources = append(out.PluginSources, plugins)
+			out.pluginPolicies = append(out.pluginPolicies, policyPosition(entry, index))
 			seenPlugins[plugins] = true
 		}
 	}
 	if !hasRequestPermission {
 		out.RequestPermission = 0
 	}
-	if networks != nil {
-		if out.Access == nil {
-			out.Access = &Access{}
-		}
-		out.Access.Networks = networks
+	for kind, list := range routingLists {
+		*list.lists(&out.Routing) = combineLists(catalogLists[kind])
 	}
-	if countries != nil {
+	if networks != nil || countries != nil || transportLists != nil {
 		if out.Access == nil {
 			out.Access = &Access{}
 		}
-		out.Access.Countries = countries
-	}
-	if transportLists != nil {
-		if out.Access == nil {
-			out.Access = &Access{}
-		}
-		out.Access.Transports = transportLists
+		out.Access.Networks = combineNetworks(networks)
+		out.Access.Countries = combineLists(countries)
+		out.Access.Transports = combineLists(transportLists)
 	}
 	if retries != nil {
 		out.Routing.Retries = *retries
@@ -1384,9 +1286,6 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 	}
 	if len(filters) > 0 || len(sorts) > 0 {
 		out.Routing.Query = &Query{OrderBy: sorts, Filters: filters}
-	}
-	if err := out.validateCombined(); err != nil {
-		return nil, err
 	}
 	return out, nil
 }
@@ -1445,44 +1344,4 @@ func (s *Source) requestWide() bool {
 		set = set || rule.Value.settings&requestWidePermissions != 0
 	}
 	return set
-}
-
-func (c *Config) ValidatePlugins() error {
-	if _, err := c.ExportConfig(); err != nil {
-		return err
-	}
-	// Validate aggregate redaction limits without retaining a copied dictionary.
-	if len(c.PluginSources) > 1 {
-		var literals []redaction.Literal
-		patterns := map[string]bool{}
-		for _, plugins := range c.PluginSources {
-			p := plugins.Redaction
-			if p == nil {
-				continue
-			}
-			literals = append(literals, p.Literals...)
-			for _, pattern := range p.CustomPatterns {
-				patterns[pattern] = true
-			}
-		}
-		if len(patterns) > MaxCustomPatterns {
-			return configError("combined custom patterns exceed limit")
-		}
-		if err := redaction.ValidateLiterals(redaction.NormalizeLiterals(literals)); err != nil {
-			return err
-		}
-
-	}
-	return nil
-}
-
-func (c *Config) validateCombined() error {
-	if err := c.ValidatePlugins(); err != nil {
-		return err
-	}
-	// Access windows have already been initialized once in their source. Calling
-	// validate here would mutate shared maps while other requests read them.
-	// Each source checked its own filter and sort; the composed sort may hold
-	// more criteria and several lists of one kind, from different policies.
-	return nil
 }

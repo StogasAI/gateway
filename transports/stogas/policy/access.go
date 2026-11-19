@@ -25,6 +25,9 @@ var transports = []string{TransportHTTPS, TransportAttestedTLS, TransportE2EE}
 type Lists struct {
 	Allow []string `json:"allow,omitzero"`
 	Deny  []string `json:"deny,omitzero"`
+	// sorted marks lists that validation or composition put in order, so a
+	// lookup searches them instead of reading every value.
+	sorted bool
 }
 
 // Networks limits requests by where they come from. Both lists take
@@ -233,31 +236,41 @@ func (s networkSet) lists() NetworkLists {
 	return lists
 }
 
-// combine returns the networks of both lists: the networks that both allow
-// and the networks that either denies.
-func (n *Networks) combine(other *Networks) *Networks {
-	if n == nil {
-		return other
+// combineNetworks returns the networks that every list allows and the
+// networks that any denies. A chain's lists can hold several hundred thousand
+// entries together, so they join in one pass.
+func combineNetworks(lists []*Networks) *Networks {
+	switch len(lists) {
+	case 0:
+		return nil
+	case 1:
+		return lists[0]
 	}
-	ases := slices.Concat(n.deny.ases, other.deny.ases)
+	out := &Networks{}
+	var ranges []netip.Prefix
+	var ases []uint32
+	allows, denies := false, false
+	for _, list := range lists {
+		ranges = append(ranges, list.deny.ranges...)
+		ases = append(ases, list.deny.ases...)
+		out.deny.kinds |= list.deny.kinds
+		denies = denies || list.Deny != nil
+		switch {
+		case list.Allow == nil:
+		case !allows:
+			out.allow, allows = list.allow, true
+		default:
+			out.allow = networkSet{ranges: intersectNetworks(out.allow.ranges, list.allow.ranges), kinds: out.allow.kinds & list.allow.kinds}
+		}
+	}
 	slices.Sort(ases)
-	out := &Networks{allow: n.allow, deny: networkSet{
-		ranges: disjointNetworks(slices.Concat(n.deny.ranges, other.deny.ranges)),
-		ases:   slices.Compact(ases),
-		kinds:  n.deny.kinds | other.deny.kinds,
-	}}
-	switch {
-	case n.Allow == nil:
-		out.allow = other.allow
-	case other.Allow != nil:
-		out.allow = networkSet{ranges: intersectNetworks(n.allow.ranges, other.allow.ranges), kinds: n.allow.kinds & other.allow.kinds}
-	}
+	out.deny.ranges, out.deny.ases = disjointNetworks(ranges), slices.Compact(ases)
 	// Allow and Deny stay nil where no policy set them, because an empty
 	// allow list admits no client.
-	if n.Allow != nil || other.Allow != nil {
+	if allows {
 		out.Allow = out.allow.strings()
 	}
-	if n.Deny != nil || other.Deny != nil {
+	if denies {
 		out.Deny = out.deny.strings()
 	}
 	return out
@@ -284,6 +297,7 @@ func (s networkSet) strings() []string {
 // client in that form. An AS number takes the form AS64496.
 func parseNetworks(list string, entries []string) (networkSet, error) {
 	var set networkSet
+	ases, ranges := map[uint32]bool{}, map[netip.Prefix]bool{}
 	for _, entry := range entries {
 		number, isAS := parseAS(entry)
 		kind := networkKinds(0)
@@ -295,11 +309,11 @@ func parseNetworks(list string, entries []string) (networkSet, error) {
 		if (isAS || kind != 0 && kind != kindOnion) && list == "allow" {
 			return networkSet{}, configError("access.networks.allow has %q, which only deny lists take", entry)
 		}
-		if isAS && slices.Contains(set.ases, number) || set.kinds&kind != 0 {
+		if isAS && ases[number] || set.kinds&kind != 0 {
 			return networkSet{}, configError("access.networks.%s lists %s twice", list, entry)
 		}
 		if isAS {
-			set.ases = append(set.ases, number)
+			set.ases, ases[number] = append(set.ases, number), true
 			continue
 		}
 		if kind != 0 {
@@ -310,10 +324,10 @@ func parseNetworks(list string, entries []string) (networkSet, error) {
 		if err != nil {
 			return networkSet{}, err
 		}
-		if slices.Contains(set.ranges, network) {
+		if ranges[network] {
 			return networkSet{}, configError("access.networks.%s lists %s twice", list, network)
 		}
-		set.ranges = append(set.ranges, network)
+		set.ranges, ranges[network] = append(set.ranges, network), true
 	}
 	slices.Sort(set.ases)
 	set.ranges = disjointNetworks(set.ranges)
@@ -426,7 +440,7 @@ func subtractNetworks(a, b []netip.Prefix) []netip.Prefix {
 // default and refuses nothing, and a deny list of every value, as a default,
 // refuses until a nearer scope sets its own lists. An allow list that admits
 // nothing would refuse every request, which disabling the resource already
-// says.
+// says. Valid lists are left sorted.
 func (l *Lists) validate(setting, noun, expected string, valid func(string) bool) error {
 	if l == nil {
 		return nil
@@ -441,15 +455,21 @@ func (l *Lists) validate(setting, noun, expected string, valid func(string) bool
 		name   string
 		values []string
 	}{{"allow", l.Allow}, {"deny", l.Deny}} {
-		for index, value := range list.values {
+		for _, value := range list.values {
 			if !valid(value) {
 				return configError("%s.%s has %q, which is not %s", setting, list.name, value, expected)
 			}
-			if slices.Contains(list.values[:index], value) {
-				return configError("%s.%s lists %s twice", setting, list.name, value)
+		}
+		// A list holds up to a whole source of values, so order finds a repeat
+		// without comparing every pair.
+		slices.Sort(list.values)
+		for index := 1; index < len(list.values); index++ {
+			if list.values[index] == list.values[index-1] {
+				return configError("%s.%s lists %s twice", setting, list.name, list.values[index])
 			}
 		}
 	}
+	l.sorted = true
 	if l.Allow != nil && !slices.ContainsFunc(l.Allow, l.admits) {
 		return configError("%s.deny holds every %s that allow lists", setting, noun)
 	}
@@ -459,35 +479,68 @@ func (l *Lists) validate(setting, noun, expected string, valid func(string) bool
 // admits reports whether the lists accept value. Absent lists accept every
 // value, and a country of a client in none is empty.
 func (l *Lists) admits(value string) bool {
-	return l == nil || (l.Allow == nil || slices.Contains(l.Allow, value)) && !slices.Contains(l.Deny, value)
+	return l == nil || (l.Allow == nil || l.holds(l.Allow, value)) && !l.holds(l.Deny, value)
 }
 
-// combine returns the values that both allow and the values that either
-// denies, in order.
-func (l *Lists) combine(other *Lists) *Lists {
-	if l == nil {
-		return other
+func (l *Lists) holds(list []string, value string) bool {
+	if l.sorted {
+		_, found := slices.BinarySearch(list, value)
+		return found
 	}
-	if other == nil {
+	return slices.Contains(list, value)
+}
+
+// inOrder returns the lists sorted, which every compiled source's lists are.
+// An empty allow list, which admits nothing, stays one.
+func (l *Lists) inOrder() *Lists {
+	if l.sorted {
 		return l
 	}
-	out := &Lists{}
-	switch {
-	case l.Allow == nil:
-		out.Allow = slices.Clone(other.Allow)
-	case other.Allow == nil:
-		out.Allow = slices.Clone(l.Allow)
-	default:
-		out.Allow = []string{}
-		for _, value := range l.Allow {
-			if slices.Contains(other.Allow, value) {
-				out.Allow = append(out.Allow, value)
+	out := &Lists{Allow: slices.Clone(l.Allow), Deny: slices.Clone(l.Deny), sorted: true}
+	slices.Sort(out.Allow)
+	slices.Sort(out.Deny)
+	return out
+}
+
+// combineLists returns the values that every list allows and the values that
+// any denies, in order. A chain's lists can hold several hundred thousand
+// values together, so they join in one pass.
+func combineLists(lists []*Lists) *Lists {
+	switch len(lists) {
+	case 0:
+		return nil
+	case 1:
+		return lists[0]
+	}
+	out := &Lists{sorted: true}
+	for _, list := range lists {
+		list = list.inOrder()
+		if list.Deny != nil {
+			out.Deny = append(out.Deny, list.Deny...)
+		}
+		switch {
+		case list.Allow == nil:
+		case out.Allow == nil:
+			out.Allow = list.Allow
+		default:
+			shared := []string{}
+			for i, j := 0, 0; i < len(out.Allow) && j < len(list.Allow); {
+				switch order := strings.Compare(out.Allow[i], list.Allow[j]); {
+				case order < 0:
+					i++
+				case order > 0:
+					j++
+				default:
+					shared = append(shared, out.Allow[i])
+					i, j = i+1, j+1
+				}
 			}
+			out.Allow = shared
 		}
 	}
-	slices.Sort(out.Allow)
-	if l.Deny != nil || other.Deny != nil {
-		out.Deny = slices.Compact(slices.Sorted(slices.Values(slices.Concat(l.Deny, other.Deny))))
+	if out.Deny != nil {
+		slices.Sort(out.Deny)
+		out.Deny = slices.Compact(out.Deny)
 	}
 	return out
 }

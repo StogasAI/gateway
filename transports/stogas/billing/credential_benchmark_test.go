@@ -28,7 +28,7 @@ func BenchmarkCredentialPolicyAlternatives(b *testing.B) {
 					var cache keyConfigCache
 					snapshot := credentialPolicySnapshot(b, &cache, "org", json.RawMessage(`null`), map[string][]json.RawMessage{"openai": alternatives})
 					for index := range alternatives {
-						if _, err := snapshot.PolicyForCredential("openai", index, nil, time.Now(), nil); err != nil {
+						if _, err := snapshot.PolicyForCredential("openai", index, nil, time.Now()); err != nil {
 							b.Fatal(err)
 						}
 					}

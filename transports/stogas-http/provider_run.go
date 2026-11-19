@@ -128,7 +128,7 @@ func (r *providerRun) prepare(pair *providerPair, resolution *catalog.ResolvedRe
 		state.Export = r.server.exports.Start(resolution.ExportConfig, state.RequestID)
 	}
 	resolution.ExportConfig = nil
-	selected, err := r.keyConfig.PolicyForCredential(string(resolution.Provider), resolution.CredentialIndex, r.credential.EncryptionKeys, r.startedAt, nil)
+	selected, err := r.keyConfig.PolicyForCredential(string(resolution.Provider), resolution.CredentialIndex, r.credential.EncryptionKeys, r.startedAt)
 	if err != nil {
 		return billingFailure{err}
 	}

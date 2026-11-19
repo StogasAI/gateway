@@ -1214,11 +1214,15 @@ func piiRedactionError(err error) error {
 	if errors.Is(err, redaction.ErrNonASCII) {
 		return APIError{Code: "input_ascii_required", StatusCode: 400, Type: "invalid_request_error", Message: "Policy requires ASCII input text"}
 	}
-	if errors.Is(err, redaction.ErrMatchLimit) || errors.Is(err, redaction.ErrNestingLimit) || errors.Is(err, redaction.ErrWorkLimit) {
-		return APIError{
-			StatusCode: http.StatusRequestEntityTooLarge,
-			Type:       ErrorTypeInvalidRequest,
-			Message:    "Request exceeds redaction limits",
+	// One request has one scan budget, which every pattern and term list of its policies
+	// spends on the text, so the message says which of the two to reduce.
+	for limit, message := range map[error]string{
+		redaction.ErrWorkLimit:    "The request has too much text for its redaction patterns and terms to scan. Send less text, or narrow the patterns.",
+		redaction.ErrMatchLimit:   "The request has too many redaction matches. Send less text.",
+		redaction.ErrNestingLimit: "The request's JSON is nested too deeply to redact.",
+	} {
+		if errors.Is(err, limit) {
+			return APIError{StatusCode: http.StatusRequestEntityTooLarge, Type: ErrorTypeInvalidRequest, Message: message}
 		}
 	}
 	return err

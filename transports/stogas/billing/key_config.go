@@ -102,7 +102,7 @@ type KeyConfigSnapshot struct {
 	credentialPolicies    map[string]*PolicySnapshot
 	owner                 *keyConfigCache
 	retained              bool
-	// failure is why the policies in Versions do not combine. Like other refusals from cached
+	// failure is why a policy in Versions does not compile. Like other refusals from cached
 	// settings, it lasts until the entry expires, so a client that retries reaches neither
 	// PostgreSQL nor the compiler.
 	failure error

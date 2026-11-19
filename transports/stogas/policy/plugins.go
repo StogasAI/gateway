@@ -1,6 +1,9 @@
 package policy
 
 import (
+	"errors"
+	"strings"
+
 	"github.com/maximhq/bifrost/transports/stogas/plugins/exporter/exportconfig"
 	"github.com/maximhq/bifrost/transports/stogas/plugins/redaction"
 )
@@ -119,4 +122,129 @@ func (c *Config) ExportConfig() (*exportconfig.Config, error) {
 		return nil, nil
 	}
 	return exportconfig.Combine(configs...)
+}
+
+// SectionsError says which bound of one policy its plugin sections pass
+// together and, in a request, names the policy. The reason holds counts and
+// no setting, so it is safe to show for encrypted plugins too.
+type SectionsError struct {
+	Origin Origin
+	Scope  Scope
+	err    error
+}
+
+func (e *SectionsError) Error() string { return e.err.Error() }
+func (e *SectionsError) Unwrap() error { return e.err }
+
+// Reason says which bound the policy passed, without the error's prefix.
+func (e *SectionsError) Reason() string {
+	return strings.TrimPrefix(e.err.Error(), ErrInvalidConfig.Error()+": ")
+}
+
+// CheckSections bounds what the plugin sections of one policy hold together:
+// its own plugins and those of its rules, which one request can match at
+// once. The policies of a request combine without a bound of their own, so
+// these bounds are what keeps one request's matchers and deliveries finite:
+// exportconfig.MaxDestinations destinations, redaction.MaxLiterals literal
+// rules in redaction.MaxLiteralTotalBytes, and the custom patterns that one
+// redaction policy compiles. Each section passed the same bounds alone.
+func CheckSections(sections []*Plugins) error {
+	seen := make(map[*Plugins]bool, len(sections))
+	var exports []*exportconfig.Config
+	var literals []redaction.Literal
+	patterns := map[string]bool{}
+	for _, plugins := range sections {
+		if plugins == nil || seen[plugins] {
+			continue
+		}
+		seen[plugins] = true
+		if plugins.Export != nil {
+			exports = append(exports, plugins.Export)
+		}
+		if plugins.Redaction != nil {
+			literals = append(literals, plugins.Redaction.Literals...)
+			for _, pattern := range plugins.Redaction.CustomPatterns {
+				patterns[pattern] = true
+			}
+		}
+	}
+	if len(exports) > 1 {
+		combined, err := exportconfig.Combine(exports...)
+		if err != nil {
+			return err
+		}
+		if len(combined.Destinations) > exportconfig.MaxDestinations {
+			return &SectionsError{err: configError("a policy exports to at most %d destinations, counting its rules", exportconfig.MaxDestinations)}
+		}
+	}
+	if redaction.ValidateLiterals(literals) != nil {
+		return &SectionsError{err: configError("a policy holds at most %d redaction literals in %d bytes, counting its rules", redaction.MaxLiterals, redaction.MaxLiteralTotalBytes)}
+	}
+	// One pattern compiled with its own section.
+	if len(patterns) > 1 {
+		custom := make([]redaction.CustomPattern, 0, len(patterns))
+		for pattern := range patterns {
+			custom = append(custom, redaction.CustomPattern{Expression: pattern})
+		}
+		if redaction.ValidateCustomPatterns(custom) != nil {
+			return &SectionsError{err: configError("the custom patterns of a policy and its rules exceed the count or complexity of one policy")}
+		}
+	}
+	return nil
+}
+
+// checkSections bounds a policy with its rules when it compiles.
+func (s *Source) checkSections() error {
+	if len(s.Rules) == 0 {
+		return nil
+	}
+	sections := make([]*Plugins, 0, 1+len(s.Rules))
+	sections = append(sections, s.Config.Plugins)
+	for _, rule := range s.Rules {
+		sections = append(sections, rule.Value.Config.Plugins)
+	}
+	return CheckSections(sections)
+}
+
+// WithOpened returns c with the opened plugins of its ActiveEncryptedPlugins,
+// in their order, among its plugin sections. Only a gateway reads what an
+// encrypted plugin holds, so each policy that opened one is bounded here with
+// its other sections that apply.
+func (c *Config) WithOpened(opened []*Plugins) (*Config, error) {
+	out := *c
+	out.PluginSources = append([]*Plugins{}, c.PluginSources...)
+	out.pluginPolicies = append([]int{}, c.pluginPolicies...)
+	if len(out.PluginSources) != len(out.pluginPolicies) {
+		// A configuration that no chain composed is one policy.
+		out.pluginPolicies = make([]int, len(out.PluginSources))
+	}
+	if len(out.PluginSources) == 0 && c.Plugins != nil {
+		out.PluginSources, out.pluginPolicies = []*Plugins{c.Plugins}, []int{0}
+	}
+	checked := map[int]bool{}
+	for i, plugins := range opened {
+		position := c.ActiveEncryptedPlugins[i].policy
+		out.PluginSources = append(out.PluginSources, plugins)
+		out.pluginPolicies = append(out.pluginPolicies, position)
+		checked[position] = false
+	}
+	for i, position := range out.pluginPolicies {
+		if done, opened := checked[position]; done || !opened {
+			continue
+		}
+		checked[position] = true
+		var sections []*Plugins
+		for j := i; j < len(out.PluginSources); j++ {
+			if out.pluginPolicies[j] == position {
+				sections = append(sections, out.PluginSources[j])
+			}
+		}
+		if err := CheckSections(sections); err != nil {
+			if failed := (*SectionsError)(nil); errors.As(err, &failed) && position < len(c.sources) {
+				failed.Origin, failed.Scope = Origin{Source: position}, c.sources[position].Scope
+			}
+			return nil, err
+		}
+	}
+	return &out, nil
 }

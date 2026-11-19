@@ -25,7 +25,6 @@ import (
 
 const (
 	CompilerVersion   = 1
-	MaxCompiledBytes  = 512 << 10
 	MaxSorts          = 4
 	MaxRetries        = 3
 	MaxFallbacks      = 2
@@ -34,7 +33,6 @@ const (
 	// Without a policy value only the total limit applies. Models reason for
 	// minutes without output, and expiry neither stops nor refunds the call.
 	DefaultOutputIdleTimeout = MaxRequestTimeout
-	MaxCustomPatterns        = 3
 	MaxCustomPatternBytes    = 512
 )
 
@@ -74,16 +72,18 @@ type Config struct {
 	requiredSettings       Permission
 	sortOrigins            []Origin
 	requiredSorts          int
-	RequiredEncryptionKeys []string          `json:"-"`
-	PluginSources          []*Plugins        `json:"-"`
-	Access                 *Access           `json:"access"`
-	Input                  *Input            `json:"input,omitempty"`
-	Timeouts               *Timeouts         `json:"timeouts,omitempty"`
-	CompilerVersion        int               `json:"compilerVersion"`
-	Plugins                *Plugins          `json:"plugins"`
-	Routing                Routing           `json:"routing"`
-	RequestPermission      RequestPermission `json:"requestPermission"`
-	Schema                 string            `json:"schema"`
+	RequiredEncryptionKeys []string   `json:"-"`
+	PluginSources          []*Plugins `json:"-"`
+	// pluginPolicies holds, for each plugin section, the position of its policy.
+	pluginPolicies    []int
+	Access            *Access           `json:"access"`
+	Input             *Input            `json:"input,omitempty"`
+	Timeouts          *Timeouts         `json:"timeouts,omitempty"`
+	CompilerVersion   int               `json:"compilerVersion"`
+	Plugins           *Plugins          `json:"plugins"`
+	Routing           Routing           `json:"routing"`
+	RequestPermission RequestPermission `json:"requestPermission"`
+	Schema            string            `json:"schema"`
 }
 
 type Input struct {
@@ -689,9 +689,6 @@ func (p *Plugins) validate() error {
 	}
 	if selected.Presets == nil {
 		return configError("redaction presets are missing")
-	}
-	if len(selected.CustomPatterns) > MaxCustomPatterns {
-		return configError("redaction custom pattern count is invalid")
 	}
 	seen := map[string]bool{}
 	for _, pattern := range selected.Presets {

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"testing"
+
+	"github.com/maximhq/bifrost/transports/stogas/plugins/exporter/exportconfig"
 )
 
 func TestExportSourceContract(t *testing.T) {
@@ -113,20 +115,75 @@ func TestExportCompositionRulesAndInspection(t *testing.T) {
 	}
 }
 
-func TestExportAggregateDestinationBound(t *testing.T) {
+// Eight destinations bound one policy, counting its rules. The policies of a
+// chain have no total, so a key adds its own to an organization's eight.
+func TestExportDestinationsBoundEachPolicy(t *testing.T) {
+	destinations := make([]map[string]string, 8)
+	for i := range destinations {
+		destinations[i] = map[string]string{"url": fmt.Sprintf("https://collector.example/%d", i)}
+	}
+	export := map[string]any{"export": map[string]any{"destinations": destinations}}
+	raw, _ := json.Marshal(map[string]any{"plugins": export})
+	source := ruleSource(t, string(raw))
+	const other = `{"plugins":{"export":{"destinations":[{"url":"https://other.example/"}]}}}`
+	combined, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: source}, {Scope: KeyScope, Value: ruleSource(t, other)}})
+	if err == nil {
+		combined, err = combined.Activate(ruleValues{})
+	}
+	if err != nil {
+		t.Fatalf("policies within their own bounds did not combine: %v", err)
+	}
+	if exports, err := combined.ExportConfig(); err != nil || len(exports.Destinations) != 9 {
+		t.Fatalf("combined destinations = %v, %v", exports, err)
+	}
+	// A rule can match with its policy's own plugins, so they count together.
+	raw, _ = json.Marshal(map[string]any{"plugins": export, "rules": map[string]any{"more": json.RawMessage(other)}})
+	var sections *SectionsError
+	if _, err := CompileSource(raw); !errors.As(err, &sections) || !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("a policy and its rule exported to nine destinations: %v", err)
+	}
+	// The same destination in a rule is one receiver.
+	raw, _ = json.Marshal(map[string]any{"plugins": export, "rules": map[string]any{"same": map[string]any{"plugins": map[string]any{"export": map[string]any{"destinations": destinations[:1]}}}}})
+	if _, err := CompileSource(raw); err != nil {
+		t.Fatalf("a repeated destination counted twice: %v", err)
+	}
+}
+
+// Only a gateway reads an encrypted plugin, so it counts what a request opens
+// with the other plugins of the same policy, and names that policy.
+func TestOpenedPluginsCountWithTheirOwnPolicy(t *testing.T) {
+	export := func(prefix string, count int) *Plugins {
+		config := &exportconfig.Config{}
+		for i := range count {
+			config.Destinations = append(config.Destinations, exportconfig.Destination{URL: fmt.Sprintf("https://%s-%d.example/", prefix, i)})
+		}
+		return &Plugins{Export: config}
+	}
 	destinations := make([]map[string]string, 8)
 	for i := range destinations {
 		destinations[i] = map[string]string{"url": fmt.Sprintf("https://collector.example/%d", i)}
 	}
 	raw, _ := json.Marshal(map[string]any{"plugins": map[string]any{"export": map[string]any{"destinations": destinations}}})
-	source := ruleSource(t, string(raw))
-	child := ruleSource(t, `{"plugins":{"export":{"destinations":[{"url":"https://other.example/"}]}}}`)
-	combined, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: source}, {Scope: KeyScope, Value: child}})
-	if err == nil {
-		_, err = combined.Activate(ruleValues{})
+	config, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: ruleSource(t, string(raw))}, {Scope: KeyScope, Value: ruleSource(t, `{}`)}})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if err == nil {
-		t.Fatal("accepted more than eight combined destinations")
+	// The key's policy opens eight destinations of its own beside the
+	// organization's eight.
+	config.ActiveEncryptedPlugins = []EncryptedPlugins{{policy: 1}}
+	active, err := config.WithOpened([]*Plugins{export("key", 8)})
+	if err != nil {
+		t.Fatalf("each policy kept to its own destinations: %v", err)
+	}
+	if exports, err := active.ExportConfig(); err != nil || len(exports.Destinations) != 16 || len(config.PluginSources) != 1 {
+		t.Fatalf("opened destinations were lost or changed the cached policy: %v %v", exports, err)
+	}
+	// One more destination in the organization's own encrypted rule passes
+	// the organization's bound.
+	config.ActiveEncryptedPlugins = []EncryptedPlugins{{policy: 0}}
+	var sections *SectionsError
+	if _, err := config.WithOpened([]*Plugins{export("organization", 1)}); !errors.As(err, &sections) || sections.Scope != OrganizationScope || sections.Origin.Source != 0 {
+		t.Fatalf("a policy opened a ninth destination: %v", err)
 	}
 }
 

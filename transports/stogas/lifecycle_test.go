@@ -80,7 +80,7 @@ func TestPublicBillingErrorTypes(t *testing.T) {
 		{"rate limit", billing.ErrRateLimit, 429, "rate_limit_error", "rate_limit_exceeded"},
 		{"gateway unavailable", billing.ErrGatewayUnavailable, 503, "service_unavailable", "gateway_unavailable"},
 		{"missing encryption key", customerkey.ErrKey, 400, "invalid_request_error", "encryption_key_required"},
-		{"policy work limit", policy.ErrSourceBudget, 400, "invalid_request_error", "policy_work_limit_exceeded"},
+		{"policy work limit", fmt.Errorf("routing filter evaluation failed: %w", policy.ErrPolicyWorkLimit), 400, "invalid_request_error", "policy_work_limit_exceeded"},
 		{"invalid decrypted policy", fmt.Errorf("%w: private literal", policy.ErrInvalidConfig), 400, "invalid_request_error", "invalid_request"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

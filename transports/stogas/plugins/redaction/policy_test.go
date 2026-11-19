@@ -567,7 +567,7 @@ func mustCompilePolicy(t *testing.T, options Options) *Policy {
 	return policy
 }
 
-func TestSharedPolicyCompositionScansOriginalTextAndPrunesCoveredLiterals(t *testing.T) {
+func TestSharedPolicyCompositionScansOriginalTextWithSharedMatchers(t *testing.T) {
 	word := true
 	parentOptions := Options{Patterns: []Pattern{PatternEmailAddress}, CustomPatterns: []CustomPattern{{Expression: "ABCD"}}, Literals: []Literal{{Text: "SECRETABC", IgnoreCase: true, WholeWord: &word}}}
 	childOptions := Options{CustomPatterns: []CustomPattern{{Expression: "BCDE"}, {Expression: "ABCD"}}, Literals: []Literal{{Text: "secretabc", IgnoreCase: true, WholeWord: &word}, {Text: "SECRETABC", Fuzzy: true, WholeWord: &word}, {Text: "NEXTSECRET"}}}
@@ -577,7 +577,7 @@ func TestSharedPolicyCompositionScansOriginalTextAndPrunesCoveredLiterals(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if combined.literals[0].matcher != parent.literals[0].matcher || combined.literals[1].matcher != child.literals[0].matcher {
+	if combined.literals[0] != parent.literals[0] || combined.literals[1] != child.literals[0] {
 		t.Fatal("composition copied matchers")
 	}
 	if len(combined.custom) != 2 {
@@ -598,23 +598,59 @@ func TestSharedPolicyCompositionScansOriginalTextAndPrunesCoveredLiterals(t *tes
 			t.Fatalf("input=%q actual=%q expected=%q", input, actual, expected)
 		}
 	}
-	// A request-local combination cannot change either cached parent matcher.
-	if parent.literals[0].enabled != nil || len(parent.custom) != 1 {
+	// A request-local combination cannot change either cached parent.
+	if len(parent.literals) != 1 || len(parent.custom) != 1 {
 		t.Fatal("composition mutated a parent")
 	}
 }
 
-func TestSharedCaseInsensitiveLiteralIdentityRetainsOneCoveringMatcher(t *testing.T) {
+// The policies of a chain combine whatever their number, since a combination
+// has no pattern or literal total. Every pass charges the request's work
+// instead, here one unit a byte for each pattern's prefix search and each
+// lexicon, so the largest text that passes shrinks as policies join.
+func TestCombinationHasNoTotalAndEveryPassChargesWork(t *testing.T) {
+	const policies = 40
+	parts := make([]*Policy, policies)
+	for i := range parts {
+		literals := make([]Literal, MaxLiterals)
+		for j := range literals {
+			literals[j] = Literal{Text: fmt.Sprintf("term-%02d-%04d", i, j)}
+		}
+		parts[i] = mustCompilePolicy(t, Options{CustomPatterns: []CustomPattern{{Expression: fmt.Sprintf(`EMP%02d-[0-9]{6}`, i)}}, Literals: literals})
+	}
+	combined, err := CombinePolicies(parts)
+	if err != nil || len(combined.custom) != policies || len(combined.literals) != policies {
+		t.Fatalf("policies within their own bounds did not combine: %v", err)
+	}
+	text := []byte(strings.Repeat("plain words ", 1000) + "EMP39-123456 and term-00-0999")
+	redactor := NewWithPolicy(combined)
+	out, changed, err := redactor.redactBytes(text)
+	if err != nil || !changed || !strings.HasSuffix(string(out), "<CUSTOM_PII> and <CUSTOM_PII>") {
+		t.Fatalf("combined policies lost a match: %q %v", out[len(out)-40:], err)
+	}
+	if passes := uint64(2 * policies * len(text)); redactor.scanWork < passes {
+		t.Fatalf("scan work %d is below one unit a byte for each of %d passes", redactor.scanWork, 2*policies)
+	}
+	large := []byte(strings.Repeat("a", maxScanWork/(2*policies)+1))
+	if _, _, err := NewWithPolicy(combined).redactBytes(large); !errors.Is(err, ErrWorkLimit) {
+		t.Fatalf("text past the work of %d passes was scanned: %v", 2*policies, err)
+	}
+}
+
+func TestCombinationScansOneSharedMatcherOnce(t *testing.T) {
 	parent := mustCompilePolicy(t, Options{Literals: []Literal{{Text: "PRIVATEWORD", IgnoreCase: true}}})
 	child := mustCompilePolicy(t, Options{Patterns: []Pattern{PatternEmailAddress}})
 	duplicate := mustCompilePolicy(t, Options{Literals: []Literal{{Text: "privateword", IgnoreCase: true}}})
-	for _, parts := range [][]*Policy{{parent, child}, {parent, duplicate, child}} {
-		combined, err := CombinePolicies(parts)
+	for _, test := range []struct {
+		parts    []*Policy
+		matchers int
+	}{{[]*Policy{parent, child}, 1}, {[]*Policy{parent, child, parent}, 1}, {[]*Policy{parent, duplicate, child}, 2}} {
+		combined, err := CombinePolicies(test.parts)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(combined.literals) != 1 || combined.literals[0].matcher != parent.literals[0].matcher {
-			t.Fatal("equivalent dictionaries retained another scan or lost their shared matcher")
+		if len(combined.literals) != test.matchers || combined.literals[0] != parent.literals[0] {
+			t.Fatal("a shared matcher was scanned twice or lost")
 		}
 		out, changed, err := NewWithPolicy(combined).redactBytes([]byte("privateWORD and alice@corp.io"))
 		if err != nil || !changed || string(out) != "<CUSTOM_PII> and <EMAIL_ADDRESS>" {
