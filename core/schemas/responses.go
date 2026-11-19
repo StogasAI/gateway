@@ -3451,6 +3451,12 @@ const (
 // These are executed server-side by OpenRouter and are not part of the OpenAI spec.
 const ResponsesToolTypeOpenRouterPrefix = "openrouter:"
 
+// CanonicalResponsesToolType returns the type that a declared tool of the given type has after
+// decoding, so that a tool_choice entry can be matched with the tool that it names.
+func CanonicalResponsesToolType(t string) ResponsesToolType {
+	return normalizeResponsesToolType(ResponsesToolType(t))
+}
+
 // normalizeResponsesToolType maps versioned/provider-specific tool type strings
 // to their canonical ResponsesToolType. For example, "web_search_20250305" → "web_search".
 // Returns the input unchanged if it's already canonical or unrecognized.

@@ -24,6 +24,7 @@ var chutesAllowedChatFields = map[string]bool{
 	"reasoning":             true,
 	"reasoning_display":     true,
 	"reasoning_effort":      true,
+	"reasoning_max_tokens":  true,
 	"response_format":       true,
 	"safety_identifier":     true,
 	"seed":                  true,
@@ -53,15 +54,6 @@ func (a ChutesAdapter) ValidateRequest(state *State) error {
 func (a ChutesAdapter) SanitizeRequest(state *State) error {
 	if err := a.DefaultAdapter.SanitizeRequest(state); err != nil {
 		return err
-	}
-	if state.Resolution.Deployment.ID == "chutes-qwen3.8-27b" {
-		raw := state.Resolution.RawBody()
-		reasoning, _ := rawObject(raw["reasoning"])
-		_, nestedEffort := rawStringValue(reasoning["effort"])
-		_, effortAlias := rawStringValue(raw["reasoning_effort"])
-		if rawBool(reasoning["enabled"]) && !nestedEffort && !effortAlias {
-			return invalidRequest("Qwen3.8 reasoning enablement requires an explicit effort")
-		}
 	}
 	control := chutesReasoningControl{}
 	if requested, ok := state.Resolution.ReasoningEffort(); ok {
@@ -163,11 +155,12 @@ func validateChutesChatPolicy(state *State) error {
 	}
 	reasoning, _ := rawObject(raw["reasoning"])
 	for name := range reasoning {
-		if name != "effort" && name != "enabled" && name != "display" {
+		// A token budget reaches a Chutes model as its nearest effort.
+		if name != "effort" && name != "enabled" && name != "display" && name != "max_tokens" {
 			return invalidRequest("reasoning." + name + " is not supported for Chutes deployments")
 		}
 	}
-	if err := validateChatReasoningDisplay(state, raw); err != nil {
+	if err := validateChatReasoningDisplay(raw); err != nil {
 		return err
 	}
 	if err := validateChutesResponseFormat(raw["response_format"], state.Resolution.Deployment.Capabilities.StructuredOutputs); err != nil {

@@ -7,7 +7,7 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/rawjson"
 )
 
-func rawChatCacheControlExists(raw json.RawMessage, includeMessage bool) bool {
+func rawChatCacheControlExists(raw json.RawMessage) bool {
 	if len(raw) == 0 {
 		return false
 	}
@@ -19,9 +19,6 @@ func rawChatCacheControlExists(raw json.RawMessage, includeMessage bool) bool {
 		message, err := rawjson.Object(messageRaw)
 		if err != nil {
 			continue
-		}
-		if _, ok := message["cache_control"]; includeMessage && ok {
-			return true
 		}
 		for _, block := range rawChatMessageContentBlocks(message) {
 			if _, ok := block["cache_control"]; ok {

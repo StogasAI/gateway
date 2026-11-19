@@ -240,7 +240,6 @@ func TestChutesSamplingRangesAreProviderOwned(t *testing.T) {
 
 func TestChutesRejectsUnaccountedAndNonTextFeatures(t *testing.T) {
 	cases := []string{
-		`"cache_control":{"type":"ephemeral"}`,
 		`"logprobs":true`,
 		`"modalities":["text","audio"]`,
 		`"n":2`,
@@ -352,26 +351,22 @@ func TestChutesReasoningPolicyRejectsUnreviewedControls(t *testing.T) {
 			t.Fatalf("the %s request without a reasoning control was refused: %v", model, err)
 		}
 	}
-	for _, field := range []string{
-		`"reasoning":{"max_tokens":100}`,
-		`"reasoning_max_tokens":100`,
+}
+
+// A reasoning control that a Chutes model lacks reaches it as its nearest setting: a token budget
+// as an effort, and none as the lowest effort of a model that always reasons.
+func TestChutesReasoningControlsMapToTheNearestSetting(t *testing.T) {
+	for _, test := range []struct{ model, field, want string }{
+		{"provider:chutes glm-5.2", `"reasoning":{"max_tokens":100}`, `"reasoning_effort":"high"`},
+		{"provider:chutes glm-5.2", `"reasoning_max_tokens":100`, `"reasoning_effort":"high"`},
+		{"kimi-k3", `"reasoning_effort":"none"`, `"reasoning_effort":"low"`},
+		{"qwen3.8-27b", `"reasoning":{"enabled":true}`, `"reasoning_effort":"medium"`},
 	} {
-		t.Run(field, func(t *testing.T) {
-			if validateResolvedChat(t, chutesBodyForModel("provider:chutes glm-5.2", field)) == nil {
-				t.Fatal("unsupported Chutes reasoning control was accepted")
-			}
-		})
+		body, _, _ := providerBody(t, "/v1/chat/completions", chutesBodyForModel(test.model, test.field))
+		if encoded, _ := json.Marshal(body); !strings.Contains(string(encoded), test.want) {
+			t.Errorf("%s with %s: provider body %s, want %s", test.model, test.field, encoded, test.want)
+		}
 	}
-
-	_, err := catalog.ResolveRequest(catalog.RequestInput{
-		Method: "POST",
-		Path:   "/v1/chat/completions",
-		Body:   []byte(chutesBodyForModel("kimi-k3", `"reasoning_effort":"none"`)),
-	})
-	if err == nil {
-		t.Fatal("explicit reasoning disablement was accepted for always-reasoning Kimi K3")
-	}
-
 }
 
 func TestChutesBinaryReasoningEnabledControl(t *testing.T) {
@@ -403,16 +398,8 @@ func TestChutesBinaryReasoningEnabledControl(t *testing.T) {
 	}
 }
 
-func TestQwen38OnlyAcceptsExplicitReasoningEnablement(t *testing.T) {
-	state := resolveChutesState(t, chutesBodyForModel("qwen3.8-27b", `"reasoning":{"enabled":true}`))
-	if err := state.Adapter.ValidateRequest(state); err != nil {
-		t.Fatalf("ValidateRequest returned error: %v", err)
-	}
-	if err := state.Adapter.SanitizeRequest(state); err == nil {
-		t.Fatal("binary reasoning enablement was accepted without selecting a Qwen3.8 effort")
-	}
-
-	state = resolveChutesState(t, chutesBodyForModel("qwen3.8-27b", `"reasoning":{"enabled":true,"effort":"low"}`))
+func TestQwen38TakesAnEffortAndASwitch(t *testing.T) {
+	state := resolveChutesState(t, chutesBodyForModel("qwen3.8-27b", `"reasoning":{"enabled":true,"effort":"low"}`))
 	if err := state.Adapter.ValidateRequest(state); err != nil {
 		t.Fatalf("ValidateRequest returned error for explicit effort: %v", err)
 	}
@@ -432,7 +419,6 @@ func TestQwen38OnlyAcceptsExplicitReasoningEnablement(t *testing.T) {
 func TestChutesFieldPolicyIsClosedOverTheSharedChatSurface(t *testing.T) {
 	unsupportedValues := map[string]string{
 		"audio":                      `{"format":"wav","voice":"alloy"}`,
-		"cache_control":              `{"type":"ephemeral"}`,
 		"container":                  `"container_123"`,
 		"context_management":         `{"edits":[{"type":"compact_20260112"}]}`,
 		"fallbacks":                  `["provider:openai gpt-5-nano"]`,
@@ -447,29 +433,40 @@ func TestChutesFieldPolicyIsClosedOverTheSharedChatSurface(t *testing.T) {
 		"moderation":                 `{"model":"omni-moderation-latest"}`,
 		"n":                          `2`,
 		"parallel_tool_calls":        `false,"tools":[{"type":"function","function":{"name":"lookup"}}]`,
-		"prediction":                 `{"type":"content","content":"hello"}`,
 		"prompt_cache_isolation_key": `"tenant-a"`,
 		"prompt_cache_key":           `"tenant-a"`,
 		"prompt_cache_options":       `{"type":"ephemeral"}`,
-		"prompt_cache_retention":     `"24h"`,
 		"reasoning_display":          `"summarized"`,
-		"reasoning_max_tokens":       `1024`,
 		"service_tier":               `"priority"`,
 		"speed":                      `"fast"`,
-		"stop_sequences":             `["DONE"]`,
-		"task_budget":                `{"type":"tokens","total":20000}`,
 		"text":                       `{"verbosity":"low"}`,
 		"top_logprobs":               `1`,
-		"verbosity":                  `"high"`,
 		"web_search_options":         `{}`,
 	}
 	// The request passes without the field, so each refusal is the field's.
 	if err := validateResolvedChat(t, chutesBody("")); err != nil {
 		t.Fatalf("the Chutes request without a field was refused: %v", err)
 	}
+	// Chutes has no control for these settings, which only tune a reply, so a request with one
+	// reaches Chutes without it. Stop sequences reach it as stop.
+	leftOut := map[string]string{
+		"cache_control":          `{"type":"ephemeral"}`,
+		"prediction":             `{"type":"content","content":"hello"}`,
+		"prompt_cache_retention": `"24h"`,
+		"stop_sequences":         `["DONE"]`,
+		"task_budget":            `{"type":"tokens","total":20000}`,
+		"verbosity":              `"high"`,
+	}
 	for field := range catalog.KnownFields(catalog.RouteChat) {
 		// Gateway-only metadata is consumed before provider validation.
 		if chutesAllowedChatFields[field] || field == "policy" || field == "encryption_keys" {
+			continue
+		}
+		if value, tunes := leftOut[field]; tunes {
+			body, _, _ := providerBody(t, "/v1/chat/completions", chutesBody(fmt.Sprintf("%q:%s", field, value)))
+			if _, sent := body[field]; sent || field == "stop_sequences" && string(body["stop"]) != value {
+				t.Fatalf("shared field %q reached Chutes: %v", field, body)
+			}
 			continue
 		}
 		value, covered := unsupportedValues[field]

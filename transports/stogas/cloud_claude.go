@@ -37,7 +37,7 @@ const (
 
 	// The companies that run Claude on the two clouds, as the catalog names a deployment's hosting.
 	hostingAnthropic = catalog.CompanyAnthropic
-	hostingAmazon    = "amazon"
+	hostingAmazon    = catalog.CompanyAmazon
 	hostingGoogle    = "google"
 )
 

@@ -417,9 +417,16 @@ func TestPrepareProviderRequestRecordsSettingsWithoutContent(t *testing.T) {
 		{
 			name:  "responses to Anthropic reads extra parameters",
 			route: "responses",
-			body: `{"model":"anthropic-claude-opus-4-7","input":"secret prompt","max_output_tokens":256,"top_k":5,
+			body: `{"model":"anthropic-claude-sonnet-4-6","input":"secret prompt","max_output_tokens":256,"top_k":5,
 				"task_budget":{"type":"tokens","total":30000}}`,
 			want: `{"max_output_tokens":256,"task_budget_tokens":30000,"top_k":5}`,
+		},
+		{
+			name:  "a setting that the deployment goes without is not recorded",
+			route: "responses",
+			body: `{"model":"anthropic-claude-opus-4-7","input":"secret prompt","max_output_tokens":256,"temperature":0.2,"top_k":5,
+				"frequency_penalty":0.5,"truncation":"auto","text":{"verbosity":"low"}}`,
+			want: `{"max_output_tokens":256}`,
 		},
 		{
 			name:  "chat to Chutes reads the fields the gateway sends to Chutes",

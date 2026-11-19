@@ -1177,15 +1177,108 @@ func TestReasoningAdmissionMapsCanonicalControlsWithoutInventingBinaryEfforts(t 
 	if got, err := normalizeReasoningEffort("xhigh", twoLevels, 64000); err != nil || got.Effort == nil || *got.Effort != "max" {
 		t.Fatalf("upward tie did not map to max: %#v err=%v", got, err)
 	}
-	requiredWithoutLevels := Deployment{Reasoning: "required"}
-	if _, err := normalizeReasoningEffort("high", requiredWithoutLevels, 64000); err == nil {
-		t.Fatal("effort was accepted for always-on reasoning without level control")
-	}
-	if _, err := normalizeReasoningEffort("none", Deployment{Reasoning: "required", ReasoningEfforts: []string{"low", "high"}}, 64000); err == nil {
-		t.Fatal("required reasoning was disabled")
-	}
 	if _, err := normalizeReasoningEffort("ultra", optional, 64000); err == nil {
 		t.Fatal("non-canonical effort was accepted")
+	}
+}
+
+// A reasoning control only tunes how much the model thinks, so each deployment serves each control
+// with the nearest setting that it has, and no control keeps a request from a deployment.
+func TestEveryDeploymentServesEveryReasoningControlWithItsNearestSetting(t *testing.T) {
+	levels := []string{"low", "medium", "high"}
+	budget := &ReasoningMaxTokens{Minimum: 1024, Maximum: 32000}
+	nothing := normalizedReasoning{}
+	effort := func(value string) normalizedReasoning { return normalizedReasoning{Effort: &value} }
+	tokens := func(value int) normalizedReasoning { return normalizedReasoning{MaxTokens: &value} }
+	enabled := func(value bool) normalizedReasoning { return normalizedReasoning{Enabled: &value} }
+	same := func(got, want normalizedReasoning) bool {
+		equal := func(a, b any) bool { return fmt.Sprint(a) == fmt.Sprint(b) }
+		deref := func(r normalizedReasoning) []any {
+			out := []any{nil, nil, nil}
+			if r.Effort != nil {
+				out[0] = *r.Effort
+			}
+			if r.Enabled != nil {
+				out[1] = *r.Enabled
+			}
+			if r.MaxTokens != nil {
+				out[2] = *r.MaxTokens
+			}
+			return out
+		}
+		return equal(deref(got), deref(want))
+	}
+	for _, test := range []struct {
+		name       string
+		deployment Deployment
+		limit      int
+		normalize  func(Deployment, int) (normalizedReasoning, error)
+		want       normalizedReasoning
+	}{
+		{"an effort for a model without reasoning", Deployment{Reasoning: "unsupported"}, 64000,
+			func(d Deployment, limit int) (normalizedReasoning, error) {
+				return normalizeReasoningEffort("high", d, limit)
+			}, nothing},
+		{"a switch for a model without reasoning", Deployment{Reasoning: "unsupported"}, 64000,
+			func(d Deployment, limit int) (normalizedReasoning, error) {
+				return normalizeReasoningEnabled(true, d, limit)
+			}, nothing},
+		{"a budget for a model without reasoning", Deployment{Reasoning: "unsupported"}, 64000,
+			func(d Deployment, limit int) (normalizedReasoning, error) {
+				return normalizeReasoningMaxTokens(4096, d, limit)
+			}, nothing},
+		{"none for a model that always reasons at a level", Deployment{Reasoning: "required", ReasoningEfforts: levels}, 64000,
+			func(d Deployment, limit int) (normalizedReasoning, error) {
+				return normalizeReasoningEffort("none", d, limit)
+			}, effort("low")},
+		{"none for a model that always reasons inside a budget", Deployment{Reasoning: "required", ReasoningMaxTokens: budget}, 64000,
+			func(d Deployment, limit int) (normalizedReasoning, error) {
+				return normalizeReasoningEffort("none", d, limit)
+			}, tokens(1024)},
+		{"an effort for a model that always reasons without a setting", Deployment{Reasoning: "required"}, 64000,
+			func(d Deployment, limit int) (normalizedReasoning, error) {
+				return normalizeReasoningEffort("high", d, limit)
+			}, nothing},
+		{"a small budget for a model with levels", Deployment{Reasoning: "optional", ReasoningEfforts: levels}, 64000,
+			func(d Deployment, limit int) (normalizedReasoning, error) {
+				return normalizeReasoningMaxTokens(4096, d, limit)
+			}, effort("low")},
+		{"a middle budget for a model with levels", Deployment{Reasoning: "optional", ReasoningEfforts: levels}, 64000,
+			func(d Deployment, limit int) (normalizedReasoning, error) {
+				return normalizeReasoningMaxTokens(27788, d, limit)
+			}, effort("medium")},
+		{"a large budget for a model with levels", Deployment{Reasoning: "optional", ReasoningEfforts: levels}, 64000,
+			func(d Deployment, limit int) (normalizedReasoning, error) {
+				return normalizeReasoningMaxTokens(51404, d, limit)
+			}, effort("high")},
+		{"a budget for a model with a switch", Deployment{Reasoning: "optional"}, 64000,
+			func(d Deployment, limit int) (normalizedReasoning, error) {
+				return normalizeReasoningMaxTokens(4096, d, limit)
+			}, enabled(true)},
+		{"a budget below the deployment's minimum", Deployment{Reasoning: "optional", ReasoningMaxTokens: budget}, 64000,
+			func(d Deployment, limit int) (normalizedReasoning, error) {
+				return normalizeReasoningMaxTokens(500, d, limit)
+			}, tokens(1024)},
+		{"a budget above the deployment's maximum", Deployment{Reasoning: "optional", ReasoningMaxTokens: budget}, 64000,
+			func(d Deployment, limit int) (normalizedReasoning, error) {
+				return normalizeReasoningMaxTokens(50000, d, limit)
+			}, tokens(32000)},
+		{"an effort with no room for the smallest budget", Deployment{Reasoning: "optional", ReasoningMaxTokens: budget}, 1024,
+			func(d Deployment, limit int) (normalizedReasoning, error) {
+				return normalizeReasoningEffort("low", d, limit)
+			}, effort("none")},
+		{"a budget with no room for the smallest budget", Deployment{Reasoning: "optional", ReasoningMaxTokens: budget}, 800,
+			func(d Deployment, limit int) (normalizedReasoning, error) {
+				return normalizeReasoningMaxTokens(500, d, limit)
+			}, effort("none")},
+	} {
+		if got, err := test.normalize(test.deployment, test.limit); err != nil || !same(got, test.want) {
+			t.Errorf("%s: %+v, err=%v", test.name, got, err)
+		}
+	}
+	// A model that must reason cannot answer inside an output limit below its smallest budget.
+	if _, err := normalizeReasoningEffort("low", Deployment{Reasoning: "required", ReasoningMaxTokens: budget}, 1024); err == nil {
+		t.Fatal("a model that always reasons took an output limit below its smallest reasoning budget")
 	}
 }
 
@@ -1217,9 +1310,6 @@ func TestReasoningEffortSelectsABudgetWhereADeploymentHasNoLevels(t *testing.T) 
 		if err != nil || got.MaxTokens == nil || *got.MaxTokens != test.want {
 			t.Fatalf("%s: %#v, err=%v, want a budget of %d", test.name, got, err, test.want)
 		}
-	}
-	if _, err := normalizeReasoningEffort("low", budgeted, 1024); err == nil {
-		t.Fatal("a budget was accepted that does not fit below the output token limit")
 	}
 	if got, err := normalizeReasoningEffort("none", budgeted, 64000); err != nil || got.Effort == nil || *got.Effort != "none" || got.Enabled != nil || got.MaxTokens != nil {
 		t.Fatalf("none = %#v, err=%v, want the effort none", got, err)

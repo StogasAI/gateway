@@ -96,9 +96,8 @@ func TestReasoningCompatibilityFiltersBeforeCredentialPreparationAndRedaction(t 
 			name, model, reasoning string
 			wantDeployment         string
 		}{
-			{name: "manual budget resolves deployment ambiguity", reasoning: `"reasoning":{"max_tokens":2048}`, wantDeployment: "anthropic-claude-sonnet-4-6"},
-			{name: "pinned incompatible model is not replaced", model: "openai-gpt-5.6-sol", reasoning: `"reasoning":{"max_tokens":2048}`},
-			{name: "below catalog minimum", model: "anthropic-claude-sonnet-4-6", reasoning: `"reasoning":{"max_tokens":512}`},
+			{name: "a budget reaches a model with levels", model: "openai-gpt-5.6-sol", reasoning: `"reasoning":{"max_tokens":2048}`, wantDeployment: "openai-gpt-5.6-sol"},
+			{name: "a budget below the minimum reaches a model with budgets", model: "anthropic-claude-sonnet-4-6", reasoning: `"reasoning":{"max_tokens":512}`, wantDeployment: "anthropic-claude-sonnet-4-6"},
 			{name: "reasoning consumes entire output limit", model: "anthropic-claude-sonnet-4-6", reasoning: `"reasoning":{"max_tokens":4096}`},
 			{name: "effort conflicts with manual budget", reasoning: `"reasoning":{"effort":"high","max_tokens":2048}`},
 		} {
@@ -140,7 +139,7 @@ func TestReasoningCompatibilityFiltersBeforeCredentialPreparationAndRedaction(t 
 func TestReasoningAliasesUseTheSameEarlyCatalogConstraints(t *testing.T) {
 	loadTestCatalog(t)
 	for _, input := range []RequestInput{
-		{Path: "/v1/chat/completions", Body: []byte(`{"model":"anthropic-claude-sonnet-4-6","messages":[],"reasoning_max_tokens":512}`)},
+		{Path: "/v1/chat/completions", Body: []byte(`{"model":"anthropic-claude-sonnet-4-6","messages":[],"max_completion_tokens":512,"reasoning_max_tokens":512}`)},
 		{Path: "/v1/chat/completions", Body: []byte(`{"model":"openai-gpt-5.6-sol","messages":[],"reasoning_effort":"invalid"}`)},
 		{Path: "/v1/responses", Body: []byte(`{"model":"openai-gpt-5.6-sol","input":"hello","reasoning.effort":"invalid"}`)},
 	} {

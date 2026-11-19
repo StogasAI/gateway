@@ -17,102 +17,107 @@ type normalizedReasoning struct {
 	MaxTokens *int
 }
 
+// A reasoning control only tunes how much the model thinks, so every deployment serves every
+// control with the nearest setting that it has, and a deployment without reasoning serves the
+// request without one. OpenRouter maps efforts and budgets onto each other in the same way and
+// ignores the control for a model that has none.
+//
 // normalizeReasoningEffort maps a portable effort onto the deployment's controls. A deployment that
 // takes a budget but no levels gets each positive effort as a budget, so that every provider sends
-// the same number and the request log shows it.
+// the same number and the request log shows it. A model that always reasons gets none as its
+// lowest setting.
 func normalizeReasoningEffort(
 	requested string,
 	deployment Deployment,
 	outputTokenLimit int,
 ) (normalizedReasoning, error) {
-	if requested == "none" {
-		switch deployment.Reasoning {
-		case "unsupported":
-			return normalizedReasoning{}, nil
-		case "optional":
-			if len(deployment.ReasoningEfforts) == 0 && deployment.ReasoningMaxTokens == nil {
-				enabled := false
-				return normalizedReasoning{Enabled: &enabled}, nil
-			}
-			effort := requested
-			return normalizedReasoning{Effort: &effort}, nil
-		default:
-			return normalizedReasoning{}, APIError{
-				StatusCode: http.StatusBadRequest,
-				Type:       ErrorTypeInvalidRequest,
-				Message:    "reasoning cannot be disabled for the selected deployment",
-			}
-		}
-	}
-	if reasoningEffortIndex(requested) < 0 {
+	if requested != "none" && reasoningEffortIndex(requested) < 0 {
 		return normalizedReasoning{}, APIError{
 			StatusCode: http.StatusBadRequest,
 			Type:       ErrorTypeInvalidRequest,
 			Message:    "reasoning effort must be one of: none, minimal, low, medium, high, xhigh, max",
 		}
 	}
-	if deployment.Reasoning == "unsupported" {
-		return normalizedReasoning{}, APIError{
-			StatusCode: http.StatusBadRequest,
-			Type:       ErrorTypeInvalidRequest,
-			Message:    "reasoning is not supported for the selected deployment",
+	optional := deployment.Reasoning == "optional"
+	switch {
+	case deployment.Reasoning == "unsupported":
+		return normalizedReasoning{}, nil
+	case requested == "none" && optional:
+		if len(deployment.ReasoningEfforts) == 0 && deployment.ReasoningMaxTokens == nil {
+			enabled := false
+			return normalizedReasoning{Enabled: &enabled}, nil
 		}
-	}
-	if len(deployment.ReasoningEfforts) > 0 {
+		return normalizedReasoning{Effort: &requested}, nil
+	case len(deployment.ReasoningEfforts) > 0:
 		effort := nearestReasoningEffort(requested, deployment.ReasoningEfforts)
 		return normalizedReasoning{Effort: &effort}, nil
-	}
-	if capability := deployment.ReasoningMaxTokens; capability != nil {
-		budget, err := reasoningBudget(requested, *capability, outputTokenLimit)
-		if err != nil {
-			return normalizedReasoning{}, err
+	case deployment.ReasoningMaxTokens != nil:
+		capability := *deployment.ReasoningMaxTokens
+		if outputTokenLimit <= capability.Minimum {
+			return reasoningOutsideOutputLimit(deployment, outputTokenLimit)
+		}
+		budget := capability.Minimum
+		if requested != "none" {
+			budget = reasoningBudget(requested, capability, outputTokenLimit)
 		}
 		return normalizedReasoning{MaxTokens: &budget}, nil
-	}
-	if deployment.Reasoning == "optional" {
+	case optional:
 		enabled := true
 		return normalizedReasoning{Enabled: &enabled}, nil
 	}
-	return normalizedReasoning{}, APIError{
-		StatusCode: http.StatusBadRequest,
-		Type:       ErrorTypeInvalidRequest,
-		Message:    "the selected deployment always reasons but does not expose effort selection; use reasoning.enabled",
-	}
+	// The model always reasons and has no setting for how much.
+	return normalizedReasoning{}, nil
 }
 
 // reasoningBudget is the effort's share of the output token limit above the deployment minimum, in
 // the ratios that core gives providers that take only a budget. It stays below the output token
 // limit, as Anthropic requires, and inside the deployment's bounds.
-func reasoningBudget(effort string, capability ReasoningMaxTokens, outputTokenLimit int) (int, error) {
-	if outputTokenLimit <= capability.Minimum {
-		return 0, APIError{
-			StatusCode: http.StatusBadRequest,
-			Type:       ErrorTypeInvalidRequest,
-			Message:    "reasoning needs an output token limit greater than the deployment minimum reasoning budget",
-		}
+func reasoningBudget(effort string, capability ReasoningMaxTokens, outputTokenLimit int) int {
+	// The effort is one of the scale and the limit is above the minimum, so core returns no error.
+	budget, _ := providerUtils.GetBudgetTokensFromReasoningEffort(effort, capability.Minimum, outputTokenLimit)
+	return min(max(budget, capability.Minimum), capability.Maximum)
+}
+
+// normalizeReasoningMaxTokens maps a reasoning token budget onto the deployment's controls: inside
+// the deployment's bounds where it takes a budget, and otherwise as the effort whose share of the
+// output token limit is nearest, in the ratios that core gives efforts.
+func normalizeReasoningMaxTokens(maxTokens int, deployment Deployment, outputTokenLimit int) (normalizedReasoning, error) {
+	if deployment.Reasoning == "unsupported" {
+		return normalizedReasoning{}, nil
 	}
-	budget, err := providerUtils.GetBudgetTokensFromReasoningEffort(effort, capability.Minimum, outputTokenLimit)
-	if err != nil {
-		return 0, APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: err.Error()}
+	capability := deployment.ReasoningMaxTokens
+	if capability == nil {
+		effort := providerUtils.GetReasoningEffortFromBudgetTokens(maxTokens, 0, outputTokenLimit)
+		return normalizeReasoningEffort(effort, deployment, outputTokenLimit)
 	}
-	return min(budget, capability.Maximum), nil
+	budget := min(max(maxTokens, capability.Minimum), capability.Maximum)
+	if budget >= outputTokenLimit {
+		return reasoningOutsideOutputLimit(deployment, outputTokenLimit)
+	}
+	return normalizedReasoning{MaxTokens: &budget}, nil
+}
+
+// reasoningOutsideOutputLimit answers a request whose output token limit leaves no room for the
+// deployment's smallest reasoning budget. The limit is what the client must get, so reasoning is
+// off where the model can answer without it.
+func reasoningOutsideOutputLimit(deployment Deployment, outputTokenLimit int) (normalizedReasoning, error) {
+	if deployment.Reasoning == "optional" {
+		return normalizeReasoningEffort("none", deployment, outputTokenLimit)
+	}
+	return normalizedReasoning{}, APIError{
+		StatusCode: http.StatusBadRequest,
+		Type:       ErrorTypeInvalidRequest,
+		Message:    "reasoning needs an output token limit greater than the deployment minimum reasoning budget",
+	}
 }
 
 func normalizeReasoningEnabled(enabled bool, deployment Deployment, outputTokenLimit int) (normalizedReasoning, error) {
 	if !enabled {
 		return normalizeReasoningEffort("none", deployment, outputTokenLimit)
 	}
-	if deployment.Reasoning == "unsupported" {
-		return normalizedReasoning{}, APIError{
-			StatusCode: http.StatusBadRequest,
-			Type:       ErrorTypeInvalidRequest,
-			Message:    "reasoning is not supported for the selected deployment",
-		}
-	}
 	if len(deployment.ReasoningEfforts) == 0 && deployment.ReasoningMaxTokens == nil {
 		if deployment.Reasoning == "optional" {
-			value := true
-			return normalizedReasoning{Enabled: &value}, nil
+			return normalizedReasoning{Enabled: &enabled}, nil
 		}
 		return normalizedReasoning{}, nil
 	}
@@ -129,24 +134,16 @@ func normalizeChatReasoning(reasoning *schemas.ChatReasoning, deployment Deploym
 		}
 		reasoning.Enabled = nil
 	}
-	if err := validateReasoningMaxTokens(
-		reasoning.Effort,
-		reasoning.Enabled,
-		reasoning.MaxTokens,
-		deployment,
-		outputTokenLimit,
-	); err != nil {
+	if err := validateReasoningMaxTokens(reasoning.Effort, reasoning.Enabled, reasoning.MaxTokens); err != nil {
 		return err
-	}
-	if reasoning.MaxTokens != nil {
-		reasoning.Enabled = nil
-		return nil
 	}
 	var (
 		selection normalizedReasoning
 		err       error
 	)
 	switch {
+	case reasoning.MaxTokens != nil:
+		selection, err = normalizeReasoningMaxTokens(*reasoning.MaxTokens, deployment, outputTokenLimit)
 	case reasoning.Effort != nil:
 		selection, err = normalizeReasoningEffort(*reasoning.Effort, deployment, outputTokenLimit)
 	case reasoning.Enabled != nil:
@@ -201,13 +198,21 @@ func normalizeResponsesReasoning(reasoning *schemas.ResponsesParametersReasoning
 	if reasoning == nil {
 		return nil
 	}
-	if err := validateReasoningMaxTokens(reasoning.Effort, nil, reasoning.MaxTokens, deployment, outputTokenLimit); err != nil {
+	if err := validateReasoningMaxTokens(reasoning.Effort, nil, reasoning.MaxTokens); err != nil {
 		return err
 	}
-	if reasoning.Effort == nil {
+	var (
+		normalized normalizedReasoning
+		err        error
+	)
+	switch {
+	case reasoning.MaxTokens != nil:
+		normalized, err = normalizeReasoningMaxTokens(*reasoning.MaxTokens, deployment, outputTokenLimit)
+	case reasoning.Effort != nil:
+		normalized, err = normalizeReasoningEffort(*reasoning.Effort, deployment, outputTokenLimit)
+	default:
 		return nil
 	}
-	normalized, err := normalizeReasoningEffort(*reasoning.Effort, deployment, outputTokenLimit)
 	if err != nil {
 		return err
 	}
@@ -252,7 +257,9 @@ func reasoningEffortIndex(value string) int {
 	return -1
 }
 
-func validateReasoningMaxTokens(effort *string, enabled *bool, maxTokens *int, deployment Deployment, outputTokenLimit int) error {
+// validateReasoningMaxTokens refuses a reasoning token budget beside a setting that contradicts
+// it, which no deployment could serve.
+func validateReasoningMaxTokens(effort *string, enabled *bool, maxTokens *int) error {
 	if maxTokens == nil {
 		return nil
 	}
@@ -261,19 +268,6 @@ func validateReasoningMaxTokens(effort *string, enabled *bool, maxTokens *int, d
 	}
 	if enabled != nil && !*enabled {
 		return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "disabled reasoning conflicts with a manual reasoning token limit"}
-	}
-	capability := deployment.ReasoningMaxTokens
-	if capability == nil {
-		return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "manual reasoning token limits are not supported for the selected deployment; use reasoning.effort"}
-	}
-	if *maxTokens < capability.Minimum {
-		return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "reasoning.max_tokens must be at least the deployment minimum"}
-	}
-	if *maxTokens > capability.Maximum {
-		return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "reasoning.max_tokens exceeds the deployment maximum"}
-	}
-	if *maxTokens >= outputTokenLimit {
-		return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "reasoning.max_tokens must be less than the output token limit"}
 	}
 	return nil
 }
@@ -355,10 +349,21 @@ func chatRawReasoning(raw map[string]json.RawMessage) (*schemas.ChatReasoning, e
 }
 
 // requestReasoningValidation checks the reasoning controls against each candidate deployment.
-func requestReasoningValidation(raw map[string]json.RawMessage, route Route) (func(Deployment, int) error, error) {
+// requested is the output token limit that the client set. A reasoning budget at or above it
+// leaves no room for an answer on any deployment, so the request is refused before routing.
+func requestReasoningValidation(raw map[string]json.RawMessage, route Route, requested *int) (func(Deployment, int) error, error) {
+	fitsOutputLimit := func(budget *int) error {
+		if budget != nil && requested != nil && *budget >= *requested {
+			return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "reasoning.max_tokens must be less than the output token limit"}
+		}
+		return nil
+	}
 	if route == RouteChat {
 		parsed, err := chatRawReasoning(raw)
 		if parsed == nil || err != nil {
+			return nil, err
+		}
+		if err := fitsOutputLimit(parsed.MaxTokens); err != nil {
 			return nil, err
 		}
 		return func(deployment Deployment, outputLimit int) error {
@@ -388,6 +393,11 @@ func requestReasoningValidation(raw map[string]json.RawMessage, route Route) (fu
 			parameters.Reasoning = &schemas.ResponsesParametersReasoning{}
 		}
 		parameters.Reasoning.Effort = &effort
+	}
+	if parameters.Reasoning != nil {
+		if err := fitsOutputLimit(parameters.Reasoning.MaxTokens); err != nil {
+			return nil, err
+		}
 	}
 	return func(deployment Deployment, outputLimit int) error {
 		switch {

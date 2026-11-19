@@ -50,7 +50,6 @@ func TestChatPolicyRejectsUnsupportedFields(t *testing.T) {
 		{"tool call array arguments", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"[]"}}]},{"role":"tool","tool_call_id":"call_1","content":"done"}]}`, "arguments must encode a JSON object"},
 		{"tool call duplicate argument key", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{\"key\":1,\"key\":2}"}}]},{"role":"tool","tool_call_id":"call_1","content":"done"}]}`, "arguments must encode a JSON object"},
 		{"oversized tool call id", fmt.Sprintf(`{"model":"provider:openai gpt-5.5","messages":[{"role":"assistant","tool_calls":[{"id":%q,"type":"function","function":{"name":"lookup","arguments":"{}"}}]},{"role":"tool","tool_call_id":%q,"content":"done"}]}`, strings.Repeat("a", 65), strings.Repeat("a", 65)), "at most 64 bytes"},
-		{"Anthropic unsafe tool call id", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"assistant","tool_calls":[{"id":"call:1","type":"function","function":{"name":"lookup","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call:1","content":"done"}]}`, "only letters, digits, underscores, or hyphens"},
 		{"empty assistant", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":null}]}`, "must contain content, refusal, reasoning history, annotations, or tool calls"},
 		{"assistant message with only empty annotations", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","annotations":[]}]}`, "must contain content, refusal, reasoning history, annotations, or tool calls"},
 		{"citation reversed range", `{"model":"provider:openai gpt-5.5","messages":[{"role":"assistant","content":"answer","annotations":[{"type":"url_citation","url_citation":{"start_index":5,"end_index":2,"title":"source","url":"https://example.com"}}]},{"role":"user","content":"continue"}]}`, "end_index must be an integer at or after start_index"},
@@ -94,9 +93,6 @@ func TestChatPolicyRejectsUnsupportedFields(t *testing.T) {
 		{"anthropic hosted tool", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"web_search"}]}`, "Only function tools"},
 		{"anthropic custom tool", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"custom","name":"custom_tool"}]}`, "custom tools are not supported in Chat Completions; use /v1/responses"},
 		{"anthropic custom tool choice", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}}],"tool_choice":{"type":"custom","name":"custom_tool"}}`, "custom tool_choice is not supported in Chat Completions; use /v1/responses"},
-		{"anthropic message name", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","name":"alice","content":"hi"}]}`, "name is not supported for Anthropic-format history"},
-		{"azure claude tool result name", `{"model":"azure-claude-opus-4-8-anthropic-hosted","messages":[{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]},{"role":"tool","name":"lookup","tool_call_id":"call_1","content":"done"}]}`, "name is not supported for Anthropic-format history"},
-		{"anthropic refusal history", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"assistant","refusal":"no"},{"role":"user","content":"continue"}]}`, "refusal is not supported for Anthropic-format history"},
 		{"anthropic trailing assistant prefill whitespace", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"complete this"},{"role":"assistant","content":"answer: "}]}`, "must not end in whitespace"},
 		{"Anthropic reordered system message", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"role":"user","content":"continue"}]}`, "cannot be preserved after the conversation starts"},
 		{"Sonnet 5 mid-conversation system", `{"model":"anthropic-claude-sonnet-5","messages":[{"role":"user","content":"first"},{"role":"system","content":"new policy"}]}`, "cannot be preserved after the conversation starts"},
@@ -106,27 +102,17 @@ func TestChatPolicyRejectsUnsupportedFields(t *testing.T) {
 		{"metadata non-string", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"metadata":{"a":1}}`, "metadata values"},
 		{"metadata control character", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"metadata":{"team":"a\nb"}}`, "metadata values must be valid strings up to 512 bytes without control characters"},
 		{"metadata NUL key", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"metadata":{"a\u0000":"b"}}`, "metadata keys must be valid strings up to 64 bytes without control characters"},
-		{"anthropic-only cache control on openai", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"cache_control":{"type":"ephemeral"}}`, "cache_control is not supported for OpenAI-format"},
-		{"nested cache control on openai", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":[{"type":"text","text":"hi","cache_control":{"type":"ephemeral"}}]}]}`, "cache_control is not supported for OpenAI-format"},
-		{"prompt cache options anthropic", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"prompt_cache_options":{"mode":"explicit"}}`, "prompt_cache_options is not supported for Anthropic-format"},
 		{"anthropic cache control bad ttl", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"cache_control":{"type":"ephemeral","ttl":"24h"}}`, "cache_control.ttl must be 5m or 1h"},
 		{"anthropic cache control bad type", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"cache_control":{"type":"persisted","ttl":"1h"}}`, "cache_control.type must be ephemeral"},
-		{"openai task budget", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"task_budget":{"type":"tokens","total":20000}}`, "task_budget is not supported for OpenAI-format"},
 		{"openai context management", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"context_management":{"edits":[{"type":"compact_20260112"}]}}`, "context_management is not supported for OpenAI-format"},
-		{"anthropic frequency penalty", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"frequency_penalty":0.1}`, "frequency_penalty is not supported for Anthropic-format"},
 		{"anthropic logit bias", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"logit_bias":{"123":1}}`, "logit_bias is not supported for Anthropic-format"},
 		{"anthropic logprobs", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"logprobs":true}`, "logprobs is not supported for Anthropic-format"},
-		{"anthropic prediction", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"prediction":{"type":"content","content":"hi"}}`, "prediction is not supported for Anthropic-format"},
-		{"anthropic presence penalty", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"presence_penalty":0.1}`, "presence_penalty is not supported for Anthropic-format"},
 		{"prompt cache isolation key", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"prompt_cache_isolation_key":"tenant-a"}`, "prompt_cache_isolation_key is not supported"},
 		{"moderation", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"moderation":{"model":"omni-moderation-latest","policy":{"input":{"mode":"block"}}}}`, "moderation is not supported; no request or response is moderated"},
 		{"speed", `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"speed":"fast"}`, `speed is not supported; use service_tier "fast"`},
 		{"inference geo", `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"inference_geo":"us"}`, "inference_geo is not supported; use a regional deployment ID or a routing filter"},
-		{"anthropic seed", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"seed":1}`, "seed is not supported for Anthropic-format"},
 		{"anthropic top logprobs", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"top_logprobs":1}`, "top_logprobs is not supported for Anthropic-format"},
-		{"anthropic verbosity", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"verbosity":"medium"}`, "verbosity is not supported for Anthropic-format"},
 		{"anthropic web search options", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"web_search_options":{"search_context_size":"low"}}`, "web_search_options is not supported for Anthropic-format"},
-		{"openai repetition penalty", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"repetition_penalty":1.1}`, "repetition_penalty is not supported for OpenAI-format"},
 		{"empty stop sequence", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"stop":[""]}`, "stop sequences must be non-empty"},
 		{"duplicate stop sequence", `{"model":"provider:chutes qwen3.6-27b","messages":[{"role":"user","content":"hi"}],"stop":["END","END"]}`, "stop must not contain duplicate values"},
 		{"too many portable stop sequences", `{"model":"provider:chutes qwen3.6-27b","messages":[{"role":"user","content":"hi"}],"stop":["01","02","03","04","05","06","07","08","09","10","11","12","13","14","15","16","17"]}`, "stop contains too many items"},
@@ -136,25 +122,14 @@ func TestChatPolicyRejectsUnsupportedFields(t *testing.T) {
 		{"prediction non-text part", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"prediction":{"type":"content","content":[{"type":"image_url","text":"answer"}]}}`, "must contain only type=text and text"},
 		{"response format unknown field", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"response_format":{"type":"json_object","future":true}}`, "supports only type"},
 		{"response format invalid schema name", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"response_format":{"type":"json_schema","json_schema":{"name":"bad name","schema":{"type":"object"}}}}`, "name must contain 1 to 64"},
-		{"openai reasoning display", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning_display":"brief"}`, "reasoning_display must be summarized, omitted or updates for the selected deployment"},
-		{"anthropic empty stop sequence", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"stop_sequences":[""]}`, "stop_sequences must contain non-empty strings"},
-		{"anthropic duplicate stop sequence", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"stop_sequences":["END","END"]}`, "stop_sequences must not contain duplicate values"},
-		{"anthropic too many stop sequences", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"stop_sequences":["01","02","03","04","05","06","07","08","09","10","11","12","13","14","15","16","17"]}`, "stop_sequences contains too many items"},
+		{"openai reasoning display", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning_display":"brief"}`, "reasoning_display must be summarized, omitted or updates"},
 		{"anthropic json object response format", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"response_format":{"type":"json_object"}}`, "must be json_schema for Anthropic-format"},
-		{"top k openai", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"top_k":40}`, "top_k is not supported for OpenAI-format"},
-		{"stop sequences openai", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"stop_sequences":["END"]}`, "stop_sequences is not supported for OpenAI-format"},
 		{"anthropic stop conflicts with stop sequences", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"stop":["DONE"],"stop_sequences":["END"]}`, "stop conflicts with stop_sequences"},
 		{"conflicting reasoning alias", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning":{"effort":"minimal"},"reasoning_effort":"minimal"}`, "conflicts"},
 		{"bad reasoning object", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning":"low"}`, "reasoning must be an object"},
 		{"bad reasoning max tokens", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning_max_tokens":0}`, "reasoning_max_tokens is outside the supported range"},
 		{"bad nested reasoning max tokens", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning":{"max_tokens":"many"}}`, "reasoning.max_tokens must be an integer"},
-		{"unsupported manual reasoning limit", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning":{"max_tokens":1024}}`, "manual reasoning token limits are not supported"},
-		{"manual reasoning budget below deployment minimum", `{"model":"anthropic-claude-opus-4-6","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":4096,"reasoning":{"max_tokens":1023}}`, "at least the deployment minimum"},
 		{"manual reasoning budget equals output limit", `{"model":"anthropic-claude-opus-4-6","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":1024,"reasoning":{"max_tokens":1024}}`, "less than the output token limit"},
-		{"manual reasoning budget above deployment maximum", `{"model":"anthropic-claude-opus-4-6","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":128000,"reasoning":{"max_tokens":128000}}`, "exceeds the deployment maximum"},
-		{"manual reasoning limit on adaptive-only Anthropic model", `{"model":"anthropic-claude-opus-4-7","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":4096,"reasoning":{"max_tokens":1024}}`, "manual reasoning token limits are not supported"},
-		{"manual reasoning limit on Azure", `{"model":"azure-gpt-5.6-sol","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":4096,"reasoning":{"max_tokens":1024}}`, "manual reasoning token limits are not supported"},
-		{"manual reasoning limit on Chutes", `{"model":"chutes-glm-5.2","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":4096,"reasoning":{"max_tokens":1024}}`, "manual reasoning token limits are not supported"},
 		{"conflicting reasoning controls", `{"model":"anthropic-claude-opus-4-6","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":4096,"reasoning":{"effort":"high","max_tokens":1024}}`, "reasoning effort conflicts"},
 		{"bad reasoning enabled type", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning":{"enabled":"yes"}}`, "reasoning.enabled must be a boolean"},
 		{"unknown reasoning effort", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning_effort":"ultra"}`, "must be one of"},
@@ -1755,8 +1730,6 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 		{"user refusal block", `{"model":"provider:openai gpt-5.5","input":[{"role":"user","content":[{"type":"refusal","refusal":"no"}]}]}`, "supported only for assistant history"},
 		{"user message phase", `{"model":"provider:openai gpt-5.5","input":[{"role":"user","phase":"final_answer","content":"hi"}]}`, "input[0].phase must be commentary or final_answer on an assistant message"},
 		{"unknown phase", `{"model":"provider:openai gpt-5.5","input":[{"type":"message","role":"assistant","phase":"draft","content":[{"type":"output_text","text":"answer"}]},{"role":"user","content":"continue"}]}`, "input[0].phase must be commentary or final_answer on an assistant message"},
-		{"Anthropic assistant cache breakpoint", `{"model":"anthropic-claude-sonnet-4-6","input":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer","prompt_cache_breakpoint":{"mode":"explicit"}}]},{"role":"user","content":"continue"}]}`, "prompt_cache_breakpoint is not supported for Anthropic-format deployments"},
-		{"anthropic refusal block", `{"model":"anthropic-claude-sonnet-4-6","input":[{"type":"message","role":"assistant","content":[{"type":"refusal","refusal":"no"}]},{"role":"user","content":"continue"}]}`, "refusal history is not supported for Anthropic-format"},
 		{"Anthropic reordered Responses system message", `{"model":"anthropic-claude-sonnet-4-6","input":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"role":"user","content":"continue"}]}`, "cannot be preserved after the conversation starts"},
 		{"Sonnet 5 Responses mid-conversation system", `{"model":"anthropic-claude-sonnet-5","input":[{"role":"user","content":"first"},{"role":"system","content":"new policy"}]}`, "cannot be preserved after the conversation starts"},
 		{"Anthropic Responses mid-conversation system placement", `{"model":"anthropic-claude-opus-4-8","input":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"role":"user","content":"continue"}]}`, "must be last or immediately precede an assistant turn"},
@@ -1764,7 +1737,6 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 		{"output annotation unknown field", `{"model":"provider:openai gpt-5.5","input":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer","annotations":[{"type":"url_citation","start_index":0,"end_index":6,"title":"source","url":"https://example.com","future":true}],"logprobs":[]}]},{"role":"user","content":"continue"}]}`, "annotations[0].future is not supported"},
 		{"output annotation reversed range", `{"model":"provider:openai gpt-5.5","input":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer","annotations":[{"type":"url_citation","start_index":6,"end_index":0,"title":"source","url":"https://example.com"}],"logprobs":[]}]},{"role":"user","content":"continue"}]}`, "end_index must be an integer at or after start_index"},
 		{"output logprob bad byte", `{"model":"provider:openai gpt-5.5","input":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer","annotations":[],"logprobs":[{"token":"a","logprob":-0.1,"bytes":[256],"top_logprobs":[]}]}]},{"role":"user","content":"continue"}]}`, "bytes must contain integers from 0 to 255"},
-		{"Anthropic output logprobs", `{"model":"anthropic-claude-sonnet-4-6","input":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer","annotations":[],"logprobs":[{"token":"a","logprob":-0.1,"bytes":[97],"top_logprobs":[]}]}]},{"role":"user","content":"continue"}]}`, "cannot be preserved on Anthropic-format deployments"},
 		{"Anthropic trailing Responses assistant prefill whitespace", `{"model":"anthropic-claude-sonnet-4-6","input":[{"role":"user","content":"complete this"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer: ","annotations":[],"logprobs":[]}]}]}`, "must not end in whitespace"},
 		{"orphan function output", `{"model":"provider:openai gpt-5.5","input":[{"type":"function_call_output","call_id":"call_1","output":"done"}]}`, "must match an earlier client tool call"},
 		{"function call without output", `{"model":"provider:openai gpt-5.5","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"}]}`, "require one matching output"},
@@ -1772,7 +1744,6 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 		{"function call array arguments", `{"model":"provider:openai gpt-5.5","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"[]"},{"type":"function_call_output","call_id":"call_1","output":"done"}]}`, "arguments must encode a JSON object"},
 		{"function call duplicate argument key", `{"model":"provider:openai gpt-5.5","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{\"key\":1,\"key\":2}"},{"type":"function_call_output","call_id":"call_1","output":"done"}]}`, "arguments must encode a JSON object"},
 		{"oversized Responses call id", fmt.Sprintf(`{"model":"provider:openai gpt-5.5","input":[{"type":"function_call","call_id":%q,"name":"lookup","arguments":"{}"},{"type":"function_call_output","call_id":%q,"output":"done"}]}`, strings.Repeat("a", 65), strings.Repeat("a", 65)), "at most 64 bytes"},
-		{"Anthropic unsafe Responses call id", `{"model":"anthropic-claude-sonnet-4-6","input":[{"type":"function_call","call_id":"call:1","name":"lookup","arguments":"{}"},{"type":"function_call_output","call_id":"call:1","output":"done"}]}`, "only letters, digits, underscores, or hyphens"},
 		{"function call invalid name", `{"model":"provider:openai gpt-5.5","input":[{"type":"function_call","call_id":"call_1","name":"lookup tool","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":"done"}]}`, "name must contain 1 to 64"},
 		{"message before function output", `{"model":"provider:openai gpt-5.5","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"},{"type":"message","role":"user","content":"skip it"},{"type":"function_call_output","call_id":"call_1","output":"done"}]}`, "must resolve the preceding client tool calls"},
 		{"duplicate function call id", `{"model":"provider:openai gpt-5.5","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"},{"type":"function_call","call_id":"call_1","name":"other","arguments":"{}"}]}`, "duplicates another client tool call"},
@@ -1791,37 +1762,22 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 		{"inference geo", `{"model":"anthropic-claude-opus-4-8","input":"hi","inference_geo":"us"}`, "inference_geo is not supported; use a regional deployment ID or a routing filter"},
 		{"moderation", `{"model":"provider:openai gpt-5.5","input":"hi","moderation":{"model":"omni-moderation-latest","policy":{"output":{"mode":"block"}}}}`, "moderation is not supported; no request or response is moderated"},
 		{"reasoning input item alone", `{"model":"provider:openai gpt-5.5","input":[{"type":"reasoning","summary":[]}]}`, "input must contain non-empty text or a client tool result"},
-		{"prompt cache options anthropic", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","prompt_cache_options":{"mode":"explicit"}}`, "prompt_cache_options is not supported for Anthropic-format"},
-		{"openai cache control", `{"model":"provider:openai gpt-5.5","input":"hi","cache_control":{"type":"ephemeral"}}`, "cache_control is not supported for OpenAI-format"},
-		{"openai input cache control", `{"model":"provider:openai gpt-5.5","input":[{"role":"user","content":[{"type":"input_text","text":"hi","cache_control":{"type":"ephemeral"}}]}]}`, "cache_control is not supported for OpenAI-format"},
-		{"openai tool cache control", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup","cache_control":{"type":"ephemeral"}}]}`, "cache_control is not supported for OpenAI-format"},
 		{"anthropic cache control bad ttl", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","cache_control":{"type":"ephemeral","ttl":"24h"}}`, "cache_control.ttl must be 5m or 1h"},
 		{"anthropic message cache control unsupported", `{"model":"anthropic-claude-sonnet-4-6","input":[{"role":"user","cache_control":{"type":"ephemeral"},"content":"hi"}]}`, "input[0].cache_control is not supported"},
-		{"anthropic responses frequency penalty", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","frequency_penalty":0.1}`, "frequency_penalty is not supported for Anthropic-format"},
 		{"anthropic responses include", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","include":["message.output_text.logprobs"]}`, "include contains a value that is not supported for the selected deployment"},
-		{"anthropic responses presence penalty", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","presence_penalty":0.1}`, "presence_penalty is not supported for Anthropic-format"},
 		{"responses include unknown value", `{"model":"provider:openai gpt-5.5","input":"hi","include":["file_search_call.results"]}`, "include contains a value that is not supported for the selected deployment"},
 		{"responses duplicate include", `{"model":"provider:openai gpt-5.5","input":"hi","include":["reasoning.encrypted_content","reasoning.encrypted_content"]}`, "must not contain duplicate values"},
 		{"responses text unknown field", `{"model":"provider:openai gpt-5.5","input":"hi","text":{"future":true}}`, "text must contain only format and verbosity"},
 		{"responses text format unknown field", `{"model":"provider:openai gpt-5.5","input":"hi","text":{"format":{"type":"text","future":true}}}`, "supports only type"},
 		{"responses text format missing schema", `{"model":"provider:openai gpt-5.5","input":"hi","text":{"format":{"type":"json_schema","name":"answer"}}}`, "schema must be an object"},
-		{"anthropic responses verbosity", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","text":{"verbosity":"medium"}}`, "cannot be preserved on Anthropic-format"},
 		{"anthropic responses json object format", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","text":{"format":{"type":"json_object"}}}`, "must be json_schema for Anthropic-format"},
 		{"anthropic responses stream obfuscation", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","stream":true,"stream_options":{"include_obfuscation":true}}`, "cannot be preserved on Anthropic-format"},
-		{"anthropic truncation", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","truncation":"auto"}`, "truncation is not supported for Anthropic-format"},
-		{"top k openai", `{"model":"provider:openai gpt-5.5","input":"hi","top_k":40}`, "top_k is not supported for OpenAI-format"},
-		{"stop sequences openai", `{"model":"provider:openai gpt-5.5","input":"hi","stop_sequences":["END"]}`, "stop_sequences is not supported for OpenAI-format"},
 		{"responses stop unsupported before stop sequences conflict", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","stop":["DONE"],"stop_sequences":["END"]}`, "stop is not supported"},
-		{"openai task budget", `{"model":"provider:openai gpt-5.5","input":"hi","task_budget":{"type":"tokens","total":20000}}`, "task_budget is not supported for OpenAI-format"},
 		{"openai context management", `{"model":"provider:openai gpt-5.5","input":"hi","context_management":{"edits":[{"type":"compact_20260112"}]}}`, "context_management is not supported for OpenAI-format"},
 		{"reasoning effort bad type", `{"model":"provider:openai gpt-5.5","input":"hi","reasoning.effort":3}`, "reasoning.effort must be a string"},
 		{"responses bad reasoning object", `{"model":"provider:openai gpt-5.5","input":"hi","reasoning":"low"}`, "reasoning must be an object"},
 		{"responses bad reasoning max tokens", `{"model":"provider:openai gpt-5.5","input":"hi","reasoning":{"max_tokens":0}}`, "reasoning.max_tokens is outside the supported range"},
-		{"responses unsupported manual reasoning limit", `{"model":"provider:openai gpt-5.6-sol","input":"hi","reasoning":{"max_tokens":1024}}`, "manual reasoning token limits are not supported"},
-		{"responses manual reasoning budget below deployment minimum", `{"model":"anthropic-claude-opus-4-6","input":"hi","max_output_tokens":4096,"reasoning":{"max_tokens":1023}}`, "at least the deployment minimum"},
 		{"responses manual reasoning budget equals output limit", `{"model":"anthropic-claude-opus-4-6","input":"hi","max_output_tokens":1024,"reasoning":{"max_tokens":1024}}`, "less than the output token limit"},
-		{"responses manual reasoning limit on adaptive-only Anthropic model", `{"model":"anthropic-claude-opus-4-7","input":"hi","max_output_tokens":4096,"reasoning":{"max_tokens":1024}}`, "manual reasoning token limits are not supported"},
-		{"responses manual reasoning limit on Azure", `{"model":"azure-gpt-5.6-sol","input":"hi","max_output_tokens":4096,"reasoning":{"max_tokens":1024}}`, "manual reasoning token limits are not supported"},
 		{"responses reasoning display", `{"model":"provider:openai gpt-5.5","input":"hi","reasoning":{"display":"summarized"}}`, "reasoning.display is not supported"},
 		{"responses unknown reasoning field", `{"model":"provider:openai gpt-5.5","input":"hi","reasoning":{"unknown":true}}`, "reasoning.unknown is not supported"},
 		{"reasoning effort conflict", `{"model":"provider:openai gpt-5.5","input":"hi","reasoning":{"effort":"low"},"reasoning.effort":"medium"}`, "reasoning.effort conflicts"},
@@ -1936,7 +1892,8 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 		{"allowed hosted selector version mismatch", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"web_search_2025_08_26"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_search"}]},"max_tool_calls":1}`, "tool_choice selects an undeclared hosted tool version"},
 		{"allowed tools web fetch", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_fetch_20250910"}]},"max_tool_calls":1}`, "max_tool_calls is supported only for priced hosted Responses tools"},
 		{"anthropic hosted selector", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}],"tool_choice":{"type":"web_search_20250305"}}`, "only string tool_choice modes or named function selectors"},
-		{"anthropic allowed tools selector", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_search_20250305"}]}}`, "allowed_tools is supported only for OpenAI-format"},
+		{"anthropic allowed tool not declared", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"function","name":"other"}]}}`, "tool_choice selects an unknown function tool"},
+		{"anthropic allowed hosted tool not declared", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_search_20250305"}]}}`, "tool_choice selects an undeclared hosted tool version"},
 		{"image input", `{"model":"provider:openai gpt-5.5","input":[{"type":"input_image","image_url":"https://example.com/a.png"}]}`, "Only text input"},
 		{"file id input", `{"model":"provider:openai gpt-5.5","input":[{"role":"user","content":[{"type":"input_file","file_id":"file_123"}]}]}`, "input[0].content[0] is a provider file ID, which only a BYOK credential can read"},
 	}
@@ -2001,11 +1958,10 @@ func TestResponsesReasoningEffortAliasIsAdmittedBeforeProviderConversion(t *test
 
 func TestReasoningEffortAdmissionAcrossCatalogModels(t *testing.T) {
 	tests := []struct {
-		name      string
-		path      string
-		body      string
-		want      string
-		wantError bool
+		name string
+		path string
+		body string
+		want string
 	}{
 		{
 			name: "OpenAI maps minimal to nearest low effort",
@@ -2049,12 +2005,6 @@ func TestReasoningEffortAdmissionAcrossCatalogModels(t *testing.T) {
 			body: `{"model":"anthropic-claude-sonnet-4-6","input":"hi","reasoning":{"effort":"xhigh"}}`,
 			want: "max",
 		},
-		{
-			name:      "OpenAI search model rejects reasoning it does not advertise",
-			path:      "/v1/chat/completions",
-			body:      `{"model":"provider:openai gpt-5-search-api","messages":[{"role":"user","content":"hi"}],"reasoning_effort":"high"}`,
-			wantError: true,
-		},
 	}
 
 	for _, tc := range tests {
@@ -2064,12 +2014,6 @@ func TestReasoningEffortAdmissionAcrossCatalogModels(t *testing.T) {
 				Path:   tc.path,
 				Body:   []byte(tc.body),
 			})
-			if tc.wantError {
-				if err == nil || !strings.Contains(err.Error(), "reasoning is not supported") {
-					t.Fatalf("unadvertised reasoning effort was accepted or failed for another reason: %v", err)
-				}
-				return
-			}
 			if err != nil {
 				t.Fatalf("ResolveRequest returned error: %v", err)
 			}
@@ -3488,13 +3432,6 @@ func TestOpenAIPromptCachingRejectsUnrepresentableShapes(t *testing.T) {
 			want: "ttl must be 30m",
 		},
 		{
-			name:          "explicit controls on implicit-only model",
-			resolveReject: true,
-			path:          "/v1/responses",
-			body:          `{"model":"provider:openai gpt-5.5","input":"hi","prompt_cache_options":{"mode":"explicit"}}`,
-			want:          "explicit prompt caching is not supported",
-		},
-		{
 			name: "unknown retention",
 			path: "/v1/responses",
 			body: `{"model":"provider:openai gpt-5.6-luna","input":"hi","prompt_cache_retention":"forever"}`,
@@ -3524,11 +3461,18 @@ func TestOpenAIPromptCachingRejectsUnrepresentableShapes(t *testing.T) {
 			body:          `{"model":"provider:openai gpt-5.6-luna","input":[{"role":"user","content":[{"type":"input_text","text":"hi","prompt_cache_breakpoint":{"mode":1}}]}]}`,
 			resolveReject: true,
 		},
+		// Every deployment checks the form, also one that takes no such setting.
 		{
-			name: "anthropic breakpoint",
+			name: "twelve-hour breakpoint for Claude",
 			path: "/v1/chat/completions",
-			body: `{"model":"anthropic-claude-sonnet-5","messages":[{"role":"user","content":[{"type":"text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit"}}]}]}`,
-			want: "prompt_cache_breakpoint is not supported for Anthropic-format deployments",
+			body: `{"model":"anthropic-claude-sonnet-5","messages":[{"role":"user","content":[{"type":"text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit","ttl":"12h"}}]}]}`,
+			want: "prompt_cache_breakpoint.ttl must be 30m",
+		},
+		{
+			name: "unknown retention for Claude",
+			path: "/v1/responses",
+			body: `{"model":"anthropic-claude-sonnet-5","input":"hi","prompt_cache_retention":"forever"}`,
+			want: "retention must be in_memory or 24h",
 		},
 	}
 	for _, tc := range tests {
@@ -3557,23 +3501,6 @@ func TestOpenAIPromptCachingRejectsUnrepresentableShapes(t *testing.T) {
 			}
 		})
 	}
-
-	t.Run("cache retention on uncached deployment", func(t *testing.T) {
-		resolution, err := catalog.ResolveRequest(catalog.RequestInput{
-			Method: "POST",
-			Path:   "/v1/chat/completions",
-			Body:   []byte(`{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"prompt_cache_retention":"24h"}`),
-		})
-		if err != nil {
-			t.Fatalf("ResolveRequest returned error: %v", err)
-		}
-		resolution.Deployment.Capabilities.ImplicitPromptCaching = false
-		state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
-		err = state.Adapter.ValidateRequest(state)
-		if err == nil || !strings.Contains(err.Error(), "prompt caching is not supported") {
-			t.Fatalf("expected the deployment capability gate to reject the cache retention, got %v", err)
-		}
-	})
 }
 
 // Codex sends a prompt cache key and parallel_tool_calls: true with every request. Every
@@ -3650,16 +3577,6 @@ func TestAnthropicSamplingParametersReachProviderRequestUnchanged(t *testing.T) 
 			name: "responses",
 			path: "/v1/responses",
 			body: `{"model":"anthropic-claude-sonnet-4-6","input":"hi","temperature":1.1,"top_p":1.2,"top_k":0,"stop_sequences":["END"],"context_management":{"edits":[{"type":"compact_20260112","instructions":"keep a compact summary"}]}}`,
-		},
-		{
-			name: "adaptive chat",
-			path: "/v1/chat/completions",
-			body: `{"model":"anthropic-claude-opus-4-7","messages":[{"role":"user","content":"hi"}],"temperature":1.1,"top_p":1.2,"top_k":0,"stop_sequences":["END"],"context_management":{"edits":[{"type":"compact_20260112","instructions":"keep a compact summary"}]}}`,
-		},
-		{
-			name: "adaptive responses",
-			path: "/v1/responses",
-			body: `{"model":"anthropic-claude-opus-4-7","input":"hi","temperature":1.1,"top_p":1.2,"top_k":0,"stop_sequences":["END"],"context_management":{"edits":[{"type":"compact_20260112","instructions":"keep a compact summary"}]}}`,
 		},
 	}
 	for _, tc := range tests {

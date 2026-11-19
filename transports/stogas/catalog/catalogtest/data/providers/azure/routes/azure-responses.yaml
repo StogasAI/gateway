@@ -19,8 +19,8 @@ routes:
     frequencyPenalty: true
     presencePenalty: true
     repetitionPenalty: false
-    seed: true
-    logitBias: true
+    seed: false
+    logitBias: false
   # Native document formats reviewed 2026-10-05: https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/responses#file-input
   documentFormats:
     extensions: [.pdf]

@@ -11,6 +11,7 @@ models:
   reasoningEfforts: [low, medium, high, xhigh, max]
   reasoningEffortsByInterface:
     chat_completions: [low, medium, high, xhigh]
+  reasoningDefault: medium
   openWeights: false
   releaseDate: 2026-07-09
   knowledgeCutoff: 2026-02-16

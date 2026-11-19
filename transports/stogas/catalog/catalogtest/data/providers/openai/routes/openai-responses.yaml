@@ -19,8 +19,8 @@ routes:
     frequencyPenalty: true
     presencePenalty: true
     repetitionPenalty: false
-    seed: true
-    logitBias: true
+    seed: false
+    logitBias: false
   # Native document formats reviewed 2026-10-05: https://developers.openai.com/api/docs/guides/file-inputs#supported-file-types
   documentFormats:
     extensions:

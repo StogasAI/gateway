@@ -86,25 +86,17 @@ func (a OpenAIAdapter) ValidateRequest(state *State) error {
 
 // validateOpenAIWirePolicy checks a request with the rules of OpenAI's format for its interface.
 func validateOpenAIWirePolicy(state *State) error {
-	if err := validateOpenAIPromptCaching(state); err != nil {
-		return err
-	}
 	if err := validateOpenAIWireChatPolicy(state); err != nil {
 		return err
 	}
 	return validateOpenAIWireResponsesPolicy(state)
 }
 
-func validateOpenAIPromptCaching(state *State) error {
-	if state == nil || state.Resolution == nil {
-		return catalog.ErrUnsupportedRequest
-	}
-	raw := state.Resolution.RawBody()
-	capabilities := state.Resolution.Deployment.Capabilities
+// validateOpenAIPromptCaching checks the form of OpenAI's prompt cache settings. A longer
+// retention costs nothing more, and the lifetimes of an explicit cache write are the ones that the
+// catalog prices.
+func validateOpenAIPromptCaching(route catalog.Route, raw map[string]json.RawMessage) error {
 	if retentionRaw := raw["prompt_cache_retention"]; rawJSONValueSet(retentionRaw) {
-		if !capabilities.ImplicitPromptCaching {
-			return invalidRequest("prompt caching is not supported for the selected deployment")
-		}
 		retention, ok := rawStringValue(retentionRaw)
 		if !ok {
 			return invalidRequest("prompt_cache_retention must be a string")
@@ -113,18 +105,10 @@ func validateOpenAIPromptCaching(state *State) error {
 			return invalidRequest("prompt_cache_retention must be in_memory or 24h")
 		}
 	}
-	optionsSet := rawJSONValueSet(raw["prompt_cache_options"])
-	breakpoints, err := validatePromptCacheBreakpoints(rawPromptContent(state.Resolution.Route, raw))
-	if err != nil {
+	if _, err := validatePromptCacheBreakpoints(rawPromptContent(route, raw)); err != nil {
 		return err
 	}
-	if !optionsSet && breakpoints == 0 {
-		return nil
-	}
-	if !capabilities.ExplicitPromptCaching {
-		return invalidRequest("explicit prompt caching is not supported for the selected deployment")
-	}
-	if !optionsSet {
+	if !rawJSONValueSet(raw["prompt_cache_options"]) {
 		return nil
 	}
 	options, ok := rawObject(raw["prompt_cache_options"])
@@ -212,19 +196,15 @@ func validateOpenAIWireChatPolicy(state *State) error {
 		return nil
 	}
 	raw := state.Resolution.RawBody()
-	if err := validateOpenAIChatScalarPolicy(raw); err != nil {
+	if err := validateJSONBool(raw, "logprobs"); err != nil {
 		return err
 	}
-	if err := validateChatReasoningDisplay(state, raw); err != nil {
+	if err := validateChatReasoningDisplay(raw); err != nil {
 		return err
 	}
-	for _, name := range []string{"cache_control", "context_management", "stop_sequences", "task_budget", "top_k"} {
-		if rawJSONValueSet(raw[name]) {
-			return invalidRequest(name + " is not supported for OpenAI-format deployments")
-		}
-	}
-	if err := rejectOpenAIChatCacheControls(raw); err != nil {
-		return err
+	// Claude's context edits change what the model reads and what the reply holds.
+	if rawJSONValueSet(raw["context_management"]) {
+		return invalidRequest("context_management is not supported for OpenAI-format deployments")
 	}
 	if err := validateOpenAIChatWebSearchOptions(raw["web_search_options"]); err != nil {
 		return err
@@ -247,13 +227,12 @@ func validateOpenAIWireResponsesPolicy(state *State) error {
 		"message.output_text.logprobs", "reasoning.encrypted_content"); err != nil {
 		return err
 	}
-	for _, name := range []string{"cache_control", "context_management", "stop_sequences", "task_budget", "top_k"} {
+	// OpenAI's Responses have no stop sequences, which decide where the reply ends, and Claude's
+	// context edits change what the model reads and what the reply holds.
+	for _, name := range []string{"context_management", "stop_sequences"} {
 		if rawJSONValueSet(raw[name]) {
 			return invalidRequest(name + " is not supported for OpenAI-format deployments")
 		}
-	}
-	if err := rejectOpenAIResponsesCacheControls(raw); err != nil {
-		return err
 	}
 	return validateResponsesToolPolicy(state, raw, func(tools []schemas.ResponsesTool) error {
 		if !responsesHasHostedTool(tools) {
@@ -265,25 +244,15 @@ func validateOpenAIWireResponsesPolicy(state *State) error {
 	})
 }
 
-func validateOpenAIChatScalarPolicy(raw map[string]json.RawMessage) error {
-	if rawJSONValueSet(raw["repetition_penalty"]) {
-		return invalidRequest("repetition_penalty is not supported for OpenAI-format deployments")
-	}
-	if err := validateJSONBool(raw, "logprobs"); err != nil {
-		return err
-	}
-	return validateChatPrediction(raw["prediction"])
-}
-
-// validateChatReasoningDisplay accepts the reasoning displays of the deployments that Chat
-// Completions reach in OpenAI's format, which decide whether a reply shows a summary of the
-// reasoning: summarized, omitted, and Claude's updates, which these models write none of and so
-// answer as omitted, as Claude's models without progress updates do. OpenAI's models return
-// summaries only on Responses, so a request that asks for them while the model reasons goes
-// through Responses (catalog's chatThroughResponses). Other models return their reasoning whole,
-// with no summary to show or leave out, as their Responses replies carry it whole whatever summary
-// a client asks for, so a client's display never keeps a conversation or a fallback from them.
-func validateChatReasoningDisplay(state *State, raw map[string]json.RawMessage) error {
+// validateChatReasoningDisplay checks the reasoning display of a Chat Completions request to a
+// deployment in OpenAI's format: summarized, omitted, or Claude's updates, which these models write
+// none of and so answer as omitted, as Claude's models without progress updates do. A display only
+// chooses how a reply shows the reasoning, so each deployment answers with what it can show.
+// OpenAI's models return summaries only on Responses, so a request that asks for them while the
+// model reasons goes through Responses (catalog's chatThroughResponses), and one that Responses
+// cannot carry whole gets its reply without summaries. Other models return their reasoning whole,
+// and a model without reasoning has none to show.
+func validateChatReasoningDisplay(raw map[string]json.RawMessage) error {
 	name, value := "reasoning_display", raw["reasoning_display"]
 	if reasoning, ok := rawObject(raw["reasoning"]); ok && rawJSONValueSet(reasoning["display"]) {
 		name, value = "reasoning.display", reasoning["display"]
@@ -291,19 +260,10 @@ func validateChatReasoningDisplay(state *State, raw map[string]json.RawMessage) 
 	if !rawJSONValueSet(value) {
 		return nil
 	}
-	display, _ := rawStringValue(value)
-	switch resolution := state.Resolution; {
-	case !resolution.Deployment.ReasoningSupported:
-		return invalidRequest(name + " is not supported for the selected deployment")
-	case display != "summarized" && display != "omitted" && display != "updates":
-		return invalidRequest(name + " must be summarized, omitted or updates for the selected deployment")
-	case display != "summarized" || !resolution.RunsOpenAIModel() || resolution.WireRoute() == catalog.RouteResponses || resolution.ReasoningOff():
-		return nil
+	if display, _ := rawStringValue(value); display != "summarized" && display != "omitted" && display != "updates" {
+		return invalidRequest(name + " must be summarized, omitted or updates")
 	}
-	if gap := state.Resolution.ResponsesGap(); gap != "" {
-		return invalidRequest(name + " summarized is not supported with " + gap)
-	}
-	return invalidRequest(name + " summarized is not supported for the selected deployment")
+	return nil
 }
 
 // validateResponsesInclude accepts the include values whose extras the deployment's replies carry.
@@ -408,23 +368,6 @@ func rawStringValue(raw json.RawMessage) (string, bool) {
 		return "", false
 	}
 	return value, true
-}
-
-func rejectOpenAIChatCacheControls(raw map[string]json.RawMessage) error {
-	if rawJSONValueSet(raw["cache_control"]) {
-		return invalidRequest("cache_control is not supported for OpenAI-format deployments")
-	}
-	if rawChatCacheControlExists(raw["messages"], true) || rawChatCacheControlExists(raw["tools"], true) {
-		return invalidRequest("cache_control is not supported for OpenAI-format deployments")
-	}
-	return nil
-}
-
-func rejectOpenAIResponsesCacheControls(raw map[string]json.RawMessage) error {
-	if rawJSONValueSet(raw["cache_control"]) || rawResponsesCacheControlExists(raw["input"]) || rawResponsesCacheControlExists(raw["tools"]) {
-		return invalidRequest("cache_control is not supported for OpenAI-format deployments")
-	}
-	return nil
 }
 
 func (a OpenAIAdapter) EstimateHold(state *State) error {

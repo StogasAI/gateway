@@ -9,6 +9,11 @@ models:
   outputModalities: [text]
   reasoning: required
   reasoningEfforts: [low, medium, high, xhigh, max]
+  reasoningDefault: high
   openWeights: false
+  sampling:
+    temperature: false
+    topP: false
+    topK: false
   releaseDate: 2026-06-09
   knowledgeCutoff: 2026-01-01

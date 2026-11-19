@@ -12,6 +12,7 @@ models:
   reasoningMaxTokens:
     minimum: 1024
     maximum: 63999
+  reasoningDefault: none
   openWeights: false
   snapshot: 2025-11-01
   releaseDate: 2025-11-24

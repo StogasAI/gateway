@@ -99,7 +99,13 @@ type Deployment struct {
 	ReasoningEfforts     []string
 	ReasoningMaxTokens   *ReasoningMaxTokens
 	ReasoningSupported   bool
-	DataHandling         DataHandling
+	// ReasoningDefault is what a request that sets no reasoning gets: "none", an effort or
+	// "enabled", or nil where no author states it.
+	ReasoningDefault *string
+	// Sampling says which sampling parameters the deployment accepts on its route. A request's
+	// other sampling parameters stay out of what the provider gets (KeepCarriedPreferences).
+	Sampling     Sampling
+	DataHandling DataHandling
 	// HostedTools are the tools that the route runs for the deployment. Each can only make
 	// DataHandling worse, for requests that let the model call it.
 	HostedTools map[HostedTool]HostedToolOffer
@@ -142,6 +148,9 @@ type DataHandling struct {
 // CompanyAnthropic is Anthropic's company, which runs Claude on its own API and behind the sign-in
 // and billing of other providers.
 const CompanyAnthropic = "anthropic"
+
+// CompanyAmazon is Amazon's company, which runs Claude itself in Amazon Bedrock.
+const CompanyAmazon = "amazon"
 
 // HostingUnknown stands for a company that a provider does not name, as a hosting or as one that
 // requests are shared with.
@@ -229,7 +238,8 @@ type compiledDeployment struct {
 	Pricing             Pricing  `json:"pricing"`
 	// PromptCacheMinimumTokens is the fewest prompt tokens that the provider caches, and
 	// ReasoningDefault what a request that sets no reasoning gets. Policies read both, and the
-	// gateway sends nothing because of either.
+	// gateway sends nothing because of either: the default only tells it whether one of OpenAI's
+	// models reasons (ResolvedRequest.openAIRefusesSampling).
 	PromptCacheMinimumTokens *int                               `json:"promptCacheMinimumTokens"`
 	Reasoning                string                             `json:"reasoning"`
 	ReasoningDefault         *string                            `json:"reasoningDefault"`
@@ -259,7 +269,7 @@ type compiledDeploymentRoute struct {
 	Pricing          Pricing  `json:"-"`
 	ReasoningEfforts []string `json:"reasoningEfforts"`
 	// Sampling says which sampling parameters the deployment accepts on the route. Policies read
-	// it, and the gateway forwards those parameters unchanged.
+	// it, and the gateway sends the deployment only those (ResolvedRequest.KeepCarriedPreferences).
 	Sampling Sampling `json:"sampling"`
 }
 

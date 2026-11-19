@@ -763,7 +763,7 @@ func validateChatMessagesTextOnly(state *State, raw json.RawMessage) error {
 			if err := rejectUnsupportedInputKeys(message, path, "role", "name", "content"); err != nil {
 				return err
 			}
-			if err := validateOptionalChatMessageName(state, message, path); err != nil {
+			if err := validateOptionalChatMessageName(message, path); err != nil {
 				return err
 			}
 			content, ok := message["content"]
@@ -850,7 +850,7 @@ func validateChatAssistantInput(state *State, message map[string]json.RawMessage
 	if err := rejectUnsupportedInputKeys(message, path, "role", "name", "content", "refusal", "reasoning", "reasoning_content", "reasoning_details", "annotations", "tool_calls"); err != nil {
 		return err
 	}
-	if err := validateOptionalChatMessageName(state, message, path); err != nil {
+	if err := validateOptionalChatMessageName(message, path); err != nil {
 		return err
 	}
 	hasPayload := false
@@ -862,10 +862,9 @@ func validateChatAssistantInput(state *State, message map[string]json.RawMessage
 		hasPayload = meaningful
 		validation.meaningful = validation.meaningful || meaningful
 	}
+	// A deployment without a refusal field gets an earlier refusal as the assistant's text
+	// (catalog.ResolvedRequest.KeepCarriedPreferences).
 	if refusal, ok := message["refusal"]; ok {
-		if responsesUsesAnthropicWire(state) {
-			return invalidRequest(path + ".refusal is not supported for Anthropic-format history")
-		}
 		value, ok := rawStringValue(refusal)
 		if !ok {
 			return invalidRequest(path + ".refusal must be a string")
@@ -907,10 +906,8 @@ func validateChatAssistantInput(state *State, message map[string]json.RawMessage
 		}
 		hasPayload = true
 	}
+	// Only OpenAI's models take annotations back, and the others go without them.
 	if annotations, ok := message["annotations"]; ok && !rawJSONEmptyArray(annotations) {
-		if !chatAnnotationsInputSupported(state) {
-			return invalidRequest("assistant annotations are supported only for OpenAI-format deployments")
-		}
 		if err := validateChatAnnotations(annotations, path+".annotations"); err != nil {
 			return err
 		}
@@ -932,7 +929,7 @@ func validateChatToolResultInput(state *State, message map[string]json.RawMessag
 	if err := rejectUnsupportedInputKeys(message, path, "role", "name", "content", "tool_call_id"); err != nil {
 		return err
 	}
-	if err := validateOptionalChatMessageName(state, message, path); err != nil {
+	if err := validateOptionalChatMessageName(message, path); err != nil {
 		return err
 	}
 	callID, err := requiredInputString(message, "tool_call_id", path, false)
@@ -973,7 +970,7 @@ func validateChatToolCalls(state *State, raw json.RawMessage, path string, valid
 		if err != nil {
 			return err
 		}
-		if err := validateProviderToolCallID(state, callID, callPath+".id"); err != nil {
+		if err := validateProviderToolCallID(callID, callPath+".id"); err != nil {
 			return err
 		}
 		if validation.allCallIDs[callID] {
@@ -1006,21 +1003,11 @@ func validateChatToolCalls(state *State, raw json.RawMessage, path string, valid
 	return nil
 }
 
-func validateProviderToolCallID(state *State, value string, path string) error {
+// validateProviderToolCallID bounds a tool call ID. Claude takes only letters, digits, "_" and "-",
+// so it gets an ID with other characters under a hash (catalog.ResolvedRequest.KeepCarriedPreferences).
+func validateProviderToolCallID(value string, path string) error {
 	if len(value) > 64 {
 		return invalidRequest(path + " must contain at most 64 bytes")
-	}
-	if !responsesUsesAnthropicWire(state) {
-		return nil
-	}
-	for index := 0; index < len(value); index++ {
-		character := value[index]
-		if (character >= 'a' && character <= 'z') ||
-			(character >= 'A' && character <= 'Z') ||
-			(character >= '0' && character <= '9') || character == '_' || character == '-' {
-			continue
-		}
-		return invalidRequest(path + " must contain only letters, digits, underscores, or hyphens for Anthropic-format deployments")
 	}
 	return nil
 }
@@ -1210,32 +1197,14 @@ func validateChatAnnotations(raw json.RawMessage, path string) error {
 	return nil
 }
 
-func validateOptionalChatMessageName(state *State, message map[string]json.RawMessage, path string) error {
+// validateOptionalChatMessageName checks a message's name, which a deployment without a place for
+// one goes without (catalog.ResolvedRequest.KeepCarriedPreferences).
+func validateOptionalChatMessageName(message map[string]json.RawMessage, path string) error {
 	if _, ok := message["name"]; !ok {
 		return nil
 	}
-	if responsesUsesAnthropicWire(state) {
-		return invalidRequest(path + ".name is not supported for Anthropic-format history")
-	}
-	// Mistral's models take a name only on a tool result, as Mistral's own API does, and Azure
-	// refuses one elsewhere (capture azure/other-model-formats-request-fields).
-	if role, _ := rawStringValue(message["role"]); role != string(schemas.ChatMessageRoleTool) && rawJSONValueSet(message["name"]) && azureMistralModel(state) {
-		return invalidRequest(path + ".name is supported for Mistral's models only on a tool message")
-	}
 	_, err := requiredInputString(message, "name", path, false)
 	return err
-}
-
-// azureMistralModel reports a request to one of Mistral's models on Azure.
-func azureMistralModel(state *State) bool {
-	return state != nil && state.Resolution != nil && state.Resolution.Provider == schemas.Azure &&
-		state.Resolution.Deployment.Upstream.ModelFormat == "Mistral AI"
-}
-
-func chatAnnotationsInputSupported(state *State) bool {
-	return state != nil && state.Resolution != nil &&
-		(state.Resolution.Provider == schemas.OpenAI ||
-			(state.Resolution.Provider == schemas.Azure && !azureDeploymentUsesAnthropicWire(state)))
 }
 
 func validateTextOnlyMediaFields(object map[string]json.RawMessage, mediaMessage string) error {

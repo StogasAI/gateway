@@ -51,9 +51,10 @@ func TestCodexLiteToolsReachEveryProviderAsTopLevelTools(t *testing.T) {
 	if got := string(body["reasoning"]); !strings.Contains(got, `"context":"all_turns"`) {
 		t.Fatalf("OpenAI reasoning = %s, want the context", got)
 	}
-	err := requestCheckError(t, "/v1/responses", codexLiteRequest("anthropic-claude-sonnet-4-6", codexFunctionTools))
-	if err == nil || err.Error() != "reasoning.context must be auto for Anthropic-format deployments" {
-		t.Fatalf("Claude with reasoning.context all_turns: %v", err)
+	// Claude has no such setting, so it serves the request without it.
+	body, _, _ = providerBody(t, "/v1/responses", codexLiteRequest("anthropic-claude-sonnet-4-6", codexFunctionTools))
+	if encoded, _ := json.Marshal(body); strings.Contains(string(encoded), "all_turns") {
+		t.Fatalf("Claude got reasoning.context: %s", encoded)
 	}
 }
 

@@ -815,12 +815,8 @@ func (r *ResolvedRequest) ApplyProviderSamplingParameters() {
 			r.SetExtraParam("top_k", topK)
 		}
 	}
-	if stopSequences, ok := rawStringListValue(r.pricing.RawBody["stop_sequences"]); ok {
-		if r.chat != nil {
-			r.chat.ChatParameters.Stop = stopSequences
-		} else if r.responses != nil {
-			r.SetExtraParam("stop", stopSequences)
-		}
+	if stopSequences, ok := rawStringListValue(r.pricing.RawBody["stop_sequences"]); ok && r.responses != nil {
+		r.SetExtraParam("stop", stopSequences)
 	}
 }
 
@@ -1035,6 +1031,9 @@ func planRoutes(input RequestInput, route Route, rawData map[string]json.RawMess
 	}
 	tokenFields := []string{"max_output_tokens"}
 	if route == RouteChat {
+		if err := foldStopSequences(rawData); err != nil {
+			return nil, err
+		}
 		if _, err := normalizeChatStopString(rawData); err != nil {
 			return nil, err
 		}
@@ -1161,6 +1160,21 @@ func resolveChatRequests(input RequestInput, route Route) (*ResolvedRequest, err
 	return plan.take(nil)
 }
 
+// foldStopSequences reads Claude's name for stop sequences as stop, which every deployment takes
+// on Chat Completions, so a client of either API writes them the way it knows.
+func foldStopSequences(rawData map[string]json.RawMessage) error {
+	sequences, ok := rawData["stop_sequences"]
+	if !ok {
+		return nil
+	}
+	if stop := rawData["stop"]; len(stop) != 0 && !rawJSONNull(stop) {
+		return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "stop conflicts with stop_sequences"}
+	}
+	delete(rawData, "stop_sequences")
+	rawData["stop"] = sequences
+	return nil
+}
+
 func normalizeChatStopString(rawData map[string]json.RawMessage) (bool, error) {
 	rawStop, ok := rawData["stop"]
 	if !ok || len(rawStop) == 0 || string(rawStop) == "null" {
@@ -1275,7 +1289,7 @@ func filterRequestParameters(selections []routingSelection, raw map[string]json.
 			break
 		}
 	}
-	validateReasoning, err := requestReasoningValidation(raw, route)
+	validateReasoning, err := requestReasoningValidation(raw, route, requested)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1713,6 +1727,12 @@ func dropNoOpCompatibilityFields(rawData map[string]json.RawMessage, route Route
 		})
 		dropRawFieldIf(rawData, "prompt_cache_isolation_key", rawJSONNullOrEmptyString)
 		dropRawFieldIf(rawData, "response_format", rawJSONTextFormat)
+		// Chat Completions streams carry no padding, which is what false asks for.
+		if options := struct {
+			IncludeObfuscation *bool `json:"include_obfuscation"`
+		}{}; json.Unmarshal(rawData["stream_options"], &options) == nil && options.IncludeObfuscation != nil && !*options.IncludeObfuscation {
+			dropRawMember(rawData, "stream_options", "include_obfuscation")
+		}
 	case RouteResponses:
 		dropRawFieldIf(rawData, "background", rawJSONFalse)
 		dropRawFieldIf(rawData, "previous_response_id", rawJSONNullOrEmptyString)

@@ -267,7 +267,7 @@ func (r *ResolvedRequest) translateToResponses() error {
 		return ErrUnsupportedRequest
 	}
 	chat := r.chat.ToBifrostChatRequest(nil)
-	if err := responsesBridgeGap(chat); err != nil {
+	if err := conversionGapError(chat.ResponsesGap(), "Responses"); err != nil {
 		return err
 	}
 	converted := chat.ToResponsesRequest()
@@ -309,29 +309,6 @@ func (r *ResolvedRequest) includeEncryptedReasoning(include []string) []string {
 		return include
 	}
 	return append(slices.Clip(include), responsesIncludeEncryptedReasoning)
-}
-
-// responsesBridgeGap refuses a Chat Completions request that a Responses body cannot carry whole:
-// one with a part that Responses lacks, or with a prompt cache breakpoint in a tool's output, which
-// reaches the provider as text.
-func responsesBridgeGap(chat *schemas.BifrostChatRequest) error {
-	if err := conversionGapError(chat.ResponsesGap(), "Responses"); err != nil {
-		return err
-	}
-	for i, message := range chat.Input {
-		if message.Role != schemas.ChatMessageRoleTool || message.Content == nil {
-			continue
-		}
-		for j, block := range message.Content.ContentBlocks {
-			if block.PromptCacheBreakpoint != nil {
-				return conversionGapError(&schemas.ConversionGap{
-					Param:   "messages[" + strconv.Itoa(i) + "].content[" + strconv.Itoa(j) + "].prompt_cache_breakpoint",
-					Feature: "prompt cache breakpoints in tool outputs",
-				}, "Responses")
-			}
-		}
-	}
-	return nil
 }
 
 // textToolOutputs gives each tool output whose parts are all text as their text in order, which
@@ -378,9 +355,11 @@ func (r *ResolvedRequest) ResponsesGap() string {
 	return ""
 }
 
-// rawConversionGap refuses a body that the other interface cannot carry whole, so that routing
-// leaves out bridged deployments for it. The checks of the client's interface refuse a malformed
-// body, and the fields that every deployment refuses, with their own messages.
+// rawConversionGap refuses a body whose requirements the other interface cannot carry whole, so
+// that routing leaves out bridged deployments for it. A preference that the other interface has
+// no field for is no gap, since the deployment serves the request without it
+// (KeepCarriedPreferences). The checks of the client's interface refuse a malformed body, and the
+// fields that every deployment refuses, with their own messages.
 func rawConversionGap(raw map[string]json.RawMessage, route Route) error {
 	if route == RouteChat {
 		return rawResponsesGap(raw)
@@ -406,6 +385,7 @@ func rawChatCompletionsGap(raw map[string]json.RawMessage) error {
 	if input, ok := raw["input"]; ok && request.Input.UnmarshalJSON(input) != nil {
 		return nil
 	}
+	withoutResponsesPreferences(&request)
 	return conversionGapError(request.ToBifrostResponsesRequest(nil).ChatCompletionsGap(), "Chat Completions")
 }
 
@@ -424,7 +404,8 @@ func rawResponsesGap(raw map[string]json.RawMessage) error {
 	if request.UnmarshalJSON(body) != nil {
 		return nil
 	}
-	return responsesBridgeGap(request.ToBifrostChatRequest(nil))
+	withoutChatPreferences(&request)
+	return conversionGapError(request.ToBifrostChatRequest(nil).ResponsesGap(), "Responses")
 }
 
 // chatReasoning is the Chat Completions reasoning control of a Responses request: its effort and

@@ -280,6 +280,8 @@ func (s *snapshot) deploymentFromCompiledAt(deploymentID string, route compiledR
 		ReasoningEfforts:    slices.Clone(served.ReasoningEfforts),
 		ReasoningMaxTokens:  reasoningMaxTokens,
 		ReasoningSupported:  deployment.Reasoning != "unsupported",
+		ReasoningDefault:    deployment.ReasoningDefault,
+		Sampling:            served.Sampling,
 		DataHandling:        served.DataHandling,
 		HostedTools:         served.HostedTools,
 		AccountOptions:      s.graph.Providers[route.ProviderID].optionsNamed(served.AccountOptions),

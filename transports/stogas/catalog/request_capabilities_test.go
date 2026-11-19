@@ -20,8 +20,6 @@ func TestCatalogCapabilitiesFilterBeforeCredentialPreparation(t *testing.T) {
 			{"tool choice", `"tool_choice":"required"`, `"tool_choice":"required"`, func(c *Capabilities) { c.ToolChoice = false }},
 			{"structured output", `"response_format":{"type":"json_schema","json_schema":{"name":"test","schema":{"type":"object"}}}`, `"text":{"format":{"type":"json_schema","name":"test","schema":{"type":"object"}}}`, func(c *Capabilities) { c.StructuredOutputs = false }},
 			{"system message", `"messages":[{"role":"developer","content":"hello"}]`, `"instructions":"hello"`, func(c *Capabilities) { c.SystemMessages = false }},
-			{"prompt cache retention", `"prompt_cache_retention":"24h"`, `"prompt_cache_retention":"24h"`, func(c *Capabilities) { c.ImplicitPromptCaching = false }},
-			{"explicit prompt caching", `"prompt_cache_options":{"mode":"explicit"}`, `"prompt_cache_options":{"mode":"explicit"}`, func(c *Capabilities) { c.ExplicitPromptCaching = false }},
 		} {
 			for _, pinned := range []bool{false, true} {
 				t.Run(fmt.Sprintf("%s/%s/pinned=%t", route, tc.name, pinned), func(t *testing.T) {

@@ -185,8 +185,12 @@ func TestAzureClaudeUsesAnthropicPolicyAndExactMessagesWireFormat(t *testing.T) 
 			if err := sonic.Unmarshal(body, &wire); err != nil {
 				t.Fatalf("decode Azure Claude wire request: %v", err)
 			}
-			if wire["model"] != "claude-opus-4-8" || wire["max_tokens"] != float64(64) || wire["top_k"] != float64(40) {
+			if wire["model"] != "claude-opus-4-8" || wire["max_tokens"] != float64(64) {
 				t.Fatalf("Azure Claude wire fields were not preserved: %s", body)
+			}
+			// The model refuses every top_k, so the request reaches it without one.
+			if _, sent := wire["top_k"]; sent {
+				t.Fatalf("Azure Claude got top_k: %s", body)
 			}
 			stops, ok := wire["stop_sequences"].([]any)
 			if !ok || len(stops) != 1 || stops[0] != "END" {
@@ -341,16 +345,6 @@ func TestAzureClaudeWithCustomDeploymentNameUsesAnthropicEndpoint(t *testing.T) 
 	}
 }
 
-func TestAzureClaudeRejectsPromptCacheOptions(t *testing.T) {
-	// The request passes without the field, so the refusal is the field's.
-	if err := validateResolvedResponses(t, `{"model":"azure-claude-opus-4-8-anthropic-hosted","input":"hi","max_output_tokens":64}`); err != nil {
-		t.Fatalf("the Azure Claude request without the field was refused: %v", err)
-	}
-	if validateResolvedResponses(t, `{"model":"azure-claude-opus-4-8-anthropic-hosted","input":"hi","prompt_cache_options":{"mode":"explicit"},"max_output_tokens":64}`) == nil {
-		t.Fatal("Azure Claude accepted prompt_cache_options, which the Anthropic wire translation cannot preserve")
-	}
-}
-
 func TestAzureClaudeHoldCoversAnthropicCacheWriteAndToolOverhead(t *testing.T) {
 	state := resolveAzureState(
 		t,
@@ -455,17 +449,6 @@ func TestAzureMistralRequestsLeaveOutWhatAzureRefused(t *testing.T) {
 				}
 				request["model"], _ = json.Marshal(deployment)
 				client, _ := json.Marshal(request)
-				if name == "name" {
-					resolution, err := catalog.ResolveRequest(catalog.RequestInput{Body: client, Method: http.MethodPost, Path: "/v1/chat/completions"})
-					if err != nil {
-						t.Fatal(err)
-					}
-					state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
-					if err := state.Adapter.ValidateRequest(state); err == nil || !strings.Contains(err.Error(), "messages[0].name") {
-						t.Fatalf("ValidateRequest = %v, want a refusal of the message's name", err)
-					}
-					return
-				}
 				if fields := refusedChatFields(t, azureCustomerChatBody(t, string(client))); len(fields) > 0 {
 					t.Fatalf("the body keeps %v", fields)
 				}
@@ -547,10 +530,10 @@ func resolveRecordedAzureRequest(t *testing.T, recorded providerExchange) (*cata
 
 // TestAzureOtherFormatsStateWhatAzureTook compares the sampling fields that the catalog states for
 // each Azure deployment of another model format with what Azure took in the recording (capture
-// azure/other-model-formats-sampling). The gateway forwards sampling fields unchanged and leaves
-// their refusal to the provider, so the catalog's statement is what policies and clients rely on.
-// Mistral Medium 3.5 states no reasoning, because Azure returns its reasoning at effort high in a
-// shape that Chat Completions does not have, so the gateway takes only effort none.
+// azure/other-model-formats-sampling). The gateway sends a deployment only the sampling fields that
+// the catalog states for it, and policies read the same statement. Mistral Medium 3.5 states no
+// reasoning, because Azure returns its reasoning at effort high in a shape that Chat Completions
+// does not have, so the gateway sends it no effort.
 func TestAzureOtherFormatsStateWhatAzureTook(t *testing.T) {
 	catalogtest.UseFallback(t)
 	var deployments map[string]struct {
@@ -573,8 +556,9 @@ func TestAzureOtherFormatsStateWhatAzureTook(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			model, field, _ := strings.Cut(name, " ")
 			took := recorded.Response.Status == http.StatusOK
-			if effort, ok := strings.CutPrefix(field, "reasoning_effort "); ok {
-				if _, err := resolveRecordedAzureRequest(t, recorded); (err == nil) != (effort == "none") {
+			if strings.HasPrefix(field, "reasoning_effort ") {
+				// The model has no reasoning control, so the request reaches it without one.
+				if _, err := resolveRecordedAzureRequest(t, recorded); err != nil {
 					t.Fatalf("resolve error = %v, Azure answered %d", err, recorded.Response.Status)
 				}
 				return
@@ -592,19 +576,16 @@ func TestAzureOtherFormatsStateWhatAzureTook(t *testing.T) {
 
 // TestAzureOtherFormatsSendOnlyEffortsThatAzureTook sends each recorded request with
 // reasoning_effort as a client's request for its deployment (capture
-// azure/other-model-formats-efforts). The gateway refuses none exactly where Azure refused it, and
-// sends every other effort as one that Azure took.
+// azure/other-model-formats-efforts). The gateway sends every effort as one that Azure took, and
+// none as the lowest effort of a model that Azure does not let answer without reasoning.
 func TestAzureOtherFormatsSendOnlyEffortsThatAzureTook(t *testing.T) {
 	catalogtest.UseFallback(t)
 	recorded := providerCapture(t, "azure/other-model-formats-efforts")
 	for name, exchange := range recorded {
 		t.Run(name, func(t *testing.T) {
-			model, effort, _ := strings.Cut(name, " reasoning_effort ")
+			model, _, _ := strings.Cut(name, " reasoning_effort ")
 			if _, err := resolveRecordedAzureRequest(t, exchange); err != nil {
-				if effort != "none" || exchange.Response.Status == http.StatusOK {
-					t.Fatalf("resolve error = %v, Azure answered %d", err, exchange.Response.Status)
-				}
-				return
+				t.Fatalf("resolve error = %v, Azure answered %d", err, exchange.Response.Status)
 			}
 			request := map[string]json.RawMessage{}
 			if err := json.Unmarshal(exchange.Request.Body, &request); err != nil {

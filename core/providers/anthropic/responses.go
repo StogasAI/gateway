@@ -5435,7 +5435,7 @@ func ToAnthropicResponsesRequest(ctx *schemas.BifrostContext, bifrostReq *schema
 
 		// Convert tools
 		if bifrostReq.Params.Tools != nil {
-			anthropicTools, mcpServers, err := convertBifrostToolsToAnthropic(caps, tools, bifrostReq.Provider)
+			anthropicTools, mcpServers, err := convertBifrostToolsToAnthropic(caps, allowedResponsesTools(tools, bifrostReq.Params.ToolChoice), bifrostReq.Provider)
 			if err != nil {
 				return nil, err
 			}
@@ -10844,6 +10844,13 @@ func convertResponsesToolChoiceToAnthropic(toolChoice *schemas.ResponsesToolChoi
 		anthropicChoice.Type = "auto"
 	case "required":
 		anthropicChoice.Type = "any"
+	case string(schemas.ResponsesToolChoiceTypeAllowedTools):
+		// allowedResponsesTools has removed the other declarations, so only the mode is left.
+		anthropicChoice.Type = "auto"
+		if mode := toolChoice.ResponsesToolChoiceStruct.Mode; mode != nil && *mode == "required" {
+			anthropicChoice.Type = "any"
+		}
+		return anthropicChoice
 	case "function":
 		// Handle function type - set as "tool" with specific function name
 		if toolChoice.ResponsesToolChoiceStruct != nil && toolChoice.ResponsesToolChoiceStruct.Name != nil {
@@ -10860,6 +10867,55 @@ func convertResponsesToolChoiceToAnthropic(toolChoice *schemas.ResponsesToolChoi
 	}
 
 	return anthropicChoice
+}
+
+// allowedResponsesTools returns the declarations that tool_choice.allowed_tools names. Anthropic's
+// tool_choice has no subset form, so the restriction is stated by leaving out the other
+// declarations, as the Chat Completions conversion does: a model can call only a tool that it was
+// given. An entry names a function, alone or in the default namespace, by name, an MCP server by
+// its label, and any other tool by its type. The input is never changed.
+func allowedResponsesTools(tools []schemas.ResponsesTool, choice *schemas.ResponsesToolChoice) []schemas.ResponsesTool {
+	if choice == nil || choice.ResponsesToolChoiceStruct == nil ||
+		choice.ResponsesToolChoiceStruct.Type != schemas.ResponsesToolChoiceTypeAllowedTools {
+		return tools
+	}
+	names, labels, types := map[string]bool{}, map[string]bool{}, map[schemas.ResponsesToolType]bool{}
+	for _, allowed := range choice.ResponsesToolChoiceStruct.Tools {
+		switch {
+		case allowed.ServerLabel != nil:
+			labels[*allowed.ServerLabel] = true
+		case allowed.Name != nil:
+			names[*allowed.Name] = true
+		default:
+			types[schemas.CanonicalResponsesToolType(allowed.Type)] = true
+		}
+	}
+	kept := make([]schemas.ResponsesTool, 0, len(tools))
+	for _, tool := range tools {
+		switch {
+		case tool.Type == schemas.ResponsesToolTypeNamespace:
+			if tool.ResponsesToolNamespace == nil || tool.Name == nil || *tool.Name != providerUtils.DefaultToolNamespace {
+				continue
+			}
+			members := make([]schemas.ResponsesTool, 0, len(tool.ResponsesToolNamespace.Tools))
+			for _, member := range tool.ResponsesToolNamespace.Tools {
+				if member.Name != nil && names[*member.Name] {
+					members = append(members, member)
+				}
+			}
+			if len(members) > 0 {
+				tool.ResponsesToolNamespace = &schemas.ResponsesToolNamespace{Tools: members}
+				kept = append(kept, tool)
+			}
+		case tool.Type == schemas.ResponsesToolTypeMCP:
+			if tool.ResponsesToolMCP != nil && labels[tool.ResponsesToolMCP.ServerLabel] {
+				kept = append(kept, tool)
+			}
+		case types[tool.Type], tool.Name != nil && names[*tool.Name]:
+			kept = append(kept, tool)
+		}
+	}
+	return kept
 }
 
 // Helper function to convert ContentBlock to AnthropicContentBlock

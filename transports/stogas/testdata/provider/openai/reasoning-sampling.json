@@ -1,0 +1,1616 @@
+{
+	"shows": "OpenAI and Azure refuse temperature and top_p while a GPT model reasons and take them with the effort none. A request without an effort gets the default of the model, so the same field passes for a model whose default is none.",
+	"recorded": "2026-11-19",
+	"exchanges": [
+		{
+			"name": "openai responses gpt-6-luna default temperature",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"temperature": 0.5,
+					"max_output_tokens": 200,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say hi."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Unsupported parameter: 'temperature' is not supported with this model.",
+						"type": "invalid_request_error",
+						"param": "temperature",
+						"code": null
+					}
+				}
+			}
+		},
+		{
+			"name": "openai responses gpt-6-luna low temperature",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "low"
+					},
+					"temperature": 0.5,
+					"max_output_tokens": 200,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say hi."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Unsupported parameter: 'temperature' is not supported with this model.",
+						"type": "invalid_request_error",
+						"param": "temperature",
+						"code": null
+					}
+				}
+			}
+		},
+		{
+			"name": "openai responses gpt-6-luna low top_p",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "low"
+					},
+					"top_p": 0.9,
+					"max_output_tokens": 200,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say hi."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Unsupported parameter: 'top_p' is not supported with this model.",
+						"type": "invalid_request_error",
+						"param": "top_p",
+						"code": null
+					}
+				}
+			}
+		},
+		{
+			"name": "openai responses gpt-6-luna none temperature",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"temperature": 0.5,
+					"max_output_tokens": 200,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say hi."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_043b241f5f7db123016aff4672641087d2afb5163eabfbe834",
+					"object": "response",
+					"created_at": 1795114610,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795114611,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 200,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "msg_043b241f5f7db123016aff4672cee087d2a15eabee69cfa6a0",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "Hi!"
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 0.5,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 9,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 6,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 15
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "openai responses gpt-6-luna none top_p",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"top_p": 0.9,
+					"max_output_tokens": 200,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say hi."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_01fb7123fcf151b3016aff46732b4087d2a3fc792d133d4d3a",
+					"object": "response",
+					"created_at": 1795114611,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795114611,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 200,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "msg_01fb7123fcf151b3016aff46739bb487d2a63911d481ac4a3c",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "Hi!"
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [],
+					"top_logprobs": 0,
+					"top_p": 0.9,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 9,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 6,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 15
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "openai chat gpt-6-luna default temperature",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/chat/completions",
+				"body": {
+					"model": "gpt-6-luna",
+					"temperature": 0.5,
+					"max_completion_tokens": 200,
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say hi."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Unsupported value: 'temperature' does not support 0.5 with this model. Only the default (1) value is supported.",
+						"type": "invalid_request_error",
+						"param": "temperature",
+						"code": "unsupported_value"
+					}
+				}
+			}
+		},
+		{
+			"name": "openai chat gpt-6-luna low temperature",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/chat/completions",
+				"body": {
+					"model": "gpt-6-luna",
+					"reasoning_effort": "low",
+					"temperature": 0.5,
+					"max_completion_tokens": 200,
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say hi."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Unsupported value: 'temperature' does not support 0.5 with this model. Only the default (1) value is supported.",
+						"type": "invalid_request_error",
+						"param": "temperature",
+						"code": "unsupported_value"
+					}
+				}
+			}
+		},
+		{
+			"name": "openai chat gpt-6-luna low top_p",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/chat/completions",
+				"body": {
+					"model": "gpt-6-luna",
+					"reasoning_effort": "low",
+					"top_p": 0.9,
+					"max_completion_tokens": 200,
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say hi."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Unsupported parameter: 'top_p' is not supported with this model.",
+						"type": "invalid_request_error",
+						"param": "top_p",
+						"code": "unsupported_parameter"
+					}
+				}
+			}
+		},
+		{
+			"name": "openai chat gpt-6-luna none temperature",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/chat/completions",
+				"body": {
+					"model": "gpt-6-luna",
+					"reasoning_effort": "none",
+					"temperature": 0.5,
+					"max_completion_tokens": 200,
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say hi."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "chatcmpl-Em1bQakYBmGOctw4qogVzxegcA73c",
+					"object": "chat.completion",
+					"created": 1795114612,
+					"model": "gpt-6-luna",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "Hi!",
+								"refusal": null,
+								"annotations": []
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 9,
+						"completion_tokens": 5,
+						"total_tokens": 14,
+						"prompt_tokens_details": {
+							"cached_tokens": 0,
+							"cache_write_tokens": 0,
+							"audio_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 0,
+							"audio_tokens": 0,
+							"accepted_prediction_tokens": 0,
+							"rejected_prediction_tokens": 0
+						}
+					},
+					"service_tier": "default",
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "openai chat gpt-6-luna none top_p",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/chat/completions",
+				"body": {
+					"model": "gpt-6-luna",
+					"reasoning_effort": "none",
+					"top_p": 0.9,
+					"max_completion_tokens": 200,
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say hi."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "chatcmpl-Em1bR91DnD7XJngqxUP6WiwRkTCk8",
+					"object": "chat.completion",
+					"created": 1795114613,
+					"model": "gpt-6-luna",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "Hi!",
+								"refusal": null,
+								"annotations": []
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 9,
+						"completion_tokens": 5,
+						"total_tokens": 14,
+						"prompt_tokens_details": {
+							"cached_tokens": 0,
+							"cache_write_tokens": 0,
+							"audio_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 0,
+							"audio_tokens": 0,
+							"accepted_prediction_tokens": 0,
+							"rejected_prediction_tokens": 0
+						}
+					},
+					"service_tier": "default",
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "azure responses gpt-5.6-sol default temperature",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/responses",
+				"body": {
+					"model": "gpt-5.6-sol",
+					"store": false,
+					"temperature": 0.5,
+					"max_output_tokens": 200,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say hi."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Unsupported parameter: 'temperature' is not supported with this model.",
+						"type": "invalid_request_error",
+						"param": "temperature",
+						"code": null
+					}
+				}
+			}
+		},
+		{
+			"name": "azure responses gpt-5.6-sol low temperature",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/responses",
+				"body": {
+					"model": "gpt-5.6-sol",
+					"store": false,
+					"reasoning": {
+						"effort": "low"
+					},
+					"temperature": 0.5,
+					"max_output_tokens": 200,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say hi."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Unsupported parameter: 'temperature' is not supported with this model.",
+						"type": "invalid_request_error",
+						"param": "temperature",
+						"code": null
+					}
+				}
+			}
+		},
+		{
+			"name": "azure responses gpt-5.6-sol low top_p",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/responses",
+				"body": {
+					"model": "gpt-5.6-sol",
+					"store": false,
+					"reasoning": {
+						"effort": "low"
+					},
+					"top_p": 0.9,
+					"max_output_tokens": 200,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say hi."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Unsupported parameter: 'top_p' is not supported with this model.",
+						"type": "invalid_request_error",
+						"param": "top_p",
+						"code": null
+					}
+				}
+			}
+		},
+		{
+			"name": "azure responses gpt-5.6-sol none temperature",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/responses",
+				"body": {
+					"model": "gpt-5.6-sol",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"temperature": 0.5,
+					"max_output_tokens": 200,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say hi."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_07f415019f2fc22b016aff4676e74881969d86793052108478",
+					"object": "response",
+					"created_at": 1795114614,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"completed_at": 1795114616,
+					"content_filters": [
+						{
+							"blocked": false,
+							"source_type": "prompt",
+							"content_filter_raw": [],
+							"content_filter_results": {
+								"hate": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"sexual": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"violence": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"self_harm": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"jailbreak": {
+									"detected": false,
+									"filtered": false
+								}
+							},
+							"content_filter_offsets": {
+								"start_offset": 0,
+								"end_offset": 784,
+								"check_offset": 0
+							}
+						},
+						{
+							"blocked": false,
+							"source_type": "completion",
+							"content_filter_raw": [],
+							"content_filter_results": {
+								"protected_material_text": {
+									"detected": false,
+									"filtered": false
+								},
+								"protected_material_code": {
+									"detected": false,
+									"filtered": false
+								},
+								"hate": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"sexual": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"violence": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"self_harm": {
+									"filtered": false,
+									"severity": "safe"
+								}
+							},
+							"content_filter_offsets": {
+								"start_offset": 0,
+								"end_offset": 3,
+								"check_offset": 0
+							}
+						}
+					],
+					"error": null,
+					"frequency_penalty": 0,
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 200,
+					"max_tool_calls": null,
+					"model": "gpt-5.6-sol",
+					"moderation": null,
+					"output": [
+						{
+							"id": "msg_07f415019f2fc22b016aff4677d6e48196a97b8b3460c2e8fe",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "Hi!"
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 0.5,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 9,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"output_tokens": 6,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 15
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "azure responses gpt-5.6-sol none top_p",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/responses",
+				"body": {
+					"model": "gpt-5.6-sol",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"top_p": 0.9,
+					"max_output_tokens": 200,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say hi."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_0600e79ea62fc9f5016aff4678401481909756faa1399aa32d",
+					"object": "response",
+					"created_at": 1795114616,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"completed_at": 1795114617,
+					"content_filters": [
+						{
+							"blocked": false,
+							"source_type": "prompt",
+							"content_filter_raw": [],
+							"content_filter_results": {
+								"hate": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"sexual": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"violence": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"self_harm": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"jailbreak": {
+									"detected": false,
+									"filtered": false
+								}
+							},
+							"content_filter_offsets": {
+								"start_offset": 0,
+								"end_offset": 784,
+								"check_offset": 0
+							}
+						},
+						{
+							"blocked": false,
+							"source_type": "completion",
+							"content_filter_raw": [],
+							"content_filter_results": {
+								"protected_material_text": {
+									"detected": false,
+									"filtered": false
+								},
+								"protected_material_code": {
+									"detected": false,
+									"filtered": false
+								},
+								"hate": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"sexual": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"violence": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"self_harm": {
+									"filtered": false,
+									"severity": "safe"
+								}
+							},
+							"content_filter_offsets": {
+								"start_offset": 0,
+								"end_offset": 3,
+								"check_offset": 0
+							}
+						}
+					],
+					"error": null,
+					"frequency_penalty": 0,
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 200,
+					"max_tool_calls": null,
+					"model": "gpt-5.6-sol",
+					"moderation": null,
+					"output": [
+						{
+							"id": "msg_0600e79ea62fc9f5016aff4679174c819082de00bb264dc6a1",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "Hi!"
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [],
+					"top_logprobs": 0,
+					"top_p": 0.9,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 9,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"output_tokens": 6,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 15
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "azure chat gpt-5.6-sol default temperature",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "gpt-5.6-sol",
+					"temperature": 0.5,
+					"max_completion_tokens": 200,
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say hi."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Unsupported value: 'temperature' does not support 0.5 with this model. Only the default (1) value is supported.",
+						"type": "invalid_request_error",
+						"param": "temperature",
+						"code": "unsupported_value"
+					}
+				}
+			}
+		},
+		{
+			"name": "azure chat gpt-5.6-sol low temperature",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "gpt-5.6-sol",
+					"reasoning_effort": "low",
+					"temperature": 0.5,
+					"max_completion_tokens": 200,
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say hi."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Unsupported value: 'temperature' does not support 0.5 with this model. Only the default (1) value is supported.",
+						"type": "invalid_request_error",
+						"param": "temperature",
+						"code": "unsupported_value"
+					}
+				}
+			}
+		},
+		{
+			"name": "azure chat gpt-5.6-sol low top_p",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "gpt-5.6-sol",
+					"reasoning_effort": "low",
+					"top_p": 0.9,
+					"max_completion_tokens": 200,
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say hi."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Unsupported parameter: 'top_p' is not supported with this model.",
+						"type": "invalid_request_error",
+						"param": "top_p",
+						"code": "unsupported_parameter"
+					}
+				}
+			}
+		},
+		{
+			"name": "azure chat gpt-5.6-sol none temperature",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "gpt-5.6-sol",
+					"reasoning_effort": "none",
+					"temperature": 0.5,
+					"max_completion_tokens": 200,
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say hi."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"content_filter_results": {
+								"hate": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"protected_material_code": {
+									"detected": false,
+									"filtered": false
+								},
+								"protected_material_text": {
+									"detected": false,
+									"filtered": false
+								},
+								"self_harm": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"sexual": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"violence": {
+									"filtered": false,
+									"severity": "safe"
+								}
+							},
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"annotations": [],
+								"content": "Hi!",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795114617,
+					"id": "chatcmpl-Em1bVSKrV1LJ2U5zc7VngYN5L0EfJ",
+					"model": "gpt-5.6-sol-2026-07-09",
+					"object": "chat.completion",
+					"prompt_filter_results": [
+						{
+							"prompt_index": 0,
+							"content_filter_results": {
+								"hate": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"jailbreak": {
+									"detected": false,
+									"filtered": false
+								},
+								"self_harm": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"sexual": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"violence": {
+									"filtered": false,
+									"severity": "safe"
+								}
+							}
+						}
+					],
+					"routing": {
+						"serving_pipereplica": "d20261117021551-8a31b798-prefill-r12-dp0-prefill"
+					},
+					"service_tier": "default",
+					"system_fingerprint": null,
+					"usage": {
+						"completion_tokens": 5,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"latency_checkpoint": {
+							"engine_tbt_ms": 8,
+							"engine_ttft_ms": 163,
+							"engine_ttlt_ms": 211,
+							"pre_inference_ms": 77,
+							"service_tbt_ms": 9,
+							"service_ttft_ms": 760,
+							"service_ttlt_ms": 804,
+							"user_visible_ttft_ms": 683
+						},
+						"prompt_tokens": 9,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 14
+					}
+				}
+			}
+		},
+		{
+			"name": "azure chat gpt-5.6-sol none top_p",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "gpt-5.6-sol",
+					"reasoning_effort": "none",
+					"top_p": 0.9,
+					"max_completion_tokens": 200,
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say hi."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"content_filter_results": {
+								"hate": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"protected_material_code": {
+									"detected": false,
+									"filtered": false
+								},
+								"protected_material_text": {
+									"detected": false,
+									"filtered": false
+								},
+								"self_harm": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"sexual": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"violence": {
+									"filtered": false,
+									"severity": "safe"
+								}
+							},
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"annotations": [],
+								"content": "Hi!",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795114618,
+					"id": "chatcmpl-Em1bWdgnPVVIHkriXilXbUtC9S4xz",
+					"model": "gpt-5.6-sol-2026-07-09",
+					"object": "chat.completion",
+					"prompt_filter_results": [
+						{
+							"prompt_index": 0,
+							"content_filter_results": {
+								"hate": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"jailbreak": {
+									"detected": false,
+									"filtered": false
+								},
+								"self_harm": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"sexual": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"violence": {
+									"filtered": false,
+									"severity": "safe"
+								}
+							}
+						}
+					],
+					"routing": {
+						"serving_pipereplica": "d20261117021551-8a31b798-prefill-r12-dp0-prefill"
+					},
+					"service_tier": "default",
+					"system_fingerprint": null,
+					"usage": {
+						"completion_tokens": 5,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"latency_checkpoint": {
+							"engine_tbt_ms": 8,
+							"engine_ttft_ms": 201,
+							"engine_ttlt_ms": 248,
+							"pre_inference_ms": 82,
+							"service_tbt_ms": 16,
+							"service_ttft_ms": 777,
+							"service_ttlt_ms": 856,
+							"user_visible_ttft_ms": 695
+						},
+						"prompt_tokens": 9,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 14
+					}
+				}
+			}
+		},
+		{
+			"name": "openai responses gpt-5.4-mini default temperature",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-5.4-mini",
+					"store": false,
+					"temperature": 0.5,
+					"max_output_tokens": 200,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say hi."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_00be554cdf7b22b5016aff467c161087d2aec7f7fd1a4acfad",
+					"object": "response",
+					"created_at": 1795114620,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795114620,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 200,
+					"max_tool_calls": null,
+					"model": "gpt-5.4-mini-2026-03-17",
+					"moderation": null,
+					"output": [
+						{
+							"id": "msg_00be554cdf7b22b5016aff467c7c4087d29b7af4a01304ac2a",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "Hi!"
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "current_turn",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 0.5,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 9,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 6,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 15
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "openai responses gpt-5.4-mini low temperature",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-5.4-mini",
+					"store": false,
+					"reasoning": {
+						"effort": "low"
+					},
+					"temperature": 0.5,
+					"max_output_tokens": 200,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say hi."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": null,
+						"message": "Unsupported parameter: 'temperature' is not supported with this model.",
+						"param": "temperature",
+						"type": "invalid_request_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "openai chat gpt-5.4-mini default temperature",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/chat/completions",
+				"body": {
+					"model": "gpt-5.4-mini",
+					"temperature": 0.5,
+					"max_completion_tokens": 200,
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say hi."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "chatcmpl-Em1bYcbSfkfgLisDHKwGp5VrKtdkC",
+					"object": "chat.completion",
+					"created": 1795114620,
+					"model": "gpt-5.4-mini-2026-03-17",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "Hi!",
+								"refusal": null,
+								"annotations": []
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 9,
+						"completion_tokens": 5,
+						"total_tokens": 14,
+						"prompt_tokens_details": {
+							"cached_tokens": 0,
+							"audio_tokens": 0
+						},
+						"completion_tokens_details": {
+							"reasoning_tokens": 0,
+							"audio_tokens": 0,
+							"accepted_prediction_tokens": 0,
+							"rejected_prediction_tokens": 0
+						}
+					},
+					"service_tier": "default",
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "openai chat gpt-5.4-mini low temperature",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/chat/completions",
+				"body": {
+					"model": "gpt-5.4-mini",
+					"reasoning_effort": "low",
+					"temperature": 0.5,
+					"max_completion_tokens": 200,
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say hi."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Unsupported value: 'temperature' does not support 0.5 with this model. Only the default (1) value is supported.",
+						"type": "invalid_request_error",
+						"param": "temperature",
+						"code": "unsupported_value"
+					}
+				}
+			}
+		}
+	]
+}

@@ -666,7 +666,7 @@ func TestCloudClaudeAdapterRefusesWhatTheCloudLacks(t *testing.T) {
 		body       string
 		want       string
 	}{
-		{"aws-claude-fable-5-1", "/v1/responses", `"input":"hi","task_budget":{"type":"tokens","total":20000},`, "task_budget is not supported for Claude in Amazon Bedrock"},
+		{"aws-claude-fable-5-1", "/v1/responses", `"input":"hi","task_budget":{"type":"tokens","total":20000},`, ""},
 		{"aws-claude-fable-5-1-anthropic-hosted", "/v1/responses", `"input":"hi","task_budget":{"type":"tokens","total":20000},`, ""},
 		// Only Anthropic's hosting runs hosted tools, so a credential that reaches only the
 		// cloud's own hosting gets the tool named.

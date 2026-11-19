@@ -130,7 +130,8 @@ func TestChatReachesDeploymentsThatTakeBothInterfacesOnOne(t *testing.T) {
 		"Claude reasoning history":  {`"model":"provider:openai gpt-6-luna",` + claudeHistory, "openai-chat-completions"},
 		"unbound reasoning history": {`"model":"provider:openai gpt-6-luna",` + unboundHistory, "openai-chat-completions"},
 		"empty tools":               {`"model":"provider:openai gpt-6-luna",` + user + `,"tools":[]`, "openai-chat-completions"},
-		"tools with a seed":         {`"model":"provider:openai gpt-6-luna",` + user + `,` + chatBridgeTools + `,"seed":1`, "openai-chat-completions"},
+		"tools with a seed":         {`"model":"provider:openai gpt-6-luna",` + user + `,` + chatBridgeTools + `,"seed":1`, "openai-responses"},
+		"tools with stop sequences": {`"model":"provider:openai gpt-6-luna",` + user + `,` + chatBridgeTools + `,"stop":["END"]`, "openai-chat-completions"},
 		"tools on the Chat route":   {`"model":"route:openai-chat-completions gpt-6-luna",` + user + `,` + chatBridgeTools, "openai-chat-completions"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -148,22 +149,11 @@ func TestChatReachesDeploymentsThatTakeBothInterfacesOnOne(t *testing.T) {
 func TestChatBridgeRefusesWhatResponsesLackOrTheFormatRefuses(t *testing.T) {
 	for _, test := range []struct{ name, fields, want string }{
 		{"several choices", `"n":2`, "n: Responses deployments do not support several choices"},
-		{"seed", `"seed":7`, "seed: Responses deployments do not support seeds"},
 		{"stop sequences", `"stop":["END"]`, "stop: Responses deployments do not support stop sequences"},
 		{"logit bias", `"logit_bias":{"50256":-100}`, "logit_bias: Responses deployments do not support logit biases"},
-		{"predicted output", `"prediction":{"type":"content","content":"x"}`, "prediction: Responses deployments do not support predicted outputs"},
-		{"message name", `"messages":[{"role":"user","name":"ann","content":"hi"}]`, "messages[0].name: Responses deployments do not support message names"},
-		// OpenAI's format refuses these on Chat Completions, so the translation must not drop them.
-		{"repetition penalty", `"repetition_penalty":1.1`, "repetition_penalty is not supported for OpenAI-format deployments"},
 		{"reasoning display", `"reasoning":{"display":"brief"}`, "reasoning.display"},
-		{"top_k", `"top_k":5`, "top_k"},
 		{"prompt cache breakpoint member", `"messages":[{"role":"user","content":[{"type":"text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit","ttl":"1h"}}]}]`, "prompt_cache_breakpoint.ttl must be 30m"},
 		{"prompt cache option", `"prompt_cache_options":{"mode":"implicit","scope":"org"}`, "prompt_cache_options supports only mode and ttl"},
-		{"breakpoint in a tool output", `"messages":[{"role":"user","content":"Find a1."},{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{\"id\":\"a1\"}"}}]},` +
-			`{"role":"tool","tool_call_id":"call_1","content":[{"type":"text","text":"42","prompt_cache_breakpoint":{"mode":"explicit"}}]}],` + chatBridgeTools,
-			"messages[2].content[0].prompt_cache_breakpoint: Responses deployments do not support prompt cache breakpoints in tool outputs"},
-		{"cache control in a tool output", `"messages":[{"role":"user","content":"Find a1."},{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{\"id\":\"a1\"}"}}]},` +
-			`{"role":"tool","tool_call_id":"call_1","content":[{"type":"text","text":"42","cache_control":{"type":"ephemeral"}}]}],` + chatBridgeTools, "cache_control"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			body := `{"model":"openai-gpt-5.6-sol-pro","messages":[{"role":"user","content":"hi"}],` + test.fields + `}`
@@ -180,8 +170,8 @@ func TestChatBridgeRefusesWhatResponsesLackOrTheFormatRefuses(t *testing.T) {
 
 // A Chat Completions client of OpenAI's models asks for reasoning summaries with the display
 // summarized. Only Responses return them, so a request that reasons goes through Responses, which
-// get the summary auto. A request that Responses cannot carry is refused rather than answered
-// without them. Claude's updates get what omitted gets, as these models write no progress updates.
+// get the summary auto. A request that Responses cannot carry stays on Chat Completions and is
+// answered without them. Claude's updates get what omitted gets, as these models write no progress updates.
 // Open models return their reasoning whole, so they take every display and stay on Chat
 // Completions, and their provider gets no display.
 func TestChatSummarizedReasoningGoesThroughResponses(t *testing.T) {
@@ -193,13 +183,14 @@ func TestChatSummarizedReasoningGoesThroughResponses(t *testing.T) {
 		"summarized, reasoning off":    {`"model":"provider:openai gpt-6-luna",` + user + `,"reasoning":{"display":"summarized","effort":"none"}`, "openai-chat-completions", ""},
 		"summarized, enabled false":    {`"model":"provider:openai gpt-6-luna",` + user + `,"reasoning":{"display":"summarized","enabled":false}`, "openai-chat-completions", ""},
 		"omitted":                      {`"model":"provider:openai gpt-6-luna",` + user + `,"reasoning_display":"omitted"`, "openai-chat-completions", ""},
-		"summarized with a seed":       {`"model":"provider:openai gpt-6-luna",` + user + `,"reasoning_display":"summarized","seed":1`, "openai-chat-completions", "reasoning_display summarized is not supported with seed"},
+		"summarized with a seed":       {`"model":"provider:openai gpt-6-luna",` + user + `,"reasoning_display":"summarized","seed":1`, "openai-responses", ""},
+		"summarized with a stop":       {`"model":"provider:openai gpt-6-luna",` + user + `,"reasoning_display":"summarized","stop":["END"]`, "openai-chat-completions", ""},
 		"updates":                      {`"model":"provider:openai gpt-6-luna",` + user + `,"reasoning":{"display":"updates"}`, "openai-chat-completions", ""},
 		"an open model on Azure":       {`"model":"azure-deepseek-v4-flash-0423",` + user + `,"reasoning":{"display":"summarized"}`, "", ""},
 		"omitted on Chutes":            {`"model":"chutes-glm-5.2",` + user + `,"reasoning_display":"omitted"`, "", ""},
 		"updates on an open model":     {`"model":"azure-deepseek-v4-flash-0423",` + user + `,"reasoning":{"display":"updates"}`, "", ""},
-		"another display":              {`"model":"provider:openai gpt-6-luna",` + user + `,"reasoning":{"display":"brief"}`, "openai-chat-completions", "reasoning.display must be summarized, omitted or updates for the selected deployment"},
-		"summarized on the Chat route": {`"model":"route:openai-chat-completions gpt-6-luna",` + user + `,"reasoning_display":"summarized"`, "openai-chat-completions", "reasoning_display summarized is not supported for the selected deployment"},
+		"another display":              {`"model":"provider:openai gpt-6-luna",` + user + `,"reasoning":{"display":"brief"}`, "openai-chat-completions", "reasoning.display must be summarized, omitted or updates"},
+		"summarized on the Chat route": {`"model":"route:openai-chat-completions gpt-6-luna",` + user + `,"reasoning_display":"summarized"`, "openai-chat-completions", ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			body := "{" + test.body + "}"

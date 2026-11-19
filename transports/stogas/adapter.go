@@ -64,8 +64,39 @@ func (DefaultAdapter) ValidateRequest(state *State) error {
 	if err := validateCommonResponsesPolicy(state); err != nil {
 		return err
 	}
+	if err := validatePreferences(state.Resolution.Route, state.Resolution.RawBody()); err != nil {
+		return err
+	}
 	state.Resolution.KeepReadableHistory()
+	state.Resolution.KeepCarriedPreferences()
 	return translate(state)
+}
+
+// validatePreferences checks the form of the settings that only tune a reply, on every deployment
+// and before the deployments without a control for one go without it
+// (catalog.ResolvedRequest.KeepCarriedPreferences), so that a request is valid or invalid whatever
+// deployment serves it. The provider decides the values of a setting that reaches it. The lifetimes
+// of cache writes stay closed, because each has its own price.
+func validatePreferences(route catalog.Route, raw map[string]json.RawMessage) error {
+	if err := validateInteger(raw, "top_k"); err != nil {
+		return err
+	}
+	if err := validateNumber(raw, "repetition_penalty"); err != nil {
+		return err
+	}
+	if err := validateTaskBudget(raw["task_budget"]); err != nil {
+		return err
+	}
+	if err := validateOpenAIPromptCaching(route, raw); err != nil {
+		return err
+	}
+	if route == catalog.RouteChat {
+		if err := validateChatPrediction(raw["prediction"]); err != nil {
+			return err
+		}
+		return validateChatCacheControls(raw)
+	}
+	return validateResponsesCacheControls(raw)
 }
 
 // translate gives a bridged request the body of the interface that its provider takes. The

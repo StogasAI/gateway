@@ -31,9 +31,6 @@ func (a CloudClaudeAdapter) ValidateRequest(state *State) error {
 	if state == nil || state.Resolution == nil {
 		return catalog.ErrUnsupportedRequest
 	}
-	if state.Resolution.Deployment.Hosting == hostingAmazon && rawJSONValueSet(state.Resolution.RawBody()["task_budget"]) {
-		return invalidRequest("task_budget is not supported for Claude in Amazon Bedrock")
-	}
 	return a.AnthropicAdapter.ValidateRequest(state)
 }
 

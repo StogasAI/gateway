@@ -11,14 +11,12 @@ import (
 // Read only feature selectors. Large prompt strings and tool schemas are skipped
 // by the JSON decoder, rather than decoded into provider request types here.
 func requestCapabilities(raw map[string]json.RawMessage, route Route, shared Capabilities) (Capabilities, error) {
-	// Neither a prompt cache key nor parallel_tool_calls needs a capability. A cache key only tunes
-	// how a provider routes requests to its cache, and a deployment that does not take it never
-	// receives it (ResolvedRequest.ToBifrost). parallel_tool_calls either allows parallel calls,
-	// the default that dropNoOpCompatibilityFields drops, or asks the provider for one call per turn.
+	// Neither a prompt cache setting nor parallel_tool_calls needs a capability. A cache setting
+	// only tunes how a provider caches the prompt, and a deployment that does not take one never
+	// receives it (ResolvedRequest.KeepCarriedPreferences, ResolvedRequest.ToBifrost).
+	// parallel_tool_calls either allows parallel calls, the default that
+	// dropNoOpCompatibilityFields drops, or asks the provider for one call per turn.
 	var required Capabilities
-	for name, target := range map[string]*bool{"prompt_cache_retention": &required.ImplicitPromptCaching, "prompt_cache_options": &required.ExplicitPromptCaching} {
-		*target = len(raw[name]) != 0 && !rawJSONNull(raw[name])
-	}
 	if value, ok := raw["stream"]; ok && !shared.Streaming {
 		if err := json.Unmarshal(value, &required.Streaming); err != nil {
 			return required, ErrInvalidJSON
@@ -106,8 +104,6 @@ func validateRequestCapabilities(required, supported Capabilities) error {
 		{"tool choice", required.ToolChoice, supported.ToolChoice},
 		{"structured outputs", required.StructuredOutputs, supported.StructuredOutputs},
 		{"system messages", required.SystemMessages, supported.SystemMessages},
-		{"prompt caching", required.ImplicitPromptCaching, supported.ImplicitPromptCaching},
-		{"explicit prompt caching", required.ExplicitPromptCaching, supported.ExplicitPromptCaching},
 	} {
 		if feature.required && !feature.supported {
 			return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: feature.name + " is not supported for the selected deployment"}

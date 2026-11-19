@@ -300,9 +300,9 @@ func TestResolveChatRedactsStopSequencesInRawRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	if resolution.StructuredPIIRedactionSummary().ItemsRedacted != 1 ||
-		bytes.Contains(resolution.RawBody()["stop_sequences"], []byte("alice@corp.io")) ||
-		!bytes.Contains(resolution.RawBody()["stop_sequences"], []byte("<EMAIL_ADDRESS>")) {
-		t.Fatalf("stop sequences were not redacted: summary=%#v value=%s", resolution.StructuredPIIRedactionSummary(), resolution.RawBody()["stop_sequences"])
+		bytes.Contains(resolution.RawBody()["stop"], []byte("alice@corp.io")) ||
+		!bytes.Contains(resolution.RawBody()["stop"], []byte("<EMAIL_ADDRESS>")) {
+		t.Fatalf("stop sequences were not redacted: summary=%#v value=%s", resolution.StructuredPIIRedactionSummary(), resolution.RawBody()["stop"])
 	}
 }
 

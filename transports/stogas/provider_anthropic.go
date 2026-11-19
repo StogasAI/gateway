@@ -103,9 +103,6 @@ func (a AnthropicAdapter) ValidateRequest(state *State) error {
 	if err := validateAnthropicOutputTokenLimit(state); err != nil {
 		return err
 	}
-	if err := validateAnthropicTaskBudget(state); err != nil {
-		return err
-	}
 	if err := validateAnthropicContextManagement(state); err != nil {
 		return err
 	}
@@ -115,16 +112,12 @@ func (a AnthropicAdapter) ValidateRequest(state *State) error {
 	return validateAnthropicResponsesPolicy(state)
 }
 
-func validateAnthropicTaskBudget(state *State) error {
-	if state == nil || state.Resolution == nil {
-		return catalog.ErrUnsupportedRequest
-	}
-	raw := state.Resolution.RawBody()["task_budget"]
+// validateTaskBudget checks the form of Claude's task budget. It is advisory and never changes the
+// hold, so the provider owns which models accept it and its minimum.
+func validateTaskBudget(raw json.RawMessage) error {
 	if !rawJSONValueSet(raw) {
 		return nil
 	}
-	// task_budget is advisory and never changes the hold, so the provider owns
-	// which models accept it and its minimum.
 	taskBudget, ok := rawObject(raw)
 	if !ok {
 		return invalidRequest("task_budget must be an object")
@@ -358,36 +351,12 @@ func validateAnthropicChatCompletionPolicy(state *State) error {
 		return nil
 	}
 	raw := state.Resolution.RawBody()
-	if err := validateAnthropicSamplingIntent(state, raw); err != nil {
-		return err
-	}
 	if format, ok := rawObject(raw["response_format"]); ok && rawJSONValueSet(raw["response_format"]) && rawString(format["type"]) != "json_schema" {
 		return invalidRequest("response_format.type must be json_schema for Anthropic-format deployments")
 	}
-	if rawJSONValueSet(raw["prompt_cache_retention"]) {
-		return invalidRequest("prompt_cache_retention is not supported for Anthropic-format deployments")
-	}
-	if err := rejectAnthropicUnsupportedParameters(raw,
-		"frequency_penalty",
-		"logit_bias",
-		"logprobs",
-		"prediction",
-		"presence_penalty",
-		"prompt_cache_options",
-		"repetition_penalty",
-		"seed",
-		"top_logprobs",
-		"verbosity",
-		"web_search_options",
-	); err != nil {
-		return err
-	}
-	if count, err := validatePromptCacheBreakpoints(raw["messages"]); err != nil {
-		return err
-	} else if count > 0 {
-		return invalidRequest("prompt_cache_breakpoint is not supported for Anthropic-format deployments")
-	}
-	if err := validateAnthropicChatCacheControls(raw); err != nil {
+	// Each of these asks for something in the reply that Claude cannot give. The settings that
+	// only tune the reply never reach these checks (catalog.ResolvedRequest.KeepCarriedPreferences).
+	if err := rejectAnthropicUnsupportedParameters(raw, "logit_bias", "logprobs", "top_logprobs", "web_search_options"); err != nil {
 		return err
 	}
 	for _, rawTool := range state.Resolution.RawTools() {
@@ -413,9 +382,6 @@ func validateAnthropicResponsesPolicy(state *State) error {
 	if streamOptions, ok := rawObject(raw["stream_options"]); ok && rawBool(streamOptions["include_obfuscation"]) {
 		return invalidRequest("stream_options.include_obfuscation cannot be preserved on Anthropic-format deployments")
 	}
-	if err := validateAnthropicSamplingIntent(state, raw); err != nil {
-		return err
-	}
 	if reasoning, ok := rawObject(raw["reasoning"]); ok {
 		// OpenAI's summaries become Claude's summarized thinking, none omits it, and updates asks
 		// for Claude's progress updates without reasoning summaries.
@@ -424,33 +390,12 @@ func validateAnthropicResponsesPolicy(state *State) error {
 		default:
 			return invalidRequest("reasoning.summary must be auto, concise, detailed, none or updates for Anthropic-format deployments")
 		}
-		// Claude has no such setting: context_management's clear_thinking edit chooses which
-		// earlier thinking it reads.
-		if value, exists := rawStringValue(reasoning["context"]); exists && value != "auto" {
-			return invalidRequest("reasoning.context must be auto for Anthropic-format deployments")
-		}
 	}
-	if rawJSONValueSet(raw["prompt_cache_retention"]) {
-		return invalidRequest("prompt_cache_retention is not supported for Anthropic-format deployments")
-	}
-	if err := rejectAnthropicUnsupportedParameters(raw,
-		"frequency_penalty",
-		"presence_penalty",
-		"prompt_cache_options",
-		"top_logprobs",
-	); err != nil {
+	if err := rejectAnthropicUnsupportedParameters(raw, "top_logprobs"); err != nil {
 		return err
 	}
 	// Each Claude block comes back whole in a reasoning item's encrypted content.
 	if err := validateResponsesInclude(raw["include"], "reasoning.encrypted_content"); err != nil {
-		return err
-	}
-	if count, err := validatePromptCacheBreakpoints(raw["input"]); err != nil {
-		return err
-	} else if count > 0 {
-		return invalidRequest("prompt_cache_breakpoint is not supported for Anthropic-format deployments")
-	}
-	if err := validateAnthropicResponsesCacheControls(raw); err != nil {
 		return err
 	}
 	return validateResponsesToolPolicy(state, raw, func(tools []schemas.ResponsesTool) error {
@@ -473,14 +418,7 @@ func rejectAnthropicUnsupportedParameters(raw map[string]json.RawMessage, names 
 	return nil
 }
 
-func validateAnthropicSamplingIntent(state *State, raw map[string]json.RawMessage) error {
-	if rawJSONValueSet(raw["stop"]) && rawJSONValueSet(raw["stop_sequences"]) {
-		return invalidRequest("stop conflicts with stop_sequences")
-	}
-	return validateStopSequenceArray(raw["stop_sequences"], "stop_sequences", maxPortableStopSequences)
-}
-
-func validateAnthropicChatCacheControls(raw map[string]json.RawMessage) error {
+func validateChatCacheControls(raw map[string]json.RawMessage) error {
 	if cacheControl, ok := raw["cache_control"]; ok {
 		if err := validateAnthropicCacheControl(cacheControl, "cache_control"); err != nil {
 			return err
@@ -515,7 +453,7 @@ func validateAnthropicChatMessageCacheControls(raw json.RawMessage) error {
 	return nil
 }
 
-func validateAnthropicResponsesCacheControls(raw map[string]json.RawMessage) error {
+func validateResponsesCacheControls(raw map[string]json.RawMessage) error {
 	if cacheControl, ok := raw["cache_control"]; ok {
 		if err := validateAnthropicCacheControl(cacheControl, "cache_control"); err != nil {
 			return err
@@ -1051,7 +989,7 @@ func anthropicRawRequestContainsCacheControl(route catalog.Route, rawData map[st
 	}
 	switch route {
 	case catalog.RouteChat:
-		return rawChatCacheControlExists(rawData["messages"], false)
+		return rawChatCacheControlExists(rawData["messages"])
 	case catalog.RouteResponses:
 		return rawResponsesCacheControlExists(rawData["input"])
 	default:

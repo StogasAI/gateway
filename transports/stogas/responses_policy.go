@@ -48,11 +48,11 @@ func validateCommonResponsesPolicy(state *State) error {
 			return err
 		}
 	}
+	// Claude takes them, and Chat Completions takes them as stop.
+	if err := validateStopSequenceArray(raw["stop_sequences"], "stop_sequences", maxPortableStopSequences); err != nil {
+		return err
+	}
 	if state.Resolution.Bridged() {
-		// Chat Completions takes them as stop, which Responses lacks.
-		if err := validateStopSequenceArray(raw["stop_sequences"], "stop_sequences", maxPortableStopSequences); err != nil {
-			return err
-		}
 		// The Chat Completions body keeps only the function tools that tool_choice allows, so its
 		// checks cannot tell what tool_choice asked, and the reply checks hold the reply to it.
 		var tools []schemas.ResponsesTool
@@ -112,7 +112,7 @@ func validateCommonResponsesPolicy(state *State) error {
 	if err := validateResponsesTextConfig(state, raw["text"]); err != nil {
 		return err
 	}
-	if err := validateResponsesTruncation(state, raw["truncation"]); err != nil {
+	if err := validateResponsesTruncation(raw["truncation"]); err != nil {
 		return err
 	}
 	if err := validateResponsesAccessPrograms(state, raw["access_programs"]); err != nil {
@@ -215,9 +215,6 @@ func validateResponsesTextConfig(state *State, raw json.RawMessage) error {
 		return invalidRequest("text must contain only format and verbosity")
 	}
 	if verbosity, exists := text["verbosity"]; exists && rawJSONValueSet(verbosity) {
-		if responsesUsesAnthropicWire(state) {
-			return invalidRequest("text.verbosity cannot be preserved on Anthropic-format deployments")
-		}
 		if _, ok := rawStringValue(verbosity); !ok {
 			return invalidRequest("text.verbosity must be a string")
 		}
@@ -311,16 +308,13 @@ func rawInteger(valueRaw json.RawMessage, name string) (int, bool, error) {
 	return value, true, nil
 }
 
-func validateResponsesTruncation(state *State, raw json.RawMessage) error {
+func validateResponsesTruncation(raw json.RawMessage) error {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil
 	}
 	var value string
 	if err := sonic.Unmarshal(raw, &value); err != nil {
 		return invalidRequest("truncation must be a string")
-	}
-	if responsesUsesAnthropicWire(state) {
-		return invalidRequest("truncation is not supported for Anthropic-format deployments")
 	}
 	return nil
 }
@@ -1098,9 +1092,6 @@ func validateResponsesToolChoice(state *State, raw json.RawMessage, tools []sche
 	}
 	rawType := rawString(choice["type"])
 	if rawType == "allowed_tools" {
-		if responsesUsesAnthropicWire(state) {
-			return invalidRequest("tool_choice.allowed_tools is supported only for OpenAI-format deployments")
-		}
 		if err := rejectUnsupportedResponsesToolKeys(choice, "tool_choice", "type", "mode", "tools"); err != nil {
 			return err
 		}
@@ -1193,7 +1184,7 @@ func validateResponsesAllowedToolChoice(state *State, raw json.RawMessage, tools
 	seen := make(map[string]bool, len(allowedTools))
 	for index, allowed := range allowedTools {
 		path := fmt.Sprintf("tool_choice.tools[%d]", index)
-		toolType, err := validateResponsesToolSelectorType(state, rawString(allowed["type"]))
+		toolType, err := validateResponsesAllowedToolType(state, rawString(allowed["type"]))
 		if err != nil {
 			return err
 		}
@@ -1264,6 +1255,19 @@ func responsesRawHostedToolExists(state *State, rawType string) bool {
 		}
 	}
 	return false
+}
+
+// validateResponsesAllowedToolType checks the type of an allowed_tools entry. Claude gets the
+// list as the declarations that it names, so it takes Claude's hosted tools too, which no
+// selector can force.
+func validateResponsesAllowedToolType(state *State, rawType string) (schemas.ResponsesToolType, error) {
+	if responsesUsesAnthropicWire(state) {
+		switch toolType := catalog.CanonicalResponsesToolType(strings.TrimSpace(rawType)); toolType {
+		case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebFetch:
+			return toolType, nil
+		}
+	}
+	return validateResponsesToolSelectorType(state, rawType)
 }
 
 func validateResponsesToolSelectorType(state *State, rawType string) (schemas.ResponsesToolType, error) {
@@ -1666,7 +1670,7 @@ func validateResponsesMessageContent(state *State, raw json.RawMessage, path str
 			if err := validateResponsesOutputAnnotations(state, block["annotations"], blockPath+".annotations"); err != nil {
 				return false, err
 			}
-			if err := validateResponsesOutputLogProbs(state, block["logprobs"], blockPath+".logprobs"); err != nil {
+			if err := validateResponsesOutputLogProbs(block["logprobs"], blockPath+".logprobs"); err != nil {
 				return false, err
 			}
 			meaningful = meaningful || hasNonWhitespace(text)
@@ -1676,9 +1680,6 @@ func validateResponsesMessageContent(state *State, raw json.RawMessage, path str
 			}
 			if role != "assistant" {
 				return false, invalidRequest(blockPath + ".type is supported only for assistant history")
-			}
-			if responsesUsesAnthropicWire(state) {
-				return false, invalidRequest("refusal history is not supported for Anthropic-format deployments")
 			}
 			text, ok := rawStringValue(block["refusal"])
 			if !ok {
@@ -1751,16 +1752,13 @@ func validateResponsesOutputAnnotations(state *State, raw json.RawMessage, path 
 	return nil
 }
 
-func validateResponsesOutputLogProbs(state *State, raw json.RawMessage, path string) error {
+func validateResponsesOutputLogProbs(raw json.RawMessage, path string) error {
 	if len(raw) == 0 {
 		return nil
 	}
 	var entries []map[string]json.RawMessage
 	if err := sonic.Unmarshal(raw, &entries); err != nil || entries == nil {
 		return invalidRequest(path + " must be an array")
-	}
-	if responsesUsesAnthropicWire(state) && len(entries) > 0 {
-		return invalidRequest(path + " cannot be preserved on Anthropic-format deployments")
 	}
 	for index, entry := range entries {
 		if err := validateResponsesOutputLogProb(entry, fmt.Sprintf("%s[%d]", path, index), true); err != nil {
@@ -1830,7 +1828,7 @@ func validateResponsesToolCallInput(state *State, item map[string]json.RawMessag
 	if err != nil {
 		return err
 	}
-	if err := validateProviderToolCallID(state, callID, path+".call_id"); err != nil {
+	if err := validateProviderToolCallID(callID, path+".call_id"); err != nil {
 		return err
 	}
 	if _, exists := validation.calls[callID]; exists {

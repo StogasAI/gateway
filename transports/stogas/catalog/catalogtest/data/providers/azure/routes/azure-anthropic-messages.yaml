@@ -15,12 +15,12 @@ routes:
   sampling:
     temperature: true
     topP: true
-    topK: false
-    frequencyPenalty: true
-    presencePenalty: true
+    topK: true
+    frequencyPenalty: false
+    presencePenalty: false
     repetitionPenalty: false
-    seed: true
-    logitBias: true
+    seed: false
+    logitBias: false
   # Native document formats reviewed 2026-10-05: https://platform.claude.com/docs/en/build-with-claude/files
   documentFormats:
     extensions: [.csv, .md, .pdf, .txt]
