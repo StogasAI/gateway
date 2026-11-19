@@ -440,15 +440,12 @@ func inspectionPlugins(parts []*Plugins) (*Plugins, error) {
 	return plugins, validateInspectionPlugins(plugins)
 }
 
+// sortedLists keeps an empty allow list, which admits nothing.
 func sortedLists(value *Lists) *Lists {
-	return &Lists{Allow: sortedCopy(value.Allow), Deny: sortedCopy(value.Deny)}
-}
-
-func sortedCopy(values []string) []string {
-	if values == nil {
-		return nil
-	}
-	return slices.Sorted(slices.Values(values))
+	out := &Lists{Allow: slices.Clone(value.Allow), Deny: slices.Clone(value.Deny)}
+	slices.Sort(out.Allow)
+	slices.Sort(out.Deny)
+	return out
 }
 
 // inspectionSetBy names the policies that set each combined setting outside
