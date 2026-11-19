@@ -138,9 +138,9 @@ func NormalizeStogasErrorCode(code string, status int) string {
 		"method_not_allowed", "network_denied", "organization_restricted", "platform_rate_limited", "transport_denied",
 		"model_ambiguous", "model_retired", "model_unavailable", "parameter_limit_exceeded", "permission_denied",
 		"provider_not_allowed", "provider_state_unsupported", "provider_unavailable", "rate_limit_exceeded",
-		"request_body_timeout", "request_timeout", "request_too_large", "response_encoding_failed",
+		"reasoning_mode_unavailable", "request_body_timeout", "request_timeout", "request_too_large", "response_encoding_failed",
 		"stogas_response_proof_failed", "route_not_found", "schedule_denied", "service_tier_unavailable",
-		"unsupported_media_type", "unsupported_request", "unsupported_service_tier", "unsupported_tool",
+		"unsupported_media_type", "unsupported_reasoning_mode", "unsupported_request", "unsupported_service_tier", "unsupported_tool",
 		// A provider call that never reached the provider can fail with these: the transport
 		// proves so itself, and the provider account errors keep the code that the reply shows.
 		"upstream_access_denied", "upstream_authentication_failed", "upstream_capacity_unavailable",

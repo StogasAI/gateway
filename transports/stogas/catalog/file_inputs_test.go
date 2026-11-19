@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/maximhq/bifrost/core/schemas"
-	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/inputfiles"
 	"github.com/maximhq/bifrost/transports/stogas/policy"
 )
@@ -153,10 +152,6 @@ func TestRoutingRefusesAnAttachmentThatNoCandidateCanRead(t *testing.T) {
 	if public.StatusCode != 400 || checks != 0 || public.Message != "messages[0].content[1] documents are not supported by azure-gpt-5.6-sol. messages[0].content[1] is application/pdf, which is not supported by openai-gpt-5.6-sol. Set plugins.textExtraction.pdf to auto to send it as text" ||
 		public.Code != AttachmentUnsupported || public.Param != "messages[0].content[1]" {
 		t.Fatalf("the request was not refused before credential preparation: %+v, %d", public, checks)
-	}
-	// Clients and request logs see a code only if the public vocabulary lists it.
-	if code := billing.NormalizeStogasErrorCode(public.Code, public.StatusCode); code != AttachmentUnsupported {
-		t.Fatalf("the refusal reaches clients as %s", code)
 	}
 }
 

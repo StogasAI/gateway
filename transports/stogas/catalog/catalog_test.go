@@ -4,9 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"maps"
+	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1934,5 +1939,66 @@ func TestSnapshotRejectsIncompleteOrAmbiguousFileFormats(t *testing.T) {
 				t.Fatal("invalid document formats accepted")
 			}
 		})
+	}
+}
+
+// Every refusal that the package builds reaches request logs with the code that clients get,
+// because the logs keep only codes in the public vocabulary and record any other as its status
+// category.
+func TestRequestLogsKeepEveryCatalogErrorCode(t *testing.T) {
+	files := token.NewFileSet()
+	constants := map[string]string{}
+	var codes []ast.Expr
+	sources, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range sources {
+		if strings.HasSuffix(source, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(files, source, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ast.Inspect(file, func(node ast.Node) bool {
+			switch node := node.(type) {
+			case *ast.ValueSpec:
+				for i, value := range node.Values {
+					if literal, ok := value.(*ast.BasicLit); ok && literal.Kind == token.STRING {
+						constants[node.Names[i].Name], _ = strconv.Unquote(literal.Value)
+					}
+				}
+			case *ast.CompositeLit:
+				if name, ok := node.Type.(*ast.Ident); ok && name.Name == "APIError" {
+					for _, element := range node.Elts {
+						if field, ok := element.(*ast.KeyValueExpr); ok && field.Key.(*ast.Ident).Name == "Code" {
+							codes = append(codes, field.Value)
+						}
+					}
+				}
+			}
+			return true
+		})
+	}
+	checked := 0
+	for _, expression := range codes {
+		var code string
+		switch value := expression.(type) {
+		case *ast.BasicLit:
+			code, _ = strconv.Unquote(value.Value)
+		case *ast.Ident:
+			code = constants[value.Name]
+		case *ast.SelectorExpr:
+			// Another error's code, such as ErrModelUnavailable.Code, which its own literal covers.
+			continue
+		}
+		if code == "" || billing.NormalizeStogasErrorCode(code, 400) != code {
+			t.Errorf("%s: request logs record %q as another code", files.Position(expression.Pos()), code)
+		}
+		checked++
+	}
+	if checked < 20 {
+		t.Fatalf("found only %d error codes", checked)
 	}
 }
