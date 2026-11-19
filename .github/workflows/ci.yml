@@ -3,13 +3,14 @@ name: CI
 on:
   push:
     branches: [main]
+  workflow_call:
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# A release needs a passing run for its exact commit, so only the newest push
-# to a ref runs to the end.
+# A newer push to a ref cancels the run before it. A release runs these jobs
+# itself, so no release waits for a run that a push can cancel.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
