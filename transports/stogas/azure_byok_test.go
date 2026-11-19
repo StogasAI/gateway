@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/maximhq/bifrost/core/network"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/azureauth"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
@@ -492,15 +493,31 @@ func TestApplyUpstreamCredentialsInstallsAzureBoundKey(t *testing.T) {
 	if directKey.AzureKeyConfig.ClientID != nil || directKey.AzureKeyConfig.ClientSecret != nil || directKey.AzureKeyConfig.TenantID != nil {
 		t.Fatal("Azure SDK credentials retained")
 	}
-	// The first token checked the credential before dispatch, and each attempt
-	// reads the one current when it starts.
+	// No sign-in runs before the first attempt, and each attempt reads the token
+	// current when it starts.
+	if signIns != 0 {
+		t.Fatalf("signed in %d times before dispatch", signIns)
+	}
 	signer, _ := ctx.Value(schemas.BifrostContextKeyRequestSigner).(schemas.RequestSigner)
-	for _, want := range []string{"Bearer token-2", "Bearer token-3"} {
+	for _, want := range []string{"Bearer token-1", "Bearer token-2"} {
 		if signer == nil {
 			t.Fatal("Azure signer missing")
 		}
 		if headers, err := signer(nil); err != nil || headers["Authorization"] != want {
 			t.Fatalf("attempt headers %v %v, want %q", headers, err, want)
 		}
+	}
+
+	// A rejected application fails its attempt as Azure's own 401 would, before anything is sent.
+	ctx = schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	if err := applyUpstreamCredentials(ctx, state, azureTokenFunc(func(context.Context, azureauth.Credential) (string, error) {
+		return "", azureauth.ErrCredential
+	}), cloudSignIns{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	signer, _ = ctx.Value(schemas.BifrostContextKeyRequestSigner).(schemas.RequestSigner)
+	if _, rejected := signer(nil); rejected == nil || billing.NormalizeUpstreamStatus(rejected) != "authentication_error" ||
+		!network.RequestNotSent(rejected.Error.Error) {
+		t.Fatalf("a rejected application answered %+v", rejected)
 	}
 }

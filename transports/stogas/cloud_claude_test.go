@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/maximhq/bifrost/core/network"
 	providerutils "github.com/maximhq/bifrost/core/providers/utils"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/awsauth"
@@ -480,32 +481,23 @@ func TestCloudClaudeRequestRefusesSecretsThatCannotServeTheHosting(t *testing.T)
 func TestGoogleSignInSeparatesRejectedKeysFromOutages(t *testing.T) {
 	ctx := context.Background()
 	vertex := cloudDeployment(t, "google-cloud-claude-fable-5-1")
-	for _, test := range []struct {
-		name   string
-		tokens googleTokenSource
-		want   error
-	}{
-		{"no token cache", nil, billing.ErrGatewayUnavailable},
-		{"rejected key", googleTokenFunc(func(context.Context, googleauth.Credential) (string, error) { return "", googleauth.ErrCredential }), billing.ErrByok},
-		{"outage", googleTokenFunc(func(context.Context, googleauth.Credential) (string, error) { return "", googleauth.ErrUnavailable }), billing.ErrGatewayUnavailable},
-	} {
-		if _, err := cloudClaudeRequest(ctx, catalog.ProviderGoogleCloud, testOrganizationID, googleSecret(t, ""), vertex, false, cloudSignIns{google: test.tokens}); !errors.Is(err, test.want) {
-			t.Errorf("%s: error %v, want %v", test.name, err, test.want)
-		}
+	if _, err := cloudClaudeRequest(ctx, catalog.ProviderGoogleCloud, testOrganizationID, googleSecret(t, ""), vertex, false, cloudSignIns{}); !errors.Is(err, billing.ErrGatewayUnavailable) {
+		t.Fatalf("no token cache: %v", err)
 	}
 
-	// Each attempt reads the token again, so a late retry gets a fresh one, and a
-	// key revoked mid-request answers as the provider would.
+	// Each attempt reads the token, so a late retry gets a fresh one, and a rejected key answers
+	// as the provider would, from the first attempt on. No attempt that fails to sign in sent the
+	// request.
 	calls := 0
 	request, err := cloudClaudeRequest(ctx, catalog.ProviderGoogleCloud, testOrganizationID, googleSecret(t, ""), vertex, false,
 		cloudSignIns{google: googleTokenFunc(func(context.Context, googleauth.Credential) (string, error) {
 			calls++
 			switch calls {
-			case 1, 2:
+			case 1:
 				return "ya29.first", nil
-			case 3:
+			case 2:
 				return "ya29.second", nil
-			case 4:
+			case 3:
 				return "", googleauth.ErrCredential
 			}
 			return "", googleauth.ErrUnavailable
@@ -513,14 +505,20 @@ func TestGoogleSignInSeparatesRejectedKeysFromOutages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if calls != 0 {
+		t.Fatalf("signed in %d times before the first attempt", calls)
+	}
 	first, _ := request.signer(nil)
 	second, _ := request.signer(nil)
 	_, rejected := request.signer(nil)
 	_, unavailable := request.signer(nil)
 	if first["Authorization"] != "Bearer ya29.first" || second["Authorization"] != "Bearer ya29.second" ||
-		rejected == nil || *rejected.StatusCode != http.StatusUnauthorized ||
-		unavailable == nil || *unavailable.StatusCode != http.StatusServiceUnavailable {
+		rejected == nil || *rejected.StatusCode != http.StatusUnauthorized || !network.RequestNotSent(rejected.Error.Error) ||
+		unavailable == nil || *unavailable.StatusCode != http.StatusServiceUnavailable || !network.RequestNotSent(unavailable.Error.Error) {
 		t.Fatalf("attempts = %v, %v, %+v, %+v", first, second, rejected, unavailable)
+	}
+	if billing.NormalizeUpstreamStatus(rejected) != "authentication_error" {
+		t.Fatalf("a rejected key logs as %s", billing.NormalizeUpstreamStatus(rejected))
 	}
 }
 
@@ -535,23 +533,26 @@ func TestFederatedCredentialsSignInAsTheOrganization(t *testing.T) {
 	roles := awsRoleFunc(func(_ context.Context, credential awsauth.Credential) (aws.Credentials, error) {
 		asked = append(asked, credential)
 		switch len(asked) {
-		case 1, 2:
+		case 1:
 			return aws.Credentials{AccessKeyID: "ASIAFIRST", SecretAccessKey: "first", SessionToken: "session-1"}, nil
-		case 3:
+		case 2:
 			return aws.Credentials{AccessKeyID: "ASIASECOND", SecretAccessKey: "second", SessionToken: "session-2"}, nil
+		case 3:
+			return aws.Credentials{}, awsauth.ErrCredential
 		}
-		return aws.Credentials{}, awsauth.ErrCredential
+		return aws.Credentials{}, awsauth.ErrUnavailable
 	})
 	request, err := cloudClaudeRequest(ctx, catalog.ProviderAWS, testOrganizationID, awsRoleSecret(t, "us-east-1", ""), bedrock, false, cloudSignIns{roles: roles})
 	if err != nil {
 		t.Fatal(err)
 	}
+	first, _ := request.signer([]byte("{}"))
 	if want := (awsauth.Credential{OrganizationID: testOrganizationID, Region: "us-east-1", RoleARN: testAWSRoleARN}); asked[0] != want {
 		t.Fatalf("assumed %+v", asked[0])
 	}
-	first, _ := request.signer([]byte("{}"))
 	second, _ := request.signer([]byte("{}"))
 	_, rejected := request.signer([]byte("{}"))
+	_, unavailable := request.signer([]byte("{}"))
 	if first["X-Amz-Security-Token"] != "session-1" || !strings.Contains(first["Authorization"], "Credential=ASIAFIRST/") ||
 		second["X-Amz-Security-Token"] != "session-2" || !strings.Contains(second["Authorization"], "Credential=ASIASECOND/") {
 		t.Fatalf("signatures %v, %v", first, second)
@@ -559,26 +560,14 @@ func TestFederatedCredentialsSignInAsTheOrganization(t *testing.T) {
 	if !strings.Contains(first["Authorization"], "SignedHeaders=host;x-amz-date;x-amz-security-token") {
 		t.Fatalf("the signature leaves the session token out: %s", first["Authorization"])
 	}
-	if rejected == nil || *rejected.StatusCode != http.StatusUnauthorized {
+	if rejected == nil || *rejected.StatusCode != http.StatusUnauthorized || !network.RequestNotSent(rejected.Error.Error) {
 		t.Fatalf("a role that AWS stopped trusting answered %+v", rejected)
 	}
-
-	for _, test := range []struct {
-		name  string
-		roles awsRoleSource
-		want  error
-	}{
-		{"no role cache", nil, billing.ErrGatewayUnavailable},
-		{"AWS refuses the role", awsRoleFunc(func(context.Context, awsauth.Credential) (aws.Credentials, error) {
-			return aws.Credentials{}, awsauth.ErrCredential
-		}), billing.ErrByok},
-		{"outage", awsRoleFunc(func(context.Context, awsauth.Credential) (aws.Credentials, error) {
-			return aws.Credentials{}, awsauth.ErrUnavailable
-		}), billing.ErrGatewayUnavailable},
-	} {
-		if _, err := cloudClaudeRequest(ctx, catalog.ProviderAWS, testOrganizationID, awsRoleSecret(t, "us-east-1", ""), bedrock, false, cloudSignIns{roles: test.roles}); !errors.Is(err, test.want) {
-			t.Errorf("%s: error %v, want %v", test.name, err, test.want)
-		}
+	if unavailable == nil || *unavailable.StatusCode != http.StatusServiceUnavailable || !network.RequestNotSent(unavailable.Error.Error) {
+		t.Fatalf("an AWS outage answered %+v", unavailable)
+	}
+	if _, err := cloudClaudeRequest(ctx, catalog.ProviderAWS, testOrganizationID, awsRoleSecret(t, "us-east-1", ""), bedrock, false, cloudSignIns{}); !errors.Is(err, billing.ErrGatewayUnavailable) {
+		t.Fatalf("no role cache: %v", err)
 	}
 
 	// Google signs in through the pool as the organization, and as the service account when the
@@ -593,11 +582,11 @@ func TestFederatedCredentialsSignInAsTheOrganization(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if want := (googleauth.Credential{ClientEmail: account, OrganizationID: testOrganizationID, Provider: testGoogleProvider}); signIn != want {
-			t.Fatalf("signed in as %+v", signIn)
-		}
 		if headers, _ := request.signer(nil); headers["Authorization"] != "Bearer ya29.federated" {
 			t.Fatalf("headers %v", headers)
+		}
+		if want := (googleauth.Credential{ClientEmail: account, OrganizationID: testOrganizationID, Provider: testGoogleProvider}); signIn != want {
+			t.Fatalf("signed in as %+v", signIn)
 		}
 	}
 }

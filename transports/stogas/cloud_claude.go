@@ -16,6 +16,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+	"github.com/maximhq/bifrost/core/network"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/accesstoken"
 	"github.com/maximhq/bifrost/transports/stogas/awsauth"
@@ -292,12 +293,6 @@ func cloudClaudeRequest(ctx context.Context, provider schemas.ModelProvider, org
 				return cloudRequest{}, billing.ErrGatewayUnavailable
 			}
 			role := awsauth.Credential{OrganizationID: organizationID, Region: credential.Region, RoleARN: credential.RoleARN}
-			if _, err := signIns.roles.Credentials(ctx, role); err != nil {
-				if errors.Is(err, awsauth.ErrCredential) {
-					return cloudRequest{}, billing.ErrByok
-				}
-				return cloudRequest{}, billing.ErrGatewayUnavailable
-			}
 			request.signer = sigV4Signer(func() (aws.Credentials, error) { return signIns.roles.Credentials(ctx, role) }, service, credential.Region, request.url)
 		default:
 			key := aws.Credentials{AccessKeyID: credential.AccessKeyID, SecretAccessKey: credential.SecretAccessKey}
@@ -336,12 +331,6 @@ func cloudClaudeRequest(ctx context.Context, provider schemas.ModelProvider, org
 			return cloudRequest{}, billing.ErrGatewayUnavailable
 		}
 		signIn := credential.signIn(organizationID)
-		if _, err := googleTokens.Token(ctx, signIn); err != nil {
-			if errors.Is(err, googleauth.ErrCredential) {
-				return cloudRequest{}, billing.ErrByok
-			}
-			return cloudRequest{}, billing.ErrGatewayUnavailable
-		}
 		request.signer = bearerSigner(func() (string, error) { return googleTokens.Token(ctx, signIn) })
 		return request, nil
 	}
@@ -398,14 +387,19 @@ func bearerSigner(current func() (string, error)) schemas.RequestSigner {
 }
 
 // upstreamSignInFailure reports a sign-in failure as the provider would: a
-// rejected credential as 401, anything else as 503, which a retry may fix.
+// rejected credential as 401, which moves the request to the next pair, and
+// anything else as 503, which a retry may fix. The attempt never sent the
+// request, so no provider can have run it.
 func upstreamSignInFailure(err error) *schemas.BifrostError {
-	status, message := http.StatusServiceUnavailable, "Upstream sign-in is unavailable"
+	status, message, cause := http.StatusServiceUnavailable, "Upstream sign-in is unavailable", accesstoken.ErrUnavailable
 	// Every sign-in reports a rejected credential as accesstoken.ErrCredential.
 	if errors.Is(err, accesstoken.ErrCredential) {
-		status, message = http.StatusUnauthorized, "Upstream credential rejected"
+		status, message, cause = http.StatusUnauthorized, "Upstream credential rejected", accesstoken.ErrCredential
 	}
-	return &schemas.BifrostError{StatusCode: schemas.Ptr(status), Error: &schemas.ErrorField{Message: message}}
+	return &schemas.BifrostError{StatusCode: schemas.Ptr(status), Error: &schemas.ErrorField{
+		Message: message,
+		Error:   &network.NotSentError{Err: cause},
+	}}
 }
 
 // applyCloudClaudeRequest installs one pair's cloud request. The body was

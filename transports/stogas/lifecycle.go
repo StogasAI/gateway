@@ -247,16 +247,10 @@ func applyUpstreamCredentials(
 				Scope:          azure.Scopes[0],
 				OrganizationID: authorization.OrganizationID,
 			}
-			// The first token decides before dispatch whether the credential works.
-			if _, err := azureTokens.Token(ctx, signIn); err != nil {
-				if errors.Is(err, azureauth.ErrCredential) {
-					return gatewaybilling.ErrByok
-				}
-				return gatewaybilling.ErrGatewayUnavailable
-			}
 			// Core's own sign-in keeps every credential for the life of the
 			// process, so the provider never receives the client secret. It reads
-			// a token for each attempt from the signer instead.
+			// a token for each attempt from the signer instead, where a rejected
+			// sign-in fails the attempt as the provider's own 401 would.
 			azure.ClientID, azure.ClientSecret, azure.TenantID = nil, nil, nil
 			ctx.SetValue(schemas.BifrostContextKeyRequestSigner, bearerSigner(func() (string, error) { return azureTokens.Token(ctx, signIn) }))
 		}

@@ -414,11 +414,12 @@ func NormalizeUpstreamStatus(bifrostErr *schemas.BifrostError) string {
 	case identifiers.has("authentication_error", "invalid_api_key", "unauthorized", "upstream_authentication_failed",
 		"unrecognizedclientexception", "expiredtokenexception"):
 		return "authentication_error"
-	// OpenAI sends missing_scope, as a 401, for a restricted key that lacks a permission. Google
-	// sends FAILED_PRECONDITION, as a 400, for a model that needs allowlisting or that an
+	// OpenAI sends missing_scope, as a 401, for a restricted key that lacks a permission, and Azure
+	// sends PermissionDenied, as a 401, for an identity without a data-plane role on the account.
+	// Google sends FAILED_PRECONDITION, as a 400, for a model that needs allowlisting or that an
 	// organization policy disallows (https://docs.cloud.google.com/vertex-ai/generative-ai/docs/model-reference/api-errors).
-	case identifiers.has("permission_error", "permission_denied", "forbidden", "upstream_access_denied", "missing_scope",
-		"failed_precondition"):
+	case identifiers.has("permission_error", "permission_denied", "permissiondenied", "forbidden", "upstream_access_denied",
+		"missing_scope", "failed_precondition"):
 		return "permission_error"
 	case identifiers.has("billing_error", "insufficient_quota", "over_budget", "upstream_quota_exceeded", "payment_required",
 		// Anthropic's monthly spend cap, a 429 that retries cannot pass until the next month.
