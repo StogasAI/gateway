@@ -3354,3 +3354,63 @@ func TestUnregisteredUpstreamCredentialsAreUnsupported(t *testing.T) {
 		}
 	}
 }
+
+// The client gets the store value that the provider got, in a reply and in each event of a stream
+// that carries the response.
+func TestRepliesReachTheClientWithTheStoreThatTheProviderGot(t *testing.T) {
+	for _, tc := range []struct {
+		name, fields string
+		store        bool
+	}{
+		{"a stored reply", `,"store":true`, true},
+		{"a reply", ``, false},
+		{"a continued reply", `,"previous_response_id":"resp_1"`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resolution := mustResolvedRequest(t, "/v1/responses", `{"model":"provider:openai gpt-5.5","input":"hi"`+tc.fields+`}`)
+			state := &stogas.State{
+				Pair:      stogas.Pair{Resolution: resolution, Adapter: stogas.AdapterFor(resolution.Provider)},
+				StartedAt: time.Now().Add(-5 * time.Millisecond),
+			}
+			bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
+			defer cancel()
+			completed := responsesReply("completed")
+			completed.Store = schemas.Ptr(tc.store)
+			if tc.store && strings.Contains(tc.fields, "previous_response_id") {
+				completed.PreviousResponseID = schemas.Ptr("resp_1")
+			}
+			completed.Output = []schemas.ResponsesMessage{*responsesTextItem("completed", "Hello")}
+			completed.Usage = &schemas.ResponsesResponseUsage{InputTokens: 3, OutputTokens: 1, TotalTokens: 4}
+			reply, outcome, failure := ingestProviderResult(nil, bifrostCtx, state, &schemas.BifrostResponse{ResponsesResponse: completed}, nil)
+			if outcome != nil || failure != nil || reply == nil || reply.ResponsesResponse == nil {
+				t.Fatalf("reply = %#v, outcome = %v, failure = %v", reply, outcome, failure)
+			}
+			event := &schemas.BifrostResponsesStreamResponse{Type: schemas.ResponsesStreamResponseTypeCompleted, Response: reply.ResponsesResponse}
+			for name, payload := range map[string]any{
+				"reply": unaryResponsePayload(reply, servedModel(state)),
+				"event": responsesStreamPayload(event, servedModel(state)),
+			} {
+				encoded, err := marshalPayload(payload)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var public struct {
+					Store    *bool `json:"store"`
+					Response struct {
+						Store *bool `json:"store"`
+					} `json:"response"`
+				}
+				if err := json.Unmarshal(encoded, &public); err != nil {
+					t.Fatal(err)
+				}
+				store := public.Store
+				if name == "event" {
+					store = public.Response.Store
+				}
+				if store == nil || *store != tc.store {
+					t.Fatalf("%s store = %v, want %t: %s", name, store, tc.store, encoded)
+				}
+			}
+		})
+	}
+}

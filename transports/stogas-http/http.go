@@ -422,9 +422,7 @@ func unaryResponsePayload(response *schemas.BifrostResponse, model string) any {
 	if response.ChatResponse != nil {
 		return publicResponsePayload(response.ChatResponse, model)
 	}
-	value := response.ResponsesResponse.WithDefaults()
-	value.Store, value.Background = schemas.Ptr(false), schemas.Ptr(false)
-	return publicResponsePayload(value, model)
+	return publicResponsePayload(response.ResponsesResponse.WithDefaults(), model)
 }
 
 // finishDetachedUnary owns a unary call after its caller stopped waiting. It
@@ -957,10 +955,6 @@ func responsesStreamPayload(event *schemas.BifrostResponsesStreamResponse, model
 	normalized := event.WithDefaults()
 	if normalized == nil {
 		return nil
-	}
-	if normalized.Response != nil {
-		normalized.Response.Store = schemas.Ptr(false)
-		normalized.Response.Background = schemas.Ptr(false)
 	}
 	return publicResponsePayload(normalized, model)
 }
