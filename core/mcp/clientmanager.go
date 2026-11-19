@@ -717,10 +717,12 @@ func (m *MCPManager) reconnect(id string, dialCtx context.Context) error {
 
 // writeBackDiscovery installs a discovery found over an existing connection (the checker,
 // RefreshClientTools) and fires the change callback on a genuine change. A connGeneration
-// mismatch means a reconnect replaced the connection meanwhile, so the result is dropped. State is
-// left to the connection checker. Instructions are only replaced when instructionsKnown (the
+// mismatch means a reconnect replaced the connection meanwhile, so the result is dropped. So is a
+// result whose list began (seq, from beginDiscovery) before the installed one's: a connection check
+// that listed before an upstream change would otherwise put back the tool set that a later refresh
+// replaced. State is left to the connection checker. Instructions are only replaced when instructionsKnown (the
 // discovery ran initialize). Returns whether the write landed.
-func (m *MCPManager) writeBackDiscovery(clientID string, connGeneration uint64, discovery *schemas.MCPDiscovery, instructionsKnown bool) bool {
+func (m *MCPManager) writeBackDiscovery(clientID string, connGeneration, seq uint64, discovery *schemas.MCPDiscovery, instructionsKnown bool) bool {
 	// Precompute serialized JSON before the lock (see precomputeToolSerialization),
 	// so per-request logging/marshal reuse the bytes and the manager mutex isn't
 	// held across N marshals.
@@ -737,6 +739,12 @@ func (m *MCPManager) writeBackDiscovery(clientID string, connGeneration uint64, 
 		m.logger.Debug("%s Skipping tool write-back for %s: connection was replaced during discovery", MCPLogPrefix, clientID)
 		return false
 	}
+	if seq < clientState.InstalledSeq {
+		m.mu.Unlock()
+		m.logger.Debug("%s Skipping tool write-back for %s: a discovery that began later was installed", MCPLogPrefix, clientID)
+		return false
+	}
+	clientState.InstalledSeq = seq
 	installed := &schemas.MCPDiscovery{
 		Tools:             discovery.Tools,
 		Instructions:      m.discoveryStore.GetDiscovery(m.ctx, clientState.ExecutionConfig).GetInstructions(),
@@ -946,13 +954,14 @@ func (m *MCPManager) RefreshClientTools(ctx context.Context, clientID string) (i
 		bfCtx := schemas.NewBifrostContext(attemptCtx, schemas.NoDeadline)
 		bfCtx.SetValue(schemas.BifrostContextKeyMCPHealthCheckRequest, true)
 
+		seq := m.beginDiscovery(clientID)
 		tools, err := m.runListToolsWithHooks(bfCtx, conn, config.Name)
 		if err != nil {
 			return 0, fmt.Errorf("failed to list tools for MCP client %s: %w", config.Name, err)
 		}
 		discovery := &schemas.MCPDiscovery{Tools: tools}
 		m.listResourcesAndPrompts(bfCtx, ConnectionCheckTimeout, conn, config.Name, conn.GetServerCapabilities(), discovery, m.installedDiscovery(config))
-		if !m.writeBackDiscovery(clientID, connGeneration, discovery, false) {
+		if !m.writeBackDiscovery(clientID, connGeneration, seq, discovery, false) {
 			// Dropped as stale: a reconnect swapped the connection while this
 			// list was in flight, so these tools were never installed and the
 			// client is still serving whatever that reconnect discovered.
@@ -969,11 +978,12 @@ func (m *MCPManager) RefreshClientTools(ctx context.Context, clientID string) (i
 		attemptCtx, cancel := context.WithTimeout(ctx, ConnectionCheckTimeout)
 		defer cancel()
 
+		seq := m.beginDiscovery(clientID)
 		discovery, err := m.performAdminToolDiscovery(attemptCtx, config, ConnectionCheckTimeout)
 		if err != nil {
 			return 0, fmt.Errorf("failed to discover tools for MCP client %s: %w", config.Name, err)
 		}
-		if !m.writeBackDiscovery(clientID, connGeneration, discovery, true) {
+		if !m.writeBackDiscovery(clientID, connGeneration, seq, discovery, true) {
 			// Same staleness guard as the live branch above.
 			return m.installedToolCount(clientID), nil
 		}

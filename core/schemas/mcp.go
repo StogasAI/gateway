@@ -1531,6 +1531,8 @@ type MCPClientState struct {
 	LastFailure       *MCPConnectionFailure    `json:"last_failure,omitempty"` // Why State is not Healthy; nil while Healthy (see MCPConnectionFailure)
 	ConnGeneration    uint64                   `json:"-"`                      // Counts connection swaps; late writers bound to an older Conn compare against it to detect staleness (not serialized)
 	LastDiscoveryHash string                   `json:"-"`                      // Content hash of the last discovery (tools, instructions, resources, prompts) the change callback fired for; gates it to genuine changes (not serialized)
+	DiscoverySeq      uint64                   `json:"-"`                      // Numbers each discovery as its list begins (not serialized)
+	InstalledSeq      uint64                   `json:"-"`                      // DiscoverySeq of the installed discovery; a write-back that began before it is stale (not serialized)
 }
 
 // MCPClientConnectionInfo stores metadata about how a client is connected.

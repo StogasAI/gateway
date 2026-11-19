@@ -442,10 +442,12 @@ func (c *ClientConnectionChecker) checkLiveConnection(conn *client.Client, clien
 	}
 
 	var newTools map[string]schemas.ChatTool
+	var seq uint64
 	listErr := ExecuteWithRetry(context.Background(), func() error {
 		attemptCtx, cancel := context.WithTimeout(context.Background(), c.timeout)
 		defer cancel()
 		var err error
+		seq = c.manager.beginDiscovery(c.clientID)
 		newTools, err = c.manager.runListToolsWithHooks(c.markAsCheck(attemptCtx), conn, clientName)
 		return err
 	}, ProbeRetryConfig, c.logger)
@@ -462,7 +464,7 @@ func (c *ClientConnectionChecker) checkLiveConnection(conn *client.Client, clien
 		c.recordFailure(clientName, schemas.MCPConnectionFailureStageListTools, listErr, connGeneration)
 		return false
 	}
-	c.manager.writeBackDiscovery(c.clientID, connGeneration, discovery, false)
+	c.manager.writeBackDiscovery(c.clientID, connGeneration, seq, discovery, false)
 	c.recordSuccess(clientName, connGeneration)
 	return true
 }
@@ -472,10 +474,12 @@ func (c *ClientConnectionChecker) checkLiveConnection(conn *client.Client, clien
 // per-attempt-timeout reasoning as checkLiveConnection above.
 func (c *ClientConnectionChecker) checkPerCall(config *schemas.MCPClientConfig, connGeneration uint64) bool {
 	var discovery *schemas.MCPDiscovery
+	var seq uint64
 	err := ExecuteWithRetry(context.Background(), func() error {
 		attemptCtx, cancel := context.WithTimeout(context.Background(), c.timeout)
 		defer cancel()
 		var innerErr error
+		seq = c.manager.beginDiscovery(c.clientID)
 		discovery, innerErr = c.manager.performAdminToolDiscovery(attemptCtx, config, c.timeout)
 		return innerErr
 	}, ProbeRetryConfig, c.logger)
@@ -484,7 +488,7 @@ func (c *ClientConnectionChecker) checkPerCall(config *schemas.MCPClientConfig, 
 		return false
 	}
 
-	c.manager.writeBackDiscovery(c.clientID, connGeneration, discovery, true)
+	c.manager.writeBackDiscovery(c.clientID, connGeneration, seq, discovery, true)
 	c.recordSuccess(config.Name, connGeneration)
 	return true
 }

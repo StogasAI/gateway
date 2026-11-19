@@ -1238,7 +1238,7 @@ func TestWriteBackDiscoveredToolsKeepsInstructionsWhenNotRediscovered(t *testing
 	m.discoveryStore.SetDiscovery(context.Background(), config, &schemas.MCPDiscovery{Instructions: "keep me"})
 	m.mu.Unlock()
 
-	require.True(t, m.writeBackDiscovery(config.ID, 0, &schemas.MCPDiscovery{Tools: map[string]schemas.ChatTool{"a": {Type: "function"}}}, false))
+	require.True(t, m.writeBackDiscovery(config.ID, 0, m.beginDiscovery(config.ID), &schemas.MCPDiscovery{Tools: map[string]schemas.ChatTool{"a": {Type: "function"}}}, false))
 
 	got := m.discoveryStore.GetDiscovery(context.Background(), config)
 	assert.Equal(t, "keep me", got.GetInstructions())

@@ -92,13 +92,13 @@ func TestWriteBackTools_UnchangedTools_DoesNotFireCallback(t *testing.T) {
 
 	tools := map[string]schemas.ChatTool{"echo": {Type: "function"}}
 
-	manager.writeBackDiscovery(config.ID, 0, &schemas.MCPDiscovery{Tools: tools}, false)
+	manager.writeBackDiscovery(config.ID, 0, manager.beginDiscovery(config.ID), &schemas.MCPDiscovery{Tools: tools}, false)
 	require.Equal(t, 1, callCount)
 
-	manager.writeBackDiscovery(config.ID, 0, &schemas.MCPDiscovery{Tools: map[string]schemas.ChatTool{"echo": {Type: "function"}}}, false)
+	manager.writeBackDiscovery(config.ID, 0, manager.beginDiscovery(config.ID), &schemas.MCPDiscovery{Tools: map[string]schemas.ChatTool{"echo": {Type: "function"}}}, false)
 	assert.Equal(t, 1, callCount, "an unchanged tick must not re-fire")
 
-	manager.writeBackDiscovery(config.ID, 0, &schemas.MCPDiscovery{Tools: map[string]schemas.ChatTool{}}, false)
+	manager.writeBackDiscovery(config.ID, 0, manager.beginDiscovery(config.ID), &schemas.MCPDiscovery{Tools: map[string]schemas.ChatTool{}}, false)
 	assert.Equal(t, 2, callCount, "the server legitimately losing all its tools is still a genuine change")
 }
 
