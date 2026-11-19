@@ -5,6 +5,8 @@ import (
 	"errors"
 	"sort"
 	"time"
+
+	"github.com/maximhq/bifrost/transports/stogas/plugins/classification"
 )
 
 const (
@@ -86,9 +88,11 @@ type Summary struct {
 // Redactor is request-local. It retains only a count and elapsed duration,
 // never source values, hashes, offsets, or replacement maps.
 type Redactor struct {
-	policy           *Policy
-	items            uint32
-	inputTextBytes   int
+	policy *Policy
+	items  uint32
+	// input measures the provider-bound text that the walk passes, after redaction.
+	input            inputText
+	countHidden      bool
 	duration         time.Duration
 	scanWork         uint64
 	asciiOnly        bool
@@ -124,7 +128,37 @@ func (r *Redactor) InputTextBytes() int {
 	if r == nil {
 		return 0
 	}
-	return r.inputTextBytes
+	return r.input.bytes
+}
+
+// CountHidden has the walk also count the hidden characters of the text that
+// InputTextBytes measures (classification.Hidden).
+func (r *Redactor) CountHidden() {
+	r.countHidden = true
+}
+
+// HiddenCharacters is the count that CountHidden asked for.
+func (r *Redactor) HiddenCharacters() int {
+	if r == nil {
+		return 0
+	}
+	return r.input.hidden
+}
+
+// inputText is what the walk measures of the text that it passes.
+type inputText struct {
+	bytes, hidden int
+}
+
+func (t inputText) minus(other inputText) inputText {
+	return inputText{bytes: t.bytes - other.bytes, hidden: t.hidden - other.hidden}
+}
+
+func (r *Redactor) measure(text []byte) {
+	r.input.bytes += len(text)
+	if r.countHidden {
+		r.input.hidden += classification.CountHidden(text)
+	}
 }
 
 func (r *Redactor) chargeScanWork(amount uint64) bool {

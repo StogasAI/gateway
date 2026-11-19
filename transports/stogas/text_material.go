@@ -17,10 +17,119 @@ func (m *textMaterial) add(other textMaterial, sign int) {
 }
 
 func textBytes(text *string) int {
+	return len(stringValue(text))
+}
+
+func stringValue(text *string) string {
 	if text == nil {
-		return 0
+		return ""
 	}
-	return len(*text)
+	return *text
+}
+
+// textSource names one text of a response, which its pieces continue: the content, a refusal or
+// a tool call of a Chat choice, or a part, a tool value or a patch's path of a Responses item.
+type textSource struct {
+	kind       textSourceKind
+	item, part int
+}
+
+type textSourceKind uint8
+
+const (
+	chatContent textSourceKind = iota
+	chatRefusal
+	chatCall
+	responsesPart
+	responsesValue
+	responsesPath
+)
+
+// chatOutputText visits the output text of a Chat choice: the content and refusals that a person
+// reads, the reply, and the arguments of its tool calls.
+func chatOutputText(choice *schemas.BifrostResponseChoice, visit func(source textSource, text string, reply bool)) {
+	if stream := choice.ChatStreamResponseChoice; stream != nil && stream.Delta != nil {
+		delta := stream.Delta
+		visit(textSource{kind: chatContent, part: -1}, stringValue(delta.Content), true)
+		visit(textSource{kind: chatRefusal, part: -1}, stringValue(delta.Refusal), true)
+		for _, call := range delta.ToolCalls {
+			visit(textSource{kind: chatCall, item: int(call.Index)}, call.Function.Arguments, false)
+		}
+	}
+	if unary := choice.ChatNonStreamResponseChoice; unary != nil && unary.Message != nil {
+		message := unary.Message
+		if content := message.Content; content != nil {
+			visit(textSource{kind: chatContent, part: -1}, stringValue(content.ContentStr), true)
+			for i, block := range content.ContentBlocks {
+				visit(textSource{kind: chatContent, part: i}, stringValue(block.Text), true)
+				visit(textSource{kind: chatRefusal, part: i}, stringValue(block.Refusal), true)
+			}
+		}
+		if assistant := message.ChatAssistantMessage; assistant != nil {
+			visit(textSource{kind: chatRefusal, part: -1}, stringValue(assistant.Refusal), true)
+			for i, call := range assistant.ToolCalls {
+				visit(textSource{kind: chatCall, item: i}, call.Function.Arguments, false)
+			}
+		}
+	}
+}
+
+// responsesItemOutputText visits the output text of the Responses item at index: the text and
+// refusals of a message, the reply, and the values of a tool call.
+func responsesItemOutputText(index int, item *schemas.ResponsesMessage, visit func(source textSource, text string, reply bool)) {
+	if item == nil || item.Type == nil {
+		return
+	}
+	if item.Content != nil {
+		for i, block := range item.Content.ContentBlocks {
+			source := textSource{kind: responsesPart, item: index, part: i}
+			switch block.Type {
+			case schemas.ResponsesOutputMessageContentTypeText:
+				visit(source, stringValue(block.Text), true)
+			case schemas.ResponsesOutputMessageContentTypeRefusal:
+				if block.ResponsesOutputMessageContentRefusal != nil {
+					visit(source, block.Refusal, true)
+				}
+			}
+		}
+	}
+	tool := item.ResponsesToolMessage
+	if tool == nil {
+		return
+	}
+	source := textSource{kind: responsesValue, item: index}
+	switch *item.Type {
+	case schemas.ResponsesMessageTypeFunctionCall:
+		visit(source, stringValue(tool.Arguments), false)
+	case schemas.ResponsesMessageTypeCustomToolCall:
+		if tool.ResponsesCustomToolCall != nil {
+			visit(source, tool.ResponsesCustomToolCall.Input, false)
+		}
+	case schemas.ResponsesMessageTypeShellCall:
+		for i, command := range providerShellCommands(item) {
+			visit(textSource{kind: responsesValue, item: index, part: i}, command, false)
+		}
+	case schemas.ResponsesMessageTypeApplyPatchCall:
+		if call := tool.ResponsesApplyPatchCall; call != nil && call.Operation != nil {
+			visit(textSource{kind: responsesPath, item: index}, call.Operation.Path, false)
+			visit(source, stringValue(call.Operation.Diff), false)
+		}
+	}
+}
+
+// responsesOutputDelta reports whether a Responses stream event's delta continues output text,
+// and whether that text is the reply.
+func responsesOutputDelta(eventType schemas.ResponsesStreamResponseType) (output, reply bool) {
+	switch eventType {
+	case schemas.ResponsesStreamResponseTypeOutputTextDelta, schemas.ResponsesStreamResponseTypeRefusalDelta:
+		return true, true
+	case schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDelta,
+		schemas.ResponsesStreamResponseTypeCustomToolCallInputDelta,
+		schemas.ResponsesStreamResponseTypeShellCallCommandDelta,
+		schemas.ResponsesStreamResponseTypeApplyPatchCallOperationDiffDelta:
+		return true, false
+	}
+	return false, false
 }
 
 // keepClientStopText keeps the text material that a stopped client had received, before text
@@ -50,30 +159,17 @@ func (s *State) observeChatTextMaterial(response *schemas.BifrostChatResponse) {
 	}
 	s.keepClientStopText()
 	var material textMaterial
-	for _, choice := range response.Choices {
+	for i := range response.Choices {
+		choice := &response.Choices[i]
+		chatOutputText(choice, func(_ textSource, text string, _ bool) { material.output += len(text) })
 		var details []schemas.ChatReasoningDetails
-		var calls []schemas.ChatAssistantMessageToolCall
 		var reasoning *string
 		if stream := choice.ChatStreamResponseChoice; stream != nil && stream.Delta != nil {
-			delta := stream.Delta
-			material.output += textBytes(delta.Content) + textBytes(delta.Refusal)
-			details, calls, reasoning = delta.ReasoningDetails, delta.ToolCalls, delta.Reasoning
+			details, reasoning = stream.Delta.ReasoningDetails, stream.Delta.Reasoning
 		}
-		if unary := choice.ChatNonStreamResponseChoice; unary != nil && unary.Message != nil {
-			message := unary.Message
-			if content := message.Content; content != nil {
-				material.output += textBytes(content.ContentStr)
-				for _, block := range content.ContentBlocks {
-					material.output += textBytes(block.Text) + textBytes(block.Refusal)
-				}
-			}
-			if assistant := message.ChatAssistantMessage; assistant != nil {
-				material.output += textBytes(assistant.Refusal)
-				details, calls, reasoning = assistant.ReasoningDetails, assistant.ToolCalls, assistant.Reasoning
-			}
-		}
-		for _, call := range calls {
-			material.output += len(call.Function.Arguments)
+		if unary := choice.ChatNonStreamResponseChoice; unary != nil && unary.Message != nil && unary.Message.ChatAssistantMessage != nil {
+			assistant := unary.Message.ChatAssistantMessage
+			details, reasoning = assistant.ReasoningDetails, assistant.Reasoning
 		}
 		// The reasoning string repeats the text of its details, then holds Claude's thinking
 		// that has no detail (validateProviderChatMessage), so the longer of the two counts.
@@ -103,16 +199,10 @@ func responsesItemTextMaterial(item *schemas.ResponsesMessage) textMaterial {
 	if item == nil || item.Type == nil {
 		return material
 	}
+	responsesItemOutputText(0, item, func(_ textSource, text string, _ bool) { material.output += len(text) })
 	if item.Content != nil {
 		for _, block := range item.Content.ContentBlocks {
-			switch block.Type {
-			case schemas.ResponsesOutputMessageContentTypeText:
-				material.output += textBytes(block.Text)
-			case schemas.ResponsesOutputMessageContentTypeRefusal:
-				if block.ResponsesOutputMessageContentRefusal != nil {
-					material.output += len(block.Refusal)
-				}
-			case schemas.ResponsesOutputMessageContentTypeReasoning:
+			if block.Type == schemas.ResponsesOutputMessageContentTypeReasoning {
 				material.reasoning += textBytes(block.Text)
 				material.visible = 1
 			}
@@ -120,24 +210,6 @@ func responsesItemTextMaterial(item *schemas.ResponsesMessage) textMaterial {
 	}
 	if item.ResponsesReasoning != nil && (len(item.ResponsesReasoning.Summary) > 0 || item.ResponsesReasoning.EncryptedContent != nil) {
 		material.opaque = 1
-	}
-	if tool := item.ResponsesToolMessage; tool != nil {
-		switch *item.Type {
-		case schemas.ResponsesMessageTypeFunctionCall:
-			material.output += textBytes(tool.Arguments)
-		case schemas.ResponsesMessageTypeCustomToolCall:
-			if tool.ResponsesCustomToolCall != nil {
-				material.output += len(tool.ResponsesCustomToolCall.Input)
-			}
-		case schemas.ResponsesMessageTypeShellCall:
-			for _, command := range providerShellCommands(item) {
-				material.output += len(command)
-			}
-		case schemas.ResponsesMessageTypeApplyPatchCall:
-			if tool.ResponsesApplyPatchCall != nil && tool.ResponsesApplyPatchCall.Operation != nil {
-				material.output += len(tool.ResponsesApplyPatchCall.Operation.Path) + textBytes(tool.ResponsesApplyPatchCall.Operation.Diff)
-			}
-		}
 	}
 	return material
 }
@@ -172,24 +244,18 @@ func (s *State) observeResponsesStreamTextMaterial(event *schemas.BifrostRespons
 	index := *event.OutputIndex
 	previous := s.responsesTextMaterial[index]
 	current := previous
-	switch event.Type {
-	case schemas.ResponsesStreamResponseTypeOutputItemAdded, schemas.ResponsesStreamResponseTypeOutputItemDone:
+	switch output, _ := responsesOutputDelta(event.Type); {
+	case output:
+		current.output += textBytes(event.Delta)
+	case event.Type == schemas.ResponsesStreamResponseTypeOutputItemAdded, event.Type == schemas.ResponsesStreamResponseTypeOutputItemDone:
 		current = responsesItemTextMaterial(event.Item)
-	case schemas.ResponsesStreamResponseTypeOutputTextDelta:
-		current.output += textBytes(event.Delta)
-	case schemas.ResponsesStreamResponseTypeRefusalDelta,
-		schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDelta,
-		schemas.ResponsesStreamResponseTypeCustomToolCallInputDelta,
-		schemas.ResponsesStreamResponseTypeShellCallCommandDelta,
-		schemas.ResponsesStreamResponseTypeApplyPatchCallOperationDiffDelta:
-		current.output += textBytes(event.Delta)
-	case schemas.ResponsesStreamResponseTypeReasoningSummaryPartAdded,
-		schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta:
+	case event.Type == schemas.ResponsesStreamResponseTypeReasoningSummaryPartAdded,
+		event.Type == schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta:
 		current.opaque = 1
-	case schemas.ResponsesStreamResponseTypeReasoningTextDelta:
+	case event.Type == schemas.ResponsesStreamResponseTypeReasoningTextDelta:
 		current.reasoning += textBytes(event.Delta)
 		current.visible = 1
-	case schemas.ResponsesStreamResponseTypeContentPartAdded:
+	case event.Type == schemas.ResponsesStreamResponseTypeContentPartAdded:
 		if event.Part != nil && event.Part.Type == schemas.ResponsesOutputMessageContentTypeReasoning {
 			current.visible = 1
 		}

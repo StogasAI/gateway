@@ -261,7 +261,12 @@ type ResolvedRequest struct {
 	outputTokenLimit   int
 	pricing            requestPricingContext
 	redactionSummary   *redaction.Summary
-	responses          *openaiprovider.OpenAIResponsesRequest
+	// classifiers are the classifiers that the pair's policy runs, and inputLanguage and
+	// inputHidden what they found in the input.
+	classifiers   []string
+	inputLanguage string
+	inputHidden   int
+	responses     *openaiprovider.OpenAIResponsesRequest
 	// wireBody is the body of a bridged request on the interface that its provider takes, and wire
 	// is the request as its provider gets it. Translate makes both.
 	wireBody map[string]json.RawMessage
@@ -333,6 +338,7 @@ func (r *ResolvedRequest) retainPolicyDecision(config *policy.Config) {
 		r.policyTimeouts = config.Timeouts
 		r.retries = config.Routing.Retries
 		r.promptCaching = config.PromptCaching()
+		r.classifiers = config.Classification()
 	}
 }
 
@@ -341,6 +347,7 @@ func (r *ResolvedRequest) retainVariant(variant *requestBodyVariant, config *pol
 	r.inputTextBytes = &textBytes
 	r.inputFiles = variant.files
 	r.redactionSummary = variant.summary
+	r.inputLanguage, r.inputHidden = variant.language, variant.hidden
 	r.ExportConfig = variant.exports
 	r.retainPolicyDecision(config)
 	r.policyTime, r.policyBudget = input.now, input.policyBudget
@@ -634,6 +641,24 @@ func (r *ResolvedRequest) StructuredPIIRedactionSummary() *redaction.Summary {
 		return nil
 	}
 	return r.redactionSummary
+}
+
+// Classifiers are the classifiers that the pair's policy runs, sorted.
+func (r *ResolvedRequest) Classifiers() []string {
+	if r == nil {
+		return nil
+	}
+	return r.classifiers
+}
+
+// InputClassification returns what the classifiers found in the input: the language of the
+// newest user message that holds prose, or "" without one, and the hidden characters of the
+// input text.
+func (r *ResolvedRequest) InputClassification() (language string, hidden int) {
+	if r == nil {
+		return "", 0
+	}
+	return r.inputLanguage, r.inputHidden
 }
 
 // SetWireModel binds the already authorized catalog deployment to the exact

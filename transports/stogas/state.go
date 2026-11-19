@@ -105,6 +105,7 @@ type State struct {
 	responsesItems          map[int]providerResponsesItem
 	textMaterial            textMaterial
 	textMaterialObserved    bool
+	reply                   replyClassification
 	responsesTextMaterial   map[int]textMaterial
 	// clientStopText is the text material when the first text after a client stopped arrived,
 	// which is what the client had received; clientStopTextTaken is set once it is kept.

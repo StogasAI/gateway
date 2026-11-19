@@ -40,7 +40,8 @@ const (
 	permissionTransports
 	permissionCountries
 	permissionPromptCaching
-	allPermissions     = permissionPromptCaching | (permissionPromptCaching - 1)
+	permissionClassification
+	allPermissions     = permissionClassification | (permissionClassification - 1)
 	requestPermissions = allPermissions &^ (permissionLimits | permissionDelegation)
 )
 
@@ -60,7 +61,8 @@ var permissionSections = map[string]Permission{
 	"timeouts":                      permissionTotalTimeout | permissionOutputIdleTimeout,
 	"timeouts.totalSeconds":         permissionTotalTimeout,
 	"timeouts.outputIdleSeconds":    permissionOutputIdleTimeout,
-	"plugins":                       permissionRedaction | permissionEncryptedPlugins | textExtractionUnits | permissionExport | permissionPromptCaching,
+	"plugins":                       permissionRedaction | permissionEncryptedPlugins | textExtractionUnits | permissionExport | permissionPromptCaching | permissionClassification,
+	"plugins.classification":        permissionClassification,
 	"plugins.export":                permissionExport,
 	"plugins.promptCaching":         permissionPromptCaching,
 	"plugins.textExtraction":        textExtractionUnits,

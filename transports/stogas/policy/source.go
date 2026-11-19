@@ -628,6 +628,7 @@ func (d *SourceDocument) compile(plugins map[[32]byte]*Plugins, compiler *celCom
 
 func compileSourcePlugins(raw []byte) (*Plugins, error) {
 	var doc struct {
+		Classification []string             `json:"classification"`
 		Export         *exportconfig.Config `json:"export"`
 		PromptCaching  *string              `json:"promptCaching"`
 		Redaction      *sourceRedaction     `json:"redaction"`
@@ -639,14 +640,14 @@ func compileSourcePlugins(raw []byte) (*Plugins, error) {
 	if err := validateSourceMembers(raw, reflect.TypeOf(doc)); err != nil {
 		return nil, err
 	}
-	if doc.Redaction == nil && doc.TextExtraction == nil && doc.Export == nil && doc.PromptCaching == nil {
+	if doc.Redaction == nil && doc.TextExtraction == nil && doc.Export == nil && doc.PromptCaching == nil && doc.Classification == nil {
 		return nil, configError("plugins require explicit configuration")
 	}
 	selected, err := compileSourceRedaction(doc.Redaction)
 	if err != nil {
 		return nil, err
 	}
-	result := &Plugins{Redaction: selected, TextExtraction: doc.TextExtraction, Export: doc.Export}
+	result := &Plugins{Classification: doc.Classification, Redaction: selected, TextExtraction: doc.TextExtraction, Export: doc.Export}
 	if doc.PromptCaching != nil {
 		if err := validatePromptCaching(*doc.PromptCaching); err != nil {
 			return nil, err

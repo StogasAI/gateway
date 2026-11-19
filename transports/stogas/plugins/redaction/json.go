@@ -31,9 +31,10 @@ var (
 	responsesTextFields = [...]string{"input", "instructions", "tools", "text", "context_management", "stop", "stop_sequences"}
 )
 
-// jsonSpan is the source range of one value and the text bytes that its walk counted.
+// jsonSpan is the source range of one value and what its walk measured of its text.
 type jsonSpan struct {
-	start, end, textBytes int
+	start, end int
+	text       inputText
 }
 
 type jsonReplacement struct {
@@ -90,7 +91,7 @@ func (r *Redactor) RedactRequestFields(raw map[string]json.RawMessage, surface S
 		field string
 		value json.RawMessage
 	}
-	baseItems, baseTextBytes := r.items, r.inputTextBytes
+	baseItems, baseInput := r.items, r.input
 	var updates []update
 	for _, field := range fields {
 		value, ok := raw[field]
@@ -108,7 +109,7 @@ func (r *Redactor) RedactRequestFields(raw map[string]json.RawMessage, surface S
 		redacted, changed, err := r.redactJSONContext(value, context)
 		if err != nil {
 			r.items = baseItems
-			r.inputTextBytes = baseTextBytes
+			r.input = baseInput
 			return err
 		}
 		if changed {
@@ -122,12 +123,12 @@ func (r *Redactor) RedactRequestFields(raw map[string]json.RawMessage, surface S
 }
 
 func (r *Redactor) redactJSONContext(source []byte, context jsonValueContext) ([]byte, bool, error) {
-	baseItems, baseTextBytes := r.items, r.inputTextBytes
+	baseItems, baseInput := r.items, r.input
 	var replacements []jsonReplacement
 	position, err := r.walkJSONValue(source, skipJSONSpace(source, 0), true, &replacements, 0, context)
 	if err != nil || skipJSONSpace(source, position) != len(source) {
 		r.items = baseItems
-		r.inputTextBytes = baseTextBytes
+		r.input = baseInput
 		if err == nil {
 			err = errInvalidJSON
 		}
@@ -140,7 +141,7 @@ func (r *Redactor) redactJSONContext(source []byte, context jsonValueContext) ([
 		// Object markers can appear after their text. Resolve protected replay
 		// before reporting a violation, just as redaction discards replacements.
 		r.items = baseItems
-		r.inputTextBytes = baseTextBytes
+		r.input = baseInput
 		return nil, false, ErrNonASCII
 	}
 
@@ -153,7 +154,7 @@ func (r *Redactor) redactJSONContext(source []byte, context jsonValueContext) ([
 	for _, replacement := range replacements {
 		if replacement.start < position || replacement.end < replacement.start || replacement.end > len(source) {
 			r.items = baseItems
-			r.inputTextBytes = baseTextBytes
+			r.input = baseInput
 			return nil, false, errInvalidJSON
 		}
 		out = append(out, source[position:replacement.start]...)
@@ -196,7 +197,7 @@ func (r *Redactor) walkJSONValue(source []byte, position int, allow bool, replac
 
 func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, replacements *[]jsonReplacement, depth int, context jsonValueContext) (int, error) {
 	baseReplacements := len(*replacements)
-	baseItems, baseTextBytes := r.items, r.inputTextBytes
+	baseItems, baseInput := r.items, r.input
 	hasEncryptedContent := false
 	// A reasoning detail with a signature or encrypted data, and a reasoning item with encrypted
 	// content or a signature, is the provider's own: a provider refuses a changed one, so it stays
@@ -309,19 +310,19 @@ func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, repla
 				valueAllowed = false
 			}
 		}
-		settingStart, settingBytes := position, r.inputTextBytes
+		settingStart, settingInput := position, r.input
 		position, err = r.walkJSONValue(source, position, valueAllowed, replacements, depth, valueContext)
 		if err != nil {
 			return position, err
 		}
 		if context == jsonContextResponsesTool && key == jsonKeyMCPSetting {
-			mcpSettings = append(mcpSettings, jsonSpan{start: settingStart, end: position, textBytes: r.inputTextBytes - settingBytes})
+			mcpSettings = append(mcpSettings, jsonSpan{start: settingStart, end: position, text: r.input.minus(settingInput)})
 		}
 		if context == jsonContextChatMessage && key == jsonKeyReasoning {
-			reasoningTexts = append(reasoningTexts, jsonSpan{start: settingStart, end: position, textBytes: r.inputTextBytes - settingBytes})
+			reasoningTexts = append(reasoningTexts, jsonSpan{start: settingStart, end: position, text: r.input.minus(settingInput)})
 		}
 		if context == jsonContextSearchResult && key == jsonKeyEncryptedContent && source[settingStart] == '"' {
-			r.searchResults = append(r.searchResults, jsonSpan{start: settingStart, end: position, textBytes: r.inputTextBytes - settingBytes})
+			r.searchResults = append(r.searchResults, jsonSpan{start: settingStart, end: position, text: r.input.minus(settingInput)})
 		}
 		position = skipJSONSpace(source, position)
 		if position >= len(source) {
@@ -334,14 +335,14 @@ func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, repla
 			if context == jsonContextChatMessage && r.sealedDetails != sealedDetails {
 				for _, text := range reasoningTexts {
 					r.discardJSONReplacements(replacements, baseReplacements, text.start, text.end)
-					r.inputTextBytes -= text.textBytes
+					r.input = r.input.minus(text.text)
 				}
 			}
 			if context == jsonContextResponsesInputItem {
 				if itemType == "web_search_call" {
 					for _, result := range r.searchResults[searchResults:] {
 						r.discardJSONReplacements(replacements, baseReplacements, result.start, result.end)
-						r.inputTextBytes -= result.textBytes
+						r.input = r.input.minus(result.text)
 					}
 				}
 				r.searchResults = r.searchResults[:searchResults]
@@ -349,7 +350,7 @@ func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, repla
 			if context == jsonContextResponsesTool && itemType == "mcp" {
 				for _, setting := range mcpSettings {
 					r.discardJSONReplacements(replacements, baseReplacements, setting.start, setting.end)
-					r.inputTextBytes -= setting.textBytes
+					r.input = r.input.minus(setting.text)
 				}
 			}
 			sealed := context == jsonContextReasoningDetail && (hasSignature || hasData)
@@ -359,7 +360,7 @@ func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, repla
 			if sealed || context == jsonContextResponsesInputItem && itemType == "reasoning" && (hasEncryptedContent || hasSignature) {
 				*replacements = (*replacements)[:baseReplacements]
 				r.items = baseItems
-				r.inputTextBytes = baseTextBytes
+				r.input = baseInput
 			}
 			return position + 1, nil
 		default:
@@ -420,7 +421,7 @@ func (r *Redactor) redactJSONString(source []byte, start, end int, escaped bool,
 		if err != nil {
 			return err
 		}
-		r.inputTextBytes += len(redacted)
+		r.measure(redacted)
 		if changed {
 			*replacements = append(*replacements, jsonReplacement{start: start + 1, end: end - 1, value: redacted, items: r.items - baseItems})
 		}
@@ -438,7 +439,7 @@ func (r *Redactor) redactJSONString(source []byte, start, end int, escaped bool,
 	if err != nil {
 		return err
 	}
-	r.inputTextBytes += len(redacted)
+	r.measure(redacted)
 	if r.asciiOnly {
 		return nil
 	}

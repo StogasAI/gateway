@@ -319,9 +319,9 @@ func TestTimeoutRulesComposeIndependentlyWithoutMutatingSavedPolicies(t *testing
 }
 
 func TestRulesExplicitEmptySettingsReplaceDefaultsWithoutWeakeningRequirements(t *testing.T) {
-	settings := `"access":{"schedule":{"deny":[{"days":["mon"],"start":"09:00","end":"17:00","timeZone":"UTC"}]}},"input":{"asciiOnly":true,"mediaTypes":{"allow":["image/png"]}},"plugins":{"redaction":{"presets":["email_address"]},"promptCaching":"1h"},"routing":{"providers":{"allow":["openai"]},"filter":"provider.id == 'openai'","sort":[{"by":"provider.id","direction":"asc"}],"retries":1,"fallbacks":0}`
+	settings := `"access":{"schedule":{"deny":[{"days":["mon"],"start":"09:00","end":"17:00","timeZone":"UTC"}]}},"input":{"asciiOnly":true,"mediaTypes":{"allow":["image/png"]}},"plugins":{"classification":["language"],"redaction":{"presets":["email_address"]},"promptCaching":"1h"},"routing":{"providers":{"allow":["openai"]},"filter":"provider.id == 'openai'","sort":[{"by":"provider.id","direction":"asc"}],"retries":1,"fallbacks":0}`
 	org := ruleSource(t, `{"rules":{"baseline":{"mode":"default",`+settings+`}}}`)
-	empty := ruleSource(t, `{"access":{"schedule":{"deny":[]}},"input":{"asciiOnly":false,"mediaTypes":{"deny":[]}},"plugins":{"redaction":{},"promptCaching":"off"},"routing":{"providers":{"deny":[]},"filter":"true","sort":[],"retries":3,"fallbacks":2}}`)
+	empty := ruleSource(t, `{"access":{"schedule":{"deny":[]}},"input":{"asciiOnly":false,"mediaTypes":{"deny":[]}},"plugins":{"classification":[],"redaction":{},"promptCaching":"off"},"routing":{"providers":{"deny":[]},"filter":"true","sort":[],"retries":3,"fallbacks":2}}`)
 	required := ruleSource(t, `{`+settings+`}`)
 	for _, withRequired := range []bool{false, true} {
 		for _, reverse := range []bool{false, true} {
@@ -354,6 +354,9 @@ func TestRulesExplicitEmptySettingsReplaceDefaultsWithoutWeakeningRequirements(t
 			}
 			if (active.MediaTypes() != nil && len(active.MediaTypes().Allow) > 0) != withRequired || (active.PromptCaching() == PromptCaching1h) != withRequired {
 				t.Fatalf("required=%v: media types %+v, prompt caching %s", withRequired, active.MediaTypes(), active.PromptCaching())
+			}
+			if (len(active.Classification()) > 0) != withRequired {
+				t.Fatalf("required=%v: classifiers %q", withRequired, active.Classification())
 			}
 			hasPreset := false
 			for _, plugins := range active.PluginSources {
@@ -623,8 +626,8 @@ func TestEveryReplaceableKindHasOneName(t *testing.T) {
 	}
 	if want := []string{
 		"access.countries", "access.networks", "access.schedule", "access.transports", "input.asciiOnly", "input.mediaTypes",
-		"plugins.export", "plugins.promptCaching", "plugins.redaction", "plugins.textExtraction.office", "plugins.textExtraction.pdf",
-		"plugins.textExtraction.text", "routing.authors", "routing.deployments", "routing.fallbacks", "routing.filter",
+		"plugins.classification", "plugins.export", "plugins.promptCaching", "plugins.redaction", "plugins.textExtraction.office",
+		"plugins.textExtraction.pdf", "plugins.textExtraction.text", "routing.authors", "routing.deployments", "routing.fallbacks", "routing.filter",
 		"routing.missingEncryptionKeys", "routing.models", "routing.providers", "routing.retries", "routing.routes",
 		"timeouts.outputIdleSeconds", "timeouts.totalSeconds",
 	}; !slices.Equal(names, want) {

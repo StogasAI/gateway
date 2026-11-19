@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"slices"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -29,6 +30,9 @@ type requestBodyVariant struct {
 	summary   *redaction.Summary
 	textBytes int
 	files     inputfiles.Stats
+	// language and hidden are what the policy's classifiers found in the input.
+	language string
+	hidden   int
 }
 
 type requestPolicyResult struct {
@@ -64,6 +68,15 @@ type requestVariants struct {
 	facts *requestFacts
 	// ruledOut are the deployments that the request's parameters or hosted tools ruled out.
 	ruledOut []ruledOut
+	// language is the language of the client's newest user message that holds prose, which every
+	// pair whose policy classifies languages records.
+	languageOnce sync.Once
+	language     string
+}
+
+func (v *requestVariants) inputLanguage() string {
+	v.languageOnce.Do(func() { v.language = newestUserLanguage(v.route, v.fields) })
+	return v.language
 }
 
 // ruledOutError gives the error of the first deployment that the request's own content ruled
@@ -680,6 +693,10 @@ func (v *requestVariants) prepareBody(selection routingSelection, value RequestP
 		}
 	}
 	redactor := redaction.NewWithPolicy(compiled)
+	classifiers := value.Config.Classification()
+	if slices.Contains(classifiers, policy.ClassifierHiddenCharacters) {
+		redactor.CountHidden()
+	}
 	fields := copyRawRequestData(v.fields)
 	var reserveExpansion func(int) error
 	if v.reserveBody != nil {
@@ -760,6 +777,10 @@ func (v *requestVariants) prepareBody(selection routingSelection, value RequestP
 	}
 	variant := &requestBodyVariant{exports: exports, body: body, fields: fields, summary: redactor.Summary(), textBytes: redactor.InputTextBytes()}
 	variant.files = files
+	variant.hidden = redactor.HiddenCharacters()
+	if slices.Contains(classifiers, policy.ClassifierLanguage) {
+		variant.language = v.inputLanguage()
+	}
 	// The gateway cannot count an opaque file or content that the provider holds, so the hold
 	// covers the deployment's whole input.
 	if files.Opaque != "" || v.providerState.Held != "" {

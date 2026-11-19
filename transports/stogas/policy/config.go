@@ -341,6 +341,8 @@ type DenyWindow struct {
 }
 
 type Plugins struct {
+	// Classification keeps an empty list, which replaces the defaults' classifiers.
+	Classification []string             `json:"classification,omitzero"`
 	Export         *exportconfig.Config `json:"export,omitempty"`
 	PromptCaching  string               `json:"promptCaching,omitempty"`
 	Redaction      *Redaction           `json:"redaction,omitempty"`
@@ -465,7 +467,7 @@ type Redaction struct {
 
 // pluginUnits are the plugins that combine on their own: a required plugin
 // setting replaces only the defaults of the same plugin.
-const pluginUnits = permissionRedaction | textExtractionUnits | permissionExport | permissionPromptCaching
+const pluginUnits = permissionRedaction | textExtractionUnits | permissionExport | permissionPromptCaching | permissionClassification
 
 func (p *Plugins) units() Permission {
 	var units Permission
@@ -480,6 +482,9 @@ func (p *Plugins) units() Permission {
 	}
 	if p != nil && p.PromptCaching != "" {
 		units |= permissionPromptCaching
+	}
+	if p != nil && p.Classification != nil {
+		units |= permissionClassification
 	}
 	return units
 }
@@ -511,6 +516,9 @@ func (p *Plugins) only(units Permission) *Plugins {
 	}
 	if units&permissionPromptCaching != 0 {
 		part.PromptCaching = p.PromptCaching
+	}
+	if units&permissionClassification != 0 {
+		part.Classification = p.Classification
 	}
 	return part
 }
@@ -676,12 +684,15 @@ func (p *Plugins) validate() error {
 				return err
 			}
 		}
+		if err := validateClassification(p.Classification); err != nil {
+			return err
+		}
 	}
 	if p == nil || p.Redaction == nil {
 		if p == nil {
 			return nil
 		}
-		if p.TextExtraction != nil || p.Export != nil || p.PromptCaching != "" {
+		if p.TextExtraction != nil || p.Export != nil || p.PromptCaching != "" || p.Classification != nil {
 			return nil
 		}
 		return configError("plugins require explicit configuration")

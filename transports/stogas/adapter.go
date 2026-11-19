@@ -168,6 +168,7 @@ func (DefaultAdapter) IngestChunk(state *State, chunk *schemas.BifrostStreamChun
 		observeActualResponseModel(state, response.Model)
 		state.observeChatProviderOutputEmitted(response)
 		state.observeChatTextMaterial(response)
+		state.classifyChatOutput(response)
 		state.Response = &schemas.BifrostResponse{ChatResponse: response}
 	case chunk.BifrostResponsesStreamResponse != nil:
 		streamResp := chunk.BifrostResponsesStreamResponse
@@ -199,6 +200,7 @@ func (DefaultAdapter) IngestChunk(state *State, chunk *schemas.BifrostStreamChun
 		}
 		state.observeResponsesProviderOutputEmitted(streamResp)
 		state.observeResponsesStreamTextMaterial(streamResp)
+		state.classifyResponsesStream(streamResp)
 		bindEncryptedReasoning(state.Resolution, streamResp.Item)
 		if streamResp.Response != nil {
 			for index := range streamResp.Response.Output {
@@ -235,6 +237,8 @@ func (DefaultAdapter) IngestResponse(state *State, resp *schemas.BifrostResponse
 		if resp != nil {
 			state.observeChatTextMaterial(resp.ChatResponse)
 			state.observeResponsesTextMaterial(resp.ResponsesResponse)
+			state.classifyChatOutput(resp.ChatResponse)
+			state.classifyResponsesOutput(resp.ResponsesResponse)
 			if resp.ResponsesResponse != nil {
 				for index := range resp.ResponsesResponse.Output {
 					bindEncryptedReasoning(state.Resolution, &resp.ResponsesResponse.Output[index])

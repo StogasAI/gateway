@@ -388,7 +388,7 @@ func inspectionPlugins(parts []*Plugins) (*Plugins, error) {
 	}
 	presets, patterns := map[string]bool{}, map[string]bool{}
 	selected := &Redaction{Presets: []string{}}
-	plugins := &Plugins{TextExtraction: combineTextExtraction(parts), PromptCaching: combinePromptCaching(parts)}
+	plugins := &Plugins{TextExtraction: combineTextExtraction(parts), PromptCaching: combinePromptCaching(parts), Classification: combineClassification(parts)}
 	var exports []*exportconfig.Config
 	for _, part := range parts {
 		if part.Export != nil {
@@ -464,12 +464,12 @@ func inspectionSetBy(entries []InspectionSource, sources []ScopedSource, compile
 	if compiled.Input != nil && compiled.Input.MediaTypes != nil {
 		add("input.mediaTypes", permissionMediaTypes, true, func(c *Config) bool { return c.Input != nil && c.Input.MediaTypes != nil })
 	}
-	// Export and redaction name the policies whose settings for them combine. A
+	// Classification, export and redaction name the policies whose settings for them combine. A
 	// required plugin replaces the defaults of that plugin alone.
 	for _, plugin := range []struct {
 		setting string
 		unit    Permission
-	}{{"plugins.export", permissionExport}, {"plugins.redaction", permissionRedaction}} {
+	}{{"plugins.classification", permissionClassification}, {"plugins.export", permissionExport}, {"plugins.redaction", permissionRedaction}} {
 		for _, part := range compiled.PluginSources {
 			if part.units()&plugin.unit != 0 {
 				add(plugin.setting, plugin.unit, true, always)
