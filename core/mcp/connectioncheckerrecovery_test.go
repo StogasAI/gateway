@@ -45,6 +45,7 @@ type unreliableUpstream struct {
 	listFail bool
 	noPing   bool
 	latency  time.Duration
+	connects chan struct{}
 }
 
 // startUnreliableUpstream starts an upstream that behaves until told otherwise.
@@ -106,6 +107,17 @@ func (u *unreliableUpstream) forgetSessions() {
 	}
 }
 
+// holdConnects makes each new connection wait until the returned function is called. A failed
+// check starts its reconnect in the background, and against an upstream that accepts at once the
+// reconnect can make the client healthy before a test reads the state that the check left.
+func (u *unreliableUpstream) holdConnects() (release func()) {
+	held := make(chan struct{})
+	u.set(func(u *unreliableUpstream) { u.connects = held })
+	release = sync.OnceFunc(func() { close(held) })
+	u.t.Cleanup(release)
+	return release
+}
+
 // set changes the upstream's faults under its lock.
 func (u *unreliableUpstream) set(change func(u *unreliableUpstream)) {
 	u.mu.Lock()
@@ -142,7 +154,7 @@ func (u *unreliableUpstream) serve(w http.ResponseWriter, r *http.Request, next 
 	if session != "" && !forgotten {
 		u.seen[session] = true
 	}
-	latency := u.latency
+	latency, connects := u.latency, u.connects
 	var fault *jsonRPCFault
 	switch {
 	case msg.Method == string(mcpgo.MethodPing) && u.noPing:
@@ -156,6 +168,9 @@ func (u *unreliableUpstream) serve(w http.ResponseWriter, r *http.Request, next 
 
 	if r.Method == http.MethodPost {
 		time.Sleep(latency)
+	}
+	if connects != nil && msg.Method == string(mcpgo.MethodInitialize) {
+		<-connects
 	}
 	switch {
 	case forgotten:
@@ -316,6 +331,7 @@ func TestConnectionChecker_TransientPingFailureReconnects(t *testing.T) {
 	pings, connects := u.count("ping"), u.count("initialize")
 
 	u.set(func(u *unreliableUpstream) { u.pingFail = true })
+	reconnect := u.holdConnects()
 	before := clientOp(m, config.ID)
 	next, _ := checker.performCheck()
 	assert.Equal(t, UnstableConnectionCheckInterval, next)
@@ -323,6 +339,7 @@ func TestConnectionChecker_TransientPingFailureReconnects(t *testing.T) {
 	assert.Equal(t, pings+4, u.count("ping"), "one ping and three retries")
 
 	u.set(func(u *unreliableUpstream) { u.pingFail = false })
+	reconnect()
 	require.NoError(t, waitForClientOp(t, m, config.ID, before))
 	assert.Equal(t, connects+1, u.count("initialize"), "the failed check opens exactly one new connection")
 	requireRecovered(t, m, config.ID)
@@ -366,12 +383,14 @@ func TestConnectionChecker_ForgottenSessionReconnects(t *testing.T) {
 	pings, connects := u.count("ping"), u.count("initialize")
 
 	u.forgetSessions()
+	reconnect := u.holdConnects()
 	before := clientOp(m, config.ID)
 	next, _ := checker.performCheck()
 	assert.Equal(t, UnstableConnectionCheckInterval, next)
 	requireFailureStage(t, m, config.ID, schemas.MCPConnectionFailureStagePing)
 	assert.Equal(t, pings+1, u.count("ping"), "a dead session is not retried")
 
+	reconnect()
 	require.NoError(t, waitForClientOp(t, m, config.ID, before))
 	assert.Equal(t, connects+1, u.count("initialize"))
 	requireRecovered(t, m, config.ID)
