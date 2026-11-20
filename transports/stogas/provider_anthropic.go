@@ -355,8 +355,9 @@ func validateAnthropicChatCompletionPolicy(state *State) error {
 		return invalidRequest("response_format.type must be json_schema for Anthropic-format deployments")
 	}
 	// Each of these asks for something in the reply that Claude cannot give. The settings that
-	// only tune the reply never reach these checks (catalog.ResolvedRequest.KeepCarriedPreferences).
-	if err := rejectAnthropicUnsupportedParameters(raw, "logit_bias", "logprobs", "top_logprobs", "web_search_options"); err != nil {
+	// only tune the reply never reach these checks (catalog.ResolvedRequest.KeepCarriedPreferences),
+	// and routing leaves Claude out for logit_bias, as Claude's sampling.logitBias says.
+	if err := rejectAnthropicUnsupportedParameters(raw, "logprobs", "top_logprobs", "web_search_options"); err != nil {
 		return err
 	}
 	for _, rawTool := range state.Resolution.RawTools() {

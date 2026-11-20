@@ -1302,6 +1302,9 @@ func filterRequestParameters(selections []routingSelection, raw map[string]json.
 	if err != nil {
 		return nil, nil, err
 	}
+	// logit_bias decides which tokens the reply holds, so only a deployment that applies it serves
+	// the request. Others refuse it or answer without it.
+	_, biased := raw["logit_bias"]
 	kept := selections[:0]
 	var removed []ruledOut
 	for _, selection := range selections {
@@ -1311,6 +1314,9 @@ func filterRequestParameters(selections []routingSelection, raw map[string]json.
 		}
 		if err == nil && validateReasoning != nil {
 			err = validateReasoning(selection.deployment, outputLimit)
+		}
+		if err == nil && biased && !selection.deployment.Sampling.LogitBias {
+			err = APIError{StatusCode: http.StatusBadRequest, Code: "invalid_request", Type: ErrorTypeInvalidRequest, Message: "logit_bias is not supported for the selected deployment", Param: "logit_bias"}
 		}
 		if err != nil {
 			removed = append(removed, ruledOut{selection, err})

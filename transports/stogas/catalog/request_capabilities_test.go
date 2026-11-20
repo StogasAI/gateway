@@ -69,6 +69,49 @@ func TestCatalogCapabilitiesFilterBeforeCredentialPreparation(t *testing.T) {
 	}
 }
 
+// logit_bias decides which tokens the reply holds, so routing leaves out each deployment whose
+// record states no logit_bias, such as GLM 5.2 on Chutes, before it prepares a credential, and the
+// request spends none of its fallbacks there.
+func TestRoutingLeavesOutDeploymentsWithoutLogitBias(t *testing.T) {
+	order := []string{"chutes-glm-5.2", "azure-glm-5.2-fireworks-hosted-us"}
+	for _, tc := range []struct{ name, model, fields, want string }{
+		{name: "without logit_bias", model: "glm-5.2", want: order[0]},
+		{name: "with logit_bias", model: "glm-5.2", fields: `,"logit_bias":{"42":1}`, want: order[1]},
+		{name: "pinned to a deployment without it", model: order[0], fields: `,"logit_bias":{"42":1}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			snap := loadTestCatalog(t)
+			if snap.graph.Deployments[order[0]].Routes["chutes-chat-completions"].Sampling.LogitBias ||
+				!snap.graph.Deployments[order[1]].Routes["azure-chat-completions"].Sampling.LogitBias {
+				t.Fatal("the test catalog no longer states logit_bias for the Azure deployment alone")
+			}
+			config := policyConfig(1)
+			if tc.want != "" {
+				config.Routing.Deployments = &policy.Lists{Allow: order}
+				config.Routing.Query = orderedQuery(t, "", order...)
+			}
+			checks := 0
+			resolved, err := ResolveRequest(RequestInput{
+				Body:   []byte(`{"model":"` + tc.model + `","messages":[{"role":"user","content":"hi"}]` + tc.fields + `}`),
+				Method: "POST", Path: "/v1/chat/completions", Policy: config,
+				CheckCandidate: func(schemas.ModelProvider, int, Deployment) error {
+					checks++
+					return nil
+				},
+			})
+			if tc.want == "" {
+				if public := PublicError(err); err == nil || public.StatusCode != 400 || public.Param != "logit_bias" || checks != 0 {
+					t.Fatalf("want a refusal of logit_bias before any credential: %v, %d", err, checks)
+				}
+				return
+			}
+			if err != nil || resolved.Deployment.ID != tc.want || checks != 1 {
+				t.Fatalf("want %s after one check: %v, %v, %d", tc.want, resolved, err, checks)
+			}
+		})
+	}
+}
+
 // setTestCapabilities gives every route of a loaded deployment the same capabilities.
 func setTestCapabilities(deployment *compiledDeployment, capabilities Capabilities) {
 	for routeID, route := range deployment.Routes {

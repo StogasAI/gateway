@@ -16,11 +16,11 @@ type OpenAIFormatAdapter struct {
 
 // awsDroppedFields are the fields that Bedrock's Chat Completions API answers 200 without applying
 // (captures aws/chat-completions-request-fields and aws/chat-completions-tools). Each one decides
-// which tokens the reply holds, what it reports or how many tools the model calls in a turn, so a
-// deployment that drops it cannot serve the request. parallel_tool_calls reaches this check only
-// as false, because true allows what every provider allows. Routing already refuses
-// web_search_options, which Bedrock drops too, for every deployment without search prices.
-var awsDroppedFields = []string{"logit_bias", "logprobs", "parallel_tool_calls", "top_logprobs"}
+// what the reply reports or how many tools the model calls in a turn, so a deployment that drops
+// it cannot serve the request. parallel_tool_calls reaches this check only as false, because true
+// allows what every provider allows. Routing leaves these deployments out for logit_bias, because
+// their records state none, and for web_search_options, because they have no search prices.
+var awsDroppedFields = []string{"logprobs", "parallel_tool_calls", "top_logprobs"}
 
 func (a OpenAIFormatAdapter) ValidateRequest(state *State) error {
 	if err := a.OpenAIAdapter.ValidateRequest(state); err != nil {
@@ -32,7 +32,7 @@ func (a OpenAIFormatAdapter) ValidateRequest(state *State) error {
 	raw := wireState(state).Resolution.RawBody()
 	for _, name := range awsDroppedFields {
 		if rawJSONValueSet(raw[name]) {
-			return invalidRequest(name + " is not supported for AWS deployments of models other than Claude")
+			return invalidRequest(name + " is not supported for the selected AWS deployment")
 		}
 	}
 	return nil

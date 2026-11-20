@@ -105,7 +105,7 @@ func TestChatPolicyRejectsUnsupportedFields(t *testing.T) {
 		{"anthropic cache control bad ttl", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"cache_control":{"type":"ephemeral","ttl":"24h"}}`, "cache_control.ttl must be 5m or 1h"},
 		{"anthropic cache control bad type", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"cache_control":{"type":"persisted","ttl":"1h"}}`, "cache_control.type must be ephemeral"},
 		{"openai context management", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"context_management":{"edits":[{"type":"compact_20260112"}]}}`, "context_management is not supported for OpenAI-format"},
-		{"anthropic logit bias", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"logit_bias":{"123":1}}`, "logit_bias is not supported for Anthropic-format"},
+		{"anthropic logit bias", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"logit_bias":{"123":1}}`, "logit_bias is not supported for the selected deployment"},
 		{"anthropic logprobs", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"logprobs":true}`, "logprobs is not supported for Anthropic-format"},
 		{"prompt cache isolation key", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"prompt_cache_isolation_key":"tenant-a"}`, "prompt_cache_isolation_key is not supported"},
 		{"moderation", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"moderation":{"model":"omni-moderation-latest","policy":{"input":{"mode":"block"}}}}`, "moderation is not supported; no request or response is moderated"},
