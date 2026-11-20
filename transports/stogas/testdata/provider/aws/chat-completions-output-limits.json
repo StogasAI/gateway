@@ -1,0 +1,232 @@
+{
+	"shows": "On Bedrock's Chat Completions API, Kimi K3 keeps reasoning and answer within max_tokens and max_completion_tokens and counts both in completion_tokens, and refuses an output limit of 0. Kimi K3 and Kimi K3.1 Pro refuse one above 1,048,576 tokens.",
+	"recorded": "2026-11-20",
+	"exchanges": [
+		{
+			"name": "max_tokens of 12",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Count from 1 to 300 in words, separated by commas."
+						}
+					],
+					"max_tokens": 12
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "length",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": null,
+								"role": "assistant",
+								"refusal": null,
+								"reasoning_content": "The user wants me to count from 1"
+							}
+						}
+					],
+					"created": 1795144788,
+					"id": "chatcmpl-mfums3ygy2lum2ovfnbgpggb4sgucyhkgguiltqbxapsldw75blq",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 12,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 9,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 99,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 111
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "max_completion_tokens of 12",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Count from 1 to 300 in words, separated by commas."
+						}
+					],
+					"max_completion_tokens": 12
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "length",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": null,
+								"role": "assistant",
+								"refusal": null,
+								"reasoning_content": "The user wants me to count from 1"
+							}
+						}
+					],
+					"created": 1795144789,
+					"id": "chatcmpl-iqgmqtc7qowjee57a7ctrnz3v6buodbwj7g5gqebyzfr2ufldc3a",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 12,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 9,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 99,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 111
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "max_tokens of 0",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Count from 1 to 300 in words, separated by commas."
+						}
+					],
+					"max_tokens": 0
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Invalid 'max_tokens': integer below minimum value. Expected a value >= 1, but got 0 instead.",
+						"type": "invalid_request_error",
+						"param": "max_tokens",
+						"code": "integer_below_min_value"
+					}
+				}
+			}
+		},
+		{
+			"name": "max_tokens of 1048577",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Count from 1 to 300 in words, separated by commas."
+						}
+					],
+					"max_tokens": 1048577
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "'max_tokens' (1048577) exceeds model maximum (1048576)",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3 max_tokens above the limit",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 1048577
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "'max_tokens' (1048577) exceeds model maximum (1048576)",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3.1 max_tokens above the limit",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 1048577
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "'max_tokens' (1048577) exceeds model maximum (1048576)",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		}
+	]
+}

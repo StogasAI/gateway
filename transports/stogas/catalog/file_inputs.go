@@ -53,8 +53,8 @@ type Attachment struct {
 	// Kind is the part's type: image_url, input_image, input_audio, file or input_file.
 	Kind      string
 	Responses bool
-	// ToolResult says that the part is in a tool result, which only some deployments read
-	// attachments from (Capabilities.ToolResultAttachments).
+	// ToolResult says that the part is in a tool result, which only some deployments read images
+	// and documents from (Capabilities.ToolResultImages and ToolResultDocuments).
 	ToolResult bool
 	// URL, Data and ID are the part's sources: a URL, data URLs included, an inline payload and
 	// a provider file ID. The checks read no more of a source than a data URL's header.
@@ -83,8 +83,20 @@ const routingSubject = "any deployment that this request can use"
 
 // attachmentError names the deployments that cannot read the attachment as subject.
 func attachmentError(provider schemas.ModelProvider, deployment Deployment, attachment Attachment, subject string) error {
-	if attachment.ToolResult && !deployment.Capabilities.ToolResultAttachments {
-		return attachmentRefusal(attachment.Path, " attachments in tool results are not supported by "+subject)
+	if attachment.ToolResult {
+		switch attachment.Kind {
+		case "image_url", "input_image":
+			if !deployment.Capabilities.ToolResultImages {
+				return attachmentRefusal(attachment.Path, " images in tool results are not supported by "+subject)
+			}
+		case "file", "input_file":
+			if !deployment.Capabilities.ToolResultDocuments {
+				return attachmentRefusal(attachment.Path, " files in tool results are not supported by "+subject)
+			}
+		default:
+			// No interface carries audio in a tool result.
+			return attachmentRefusal(attachment.Path, " audio in tool results is not supported by "+subject)
+		}
 	}
 	claude := UsesClaudeWire(provider, deployment.ModelID)
 	// Chat Completions, which a bridged deployment gets, has no image file IDs or file URLs.
@@ -114,9 +126,16 @@ func attachmentError(provider schemas.ModelProvider, deployment Deployment, atta
 	if claude && attachment.ID != "" && deployment.Hosting != CompanyAnthropic {
 		return attachmentRefusal(attachment.Path, " file IDs are not supported by "+subject)
 	}
-	// Claude that AWS or Google runs fetches no URL.
-	if CloudRunsClaude(provider, deployment) && attachment.URL != "" && !strings.HasPrefix(attachment.URL, "data:") {
+	// A model that AWS or Google runs fetches no URL: Bedrock takes an image only inline or from S3
+	// (capture aws/chat-completions-files).
+	if CloudRunsModel(provider, deployment) && attachment.URL != "" && !strings.HasPrefix(attachment.URL, "data:") {
 		return attachmentRefusal(attachment.Path, " URLs are not supported by "+subject+"; send the content inline")
+	}
+	// Bedrock's Chat Completions API reads a file's type from its filename alone, and refuses a file
+	// whose name has no extension that it lists (capture aws/chat-completions-files).
+	if provider == ProviderAWS && !claude && (attachment.Kind == "file" || attachment.Kind == "input_file") &&
+		!slices.Contains(deployment.DocumentFormats.Extensions, strings.ToLower(filepath.Ext(attachment.Filename))) {
+		return attachmentRefusal(attachment.Path, " needs a filename whose extension "+subject+" reads, such as .pdf")
 	}
 	return nil
 }
@@ -267,9 +286,9 @@ func textExtractionHint(file filetype.Type, extraction policy.TextExtraction) st
 	return ". Set plugins.textExtraction." + key + " to auto to send it as text"
 }
 
-// CloudRunsClaude reports whether AWS or Google runs a Claude deployment itself, rather than
-// Anthropic behind the cloud's sign-in.
-func CloudRunsClaude(provider schemas.ModelProvider, deployment Deployment) bool {
+// CloudRunsModel reports whether AWS or Google runs a deployment's model itself, rather than
+// Anthropic, which runs Claude on both clouds.
+func CloudRunsModel(provider schemas.ModelProvider, deployment Deployment) bool {
 	return (provider == ProviderAWS || provider == ProviderGoogleCloud) && deployment.Hosting != CompanyAnthropic
 }
 

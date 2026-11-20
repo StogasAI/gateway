@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
@@ -282,10 +281,13 @@ func highestInputHoldMeter(pricing catalog.Pricing, alternatives ...string) stri
 	return meterKey
 }
 
+// openAICacheWriteHoldMeter is the meter of the cache writes that a request in OpenAI's format can
+// make, which the hold prices when the deployment does: a breakpoint writes, and the implicit mode
+// writes without one on OpenAI.
 func openAICacheWriteHoldMeter(state *State) string {
 	if state == nil ||
 		state.Resolution == nil ||
-		(state.Resolution.Provider != schemas.OpenAI && state.Resolution.Provider != schemas.Azure) {
+		catalog.UsesClaudeWire(state.Resolution.Provider, state.Resolution.Deployment.ModelID) {
 		return ""
 	}
 	raw := state.Resolution.RawBody()

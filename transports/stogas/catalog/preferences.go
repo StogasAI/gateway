@@ -98,9 +98,11 @@ func (r *ResolvedRequest) takesResponsesControls() bool {
 }
 
 // marksPromptCache reports whether the deployment takes OpenAI's explicit prompt cache marks:
-// prompt_cache_options and the prompt_cache_breakpoint of a content block.
+// prompt_cache_options and the prompt_cache_breakpoint of a content block. Every deployment in
+// OpenAI's format that caches explicitly takes them, Kimi on AWS included (capture
+// aws/chat-completions-prompt-caching), and Claude takes its own cache_control instead.
 func (r *ResolvedRequest) marksPromptCache() bool {
-	return r.usesOpenAIWire() && r.Deployment.Capabilities.ExplicitPromptCaching
+	return !UsesClaudeWire(r.Provider, r.Deployment.ModelID) && r.Deployment.Capabilities.ExplicitPromptCaching
 }
 
 // openAIRefusesSampling reports whether the request's GPT model refuses temperature and top_p.
@@ -300,8 +302,8 @@ func (r *ResolvedRequest) carriedChatMessage(message openaiprovider.OpenAIMessag
 		r.Deployment.Upstream.ModelFormat == "Mistral AI" && message.Role != schemas.ChatMessageRoleTool) {
 		message.Name, changed = nil, true
 	}
-	if content := message.Content; content != nil && !r.marksPromptCache() {
-		if blocks, without := withoutChatBreakpoints(content.ContentBlocks); without {
+	if content := message.Content; content != nil {
+		if blocks, differs := carriedChatBreakpoints(content.ContentBlocks, r.marksPromptCache()); differs {
 			message.Content, changed = &schemas.ChatMessageContent{ContentStr: content.ContentStr, ContentBlocks: blocks}, true
 		}
 	}
@@ -360,17 +362,39 @@ func chatMessageWithoutText(content *schemas.ChatMessageContent) bool {
 	})
 }
 
-// withoutChatBreakpoints returns content blocks without OpenAI's prompt cache breakpoints, and
-// whether any block held one.
-func withoutChatBreakpoints(blocks []schemas.ChatContentBlock) ([]schemas.ChatContentBlock, bool) {
-	if !slices.ContainsFunc(blocks, func(block schemas.ChatContentBlock) bool { return block.PromptCacheBreakpoint != nil }) {
+// carriedChatBreakpoints returns content blocks with OpenAI's prompt cache breakpoints as a Chat
+// Completions deployment gets them, and whether they differ: none where the deployment marks no
+// cache, and otherwise each without its ttl, which Bedrock refuses there (capture
+// aws/chat-completions-prompt-caching). The gateway takes no ttl but 30m, the lifetime of a
+// breakpoint without one, so every breakpoint keeps its lifetime.
+func carriedChatBreakpoints(blocks []schemas.ChatContentBlock, marks bool) ([]schemas.ChatContentBlock, bool) {
+	if !slices.ContainsFunc(blocks, func(block schemas.ChatContentBlock) bool {
+		return breakpointDiffers(block.PromptCacheBreakpoint, marks)
+	}) {
 		return blocks, false
 	}
 	blocks = slices.Clone(blocks)
 	for index := range blocks {
-		blocks[index].PromptCacheBreakpoint = nil
+		blocks[index].PromptCacheBreakpoint = carriedBreakpoint(blocks[index].PromptCacheBreakpoint, marks)
 	}
 	return blocks, true
+}
+
+// breakpointDiffers reports whether a breakpoint changes on its way to a Chat Completions
+// deployment that marks the cache or not.
+func breakpointDiffers(breakpoint *schemas.PromptCacheBreakpoint, marks bool) bool {
+	return breakpoint != nil && (!marks || breakpoint.TTL != nil)
+}
+
+// carriedBreakpoint returns a breakpoint as a Chat Completions deployment gets it.
+func carriedBreakpoint(breakpoint *schemas.PromptCacheBreakpoint, marks bool) *schemas.PromptCacheBreakpoint {
+	if !breakpointDiffers(breakpoint, marks) {
+		return breakpoint
+	}
+	if !marks {
+		return nil
+	}
+	return &schemas.PromptCacheBreakpoint{Mode: breakpoint.Mode}
 }
 
 // carriedResponsesItem returns an input item as the deployment gets it and whether it differs.
@@ -411,8 +435,14 @@ func (r *ResolvedRequest) carriedResponsesItem(item schemas.ResponsesMessage, cl
 // text that the assistant wrote.
 func (r *ResolvedRequest) carriedResponsesBlocks(blocks []schemas.ResponsesMessageContentBlock, claude bool) ([]schemas.ResponsesMessageContentBlock, bool) {
 	marks := r.marksPromptCache()
+	// Responses takes a breakpoint's ttl, and a deployment that serves Responses through Chat
+	// Completions gets each breakpoint as Chat Completions takes it.
+	chat := r.WireRoute() == RouteChat
+	breakpointChanges := func(breakpoint *schemas.PromptCacheBreakpoint) bool {
+		return breakpoint != nil && !marks || chat && breakpointDiffers(breakpoint, marks)
+	}
 	differs := func(block schemas.ResponsesMessageContentBlock) bool {
-		return !marks && block.PromptCacheBreakpoint != nil || claude && (block.Type == schemas.ResponsesOutputMessageContentTypeRefusal ||
+		return breakpointChanges(block.PromptCacheBreakpoint) || claude && (block.Type == schemas.ResponsesOutputMessageContentTypeRefusal ||
 			block.ResponsesOutputMessageContentText != nil && len(block.ResponsesOutputMessageContentText.LogProbs) > 0)
 	}
 	if !slices.ContainsFunc(blocks, differs) {
@@ -421,8 +451,8 @@ func (r *ResolvedRequest) carriedResponsesBlocks(blocks []schemas.ResponsesMessa
 	blocks = slices.Clone(blocks)
 	for index := range blocks {
 		block := &blocks[index]
-		if !marks {
-			block.PromptCacheBreakpoint = nil
+		if breakpointChanges(block.PromptCacheBreakpoint) {
+			block.PromptCacheBreakpoint = carriedBreakpoint(block.PromptCacheBreakpoint, marks)
 		}
 		if !claude {
 			continue

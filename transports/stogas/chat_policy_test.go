@@ -2099,8 +2099,14 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 		for _, routeID := range slices.Sorted(maps.Keys(source.Routes)) {
 			route := routes[routeID]
 			provider := schemas.ModelProvider(route.ProviderID)
-			cloudClaude := provider == catalog.ProviderAWS || provider == catalog.ProviderGoogleCloud
+			cloudClaude := (provider == catalog.ProviderAWS || provider == catalog.ProviderGoogleCloud) && catalog.UsesClaudeWire(provider, source.ModelID)
 			usesAnthropicWire := provider == schemas.Anthropic || routeID == "azure-anthropic-messages" || cloudClaude
+			// Bedrock's Chat Completions API, which serves the models of other authors, has its own
+			// core provider.
+			coreProvider := provider
+			if provider == catalog.ProviderAWS && !cloudClaude {
+				coreProvider = catalog.CoreProviderAWSChatCompletions
+			}
 			for _, interfaceName := range route.Interfaces {
 				var (
 					path  string
@@ -2179,8 +2185,8 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 						if err != nil {
 							t.Fatalf("build Bifrost request: %v", err)
 						}
-						if interfaceName == "chat_completions" && request.ChatRequest.Provider != provider {
-							t.Fatalf("Bifrost chat provider = %q, want %q", request.ChatRequest.Provider, provider)
+						if interfaceName == "chat_completions" && request.ChatRequest.Provider != coreProvider {
+							t.Fatalf("Bifrost chat provider = %q, want %q", request.ChatRequest.Provider, coreProvider)
 						}
 						if interfaceName == "responses" && request.ResponsesRequest.Provider != provider {
 							t.Fatalf("Bifrost Responses provider = %q, want %q", request.ResponsesRequest.Provider, provider)
@@ -2218,7 +2224,7 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 							if bifrostErr != nil {
 								t.Fatalf("build Anthropic-family Responses wire request: %v", bifrostErr)
 							}
-						case provider == schemas.OpenAI || provider == schemas.Azure:
+						case provider == schemas.OpenAI || provider == schemas.Azure || provider == catalog.ProviderAWS:
 							// The gateway writes these bodies itself, which can change what core
 							// converts, such as the effort of a model that Azure hosts for another author.
 							ctx.SetValue(schemas.BifrostContextKeyHTTPRequestType, request.RequestType)
@@ -2323,7 +2329,7 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 						switch {
 						case usesAnthropicWire:
 							wireEffort = wire.OutputConfig.Effort
-						case (provider == schemas.OpenAI || provider == schemas.Azure) && interfaceName == "chat_completions":
+						case (provider == schemas.OpenAI || provider == schemas.Azure || provider == catalog.ProviderAWS) && interfaceName == "chat_completions":
 							wireEffort = wire.ReasoningEffort
 						case provider == schemas.OpenAI || provider == schemas.Azure:
 							wireEffort = wire.Reasoning.Effort

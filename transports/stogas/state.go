@@ -358,6 +358,7 @@ func (s *State) beginProviderAttempt(startedAt time.Time) int {
 	return len(s.providerAttempts) - 1
 }
 
+// setProviderAttemptProvider records the catalog provider of the core provider that ran the attempt.
 func (s *State) setProviderAttemptProvider(index int, provider string) {
 	if s == nil || index < 0 {
 		return
@@ -365,7 +366,7 @@ func (s *State) setProviderAttemptProvider(index int, provider string) {
 	s.providerAttemptsMu.Lock()
 	defer s.providerAttemptsMu.Unlock()
 	if index < len(s.providerAttempts) {
-		s.providerAttempts[index].Provider = provider
+		s.providerAttempts[index].Provider = string(catalog.CatalogProvider(schemas.ModelProvider(provider)))
 	}
 }
 

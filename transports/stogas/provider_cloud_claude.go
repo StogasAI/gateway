@@ -1,8 +1,55 @@
 package stogas
 
 import (
+	"encoding/json"
+
+	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
+
+// CloudAdapter serves AWS and Google Cloud: Claude takes Anthropic's Messages API there, which
+// CloudClaudeAdapter serves, and other models take OpenAI's format.
+type CloudAdapter struct {
+	DefaultAdapter
+}
+
+func (a CloudAdapter) format(state *State) Adapter {
+	if stateUsesClaudeWire(state) {
+		return CloudClaudeAdapter{AnthropicAdapter{a.DefaultAdapter}}
+	}
+	return OpenAIFormatAdapter{OpenAIAdapter{a.DefaultAdapter}}
+}
+
+func (a CloudAdapter) ValidateRequest(state *State) error {
+	if state == nil || state.Resolution == nil {
+		return catalog.ErrUnsupportedRequest
+	}
+	return a.format(state).ValidateRequest(state)
+}
+
+func (a CloudAdapter) SanitizeRequest(state *State) error {
+	return a.format(state).SanitizeRequest(state)
+}
+
+func (a CloudAdapter) EstimateHold(state *State) error {
+	return a.format(state).EstimateHold(state)
+}
+
+func (a CloudAdapter) ValidateRawResponsesToolType(state *State, tool map[string]json.RawMessage) error {
+	return a.format(state).ValidateRawResponsesToolType(state, tool)
+}
+
+func (a CloudAdapter) IngestChunk(state *State, chunk *schemas.BifrostStreamChunk) error {
+	return a.format(state).IngestChunk(state, chunk)
+}
+
+func (a CloudAdapter) IngestResponse(state *State, resp *schemas.BifrostResponse, bifrostErr *schemas.BifrostError) error {
+	return a.format(state).IngestResponse(state, resp, bifrostErr)
+}
+
+func (a CloudAdapter) CalculateUpstreamCost(state *State) error {
+	return a.format(state).CalculateUpstreamCost(state)
+}
 
 // CloudClaudeAdapter serves Claude on AWS and Google Cloud. Every hosting takes
 // the Messages API, so Anthropic's validation, holds and refusal billing apply;
@@ -24,14 +71,7 @@ func stateUsesClaudeWire(state *State) bool {
 // than Anthropic.
 func cloudRunsClaude(state *State) bool {
 	return state != nil && state.Resolution != nil &&
-		catalog.CloudRunsClaude(state.Resolution.Provider, state.Resolution.Deployment)
-}
-
-func (a CloudClaudeAdapter) ValidateRequest(state *State) error {
-	if state == nil || state.Resolution == nil {
-		return catalog.ErrUnsupportedRequest
-	}
-	return a.AnthropicAdapter.ValidateRequest(state)
+		catalog.CloudRunsModel(state.Resolution.Provider, state.Resolution.Deployment)
 }
 
 // SanitizeRequest sends speed only for Fast, which only Anthropic's hosting on

@@ -226,20 +226,17 @@ func confidentialProduction(config Config) bool {
 	return config.Confidential.Enabled && config.Confidential.Environment != "local"
 }
 
-// cloudClaudeConfig serves Claude on AWS or Google Cloud through core's
-// Anthropic provider. Each request names its own URL, so the base URL cannot
-// resolve: a request without one never reaches Anthropic with a cloud credential.
-func cloudClaudeConfig(config Config) schemas.ProviderConfig {
+// cloudConfig serves AWS or Google Cloud through the core provider of the format that a
+// deployment takes: Anthropic's for Claude and OpenAI's Chat Completions for other models. Each
+// request names its own URL, so the base URL cannot resolve: a request without one never reaches
+// Anthropic or OpenAI with a cloud credential.
+func cloudConfig(config Config, format schemas.ModelProvider) schemas.ProviderConfig {
 	providerConfig := newProviderConfig("https://upstream-url-required.invalid", config.AllowPrivateProviderNetwork, false)
-	providerConfig.CustomProviderConfig = &schemas.CustomProviderConfig{
-		BaseProviderType: schemas.Anthropic,
-		AllowedRequests: &schemas.AllowedRequests{
-			ChatCompletion:       true,
-			ChatCompletionStream: true,
-			Responses:            true,
-			ResponsesStream:      true,
-		},
+	allowed := &schemas.AllowedRequests{ChatCompletion: true, ChatCompletionStream: true}
+	if format == schemas.Anthropic {
+		allowed.Responses, allowed.ResponsesStream = true, true
 	}
+	providerConfig.CustomProviderConfig = &schemas.CustomProviderConfig{BaseProviderType: format, AllowedRequests: allowed}
 	return providerConfig
 }
 
@@ -283,9 +280,11 @@ func newAccount(config Config, chutesE2EE *chutese2ee.Transport) *account {
 	}
 	// Bedrock's runtime endpoint offers only classical key exchange, so AWS
 	// requires TLS 1.3 as Azure does. Every Google endpoint offers X25519MLKEM768.
-	awsConfig := cloudClaudeConfig(config)
+	awsConfig := cloudConfig(config, schemas.Anthropic)
 	awsConfig.NetworkConfig.RequireTLS13 = requirePostQuantumTLS
-	googleCloudConfig := cloudClaudeConfig(config)
+	awsChatCompletionsConfig := cloudConfig(config, schemas.OpenAI)
+	awsChatCompletionsConfig.NetworkConfig.RequireTLS13 = requirePostQuantumTLS
+	googleCloudConfig := cloudConfig(config, schemas.Anthropic)
 	googleCloudConfig.NetworkConfig.RequirePostQuantumTLS = requirePostQuantumTLS
 
 	return &account{
@@ -300,12 +299,13 @@ func newAccount(config Config, chutesE2EE *chutese2ee.Transport) *account {
 			},
 		},
 		providerConfigs: map[schemas.ModelProvider]schemas.ProviderConfig{
-			schemas.OpenAI:              openAIConfig,
-			schemas.Anthropic:           anthropicConfig,
-			schemas.Azure:               azureConfig,
-			catalog.ProviderChutes:      chutesConfig,
-			catalog.ProviderAWS:         awsConfig,
-			catalog.ProviderGoogleCloud: googleCloudConfig,
+			schemas.OpenAI:                         openAIConfig,
+			schemas.Anthropic:                      anthropicConfig,
+			schemas.Azure:                          azureConfig,
+			catalog.ProviderChutes:                 chutesConfig,
+			catalog.ProviderAWS:                    awsConfig,
+			catalog.CoreProviderAWSChatCompletions: awsChatCompletionsConfig,
+			catalog.ProviderGoogleCloud:            googleCloudConfig,
 		},
 	}
 }
@@ -390,7 +390,7 @@ func newProviderConfig(baseURL string, allowPrivateNetwork, requirePostQuantumTL
 }
 
 func (a *account) GetConfiguredProviders() ([]schemas.ModelProvider, error) {
-	return []schemas.ModelProvider{schemas.OpenAI, schemas.Anthropic, schemas.Azure, catalog.ProviderChutes, catalog.ProviderAWS, catalog.ProviderGoogleCloud}, nil
+	return []schemas.ModelProvider{schemas.OpenAI, schemas.Anthropic, schemas.Azure, catalog.ProviderChutes, catalog.ProviderAWS, catalog.CoreProviderAWSChatCompletions, catalog.ProviderGoogleCloud}, nil
 }
 
 func (a *account) GetKeysForProvider(ctx context.Context, providerKey schemas.ModelProvider) ([]schemas.Key, error) {

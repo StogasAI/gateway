@@ -1025,7 +1025,7 @@ func (provider *OpenAIProvider) ChatCompletion(ctx *schemas.BifrostContext, key 
 		provider.GetProviderKey(),
 		nil,
 		nil,
-		nil,
+		providerUtils.ContextBodySigner(ctx),
 		provider.logger,
 	)
 }
@@ -1267,7 +1267,7 @@ func (provider *OpenAIProvider) ChatCompletionStream(ctx *schemas.BifrostContext
 		nil,
 		nil,
 		nil,
-		nil,
+		providerUtils.ContextBodySigner(ctx),
 		provider.logger,
 		postHookSpanFinalizer,
 	)

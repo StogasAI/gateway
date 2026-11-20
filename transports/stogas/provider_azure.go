@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 
 	"github.com/maximhq/bifrost/core/schemas"
-	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
 
 // format is the adapter of the format that the deployment takes: Anthropic's for Claude, OpenAI's
@@ -12,10 +11,10 @@ import (
 // format bills, such as Claude's web search, is billed on Azure too. Azure differs only where its
 // methods below say so.
 func (a AzureAdapter) format(state *State) Adapter {
-	if azureDeploymentUsesAnthropicWire(state) {
+	if stateUsesClaudeWire(state) {
 		return AnthropicAdapter{a.DefaultAdapter}
 	}
-	return OpenAIAdapter{a.DefaultAdapter}
+	return OpenAIFormatAdapter{OpenAIAdapter{a.DefaultAdapter}}
 }
 
 func (a AzureAdapter) ValidateRequest(state *State) error {
@@ -25,17 +24,14 @@ func (a AzureAdapter) ValidateRequest(state *State) error {
 // SanitizeRequest sends Claude neither speed nor inference_geo, which Anthropic's adapter sets for
 // Anthropic's own API.
 func (a AzureAdapter) SanitizeRequest(state *State) error {
+	if !stateUsesClaudeWire(state) {
+		return a.format(state).SanitizeRequest(state)
+	}
 	if err := a.DefaultAdapter.SanitizeRequest(state); err != nil {
 		return err
 	}
-	if azureDeploymentUsesAnthropicWire(state) {
-		state.Resolution.ApplyProviderSamplingParameters()
-		applyAnthropicResponsesToolCap(state)
-		return nil
-	}
-	// The OpenAI format carries reasoning only as reasoning_effort, whose "none" turns reasoning
-	// off, as Fireworks documents for the models it serves. Reasoning on leaves the model's default.
-	state.Resolution.SendReasoningOffAsEffort()
+	state.Resolution.ApplyProviderSamplingParameters()
+	applyAnthropicResponsesToolCap(state)
 	return nil
 }
 
@@ -55,27 +51,6 @@ func (a AzureAdapter) CalculateUpstreamCost(state *State) error {
 	return a.format(state).CalculateUpstreamCost(state)
 }
 
-func azureDeploymentUsesAnthropicWire(state *State) bool {
-	return state != nil &&
-		state.Resolution != nil &&
-		schemas.IsAnthropicModel(state.Resolution.Deployment.ModelID)
-}
-
-func (AzureAdapter) ValidateRawResponsesToolType(state *State, tool map[string]json.RawMessage) error {
-	if azureDeploymentUsesAnthropicWire(state) {
-		return (AnthropicAdapter{}).ValidateRawResponsesToolType(state, tool)
-	}
-	toolType := catalog.CanonicalResponsesToolType(rawString(tool["type"]))
-	switch toolType {
-	case schemas.ResponsesToolTypeFunction, schemas.ResponsesToolTypeCustom, schemas.ResponsesToolTypeNamespace:
-		// Anthropic's client tools read as functions, which only Claude takes.
-		if _, anthropicTool := catalog.AnthropicClientToolName(rawString(tool["type"])); !anthropicTool {
-			return nil
-		}
-	}
-	// The catalog offers no hosted tool on Azure's own routes.
-	if err := hostedToolOffered(state, string(toolType)); err != nil {
-		return err
-	}
-	return invalidRequest("Only function, custom, and namespace tools are supported for Azure deployments")
+func (a AzureAdapter) ValidateRawResponsesToolType(state *State, tool map[string]json.RawMessage) error {
+	return a.format(state).ValidateRawResponsesToolType(state, tool)
 }

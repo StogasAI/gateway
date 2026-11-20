@@ -45,7 +45,7 @@ func ToOpenAIChatRequest(ctx *schemas.BifrostContext, bifrostReq *schemas.Bifros
 
 	openaiReq := &OpenAIChatRequest{
 		Model:    bifrostReq.Model,
-		Messages: ConvertBifrostMessagesToOpenAIMessages(bifrostReq.Input),
+		Messages: convertBifrostMessagesToOpenAIMessages(bifrostReq.Input, caps.SupportsMultimodalToolOutput(false)),
 		Provider: bifrostReq.Provider,
 	}
 

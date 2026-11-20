@@ -587,8 +587,7 @@ func TestEncryptedReasoningGoesBackWithoutItsSummary(t *testing.T) {
 
 // TestRecordedOpenModelReasoningGoesBackAsTheProviderTookIt replays conversations recorded from
 // the open models of Azure and Chutes, which took the reasoning_content of an earlier answer and of
-// an earlier tool call back. Each recorded model maps to a test deployment of its provider, and
-// the gateway sends every assistant message with the reasoning_content that the provider took.
+// an earlier tool call back. Each recorded model maps to a test deployment of its provider.
 func TestRecordedOpenModelReasoningGoesBackAsTheProviderTookIt(t *testing.T) {
 	const history = " answer after both turns sent back with their reasoning"
 	for _, replay := range []struct{ capture, exchange, model string }{
@@ -606,33 +605,40 @@ func TestRecordedOpenModelReasoningGoesBackAsTheProviderTookIt(t *testing.T) {
 		{"chutes/reasoning-history", "Qwen/Qwen3.8-2.4T-A95B" + history, "chutes-qwen3.8-27b"},
 		{"chutes/reasoning-history", "Qwen/Qwen3.8-Max-0902" + history, "chutes-qwen3.8-27b"},
 	} {
-		sent := exchange(t, providerCapture(t, replay.capture), replay.exchange)
-		if sent.Response.Status != 200 {
-			t.Fatalf("%s: the provider answered %d in the recording", replay.exchange, sent.Response.Status)
-		}
-		var took struct {
-			Tools    json.RawMessage              `json:"tools"`
-			Messages []map[string]json.RawMessage `json:"messages"`
-		}
-		if err := json.Unmarshal(sent.Request.Body, &took); err != nil {
-			t.Fatal(err)
-		}
-		request, err := json.Marshal(map[string]any{"model": replay.model, "tools": took.Tools, "messages": took.Messages})
-		if err != nil {
-			t.Fatal(err)
-		}
-		body, _, _ := providerBody(t, "/v1/chat/completions", string(request))
-		var wire []map[string]json.RawMessage
-		if err := json.Unmarshal(body["messages"], &wire); err != nil {
-			t.Fatal(err)
-		}
-		if len(wire) != len(took.Messages) {
-			t.Fatalf("%s: messages sent = %s, the provider took %s", replay.exchange, body["messages"], sent.Request.Body)
-		}
-		for index, message := range took.Messages {
-			if string(wire[index]["reasoning_content"]) != string(message["reasoning_content"]) {
-				t.Fatalf("%s: message %d sent = %s, the provider took %s", replay.exchange, index, body["messages"], sent.Request.Body)
-			}
+		replayReasoningHistory(t, exchange(t, providerCapture(t, replay.capture), replay.exchange), replay.model)
+	}
+}
+
+// replayReasoningHistory sends a recorded conversation to a deployment as a client's request and
+// checks that the gateway sends every assistant message with the reasoning_content that the
+// provider took.
+func replayReasoningHistory(t *testing.T, sent providerExchange, model string) {
+	t.Helper()
+	if sent.Response.Status != 200 {
+		t.Fatalf("%s: the provider answered %d in the recording", sent.Name, sent.Response.Status)
+	}
+	var took struct {
+		Tools    json.RawMessage              `json:"tools"`
+		Messages []map[string]json.RawMessage `json:"messages"`
+	}
+	if err := json.Unmarshal(sent.Request.Body, &took); err != nil {
+		t.Fatal(err)
+	}
+	request, err := json.Marshal(map[string]any{"model": model, "tools": took.Tools, "messages": took.Messages})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _, _ := providerBody(t, "/v1/chat/completions", string(request))
+	var wire []map[string]json.RawMessage
+	if err := json.Unmarshal(body["messages"], &wire); err != nil {
+		t.Fatal(err)
+	}
+	if len(wire) != len(took.Messages) {
+		t.Fatalf("%s: messages sent = %s, the provider took %s", sent.Name, body["messages"], sent.Request.Body)
+	}
+	for index, message := range took.Messages {
+		if string(wire[index]["reasoning_content"]) != string(message["reasoning_content"]) {
+			t.Fatalf("%s: message %d sent = %s, the provider took %s", sent.Name, index, body["messages"], sent.Request.Body)
 		}
 	}
 }

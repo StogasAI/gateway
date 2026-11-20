@@ -48,7 +48,7 @@ func AdapterFor(provider schemas.ModelProvider) Adapter {
 	case catalog.ProviderChutes:
 		return ChutesAdapter{}
 	case catalog.ProviderAWS, catalog.ProviderGoogleCloud:
-		return CloudClaudeAdapter{}
+		return CloudAdapter{}
 	default:
 		return DefaultAdapter{}
 	}

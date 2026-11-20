@@ -1,0 +1,872 @@
+{
+	"shows": "On Bedrock's Chat Completions API, Kimi K3 and Kimi K3.1 Pro take reasoning_effort none, low, medium, high, xhigh and max, refuse minimal, answer without reasoning at none and reason without an effort.",
+	"recorded": "2026-11-20",
+	"exchanges": [
+		{
+			"name": "global.moonshotai.kimi-k3 reasoning_effort unset",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 17*23? Answer with the number only."
+						}
+					],
+					"max_tokens": 4000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "391",
+								"role": "assistant",
+								"refusal": null,
+								"reasoning_content": "The user wants a simple arithmetic answer: 17 * 23.\n\n17 * 23 = 17 * 20 + 17 * 3 = 340 + 51 = 391.\n\nAnswer with the number only."
+							}
+						}
+					],
+					"created": 1795140793,
+					"id": "chatcmpl-vm33mg7gzvp47imi6f32z4dcbfgem7aw76ukigu4uaruuvbjhr6a",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 62,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 46,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 98,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 160
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3 reasoning_effort none",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 17*23? Answer with the number only."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "none"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "391",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795140794,
+					"id": "chatcmpl-6g2dg4jxbbaj2ku4btjovjbbjmknolhg3gwcssviutkcr3ao5v3a",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 10,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 31,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 41
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3 reasoning_effort minimal",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 17*23? Answer with the number only."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "minimal"
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Unsupported value: 'reasoning_effort' does not support 'minimal' with this model. Supported values are: 'none', 'low', 'medium', 'high', and 'xhigh'.",
+						"type": "invalid_request_error",
+						"param": "reasoning_effort",
+						"code": "unsupported_value"
+					}
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3 reasoning_effort low",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 17*23? Answer with the number only."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "low"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "391",
+								"role": "assistant",
+								"refusal": null,
+								"reasoning_content": "17*23 = 391. Answer only."
+							}
+						}
+					],
+					"created": 1795140795,
+					"id": "chatcmpl-lru5rp4a3xedpgonvebwczrnzfw2sblxahbb2advpxgh7nmfdm7q",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 26,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 10,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 99,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 125
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3 reasoning_effort medium",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 17*23? Answer with the number only."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "medium"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "391",
+								"role": "assistant",
+								"refusal": null,
+								"reasoning_content": "The user asks 17*23 = 391. Need answer number only. 17*20=340, +17*3=51 total 391."
+							}
+						}
+					],
+					"created": 1795140795,
+					"id": "chatcmpl-knrujcrvooo2xfpuuo63l4o5gzdfwqnigaif52esidrb57xejy4a",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 49,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 33,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 99,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 148
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3 reasoning_effort high",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 17*23? Answer with the number only."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "high"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "391",
+								"role": "assistant",
+								"refusal": null,
+								"reasoning_content": "The user wants 17*23. Compute: 17*23 = 17*20 + 17*3 = 340 + 51 = 391. Answer with number only."
+							}
+						}
+					],
+					"created": 1795140796,
+					"id": "chatcmpl-e6dc52ohyukhlku2c3quqniav2hq635i2zolqaxwjmupvjiq43qq",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 55,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 39,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 99,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 154
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3 reasoning_effort xhigh",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 17*23? Answer with the number only."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "xhigh"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "391",
+								"role": "assistant",
+								"refusal": null,
+								"reasoning_content": "The user wants 17*23. Compute: 17*23 = 17*20 + 17*3 = 340 + 51 = 391. Answer number only."
+							}
+						}
+					],
+					"created": 1795140796,
+					"id": "chatcmpl-krgvnz6b7gwew3q3m3xbmp5usheqxb4oekmzcqnznfdl45rjwltq",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 54,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 38,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 99,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 153
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3 reasoning_effort max",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 17*23? Answer with the number only."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "max"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "391",
+								"role": "assistant",
+								"refusal": null,
+								"reasoning_content": "17 * 23 = 17 * 20 + 17 * 3 = 340 + 51 = 391"
+							}
+						}
+					],
+					"created": 1795140797,
+					"id": "chatcmpl-cmmeiobmbhgnaxvebbcvsw7ujhkw6uj6jbs5dfvfoqa6epr4ah2a",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 41,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 25,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 98,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 139
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3.1 reasoning_effort unset",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 17*23? Answer with the number only."
+						}
+					],
+					"max_tokens": 4000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "391",
+								"role": "assistant",
+								"refusal": null,
+								"reasoning_content": "I need answer arithmetic 17*23=391. Should number only. Make sure 17*20=340 plus 17*3=51 total 391. Respond just 391."
+							}
+						}
+					],
+					"created": 1795140798,
+					"id": "chatcmpl-xhglphezdpimbvfwmhgpuaxpgszee6qunrpbrlq4jwmw3j3zv56q",
+					"model": "global.moonshotai.kimi-k3.1",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 55,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 39,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 98,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 153
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3.1 reasoning_effort none",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 17*23? Answer with the number only."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "none"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "391",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795140800,
+					"id": "chatcmpl-ywqt7nbqsx4zpp6nrhwk67ipg6otclxepzkte2pd56hvld3cwpuq",
+					"model": "global.moonshotai.kimi-k3.1",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 10,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 31,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 41
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3.1 reasoning_effort minimal",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 17*23? Answer with the number only."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "minimal"
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Unsupported value: 'reasoning_effort' does not support 'minimal' with this model. Supported values are: 'none', 'low', 'medium', 'high', and 'xhigh'.",
+						"type": "invalid_request_error",
+						"param": "reasoning_effort",
+						"code": "unsupported_value"
+					}
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3.1 reasoning_effort low",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 17*23? Answer with the number only."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "low"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "391",
+								"role": "assistant",
+								"refusal": null,
+								"reasoning_content": "Kimi should respond 391. Check 17*23 = 17*20 340 +51=391. Respond only."
+							}
+						}
+					],
+					"created": 1795140802,
+					"id": "chatcmpl-dxvm4qshsdshqmad6ow6g72jfkzt2ael4wfx553oypw3cr5rizua",
+					"model": "global.moonshotai.kimi-k3.1",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 43,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 27,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 99,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 142
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3.1 reasoning_effort medium",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 17*23? Answer with the number only."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "medium"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "391",
+								"role": "assistant",
+								"refusal": null,
+								"reasoning_content": "I need respond with the number only. 17*23 = 391. Make sure no extra. I can calculate 17*20=340 +51 =391. Respond 391."
+							}
+						}
+					],
+					"created": 1795140803,
+					"id": "chatcmpl-qf756jsbdyvmxi3lxjns4xiyl3gqpbz6oclzncoazbazw6soqroq",
+					"model": "global.moonshotai.kimi-k3.1",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 55,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 39,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 99,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 154
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3.1 reasoning_effort high",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 17*23? Answer with the number only."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "high"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "391",
+								"role": "assistant",
+								"refusal": null,
+								"reasoning_content": "17*23 = 17*20 + 17*3 = 340 + 51 = 391."
+							}
+						}
+					],
+					"created": 1795140805,
+					"id": "chatcmpl-n5o2mgntguwi6cd333ztwpbkpxhitpnlnkvamdp6mqauled44skq",
+					"model": "global.moonshotai.kimi-k3.1",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 39,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 23,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 99,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 138
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3.1 reasoning_effort xhigh",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 17*23? Answer with the number only."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "xhigh"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "391",
+								"role": "assistant",
+								"refusal": null,
+								"reasoning_content": "17 * 23 = 17 * 20 + 17 * 3 = 340 + 51 = 391."
+							}
+						}
+					],
+					"created": 1795140806,
+					"id": "chatcmpl-hdrdcbme3sgdpaax44gqqsmunxesxtrhfb4zbqcqfsltrmy5rlwa",
+					"model": "global.moonshotai.kimi-k3.1",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 42,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 26,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 98,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 140
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3.1 reasoning_effort max",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 17*23? Answer with the number only."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "max"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "391",
+								"role": "assistant",
+								"refusal": null,
+								"reasoning_content": "Kimi will compute 17*23. 17*20=340, 17*3=51, sum 391. Number only."
+							}
+						}
+					],
+					"created": 1795140807,
+					"id": "chatcmpl-oupyeigiou4g4yqhxmajwrxb7inxsyfhgowkc3ouuexmpvw5pvsq",
+					"model": "global.moonshotai.kimi-k3.1",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 46,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 30,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 98,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 144
+					},
+					"system_fingerprint": null
+				}
+			}
+		}
+	]
+}

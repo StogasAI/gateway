@@ -1,0 +1,920 @@
+{
+	"shows": "On Bedrock's Chat Completions API, Kimi K3 calls a tool at tool_choice auto, required and a named function, answers in text at none, calls two tools in one turn even when parallel_tool_calls is false, and answers in the JSON schema of response_format. Kimi K3 and K3.1 call a required or named tool even when the prompt is only Hello.",
+	"recorded": "2026-11-20",
+	"exchanges": [
+		{
+			"name": "tool_choice auto",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris and in Rome? Look up each city."
+						}
+					],
+					"max_tokens": 2000,
+					"reasoning_effort": "none",
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"tool_choice": "auto"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "tool_calls",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "I'll look up the weather in both cities for you.",
+								"refusal": null,
+								"role": "assistant",
+								"tool_calls": [
+									{
+										"function": {
+											"arguments": "{\"city\": \"Paris\"}",
+											"name": "get_weather"
+										},
+										"id": "get_weather_0",
+										"type": "function"
+									},
+									{
+										"function": {
+											"arguments": "{\"city\": \"Rome\"}",
+											"name": "get_weather"
+										},
+										"id": "get_weather_1",
+										"type": "function"
+									}
+								]
+							}
+						}
+					],
+					"created": 1795142414,
+					"id": "chatcmpl-33fgz3xhw5xgh3rv4m6la3jebl3qmtucz5xynqhcnw4sl4aj6wxq",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 89,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 115,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 204
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "tool_choice required",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris and in Rome? Look up each city."
+						}
+					],
+					"max_tokens": 2000,
+					"reasoning_effort": "none",
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"tool_choice": "required"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "tool_calls",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "I'll look up the weather in both cities for you.",
+								"refusal": null,
+								"role": "assistant",
+								"tool_calls": [
+									{
+										"function": {
+											"arguments": "{\"city\": \"Paris\"}",
+											"name": "get_weather"
+										},
+										"id": "get_weather_0",
+										"type": "function"
+									},
+									{
+										"function": {
+											"arguments": "{\"city\": \"Rome\"}",
+											"name": "get_weather"
+										},
+										"id": "get_weather_1",
+										"type": "function"
+									}
+								]
+							}
+						}
+					],
+					"created": 1795142415,
+					"id": "chatcmpl-tbxz4fsy76sy4hxiy3cvangqagblegkrgmh4v6zevoevx4p7tkeq",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 89,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 151,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 240
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "tool_choice naming the function",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris and in Rome? Look up each city."
+						}
+					],
+					"max_tokens": 2000,
+					"reasoning_effort": "none",
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"tool_choice": {
+						"type": "function",
+						"function": {
+							"name": "get_weather"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "tool_calls",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": null,
+								"refusal": null,
+								"role": "assistant",
+								"tool_calls": [
+									{
+										"function": {
+											"arguments": "{\"city\": \"Paris\"}",
+											"name": "get_weather"
+										},
+										"id": "get_weather_0",
+										"type": "function"
+									},
+									{
+										"function": {
+											"arguments": "{\"city\": \"Rome\"}",
+											"name": "get_weather"
+										},
+										"id": "get_weather_1",
+										"type": "function"
+									}
+								]
+							}
+						}
+					],
+					"created": 1795142416,
+					"id": "chatcmpl-7tbb3z5glmhhwedl6zd747siwtqojl6ruu4ve4qtqhtfeh3cetwq",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 78,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 151,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 229
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3 tool_choice required after Hello",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Hello"
+						}
+					],
+					"max_tokens": 2000,
+					"reasoning_effort": "none",
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"tool_choice": "required"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "tool_calls",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "Hello! How can I assist you today?",
+								"refusal": null,
+								"role": "assistant",
+								"tool_calls": [
+									{
+										"function": {
+											"arguments": "{\"city\": \"New York\"}",
+											"name": "get_weather"
+										},
+										"id": "get_weather_0",
+										"type": "function"
+									}
+								]
+							}
+						}
+					],
+					"created": 1795142416,
+					"id": "chatcmpl-tfb437vjlbfsco3bun5pgot64wevxe2tqktinbe2gjc47awylmja",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 59,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 137,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 196
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3 tool_choice naming the function after Hello",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Hello"
+						}
+					],
+					"max_tokens": 2000,
+					"reasoning_effort": "none",
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"tool_choice": {
+						"type": "function",
+						"function": {
+							"name": "get_weather"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "tool_calls",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "Hello! How can I help you today?",
+								"refusal": null,
+								"role": "assistant",
+								"tool_calls": [
+									{
+										"function": {
+											"arguments": "{\"city\": \"New York\"}",
+											"name": "get_weather"
+										},
+										"id": "get_weather_0",
+										"type": "function"
+									}
+								]
+							}
+						}
+					],
+					"created": 1795142417,
+					"id": "chatcmpl-ldnorxbtztn34alvbrlpoj3ubl5tctyb3u3mogck6cywdicmpnaa",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 59,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 137,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 196
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3.1 tool_choice required after Hello",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Hello"
+						}
+					],
+					"max_tokens": 2000,
+					"reasoning_effort": "none",
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"tool_choice": "required"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "tool_calls",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "I'll respond to your greeting, but I need a bit more information to use the available tool. Could you please tell me which city's weather you would like to know?",
+								"refusal": null,
+								"role": "assistant",
+								"tool_calls": [
+									{
+										"function": {
+											"arguments": "{\"city\": \"London\"}",
+											"name": "get_weather"
+										},
+										"id": "get_weather_0",
+										"type": "function"
+									}
+								]
+							}
+						}
+					],
+					"created": 1795142417,
+					"id": "chatcmpl-tq2qpgbjj6tnukk6vrwhp6t7agxtdtzvqpyam5e277abcuiycgga",
+					"model": "global.moonshotai.kimi-k3.1",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 82,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 137,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 219
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3.1 tool_choice naming the function after Hello",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Hello"
+						}
+					],
+					"max_tokens": 2000,
+					"reasoning_effort": "none",
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"tool_choice": {
+						"type": "function",
+						"function": {
+							"name": "get_weather"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "tool_calls",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "Hello! How can I assist you today?",
+								"refusal": null,
+								"role": "assistant",
+								"tool_calls": [
+									{
+										"function": {
+											"arguments": "{\"city\": \"New York\"}",
+											"name": "get_weather"
+										},
+										"id": "get_weather_0",
+										"type": "function"
+									}
+								]
+							}
+						}
+					],
+					"created": 1795142419,
+					"id": "chatcmpl-6ap6sn5ljsh37d7cgeur6gr6jt5ygczek3qjzzachk4vosj335uq",
+					"model": "global.moonshotai.kimi-k3.1",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 59,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 137,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 196
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "tool_choice none",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris and in Rome? Look up each city."
+						}
+					],
+					"max_tokens": 2000,
+					"reasoning_effort": "none",
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"tool_choice": "none"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "I can help you with the weather in Paris and Rome, but I need to be transparent about my limitations: I don't have access to real-time weather data, so I can't look up current conditions.\n\nHowever, I can share what these cities typically experience:\n\n**Paris, France:**\n- Temperate oceanic climate\n- Mild summers (average highs 20-25°C / 68-77°F)\n- Cool winters (average highs 6-8°C / 43-46°F)\n- Rain distributed fairly evenly throughout the year\n\n**Rome, Italy:**\n- Mediterranean climate\n- Hot, dry summers (average highs 30-32°C / 86-90°F)\n- Mild, wetter winters (average highs 12-14°C / 54-57°F)\n- Most rainfall occurs in autumn and winter\n\nFor current weather conditions, I'd recommend checking:\n- A weather website like weather.com or accuweather.com\n- A weather app on your phone\n- Searching \"weather Paris\" or \"weather Rome\" in your preferred search engine\n\nIs there anything else about these cities I can help you with?",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795142421,
+					"id": "chatcmpl-mf3e72u57yiygpxg263cvaxefme7rrq2kf2t2dddwvvhu6ylkyuq",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 238,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 153,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 391
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "parallel_tool_calls false",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris and in Rome? Look up each city."
+						}
+					],
+					"max_tokens": 2000,
+					"reasoning_effort": "none",
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"parallel_tool_calls": false
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "tool_calls",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "I'll look up the weather for both cities.",
+								"refusal": null,
+								"role": "assistant",
+								"tool_calls": [
+									{
+										"function": {
+											"arguments": "{\"city\": \"Paris\"}",
+											"name": "get_weather"
+										},
+										"id": "get_weather_0",
+										"type": "function"
+									},
+									{
+										"function": {
+											"arguments": "{\"city\": \"Rome\"}",
+											"name": "get_weather"
+										},
+										"id": "get_weather_1",
+										"type": "function"
+									}
+								]
+							}
+						}
+					],
+					"created": 1795142422,
+					"id": "chatcmpl-maxclmgea3ivwdnuqg5x7js6365bfpmkpsjy225xvokyxlq5vnwa",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 87,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 115,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 202
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "response_format json_schema",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Name the capital of France."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"response_format": {
+						"type": "json_schema",
+						"json_schema": {
+							"name": "capital",
+							"strict": true,
+							"schema": {
+								"type": "object",
+								"properties": {
+									"city": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"city"
+								],
+								"additionalProperties": false
+							}
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "{\"city\": \"Paris\"}",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795142422,
+					"id": "chatcmpl-ss4zf4r4aerkcw2u2dz3ffgpmkgua4tgv7qczd53f4b5ofyoxtcq",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 15,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 107,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 122
+					},
+					"system_fingerprint": null
+				}
+			}
+		}
+	]
+}

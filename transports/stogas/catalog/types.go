@@ -19,17 +19,31 @@ const (
 	ProviderAWS         schemas.ModelProvider = "aws"
 	ProviderGoogleCloud schemas.ModelProvider = "google-cloud"
 
+	// CoreProviderAWSChatCompletions is the core provider that sends an AWS deployment of a model
+	// other than Claude to Bedrock's Chat Completions API in OpenAI's format. Core runs one format
+	// for each provider, so this one runs those requests while billing, routing and the adapter
+	// keep ProviderAWS.
+	CoreProviderAWSChatCompletions schemas.ModelProvider = "aws-bedrock-chat-completions"
+
 	canonicalAuthHeader = "authorization"
 )
 
+// CatalogProvider is the catalog provider that a core provider runs requests for.
+func CatalogProvider(core schemas.ModelProvider) schemas.ModelProvider {
+	if core == CoreProviderAWSChatCompletions {
+		return ProviderAWS
+	}
+	return core
+}
+
 // UsesClaudeWire reports whether a provider serves the model over Anthropic's Messages API, which
-// bills cache writes by duration and takes a manual thinking budget. AWS and Google Cloud serve
-// only Claude.
+// bills cache writes by duration and takes a manual thinking budget. Azure, AWS and Google Cloud
+// serve Claude over it and other models in OpenAI's format.
 func UsesClaudeWire(provider schemas.ModelProvider, modelID string) bool {
 	switch provider {
-	case schemas.Anthropic, ProviderAWS, ProviderGoogleCloud:
+	case schemas.Anthropic:
 		return true
-	case schemas.Azure:
+	case schemas.Azure, ProviderAWS, ProviderGoogleCloud:
 		return schemas.IsAnthropicModel(modelID)
 	}
 	return false
@@ -316,9 +330,10 @@ type Capabilities struct {
 	StructuredOutputs       bool `json:"structuredOutputs"`
 	SystemMessages          bool `json:"systemMessages"`
 	ToolChoice              bool `json:"toolChoice"`
-	// ToolResultAttachments says that a tool result takes the attachments that a user message
-	// takes.
-	ToolResultAttachments bool `json:"toolResultAttachments"`
+	// ToolResultImages and ToolResultDocuments say that a tool result takes the images and the
+	// documents that a user message takes.
+	ToolResultImages    bool `json:"toolResultImages"`
+	ToolResultDocuments bool `json:"toolResultDocuments"`
 }
 
 type compiledUpstream struct {

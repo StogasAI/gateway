@@ -26,13 +26,13 @@ import (
 // reasoning history (chatThroughResponses).
 //
 // bridgedProviders names, for each interface, the providers whose deployments serve it through the
-// other. Chutes and Azure serve Responses through Chat Completions. OpenAI's only deployment without
+// other. Chutes, Azure and AWS serve Responses through Chat Completions. OpenAI's only deployment without
 // Responses is its search model, whose searches only Chat Completions' web_search_options prices.
 // OpenAI and Azure serve Chat Completions through Responses, for the deployments that take only
 // Responses, such as Pro, and for requests with tools, summarized reasoning or reasoning history.
 var bridgedProviders = map[Route]map[schemas.ModelProvider]bool{
 	RouteChat:      {schemas.OpenAI: true, schemas.Azure: true},
-	RouteResponses: {ProviderChutes: true, schemas.Azure: true},
+	RouteResponses: {ProviderChutes: true, schemas.Azure: true, ProviderAWS: true},
 }
 
 // bridgeWire is the interface on which a bridged deployment takes the requests on an interface.
@@ -313,7 +313,8 @@ func (r *ResolvedRequest) includeEncryptedReasoning(include []string) []string {
 
 // textToolOutputs gives each tool output whose parts are all text as their text in order, which
 // every Responses deployment takes. An output with an image or a file keeps its parts, and only a
-// deployment that takes them in a tool result gets it (Capabilities.ToolResultAttachments).
+// deployment that takes them in a tool result gets it (Capabilities.ToolResultImages and
+// ToolResultDocuments).
 func textToolOutputs(input []schemas.ResponsesMessage) {
 	for _, item := range input {
 		tool := item.ResponsesToolMessage

@@ -414,7 +414,7 @@ func (r *ResolvedRequest) ToBifrost(ctx *schemas.BifrostContext) (*schemas.Bifro
 	converted := false
 	if ctx != nil {
 		if !schemas.SetRequestModelInfo(ctx, schemas.RequestModelInfo{
-			Provider:        r.Provider,
+			Provider:        r.CoreProvider(),
 			WireModel:       r.Model,
 			CanonicalModel:  r.Deployment.ModelID,
 			MaxOutputTokens: r.outputTokenLimit,
@@ -436,7 +436,7 @@ func (r *ResolvedRequest) ToBifrost(ctx *schemas.BifrostContext) (*schemas.Bifro
 		if body == nil {
 			return nil, APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Invalid chat completion request"}
 		}
-		body.Provider = r.Provider
+		body.Provider = r.CoreProvider()
 		body.Model = r.Model
 		body.Fallbacks = nil
 		if params := body.Params; params != nil && params.PromptCacheKey != nil && !r.takesPromptCacheKey() {
@@ -451,7 +451,7 @@ func (r *ResolvedRequest) ToBifrost(ctx *schemas.BifrostContext) (*schemas.Bifro
 		if body == nil {
 			return nil, APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Invalid responses request"}
 		}
-		body.Provider = r.Provider
+		body.Provider = r.CoreProvider()
 		body.Model = r.Model
 		body.Fallbacks = nil
 		if params := body.Params; params != nil && params.PromptCacheKey != nil && !r.takesPromptCacheKey() {
@@ -464,6 +464,15 @@ func (r *ResolvedRequest) ToBifrost(ctx *schemas.BifrostContext) (*schemas.Bifro
 	default:
 		return nil, ErrUnsupportedRequest
 	}
+}
+
+// CoreProvider is the core provider that runs the request: Provider, or the one that sends an AWS
+// deployment of a model other than Claude to Bedrock's Chat Completions API.
+func (r *ResolvedRequest) CoreProvider() schemas.ModelProvider {
+	if r.Provider == ProviderAWS && !UsesClaudeWire(r.Provider, r.Deployment.ModelID) {
+		return CoreProviderAWSChatCompletions
+	}
+	return r.Provider
 }
 
 // takesPromptCacheKey reports whether the deployment takes a prompt cache key, which selects the
@@ -1727,6 +1736,8 @@ func dropNoOpCompatibilityFields(rawData map[string]json.RawMessage, route Route
 		})
 		dropRawFieldIf(rawData, "prompt_cache_isolation_key", rawJSONNullOrEmptyString)
 		dropRawFieldIf(rawData, "response_format", rawJSONTextFormat)
+		// false asks for no log probabilities, which every deployment returns without it.
+		dropRawFieldIf(rawData, "logprobs", rawJSONFalse)
 		// Chat Completions streams carry no padding, which is what false asks for.
 		if options := struct {
 			IncludeObfuscation *bool `json:"include_obfuscation"`

@@ -329,6 +329,12 @@ func ConvertOpenAIMessagesToBifrostMessages(messages []OpenAIMessage) []schemas.
 // unknown message parameters never see it.
 // The caller's messages are never mutated: shared pointers are cloned before edit.
 func ConvertBifrostMessagesToOpenAIMessages(messages []schemas.ChatMessage) []OpenAIMessage {
+	return convertBifrostMessagesToOpenAIMessages(messages, false)
+}
+
+// convertBifrostMessagesToOpenAIMessages names a tool message's media in text, unless toolMedia
+// says that the model reads media there (ModelCaps.SupportsMultimodalToolOutput).
+func convertBifrostMessagesToOpenAIMessages(messages []schemas.ChatMessage, toolMedia bool) []OpenAIMessage {
 	openaiMessages := make([]OpenAIMessage, len(messages))
 	for i, message := range messages {
 		openaiMessages[i] = OpenAIMessage{
@@ -337,8 +343,8 @@ func ConvertBifrostMessagesToOpenAIMessages(messages []schemas.ChatMessage) []Op
 			Content:         message.Content,
 			ChatToolMessage: message.ChatToolMessage,
 		}
-		// A tool message takes text only on the OpenAI wire.
-		if message.Role == schemas.ChatMessageRoleTool {
+		// A tool message takes text only on the OpenAI wire, unless the model reads media there.
+		if message.Role == schemas.ChatMessageRoleTool && !toolMedia {
 			openaiMessages[i].Content = schemas.FlattenToolResultMedia(message.Content, nil)
 		}
 		// Strip provider reasoning signatures (e.g. Gemini thoughtSignatures embedded in

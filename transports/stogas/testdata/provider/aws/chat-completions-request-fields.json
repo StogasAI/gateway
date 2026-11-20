@@ -1,0 +1,2294 @@
+{
+	"shows": "Bedrock's Chat Completions API takes the max_tokens and system messages of Kimi K3 and Kimi K3.1 Pro and applies their temperature and top_k, refuses top_p other than 0.95 and penalties other than 0, and answers seed, logit_bias with a key that names no token, logprobs, web_search_options, repetition_penalty and a field that it does not know without applying them.",
+	"recorded": "2026-11-20",
+	"exchanges": [
+		{
+			"name": "max_tokens and a system message",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "system",
+							"content": "Answer in one word."
+						},
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "OK",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795144850,
+					"id": "chatcmpl-k4krj33llv67p2fgmfpvehrlob2kjpmvwqvofbdk4g54ptbd7flq",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 10,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 37,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 47
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "temperature 0.5",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"temperature": 0.5
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "OK.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795144851,
+					"id": "chatcmpl-t6ywjam7w62svb62iiuhjw3ov6cxlr464nmmhamwezvfsqdbs7wa",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 11,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 21,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 32
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "top_k 1",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"top_k": 1
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "OK",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795144851,
+					"id": "chatcmpl-mcls47g5mtc43xduyoflroqrgcpunpezmjtfht7jr3gxf76ogkfq",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 10,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 21,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 31
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "top_k as a string",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"top_k": "one"
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Invalid type for 'top_k': expected an integer, but got a string instead.",
+						"type": "invalid_request_error",
+						"param": "top_k",
+						"code": "invalid_type"
+					}
+				}
+			}
+		},
+		{
+			"name": "top_p 0.9",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"top_p": 0.9
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Invalid value: 0.9. This model accepts 'top_p' only with the value 0.95.",
+						"type": "invalid_request_error",
+						"param": "top_p",
+						"code": "invalid_value"
+					}
+				}
+			}
+		},
+		{
+			"name": "top_p 0.95",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"top_p": 0.95
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "OK.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795144852,
+					"id": "chatcmpl-2od4vwi4tgz7mqf7qlo7mux7inkbpmub66zlicavwio5lyw6b5ya",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 11,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 21,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 32
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "frequency_penalty 0.5",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"frequency_penalty": 0.5
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Invalid value: 0.5. This model accepts 'frequency_penalty' only with the value 0.",
+						"type": "invalid_request_error",
+						"param": "frequency_penalty",
+						"code": "invalid_value"
+					}
+				}
+			}
+		},
+		{
+			"name": "frequency_penalty 0",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"frequency_penalty": 0
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "OK",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795144853,
+					"id": "chatcmpl-ruqfhkwannuaph7rwlnsty4t6migg2e42klida37htjlewnq3liq",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 10,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 21,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 31
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "presence_penalty 0.5",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"presence_penalty": 0.5
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Invalid value: 0.5. This model accepts 'presence_penalty' only with the value 0.",
+						"type": "invalid_request_error",
+						"param": "presence_penalty",
+						"code": "invalid_value"
+					}
+				}
+			}
+		},
+		{
+			"name": "presence_penalty 0",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"presence_penalty": 0
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "OK.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795144854,
+					"id": "chatcmpl-qcofqhal4qec23quwsi7pujpuvpvbn365afduwtavzbrkalmtflq",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 11,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 21,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 32
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "seed 7, run 1",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Write a sentence of eight random words."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"seed": 7,
+					"temperature": 1
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "Here is a sentence of eight random words:\n\nThe fluffy cat danced under the moonlight.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795144854,
+					"id": "chatcmpl-pdg4oxyssi5h3gpah6ld4aurcawuusppb66l7b2s5gslbk5tvcxa",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 27,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 26,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 53
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "seed 7, run 2",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Write a sentence of eight random words."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"seed": 7,
+					"temperature": 1
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "Neon giraffes whisper quantum recipes through velvet thunderstorms.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795144854,
+					"id": "chatcmpl-nwxxyxt5kas6sveiflcnoihzgjmilfcarf6wpfbtbkd7kaeo575a",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 21,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 26,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 47
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "seed 7, run 3",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Write a sentence of eight random words."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"seed": 7,
+					"temperature": 1
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "The fluffy cat danced under the moonlight.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795144855,
+					"id": "chatcmpl-owzacnxs7vjad4uwibmfztjddajgu5h4pppdzj72sfskha5g55wq",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 18,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 26,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 44
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "temperature 0, run 1",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Write a sentence of eight random words."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"temperature": 0
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "Purple elephants dance quietly beneath silver moonlight tonight.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795144855,
+					"id": "chatcmpl-ix3a4etcq6ydpe5fq4ozw2w7fjpoftuqzjh3746xn73fi4bom43a",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 19,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 26,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 45
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "temperature 0, run 2",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Write a sentence of eight random words."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"temperature": 0
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "Purple elephants dance quietly beneath silver moonlight tonight.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795144856,
+					"id": "chatcmpl-ldjpgr7mujypalvb3ytozzaewxf33huns7jc4opj5es6o4fxqv7a",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 19,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 26,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 45
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "temperature 0, run 3",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Write a sentence of eight random words."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"temperature": 0
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "Purple elephants dance quietly beneath silver moonlight tonight.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795144856,
+					"id": "chatcmpl-bfvxnp5fnbpumnue6oxy3ektcq4svi62busmwpxge5o5ou5v6jtq",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 19,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 26,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 45
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "top_k 1, run 1",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Write a sentence of eight random words."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"top_k": 1
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "Purple elephants dance quietly beneath silver moonlight tonight.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795144857,
+					"id": "chatcmpl-cqa67qdtnpbssiqifea6dnsgzyokbwlt5mwct6f6mwm4qpowi62a",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 19,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 26,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 45
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "top_k 1, run 2",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Write a sentence of eight random words."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"top_k": 1
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "Purple elephants dance quietly beneath silver moonlight tonight.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795144857,
+					"id": "chatcmpl-ft3uttas3hhk3kegshrbxlhtysjgg23wrzxefzl57h3qgx4s2wkq",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 19,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 26,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 45
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "top_k 1, run 3",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Write a sentence of eight random words."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"top_k": 1
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "Purple elephants dance quietly beneath silver moonlight tonight.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795144858,
+					"id": "chatcmpl-o4ueyxnbuwxrpnbqw57tlsb4in3hgdh6waaunencbe7vqfbjrqha",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 19,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 26,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 45
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "Kimi K3.1 Pro: max_tokens and a system message",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "system",
+							"content": "Answer in one word."
+						},
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "OK",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795144859,
+					"id": "chatcmpl-onat22leenbdiyldiitzi4tb3t46vhavmnfepl7bwmcqpu26gmxa",
+					"model": "global.moonshotai.kimi-k3.1",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 10,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 37,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 47
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "Kimi K3.1 Pro: temperature 0.5",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"temperature": 0.5
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "OK",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795144860,
+					"id": "chatcmpl-o2326eegjfulnq6hrr332hzfte34rkh3gjfieukcvsfamefgidka",
+					"model": "global.moonshotai.kimi-k3.1",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 10,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 21,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 31
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "Kimi K3.1 Pro: top_k 1",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"top_k": 1
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "OK",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795144862,
+					"id": "chatcmpl-vm75fpheexdqt6v7p7zmrjuirhyseqdv3vnsungogqaljycbuvaq",
+					"model": "global.moonshotai.kimi-k3.1",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 10,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 21,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 31
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "Kimi K3.1 Pro: top_k as a string",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"top_k": "one"
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Invalid type for 'top_k': expected an integer, but got a string instead.",
+						"type": "invalid_request_error",
+						"param": "top_k",
+						"code": "invalid_type"
+					}
+				}
+			}
+		},
+		{
+			"name": "Kimi K3.1 Pro: top_p 0.9",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"top_p": 0.9
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Invalid value: 0.9. This model accepts 'top_p' only with the value 0.95.",
+						"type": "invalid_request_error",
+						"param": "top_p",
+						"code": "invalid_value"
+					}
+				}
+			}
+		},
+		{
+			"name": "Kimi K3.1 Pro: top_p 0.95",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"top_p": 0.95
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "OK",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795144864,
+					"id": "chatcmpl-gxr4qkqqpreutyyam7ejppbi6qxgmrz2edyagillofrg2ah27r3a",
+					"model": "global.moonshotai.kimi-k3.1",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 10,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 21,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 31
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "Kimi K3.1 Pro: frequency_penalty 0.5",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"frequency_penalty": 0.5
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Invalid value: 0.5. This model accepts 'frequency_penalty' only with the value 0.",
+						"type": "invalid_request_error",
+						"param": "frequency_penalty",
+						"code": "invalid_value"
+					}
+				}
+			}
+		},
+		{
+			"name": "Kimi K3.1 Pro: frequency_penalty 0",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"frequency_penalty": 0
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "OK",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795144867,
+					"id": "chatcmpl-y2gmbx2hpyk4wqm776mbmelen2tp6xwqzk2kgmcce77jirkcpngq",
+					"model": "global.moonshotai.kimi-k3.1",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 10,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 21,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 31
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "Kimi K3.1 Pro: presence_penalty 0.5",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"presence_penalty": 0.5
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Invalid value: 0.5. This model accepts 'presence_penalty' only with the value 0.",
+						"type": "invalid_request_error",
+						"param": "presence_penalty",
+						"code": "invalid_value"
+					}
+				}
+			}
+		},
+		{
+			"name": "Kimi K3.1 Pro: presence_penalty 0",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"presence_penalty": 0
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "OK",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795144869,
+					"id": "chatcmpl-rd6zbcxphmxqggsux3ie7us5tpkdx3yzrkdfab2sqoxw4aj5jx3q",
+					"model": "global.moonshotai.kimi-k3.1",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 10,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 21,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 31
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "Kimi K3.1 Pro: seed 7, run 1",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Write a sentence of eight random words."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"seed": 7,
+					"temperature": 1
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "\"The colorful parrot whispered secrets to the moon.\"",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795144870,
+					"id": "chatcmpl-mwfkflzfabhrzp7lxpklqk7uyxxl6fyxrzdzter44bpcjw6lepua",
+					"model": "global.moonshotai.kimi-k3.1",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 20,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 26,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 46
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "Kimi K3.1 Pro: seed 7, run 2",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Write a sentence of eight random words."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"seed": 7,
+					"temperature": 1
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "Silver clouds gather silently over ancient wooden bridges.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795144872,
+					"id": "chatcmpl-dypaeh3d7rt6yxi4irwngn7wwsd5ykdohw2pwp7gv6nyftxlumwq",
+					"model": "global.moonshotai.kimi-k3.1",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 18,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 26,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 44
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "Kimi K3.1 Pro: seed 7, run 3",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Write a sentence of eight random words."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"seed": 7,
+					"temperature": 1
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "Here is a sentence composed of eight random words:\n\n\"The purple elephant danced quietly under moonlight yesterday.\"\n\nThis sentence has eight words: The (1) purple (2) elephant (3) danced (4) quietly (5) under (6) moonlight (7) yesterday (8).The sentence is:\n\n**\"The purple elephant danced quietly under moonlight yesterday.\"**\n\nBreaking it down, here are the eight words:\n1. The\n2. purple\n3. elephant\n4. danced\n5. quietly\n6. under\n7. moonlight\n8. yesterday",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795144872,
+					"id": "chatcmpl-lxr3quiw5asvh4cduu65crbyed72pztko5p3vzqwwxv3wottlnyq",
+					"model": "global.moonshotai.kimi-k3.1",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 133,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 26,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 159
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "Kimi K3.1 Pro: temperature 0, run 1",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Write a sentence of eight random words."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"temperature": 0
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "Purple elephants dance quietly under silver moonlight tonight.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795144874,
+					"id": "chatcmpl-xlhok36u3skwuvd7e3sl37egl3yn3tuqlr6eaow26qx7ergth6ba",
+					"model": "global.moonshotai.kimi-k3.1",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 19,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 26,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 45
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "Kimi K3.1 Pro: temperature 0, run 2",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Write a sentence of eight random words."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"temperature": 0
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "Purple elephants dance quietly under silver moonlight tonight.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795144876,
+					"id": "chatcmpl-gxz6ngqmrivqbueo4ocyht4hboqyt4xuk24hvtvfdgu7iy5n5tvq",
+					"model": "global.moonshotai.kimi-k3.1",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 19,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 26,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 45
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "Kimi K3.1 Pro: temperature 0, run 3",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Write a sentence of eight random words."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"temperature": 0
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "Purple elephants dance quietly under silver moonlight tonight.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795144876,
+					"id": "chatcmpl-ptsilmkzej7v65kxmvx37yn2bvcohbkgcbyotnom7eueddfp2aua",
+					"model": "global.moonshotai.kimi-k3.1",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 19,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 26,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 45
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "Kimi K3.1 Pro: top_k 1, run 1",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Write a sentence of eight random words."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"top_k": 1
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "Purple elephants dance quietly under silver moonlight tonight.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795144877,
+					"id": "chatcmpl-3qbvq2htvrlgqo4ob7wqbthcgkh2fq5aqjjl6b3qaglm6cxehfsq",
+					"model": "global.moonshotai.kimi-k3.1",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 19,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 26,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 45
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "Kimi K3.1 Pro: top_k 1, run 2",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Write a sentence of eight random words."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"top_k": 1
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "Purple elephants dance quietly under silver moonlight tonight.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795144879,
+					"id": "chatcmpl-jaevm2l3r6g7f35o65ljsnhhlgclovin7c564lmdeqau26olvrva",
+					"model": "global.moonshotai.kimi-k3.1",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 19,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 26,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 45
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "Kimi K3.1 Pro: top_k 1, run 3",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Write a sentence of eight random words."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"top_k": 1
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "Purple elephants dance quietly under silver moonlight tonight.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795144880,
+					"id": "chatcmpl-wvdz3gw6xxs7ld244vr4qcpegqfflzuokgym7t5546olyur3te3a",
+					"model": "global.moonshotai.kimi-k3.1",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 19,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 26,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 45
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "logit_bias with a key that names no token",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"logit_bias": {
+						"not-a-token": 100
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "OK",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795144881,
+					"id": "chatcmpl-za4g5ehy5fuvl2ozj7aky7a7m6lcy5ctibuhmcw3drndgbxl7lbq",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 10,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 21,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 31
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "logprobs",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"logprobs": true,
+					"top_logprobs": 2
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"annotations": [],
+								"content": "OK",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795144882,
+					"id": "chatcmpl-6z6sg7pd4n2bgcoffjj3nv7liy55xrpps4ooyldqoiwrn5mvcbwq",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 10,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 21,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 31
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "web_search_options",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"web_search_options": {
+						"search_context_size": "low"
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "OK",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795144882,
+					"id": "chatcmpl-avphumz6xujzuoisn2eap7gjnnqjspkanziip6lqt6wocucozmxq",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 10,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 21,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 31
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "repetition_penalty as a string",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"repetition_penalty": "high"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "OK",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795144882,
+					"id": "chatcmpl-2qy6erbk3o7ofymttwpl3jo2l2s6kur3d3ppn7ogm7zcljwvr5yq",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 10,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 21,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 31
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "a field that Bedrock does not know",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"stogas_unknown_field": true
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "OK",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795144883,
+					"id": "chatcmpl-5ynfclkwoe5bqvemgvduvfrruftp24bnkln2gsx4j7kk2vdpyitq",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 10,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 21,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 31
+					},
+					"system_fingerprint": null
+				}
+			}
+		}
+	]
+}

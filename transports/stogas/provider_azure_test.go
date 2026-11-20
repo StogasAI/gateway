@@ -158,7 +158,7 @@ func TestAzureClaudeUsesAnthropicPolicyAndExactMessagesWireFormat(t *testing.T) 
 	for _, tc := range tests {
 		t.Run(tc.path, func(t *testing.T) {
 			state := resolveAzureState(t, tc.path, tc.body)
-			if !azureDeploymentUsesAnthropicWire(state) {
+			if !stateUsesClaudeWire(state) {
 				t.Fatalf("Azure Claude deployment did not select Anthropic policy: %#v", state.Resolution.Deployment.Upstream)
 			}
 

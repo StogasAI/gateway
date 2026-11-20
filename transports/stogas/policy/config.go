@@ -902,7 +902,7 @@ func init() {
 	for _, capability := range []string{
 		"explicitPromptCaching", "functionCalling", "implicitPromptCaching",
 		"parallelFunctionCalling", "streaming", "structuredOutputs", "systemMessages",
-		"toolChoice", "toolResultAttachments",
+		"toolChoice", "toolResultDocuments", "toolResultImages",
 	} {
 		exactFieldTypes["deployment.capabilities."+capability] = "boolean"
 	}

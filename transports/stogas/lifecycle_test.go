@@ -3305,16 +3305,13 @@ func TestEveryActiveCatalogDeploymentCacheEconomics(t *testing.T) {
 		billing.MeterCacheWrite5mInputTokens,
 		billing.MeterCacheWrite1hInputTokens,
 	}
+	// AWS and Azure also serve models of other authors, which write their caches for a single
+	// period.
 	wantProviderMeters := map[string][]string{
 		"anthropic":    claudeCacheMeters,
-		"aws":          claudeCacheMeters,
+		"aws":          append([]string{billing.MeterCacheWriteInputTokens}, claudeCacheMeters...),
 		"google-cloud": claudeCacheMeters,
-		"azure": {
-			billing.MeterCachedInputTokens,
-			billing.MeterCacheWriteInputTokens,
-			billing.MeterCacheWrite5mInputTokens,
-			billing.MeterCacheWrite1hInputTokens,
-		},
+		"azure":        append([]string{billing.MeterCacheWriteInputTokens}, claudeCacheMeters...),
 		"chutes": {
 			billing.MeterCachedInputTokens,
 		},

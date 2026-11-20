@@ -42,7 +42,7 @@ func PrepareProviderRequest(ctx *schemas.BifrostContext, state *State, request *
 		return catalog.ErrUnsupportedRequest
 	}
 	if !schemas.SetRequestModelInfo(ctx, schemas.RequestModelInfo{
-		Provider:        resolution.Provider,
+		Provider:        resolution.CoreProvider(),
 		WireModel:       resolution.Model,
 		CanonicalModel:  resolution.Deployment.ModelID,
 		MaxOutputTokens: resolvedOutputLimit(resolution),
@@ -62,28 +62,24 @@ func PrepareProviderRequest(ctx *schemas.BifrostContext, state *State, request *
 		settings   billing.RequestSettings
 	)
 	customerAccount := state.PreparedCredential.UsesBYOK()
-	otherFormat := azureOtherModelFormat(resolution)
+	otherFormat := otherModelFormat(resolution)
 	store := resolution.ProviderState().Store
 	switch {
 	case request.ChatRequest != nil && request.ResponsesRequest == nil:
 		chat := request.ChatRequest
-		if !isChatRequestType(request.RequestType) || chat.Provider != resolution.Provider || chat.Model != resolution.Model {
+		if !isChatRequestType(request.RequestType) || chat.Provider != resolution.CoreProvider() || chat.Model != resolution.Model {
 			return catalog.ErrUnsupportedRequest
 		}
 		sanitizeChatProviderFields(ctx, chat, customerAccount, otherFormat, store)
 		applyRequiredChatOutputLimit(ctx, resolution, chat)
 		body, bifrostErr = prepareChatProviderBody(ctx, chat, request.RequestType == schemas.ChatCompletionStreamRequest, resolution.Deployment.Hosting)
 		if bifrostErr == nil && otherFormat {
-			var effort *string
-			if chat.Params != nil && chat.Params.Reasoning != nil {
-				effort = chat.Params.Reasoning.Effort
-			}
-			body, bifrostErr = useModelChatFields(body, effort)
+			body, bifrostErr = useModelChatFields(body, chat.Params)
 		}
 		settings = billing.ChatRequestSettings(chat.Params)
 	case request.ResponsesRequest != nil && request.ChatRequest == nil:
 		responses := request.ResponsesRequest
-		if !isResponsesRequestType(request.RequestType) || responses.Provider != resolution.Provider || responses.Model != resolution.Model {
+		if !isResponsesRequestType(request.RequestType) || responses.Provider != resolution.CoreProvider() || responses.Model != resolution.Model {
 			return catalog.ErrUnsupportedRequest
 		}
 		sanitizeResponsesProviderFields(ctx, responses, customerAccount, otherFormat, store)
@@ -91,7 +87,7 @@ func PrepareProviderRequest(ctx *schemas.BifrostContext, state *State, request *
 		// Every interface takes the tools of the namespace functions as top-level tools. Anthropic's
 		// has no namespaces, so their tools get flat names, which core turns back into the namespace
 		// and name in the reply through the map that the request carries.
-		anthropicWire := usesAnthropicWireFormat(ctx, resolution.Provider, resolution.Model)
+		anthropicWire := usesAnthropicWireFormat(ctx, resolution.CoreProvider(), resolution.Model)
 		var err error
 		if anthropicWire {
 			responses, err = catalog.FlattenNamespaces(ctx, responses)
@@ -121,7 +117,7 @@ func PrepareProviderRequest(ctx *schemas.BifrostContext, state *State, request *
 	if bifrostErr != nil || len(body) == 0 {
 		return invalidRequest("Invalid request for selected provider")
 	}
-	if lifetime := gatewayPromptCache(state); lifetime != "" && usesAnthropicWireFormat(ctx, resolution.Provider, resolution.Model) {
+	if lifetime := gatewayPromptCache(state); lifetime != "" && usesAnthropicWireFormat(ctx, resolution.CoreProvider(), resolution.Model) {
 		marked, err := markAnthropicPromptCache(body, lifetime)
 		if err != nil {
 			return invalidRequest("Invalid request for selected provider")
@@ -130,7 +126,7 @@ func PrepareProviderRequest(ctx *schemas.BifrostContext, state *State, request *
 		settings.PromptCaching = lifetime
 	}
 
-	if !providerutils.SetPreparedRequestBody(ctx, request.RequestType, resolution.Provider, resolution.Model, body) {
+	if !providerutils.SetPreparedRequestBody(ctx, request.RequestType, resolution.CoreProvider(), resolution.Model, body) {
 		return catalog.ErrUnsupportedRequest
 	}
 	prepared = true
@@ -226,8 +222,8 @@ func sanitizeResponsesProviderFields(ctx *schemas.BifrostContext, request *schem
 // instead of the whole account, so only the customer's own account receives
 // them: on our managed accounts, a client could name another customer's users.
 // Anthropic's one field, metadata.user_id, is filled by core from user, so
-// safety_identifier takes it when both are set. Chutes documents no such field, and Azure's other
-// model formats refuse them.
+// safety_identifier takes it when both are set. Chutes documents no such field, Azure's other
+// model formats refuse them, and Bedrock's Chat Completions API documents neither.
 func providerEndUserIDs(ctx *schemas.BifrostContext, provider schemas.ModelProvider, model string, customerAccount, otherFormat bool, user, safetyIdentifier *string) (*string, *string) {
 	switch {
 	case !customerAccount:
@@ -244,37 +240,45 @@ func providerEndUserIDs(ctx *schemas.BifrostContext, provider schemas.ModelProvi
 	}
 }
 
-// azureOtherModelFormat reports an Azure deployment of a model outside Azure OpenAI and Claude,
-// such as Grok, Kimi or Mistral. Azure checks a request to such a model against the model's own
-// fields (capture azure/other-model-formats-request-fields): Grok, Kimi and Mistral refused
-// safety_identifier, and Mistral also refused store, user, a message's name, developer messages
-// and, for Mistral Large 3, max_completion_tokens.
-func azureOtherModelFormat(resolution *catalog.ResolvedRequest) bool {
-	if resolution.Provider != schemas.Azure {
-		return false
+// otherModelFormat reports a deployment that takes OpenAI's format for a model of another author,
+// such as Grok, Kimi or Mistral, on Azure or AWS. Azure checks a request to such a model against
+// the model's own fields (capture azure/other-model-formats-request-fields): Grok, Kimi and Mistral
+// refused safety_identifier, and Mistral also refused store, user, a message's name, developer
+// messages and, for Mistral Large 3, max_completion_tokens.
+func otherModelFormat(resolution *catalog.ResolvedRequest) bool {
+	switch resolution.Provider {
+	case schemas.Azure:
+		switch resolution.Deployment.Upstream.ModelFormat {
+		case "Anthropic", "OpenAI", "OpenAI-OSS":
+			return false
+		}
+		return true
+	case catalog.ProviderAWS:
+		return resolution.CoreProvider() == catalog.CoreProviderAWSChatCompletions
 	}
-	switch resolution.Deployment.Upstream.ModelFormat {
-	case "Anthropic", "OpenAI", "OpenAI-OSS":
-		return false
-	}
-	return true
+	return false
 }
 
-// useModelChatFields writes a Chat Completions body in the fields that every other Azure model
-// format takes: the output limit as max_tokens, because Mistral Large 3 refuses
+// useModelChatFields writes a Chat Completions body in the fields that every other model format
+// takes: the output limit as max_tokens, because Mistral Large 3 refuses
 // max_completion_tokens; developer messages as system messages, because Mistral's models refuse the
-// developer role; and the reasoning effort that the deployment's catalog record chose. Core
-// corrects an effort on Azure against the efforts of OpenAI's models, which would send Kimi's max
-// as high.
-func useModelChatFields(body []byte, effort *string) ([]byte, *schemas.BifrostError) {
+// developer role; and the reasoning effort and prompt cache options that the request carries to
+// the deployment. Core corrects an effort on Azure against the efforts of OpenAI's models, which
+// would send Kimi's max as high, and leaves prompt_cache_options out for a model that it does not
+// know on any other provider.
+func useModelChatFields(body []byte, params *schemas.ChatParameters) ([]byte, *schemas.BifrostError) {
 	var err error
 	if limit := providerutils.GetJSONField(body, "max_completion_tokens"); limit.Exists() {
 		if body, err = providerutils.SetJSONField(body, "max_tokens", limit.Int()); err == nil {
 			body, err = providerutils.DeleteJSONField(body, "max_completion_tokens")
 		}
 	}
-	if err == nil && effort != nil && providerutils.GetJSONField(body, "reasoning_effort").Exists() {
-		body, err = providerutils.SetJSONField(body, "reasoning_effort", *effort)
+	if err == nil && params != nil && params.Reasoning != nil && params.Reasoning.Effort != nil &&
+		providerutils.GetJSONField(body, "reasoning_effort").Exists() {
+		body, err = providerutils.SetJSONField(body, "reasoning_effort", *params.Reasoning.Effort)
+	}
+	if err == nil && params != nil && params.PromptCacheOptions != nil {
+		body, err = providerutils.SetJSONField(body, "prompt_cache_options", params.PromptCacheOptions)
 	}
 	for index, message := range providerutils.GetJSONField(body, "messages").Array() {
 		if err == nil && message.Get("role").String() == string(schemas.ChatMessageRoleDeveloper) {
@@ -312,7 +316,7 @@ func chatProviderBody(ctx *schemas.BifrostContext, request *schemas.BifrostChatR
 			}
 		}
 		return restoreStrictTools(body, hosting, strict)
-	case schemas.OpenAI:
+	case schemas.OpenAI, catalog.CoreProviderAWSChatCompletions:
 		return prepareOpenAIChatBody(ctx, request, streaming)
 	case schemas.Azure:
 		if schemas.IsAnthropicModelFamily(ctx, request.Model) {
@@ -434,7 +438,7 @@ func setOpenAIAccessPrograms(body []byte, raw json.RawMessage) ([]byte, string, 
 }
 
 // setCloudClaudeBase names Anthropic as the provider behind AWS and Google Cloud while core
-// builds their body, as core names it only when it runs the request (cloudClaudeConfig). Core
+// builds their body, as core names it only when it runs the request (cloudConfig). Core
 // reads Claude's capabilities by that provider, such as system messages after the conversation
 // starts, which it would otherwise turn into user text.
 func setCloudClaudeBase(ctx *schemas.BifrostContext) {

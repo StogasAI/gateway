@@ -58,6 +58,10 @@ var compiledRouteContracts = map[string]struct {
 		providerID: "aws",
 		interfaces: []string{"chat_completions", "responses"},
 	},
+	"aws-bedrock-chat-completions": {
+		providerID: "aws",
+		interfaces: []string{"chat_completions"},
+	},
 	"aws-claude-platform-messages": {
 		providerID: "aws",
 		interfaces: []string{"chat_completions", "responses"},
@@ -1140,7 +1144,7 @@ func validateDeploymentUpstreamSelector(deploymentID, providerID, company string
 	case "azure":
 		return validateAzureUpstreamSelector(deploymentID, deployment)
 	case "aws", "google-cloud":
-		return validateCloudClaudeSelector(deploymentID, providerID, company, deployment)
+		return validateCloudSelector(deploymentID, providerID, company, deployment)
 	default:
 		return fmt.Errorf("deployment %s uses unsupported provider %s", deploymentID, providerID)
 	}
@@ -1191,14 +1195,16 @@ func validateAzureUpstreamSelector(deploymentID string, deployment *compiledDepl
 	return nil
 }
 
-// cloudClaudeRoutes are the routes of AWS and Google Cloud that serve Claude, with whether
-// Anthropic runs it there, behind the cloud's sign-in and billing, in place of the cloud's own
-// company. Each product has its own endpoint and sign-in.
-var cloudClaudeRoutes = map[string]bool{
-	"aws-bedrock-messages":                    false,
-	"aws-claude-platform-messages":            true,
-	"google-cloud-agent-platform-messages":    false,
-	"google-cloud-anthropic-managed-messages": true,
+// cloudRoutes are the routes of AWS and Google Cloud, with whether Anthropic runs the model there,
+// behind the cloud's sign-in and billing, in place of the cloud's own company, and whether the
+// route serves Claude, over Anthropic's Messages API, or other models, in OpenAI's format. Each
+// product has its own endpoint and sign-in.
+var cloudRoutes = map[string]struct{ anthropicRuns, claude bool }{
+	"aws-bedrock-chat-completions":            {anthropicRuns: false, claude: false},
+	"aws-bedrock-messages":                    {anthropicRuns: false, claude: true},
+	"aws-claude-platform-messages":            {anthropicRuns: true, claude: true},
+	"google-cloud-agent-platform-messages":    {anthropicRuns: false, claude: true},
+	"google-cloud-anthropic-managed-messages": {anthropicRuns: true, claude: true},
 }
 
 // BedrockSourceRegions are, for each geography of Bedrock's inference profiles but global, the
@@ -1215,30 +1221,36 @@ var BedrockSourceRegions = map[string]map[string]bool{
 	"ca": {"ca-central-1": true},
 }
 
-// validateCloudClaudeSelector checks Claude on AWS or Google Cloud. inferenceGeo is the
-// geography of Bedrock's inference profile, Google's endpoint location or Anthropic's inference
-// geography, which is global or us, and which Anthropic's models before Claude 4.6 do not take.
-func validateCloudClaudeSelector(deploymentID, providerID, company string, deployment *compiledDeployment) error {
+// validateCloudSelector checks a deployment on AWS or Google Cloud. inferenceGeo is the geography
+// of Bedrock's inference profile, Google's endpoint location or Anthropic's inference geography,
+// which is global or us, and which Anthropic's models before Claude 4.6 do not take.
+func validateCloudSelector(deploymentID, providerID, company string, deployment *compiledDeployment) error {
 	selector, hosting := deployment.Upstream, deployment.Hosting
 	if hosting != company && hosting != CompanyAnthropic {
 		return fmt.Errorf("deployment %s has a hosting that %s does not sell", deploymentID, providerID)
 	}
 	bedrock := providerID == string(ProviderAWS) && hosting == company
+	claude := schemas.IsAnthropicModel(deployment.ModelID)
 	geo := selector.InferenceGeo == "global" || selector.InferenceGeo == "us" ||
 		selector.InferenceGeo == "" && hosting == CompanyAnthropic ||
 		selector.InferenceGeo == "eu" && providerID == string(ProviderGoogleCloud) && hosting == company ||
 		bedrock && BedrockSourceRegions[selector.InferenceGeo] != nil
-	if !geo || !schemas.IsAnthropicModel(deployment.ModelID) ||
-		selector.ChuteID != "" || selector.GPUCount != nil || selector.ReasoningMode != "" ||
+	if !geo || selector.ChuteID != "" || selector.GPUCount != nil || selector.ReasoningMode != "" ||
 		selector.DeploymentType != "" || selector.ModelFormat != "" || selector.ModelVersion != "" {
 		return fmt.Errorf("deployment %s has an invalid %s upstream selector", deploymentID, providerID)
 	}
-	// Bedrock serves Claude only through inference profiles, whose IDs name the geography.
-	if bedrock && !strings.HasPrefix(selector.Model, selector.InferenceGeo+".anthropic.") {
+	// Bedrock serves these deployments only through inference profiles, whose IDs name the
+	// geography and then the model, whose own ID starts with anthropic for Claude.
+	profile := selector.InferenceGeo + "."
+	if claude {
+		profile += "anthropic."
+	}
+	if bedrock && !strings.HasPrefix(selector.Model, profile) {
 		return fmt.Errorf("deployment %s must name the %s inference profile of its model", deploymentID, selector.InferenceGeo)
 	}
 	for routeID := range deployment.Routes {
-		if anthropicRuns, ok := cloudClaudeRoutes[routeID]; !ok || anthropicRuns != (hosting == CompanyAnthropic) {
+		route, ok := cloudRoutes[routeID]
+		if !ok || route.anthropicRuns != (hosting == CompanyAnthropic) || route.claude != claude {
 			return fmt.Errorf("deployment %s cannot use route %s", deploymentID, routeID)
 		}
 	}

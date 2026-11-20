@@ -419,7 +419,7 @@ func TestCloudClaudeRequestReachesEachOfferingWithItsOwnSignIn(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			request, err := cloudClaudeRequest(ctx, test.provider, testOrganizationID, test.secret, cloudDeployment(t, test.deployment), test.streaming, cloudSignIns{google: tokens})
+			request, err := newCloudRequest(ctx, test.provider, testOrganizationID, test.secret, cloudDeployment(t, test.deployment), test.streaming, cloudSignIns{google: tokens})
 			if err != nil || request.url != test.url || request.signer == nil || len(request.headers) != len(test.headers) {
 				t.Fatalf("request %+v, error %v", request, err)
 			}
@@ -467,13 +467,13 @@ func TestCloudClaudeRequestRefusesSecretsThatCannotServeTheHosting(t *testing.T)
 	ctx := context.Background()
 	platform := cloudDeployment(t, "aws-claude-fable-5-1-anthropic-hosted")
 	managed := cloudDeployment(t, "google-cloud-claude-fable-5-1-anthropic-hosted")
-	if _, err := cloudClaudeRequest(ctx, catalog.ProviderAWS, testOrganizationID, awsIAMSecret(t, "us-east-1", ""), platform, false, cloudSignIns{}); !errors.Is(err, billing.ErrByokTarget) {
+	if _, err := newCloudRequest(ctx, catalog.ProviderAWS, testOrganizationID, awsIAMSecret(t, "us-east-1", ""), platform, false, cloudSignIns{}); !errors.Is(err, billing.ErrByokTarget) {
 		t.Fatalf("Claude Platform without a workspace: %v", err)
 	}
-	if _, err := cloudClaudeRequest(ctx, catalog.ProviderGoogleCloud, testOrganizationID, googleSecret(t, ""), managed, false, cloudSignIns{}); !errors.Is(err, billing.ErrByokTarget) {
+	if _, err := newCloudRequest(ctx, catalog.ProviderGoogleCloud, testOrganizationID, googleSecret(t, ""), managed, false, cloudSignIns{}); !errors.Is(err, billing.ErrByokTarget) {
 		t.Fatalf("Claude on Google Cloud without a workspace: %v", err)
 	}
-	if _, err := cloudClaudeRequest(ctx, catalog.ProviderAWS, testOrganizationID, googleSecret(t, ""), platform, false, cloudSignIns{}); !errors.Is(err, billing.ErrByok) {
+	if _, err := newCloudRequest(ctx, catalog.ProviderAWS, testOrganizationID, googleSecret(t, ""), platform, false, cloudSignIns{}); !errors.Is(err, billing.ErrByok) {
 		t.Fatalf("Google key for AWS: %v", err)
 	}
 }
@@ -481,7 +481,7 @@ func TestCloudClaudeRequestRefusesSecretsThatCannotServeTheHosting(t *testing.T)
 func TestGoogleSignInSeparatesRejectedKeysFromOutages(t *testing.T) {
 	ctx := context.Background()
 	vertex := cloudDeployment(t, "google-cloud-claude-fable-5-1")
-	if _, err := cloudClaudeRequest(ctx, catalog.ProviderGoogleCloud, testOrganizationID, googleSecret(t, ""), vertex, false, cloudSignIns{}); !errors.Is(err, billing.ErrGatewayUnavailable) {
+	if _, err := newCloudRequest(ctx, catalog.ProviderGoogleCloud, testOrganizationID, googleSecret(t, ""), vertex, false, cloudSignIns{}); !errors.Is(err, billing.ErrGatewayUnavailable) {
 		t.Fatalf("no token cache: %v", err)
 	}
 
@@ -489,7 +489,7 @@ func TestGoogleSignInSeparatesRejectedKeysFromOutages(t *testing.T) {
 	// as the provider would, from the first attempt on. No attempt that fails to sign in sent the
 	// request.
 	calls := 0
-	request, err := cloudClaudeRequest(ctx, catalog.ProviderGoogleCloud, testOrganizationID, googleSecret(t, ""), vertex, false,
+	request, err := newCloudRequest(ctx, catalog.ProviderGoogleCloud, testOrganizationID, googleSecret(t, ""), vertex, false,
 		cloudSignIns{google: googleTokenFunc(func(context.Context, googleauth.Credential) (string, error) {
 			calls++
 			switch calls {
@@ -542,7 +542,7 @@ func TestFederatedCredentialsSignInAsTheOrganization(t *testing.T) {
 		}
 		return aws.Credentials{}, awsauth.ErrUnavailable
 	})
-	request, err := cloudClaudeRequest(ctx, catalog.ProviderAWS, testOrganizationID, awsRoleSecret(t, "us-east-1", ""), bedrock, false, cloudSignIns{roles: roles})
+	request, err := newCloudRequest(ctx, catalog.ProviderAWS, testOrganizationID, awsRoleSecret(t, "us-east-1", ""), bedrock, false, cloudSignIns{roles: roles})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -566,7 +566,7 @@ func TestFederatedCredentialsSignInAsTheOrganization(t *testing.T) {
 	if unavailable == nil || *unavailable.StatusCode != http.StatusServiceUnavailable || !network.RequestNotSent(unavailable.Error.Error) {
 		t.Fatalf("an AWS outage answered %+v", unavailable)
 	}
-	if _, err := cloudClaudeRequest(ctx, catalog.ProviderAWS, testOrganizationID, awsRoleSecret(t, "us-east-1", ""), bedrock, false, cloudSignIns{}); !errors.Is(err, billing.ErrGatewayUnavailable) {
+	if _, err := newCloudRequest(ctx, catalog.ProviderAWS, testOrganizationID, awsRoleSecret(t, "us-east-1", ""), bedrock, false, cloudSignIns{}); !errors.Is(err, billing.ErrGatewayUnavailable) {
 		t.Fatalf("no role cache: %v", err)
 	}
 
@@ -578,7 +578,7 @@ func TestFederatedCredentialsSignInAsTheOrganization(t *testing.T) {
 		return "ya29.federated", nil
 	})
 	for _, account := range []string{"", "runner@stogas-test.iam.gserviceaccount.com"} {
-		request, err := cloudClaudeRequest(ctx, catalog.ProviderGoogleCloud, testOrganizationID, googleFederatedSecret(t, account), vertex, false, cloudSignIns{google: tokens})
+		request, err := newCloudRequest(ctx, catalog.ProviderGoogleCloud, testOrganizationID, googleFederatedSecret(t, account), vertex, false, cloudSignIns{google: tokens})
 		if err != nil {
 			t.Fatal(err)
 		}

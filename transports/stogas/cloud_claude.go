@@ -249,18 +249,18 @@ type cloudSignIns struct {
 	roles  awsRoleSource
 }
 
-// cloudRequest is how one attempt reaches a cloud-hosted Claude deployment.
+// cloudRequest is how one attempt reaches a deployment on AWS or Google Cloud.
 type cloudRequest struct {
 	url     string
 	headers map[string]string
 	signer  schemas.RequestSigner
 }
 
-// cloudClaudeRequest builds the URL, headers and per-attempt signer for a
+// newCloudRequest builds the URL, headers and per-attempt signer for a
 // deployment from the customer's secret. A Google token and a role's
 // credentials are fetched once here, so a rejected credential fails before any
 // provider call.
-func cloudClaudeRequest(ctx context.Context, provider schemas.ModelProvider, organizationID, secret string, deployment catalog.Deployment, streaming bool, signIns cloudSignIns) (cloudRequest, error) {
+func newCloudRequest(ctx context.Context, provider schemas.ModelProvider, organizationID, secret string, deployment catalog.Deployment, streaming bool, signIns cloudSignIns) (cloudRequest, error) {
 	upstream := deployment.Upstream
 	switch provider {
 	case catalog.ProviderAWS:
@@ -272,7 +272,12 @@ func cloudClaudeRequest(ctx context.Context, provider schemas.ModelProvider, org
 		service := "bedrock"
 		switch deployment.Hosting {
 		case hostingAmazon:
-			request.url = "https://bedrock-runtime." + credential.Region + ".amazonaws.com/anthropic/v1/messages"
+			// Bedrock takes Claude on its Messages API and other models on its Chat Completions API.
+			path := "/openai/v1/chat/completions"
+			if catalog.UsesClaudeWire(provider, deployment.ModelID) {
+				path = "/anthropic/v1/messages"
+			}
+			request.url = "https://bedrock-runtime." + credential.Region + ".amazonaws.com" + path
 		case hostingAnthropic:
 			if credential.WorkspaceID == "" {
 				return cloudRequest{}, billing.ErrByokTarget
@@ -402,16 +407,16 @@ func upstreamSignInFailure(err error) *schemas.BifrostError {
 	}}
 }
 
-// applyCloudClaudeRequest installs one pair's cloud request. The body was
+// applyCloudRequest installs one pair's cloud request. The body was
 // built for the deployment's hosting; this adds what depends on the secret.
-func applyCloudClaudeRequest(ctx *schemas.BifrostContext, state *State, signIns cloudSignIns) (schemas.Key, error) {
+func applyCloudRequest(ctx *schemas.BifrostContext, state *State, signIns cloudSignIns) (schemas.Key, error) {
 	resolution := state.Resolution
 	authorization := state.Authorization
 	if !cloudTargetServesSecret(resolution.Provider, authorization.UpstreamByokSecret, resolution.Deployment) {
 		return schemas.Key{}, billing.ErrByokTarget
 	}
 	streaming := resolution.RequestType == schemas.ChatCompletionStreamRequest || resolution.RequestType == schemas.ResponsesStreamRequest
-	request, err := cloudClaudeRequest(ctx, resolution.Provider, authorization.OrganizationID, authorization.UpstreamByokSecret, resolution.Deployment, streaming, signIns)
+	request, err := newCloudRequest(ctx, resolution.Provider, authorization.OrganizationID, authorization.UpstreamByokSecret, resolution.Deployment, streaming, signIns)
 	if err != nil {
 		return schemas.Key{}, err
 	}

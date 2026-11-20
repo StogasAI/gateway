@@ -1,0 +1,270 @@
+{
+	"shows": "Bedrock's Chat Completions API takes Kimi K3's reasoning_content of an earlier answer and of an earlier tool call back in later turns.",
+	"recorded": "2026-11-20",
+	"exchanges": [
+		{
+			"name": "global.moonshotai.kimi-k3 answer",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"reasoning_effort": "low",
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "1591",
+								"role": "assistant",
+								"refusal": null,
+								"reasoning_content": "The user wants 37*43. Calculate: 37*43 = 37*40 + 37*3 = 1480 + 111 = 1591. Need answer number only."
+							}
+						}
+					],
+					"created": 1795140822,
+					"id": "chatcmpl-w7nopxbgdij27wm24r3vcbit74kwpuw3llmerrdhud3jhllb3yga",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 58,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 41,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 172,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 230
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3 tool call after an answer sent back with its reasoning",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"reasoning_effort": "low",
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						},
+						{
+							"role": "assistant",
+							"content": "1591",
+							"reasoning_content": "The user wants 37*43. Calculate: 37*43 = 37*40 + 37*3 = 1480 + 111 = 1591. Need answer number only."
+						},
+						{
+							"role": "user",
+							"content": "Call get_secret_number, then tell me the secret number plus that product."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "tool_calls",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": null,
+								"tool_calls": [
+									{
+										"function": {
+											"arguments": "{}",
+											"name": "get_secret_number"
+										},
+										"id": "get_secret_number_0",
+										"type": "function"
+									}
+								],
+								"refusal": null,
+								"role": "assistant",
+								"reasoning_content": "The user wants me to call get_secret_number, then tell secret number plus product. Need interpret \"that product\" as prior 37*43 = 1591. We have tool get_secret_number available. Need call it. Then compute sum. Need be careful maybe product refers 37*43. Call get_secret_number now. Then final with number only? User didn't specify number only now, but likely wants result. Need use tool."
+							}
+						}
+					],
+					"created": 1795140822,
+					"id": "chatcmpl-6kdfqac24xihe3btndjsaqs3st2eiq63n4abrk5pxwuxlcd22prq",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 126,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 89,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 264,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 390
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3 answer after both turns sent back with their reasoning",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"reasoning_effort": "low",
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						},
+						{
+							"role": "assistant",
+							"content": "1591",
+							"reasoning_content": "The user wants 37*43. Calculate: 37*43 = 37*40 + 37*3 = 1480 + 111 = 1591. Need answer number only."
+						},
+						{
+							"role": "user",
+							"content": "Call get_secret_number, then tell me the secret number plus that product."
+						},
+						{
+							"role": "assistant",
+							"content": null,
+							"reasoning_content": "The user wants me to call get_secret_number, then tell secret number plus product. Need interpret \"that product\" as prior 37*43 = 1591. We have tool get_secret_number available. Need call it. Then compute sum. Need be careful maybe product refers 37*43. Call get_secret_number now. Then final with number only? User didn't specify number only now, but likely wants result. Need use tool.",
+							"tool_calls": [
+								{
+									"function": {
+										"arguments": "{}",
+										"name": "get_secret_number"
+									},
+									"id": "get_secret_number_0",
+									"type": "function"
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "get_secret_number_0",
+							"content": "41"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "1632",
+								"role": "assistant",
+								"refusal": null,
+								"reasoning_content": "Secret number is 41. Product 1591. Sum = 1632. Need respond concise. User asked tell me secret number plus that product. Final likely 1632. Ensure no extra maybe number only from prior instruction? They said answer with number only earlier for product; current says tell me. We can just output 1632."
+							}
+						}
+					],
+					"created": 1795140823,
+					"id": "chatcmpl-u43qzwmsquub6ndxilnnfpc2btta2s6ajudc526x5i4bf6uff5ca",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 87,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 70,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 420,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 257
+						},
+						"total_tokens": 507
+					},
+					"system_fingerprint": null
+				}
+			}
+		}
+	]
+}

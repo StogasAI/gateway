@@ -153,13 +153,19 @@ func TestToolResultAttachmentsNeedADeploymentThatReadsThem(t *testing.T) {
 	if err := json.Unmarshal(recorded.Response.Body, &reply); err != nil || recorded.Response.Status != 200 || strings.Contains(strings.ToLower(reply.Choices[0].Message.Content), "red") {
 		t.Fatalf("the recorded reply must be a 200 that does not name the image's color: %v %s", err, recorded.Response.Body)
 	}
-	body, _, _ := toolResultRequest(t, "chat", "provider:openai gpt-5.5")
-	_, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/chat/completions", Body: []byte(body)})
-	if err == nil || !strings.Contains(err.Error(), "messages[2].content[1] attachments in tool results are not supported by") {
-		t.Fatalf("a Chat Completions deployment took an attachment in a tool result: %v", err)
+	body, pdf, _ := toolResultRequest(t, "chat", "provider:openai gpt-5.5")
+	imageOnly := strings.Replace(body, `{"type":"file","file":{"filename":"evidence.pdf","file_data":"`+pdf+`"}},`, "", 1)
+	_, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/chat/completions", Body: []byte(imageOnly)})
+	if err == nil || !strings.Contains(err.Error(), "messages[2].content[1] images in tool results are not supported by") {
+		t.Fatalf("a Chat Completions deployment took an image in a tool result: %v", err)
 	}
-	// Audio in a tool result is an attachment like the others: no check of the request names it,
-	// and the catalog decides. Neither model reads audio, so each refusal is the catalog's.
+	// OpenAI refuses a file there, which the deployment states too.
+	_, err = catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/chat/completions", Body: []byte(body)})
+	if err == nil || !strings.Contains(err.Error(), "messages[2].content[1] files in tool results are not supported by") {
+		t.Fatalf("a Chat Completions deployment took a file in a tool result: %v", err)
+	}
+	// The request's own checks treat audio in a tool result as any other attachment, and routing
+	// refuses it there, since no interface carries audio in a tool result.
 	audio := strings.Replace(body, `{"type":"image_url","image_url":{"url":"`, `{"type":"input_audio","input_audio":{"format":"wav","data":"`, 1)
 	var messages struct {
 		Messages []map[string]json.RawMessage `json:"messages"`
@@ -176,8 +182,8 @@ func TestToolResultAttachmentsNeedADeploymentThatReadsThem(t *testing.T) {
 		t.Fatalf("the request's checks gave their own reason for audio in a tool result: %v", err)
 	}
 	_, err = catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/chat/completions", Body: []byte(strings.Replace(audio, "provider:openai gpt-5.5", "provider:anthropic anthropic-claude-sonnet-4-6", 1))})
-	if err == nil || !strings.Contains(err.Error(), noAudio) {
-		t.Fatalf("a deployment without audio input took audio in a tool result: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "messages[2].content[2] audio in tool results is not supported by") {
+		t.Fatalf("a deployment took audio in a tool result: %v", err)
 	}
 }
 

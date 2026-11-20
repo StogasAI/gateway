@@ -2288,6 +2288,11 @@ func responsesCustomCallInputSupported(state *State) bool {
 	if state == nil || state.Resolution == nil {
 		return false
 	}
-	return state.Resolution.Provider == schemas.OpenAI ||
-		(state.Resolution.Provider == schemas.Azure && !azureDeploymentUsesAnthropicWire(state))
+	switch state.Resolution.Provider {
+	case schemas.OpenAI:
+		return true
+	case schemas.Azure, catalog.ProviderAWS:
+		return !stateUsesClaudeWire(state)
+	}
+	return false
 }

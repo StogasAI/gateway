@@ -209,7 +209,7 @@ func applyUpstreamCredentials(
 		switch state.Resolution.Provider {
 		case catalog.ProviderAWS, catalog.ProviderGoogleCloud:
 			var err error
-			if directKey, err = applyCloudClaudeRequest(ctx, state, signIns); err != nil {
+			if directKey, err = applyCloudRequest(ctx, state, signIns); err != nil {
 				return err
 			}
 		case schemas.Azure:
@@ -270,7 +270,7 @@ func literalSecret(value string) schemas.SecretVar {
 	return schemas.SecretVar{Val: value, SecretType: schemas.SecretTypePlainText}
 }
 
-// modelCapabilities overrides two of core's per-model defaults for every model.
+// modelCapabilities overrides three of core's per-model defaults for every model.
 //
 // Speed: the catalog decides which deployments run at Fast, and the adapters send speed for no
 // others. Core's own list of Fast models names them one by one and drops speed from a model it does
@@ -280,9 +280,15 @@ func literalSecret(value string) schemas.SecretVar {
 // adds a beta header that no hosting needs. Claude checks that `tools` is unchanged before it
 // accepts earlier reasoning, so a conversation must send the same tools on every hosting and in
 // every request. The gateway sets the field itself on every Claude request (streamToolInput).
+//
+// Media in a tool result: the catalog decides which deployments read images and documents in a tool
+// result, and routing refuses them for every other deployment. Core names the media of a Chat
+// Completions tool message in text for every model, which would hide an image from Kimi on Bedrock,
+// which reads it.
 var modelCapabilities = schemas.ModelCapabilities{
-	SupportsFastMode:            schemas.Ptr(true),
-	SupportsEagerInputStreaming: schemas.Ptr(false),
+	SupportsFastMode:             schemas.Ptr(true),
+	SupportsEagerInputStreaming:  schemas.Ptr(false),
+	SupportsMultimodalToolOutput: schemas.Ptr(true),
 }
 
 func resolveModelCapabilities(schemas.ModelProvider, string) *schemas.ModelCapabilities {
