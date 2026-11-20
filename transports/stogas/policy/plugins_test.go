@@ -89,7 +89,7 @@ func TestTextExtractionRequirementsAndDefaults(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := of((&Config{Plugins: inspected}).TextExtraction()); got != tc.want {
+			if got := of((&Config{Plugins: inspected.flat()}).TextExtraction()); got != tc.want {
 				t.Fatalf("inspection gives %v, and execution %v", got, tc.want)
 			}
 		})
@@ -243,6 +243,8 @@ func TestInputCheckNamesTheSettingThatReadsAllInputText(t *testing.T) {
 		{"empty redaction", `{"plugins":{"redaction":{}}}`, ""},
 		{"ASCII input", `{"input":{"asciiOnly":true}}`, "input.asciiOnly"},
 		{"redaction", `{"plugins":{"redaction":{"presets":["email_address"]}}}`, "plugins.redaction"},
+		{"redaction of one request part", `{"plugins":{"redaction":{"presets":["email_address"],"parts":["toolResults"],"action":"refuse"}}}`, "plugins.redaction"},
+		{"redaction of responses", `{"plugins":{"redaction":{"presets":["email_address"],"parts":["response"]}}}`, ""},
 		{"encrypted redaction", `{` + encrypted + `}`, "plugins.redaction"},
 		{"encrypted redaction of a matched rule", `{"rules":{"private":{"when":"provider.id == 'openai'",` + encrypted + `}}}`, "plugins.redaction"},
 		{"encrypted redaction of an unmatched rule", `{"rules":{"private":{"when":"provider.id == 'azure'",` + encrypted + `}}}`, ""},
@@ -269,5 +271,72 @@ func TestInputCheckNamesTheSettingThatReadsAllInputText(t *testing.T) {
 				t.Fatalf("input check %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// A redaction names the parts that it reads and what a match does. Equal settings have one
+// spelling, so that equal redactions share a matcher, and redactions that differ in either
+// stay apart when the policies of a request combine.
+func TestRedactionPartsAndActions(t *testing.T) {
+	for source, want := range map[string]string{
+		`{"presets":["email_address"]}`:                                                             `{"presets":["email_address"]}`,
+		`{"presets":["email_address"],"parts":["request"],"action":"replace"}`:                      `{"presets":["email_address"]}`,
+		`{"presets":["email_address"],"parts":["tools","user","system","toolResults","assistant"]}`: `{"presets":["email_address"]}`,
+		`{"presets":["email_address"],"parts":["response","request"]}`:                              `{"presets":["email_address"],"parts":["request","response"]}`,
+		`{"presets":["email_address"],"parts":["response","user","system"],"action":"refuse"}`:      `{"presets":["email_address"],"parts":["system","user","response"],"action":"refuse"}`,
+		`{"customPattern":"x+","parts":["toolResults"],"action":"restore"}`:                         `{"customPatterns":["x+"],"presets":[],"parts":["toolResults"],"action":"restore"}`,
+	} {
+		compiled, err := compileSourcePlugins([]byte(`{"redaction":` + source + `}`))
+		if err != nil {
+			t.Fatalf("%s: %v", source, err)
+		}
+		got, _ := json.Marshal(compiled.Redaction)
+		if string(got) != want {
+			t.Errorf("%s compiles to %s, want %s", source, got, want)
+		}
+	}
+	for _, source := range []string{
+		`{"presets":["email_address"],"parts":[]}`,
+		`{"presets":["email_address"],"parts":["body"]}`,
+		`{"presets":["email_address"],"parts":["user","user"]}`,
+		`{"presets":["email_address"],"parts":["request","user"]}`,
+		`{"presets":["email_address"],"action":"mask"}`,
+		`{"presets":["email_address"],"action":"restore","parts":["request","response"]}`,
+		`{"parts":["user"]}`,
+		`{"action":"refuse"}`,
+	} {
+		if _, err := compileSourcePlugins([]byte(`{"redaction":` + source + `}`)); err == nil {
+			t.Errorf("%s compiled", source)
+		}
+	}
+
+	org := ruleSource(t, `{"plugins":{"redaction":{"presets":["email_address"],"action":"restore"}},"rules":{"tools":{"plugins":{"redaction":{"presets":["credit_card_number"],"parts":["toolResults"],"action":"refuse"}}}}}`)
+	key := ruleSource(t, `{"plugins":{"redaction":{"presets":["phone_number"],"action":"restore"}},"rules":{"replies":{"plugins":{"redaction":{"literals":[{"values":["Project Kestrel"]}],"parts":["response"]}}}}}`)
+	combined, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: org}, {Scope: KeyScope, Value: key}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := combined.Activate(ruleValues{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	matcher, err := CompileRedaction(active)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !matcher.ReadsRequest() || !matcher.ReadsResponse() || !matcher.Restores() || active.InputCheck() != "plugins.redaction" {
+		t.Fatalf("request=%t response=%t restores=%t check=%q", matcher.ReadsRequest(), matcher.ReadsResponse(), matcher.Restores(), active.InputCheck())
+	}
+	inspected, err := inspectionPlugins(active.PluginSources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := json.Marshal(inspected)
+	want := `{"redactions":[` +
+		`{"presets":["email_address","phone_number"],"action":"restore"},` +
+		`{"presets":[],"literals":[{"text":"Project Kestrel","ignoreCase":false,"wholeWord":true,"fuzzy":false}],"parts":["response"]},` +
+		`{"presets":["credit_card_number"],"parts":["toolResults"],"action":"refuse"}]}`
+	if string(got) != want {
+		t.Fatalf("effective plugins\n got %s\nwant %s", got, want)
 	}
 }

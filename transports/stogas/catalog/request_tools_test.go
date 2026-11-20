@@ -194,3 +194,40 @@ func TestRequestToolFieldsRefuseImpossibleValues(t *testing.T) {
 		}
 	}
 }
+
+// A server URL names the host that the provider connects to, or no server. URL readers disagree
+// about backslashes, control characters and escaped host characters, so a URL that another
+// reader could send to a different host names none, and a list of allowed servers refuses it.
+func TestMCPServerNamesNeverNameAHostThatAnotherReaderWouldNotReach(t *testing.T) {
+	t.Parallel()
+	for address, want := range map[string]string{
+		`https://allowed.example@evil.example/mcp`: "evil.example",
+		`https://evil.example/@allowed.example`:    "evil.example",
+		`https://evil.example#@allowed.example/`:   "evil.example",
+		`https://evil.example?@allowed.example/`:   "evil.example",
+		`https://evil.example\@allowed.example/`:   "",
+		`https://allowed.example\@evil.example/`:   "",
+		`https:\\evil.example\@allowed.example/`:   "",
+		`https://evil.example\.allowed.example/`:   "",
+		`https://allowed.example%40evil.example/`:  "",
+		`https://allowed.example%2eevil.example/`:  "",
+		`https://allowed.example:evil.example/`:    "",
+		"https://evil.example\t@allowed.example/":  "",
+		"https://allowed.example\n.evil.example/":  "",
+		`https://allowed.example /mcp`:             "",
+		`allowed.example/mcp`:                      "",
+		"https://ａllowed.example/mcp":              "allowed.example",
+		"https://allowed。example/mcp":              "allowed.example",
+		`https://ALLOWED.example.:443/mcp`:         "allowed.example",
+		`https://[::ffff:192.0.2.1]:8443/mcp`:      "::ffff:192.0.2.1",
+	} {
+		encoded, err := json.Marshal(address)
+		if err != nil {
+			t.Fatal(err)
+		}
+		names := mcpServerNames(map[string]json.RawMessage{"server_url": encoded})
+		if len(names) != 1 || names[0] != want {
+			t.Errorf("%q names %q, want %q", address, names, want)
+		}
+	}
+}

@@ -288,11 +288,20 @@ func (s *Server) inference(ctx *requestContext) {
 		failure = requestTimeoutError()
 	}
 	if failure != nil {
-		captureUnaryResult(run.state, reply, outcome)
+		captureUnaryResult(run.state, lease, reply, outcome)
 		s.writeProviderError(ctx, run.state, result.ctx, failure)
 		return
 	}
-	s.writeInferenceJSON(ctx, result.ctx, run.state, http.StatusOK, unaryResponsePayload(reply, servedModel(run.state)))
+	payload, failure := unaryReplyPayload(run.state, lease, reply)
+	if failure != nil {
+		captureExportError(run.state, failure)
+		s.writeProviderError(ctx, run.state, result.ctx, failure)
+		return
+	}
+	s.writeInferenceJSON(ctx, result.ctx, run.state, http.StatusOK, payload)
+	if changed, ok := payload.([]byte); ok {
+		clear(changed)
+	}
 }
 
 func (s *Server) openProviderStream(ctx *schemas.BifrostContext, request *schemas.BifrostRequest) (chan *schemas.BifrostStreamChunk, *schemas.BifrostError) {
@@ -443,7 +452,7 @@ func (s *Server) finishDetachedUnary(run *providerRun, memory *requestMemoryLeas
 		run.commit()
 		outcome = result.ctx
 		reply, failure, _ := ingestProviderResult(memory, run.request, run.state, result.response, nil)
-		captureUnaryResult(run.state, reply, failure)
+		captureUnaryResult(run.state, memory, reply, failure)
 		return
 	}
 	failure, attempt := run.end()
@@ -452,7 +461,7 @@ func (s *Server) finishDetachedUnary(run *providerRun, memory *requestMemoryLeas
 	}
 	outcome = attempt
 	_, failure, _ = ingestProviderResult(memory, run.request, run.state, nil, failure)
-	captureUnaryResult(run.state, nil, failure)
+	captureUnaryResult(run.state, memory, nil, failure)
 }
 
 // startSSEStream delivers the run's stream. A pending call is still starting;
@@ -505,6 +514,12 @@ func (s *Server) startSSEStream(ctx *requestContext, run *providerRun, started p
 	// that the client called.
 	var bridge *stogas.BridgedStream
 	bridgeChecked := false
+	// A reply that a redaction changes is held whole. The pair that serves the stream
+	// decides, as it does for the bridge.
+	var reply *stogas.ReplyRedaction
+	replyChecked := false
+	var held []heldChunk
+	heldBytes := 0
 	completedAsync = true
 
 	go func() {
@@ -661,6 +676,151 @@ func (s *Server) startSSEStream(ctx *requestContext, run *providerRun, started p
 			}
 		}
 
+		// failStream ends the stream with a failure of the gateway's own processing.
+		failStream := func(failure *schemas.BifrostError) {
+			state.MarkProviderCompleted()
+			retainResponseFailure(state, failure)
+			sendStreamError(failure)
+		}
+		// deliver sends the events of one provider chunk and reports whether the stream has
+		// ended. terminal marks the chunk that ends the provider's stream.
+		deliver := func(provider *schemas.BifrostStreamChunk, chunks []*schemas.BifrostStreamChunk, terminal bool) bool {
+			events := clientStreamEvents(state, chunks, includeChatUsage)
+			delivered := false
+			for index, event := range events {
+				encoded, err := marshalPayload(event.payload)
+				if err == nil && reply != nil {
+					var changed []byte
+					if changed, err = reply.Event(event.responses, encoded); err != nil {
+						clear(encoded)
+						failStream(replyRedactionFailure(err))
+						return true
+					}
+					encoded = changed
+				}
+				if err == nil {
+					state.Export.Event(encoded)
+					if event.client != nil {
+						clear(encoded)
+						encoded, err = marshalPayload(event.client)
+					}
+				}
+				if err != nil {
+					failStream(responseEncodingFailure())
+					return true
+				}
+				if event.exportOnly {
+					clear(encoded)
+					continue
+				}
+				frame := frameSSEEvent(streamEventName(includeEventName, event.name), encoded)
+				clear(encoded)
+				if inferenceStreamResponseLimitExceeded(responseBytes, len(frame)) {
+					clear(frame)
+					bifrostErr := stogas.UpstreamProtocolError(stogas.ErrProviderResponseTooLarge)
+					state.MarkProviderCompleted()
+					state.BifrostError = bifrostErr
+					sendStreamError(bifrostErr)
+					return true
+				}
+				if !responseMemory.grow(len(frame)) {
+					clear(frame)
+					failStream(streamMemoryCapacityError())
+					return true
+				}
+				responseBytes += len(frame)
+				if terminal && index == len(events)-1 && !sendDone && streamProof != nil {
+					finishSuccess(frame)
+					return true
+				}
+				if !clientConnected {
+					clear(frame)
+					continue
+				}
+				// Read before handing ownership to the delivery reader, which clears
+				// consumed bytes. Failed delivery cannot produce normal completion.
+				if streamProof != nil {
+					streamProof.SentEvent(frame)
+				}
+				sent, deliveryCapacityExceeded := reader.send(deliveryContext, frame)
+				if !sent {
+					if deliveryCapacityExceeded {
+						clear(frame)
+						failStream(streamMemoryCapacityError())
+						return true
+					}
+					if wait.timedOut() {
+						finishClientTimeout()
+					} else if request.Err() != nil {
+						finishRequestTimeout()
+						stopDelivery()
+					} else {
+						state.MarkClientStopped()
+						stopDelivery()
+					}
+					continue
+				}
+				keepalive.Reset(responseKeepaliveInterval)
+				delivered = true
+			}
+			if delivered {
+				if provider.BifrostChatResponse != nil {
+					state.ObserveChatStreamOutput(provider.BifrostChatResponse)
+				} else if provider.BifrostResponsesStreamResponse != nil {
+					state.ObserveResponsesStreamOutput(provider.BifrostResponsesStreamResponse)
+				}
+			}
+			if terminal {
+				finishSuccess(nil)
+			}
+			return terminal
+		}
+		// holdChunk keeps a provider chunk of a reply that a redaction changes with the chunks
+		// that the client gets for it. The chunk counts toward the response limit and the
+		// request's memory while it is held, as its frames do afterwards.
+		holdChunk := func(provider *schemas.BifrostStreamChunk, chunks []*schemas.BifrostStreamChunk) *schemas.BifrostError {
+			for _, event := range clientStreamEvents(state, chunks, includeChatUsage) {
+				encoded, err := marshalPayload(event.payload)
+				if err != nil {
+					return responseEncodingFailure()
+				}
+				size := len(encoded)
+				clear(encoded)
+				if inferenceStreamResponseLimitExceeded(responseBytes+heldBytes, size) {
+					return stogas.UpstreamProtocolError(stogas.ErrProviderResponseTooLarge)
+				}
+				if !responseMemory.grow(size) {
+					return streamMemoryCapacityError()
+				}
+				heldBytes += size
+			}
+			held = append(held, heldChunk{provider: provider, client: chunks})
+			return nil
+		}
+		// flushHeld changes the held reply and sends it, and reports whether the stream has
+		// ended. terminal says that the last held chunk ends the provider's stream.
+		flushHeld := func(terminal bool) bool {
+			var all []*schemas.BifrostStreamChunk
+			for _, chunk := range held {
+				all = append(all, chunk.client...)
+			}
+			if err := reply.Stream(all); err != nil {
+				failStream(replyRedactionFailure(err))
+				return true
+			}
+			flushed := held
+			held = nil
+			for index, chunk := range flushed {
+				if deliver(chunk.provider, chunk.client, terminal && index == len(flushed)-1) {
+					return true
+				}
+			}
+			// The frames are charged now, and the stream goes on without the held chunks.
+			responseMemory.shrink(heldBytes)
+			heldBytes = 0
+			return false
+		}
+
 		providerStopped := false
 		for {
 			// A call whose output no client receives stops once stopping it bills what it has
@@ -731,7 +891,9 @@ func (s *Server) startSSEStream(ctx *requestContext, run *providerRun, started p
 			case next, ok := <-stream:
 				if !ok {
 					if !providerStopped {
-						finishSuccess(nil)
+						if len(held) == 0 || !flushHeld(false) {
+							finishSuccess(nil)
+						}
 						return
 					}
 					next = stogas.StoppedCallChunk(outcome)
@@ -776,7 +938,7 @@ func (s *Server) startSSEStream(ctx *requestContext, run *providerRun, started p
 			if !bridgeChecked {
 				bridge, bridgeChecked = stogas.NewBridgedStream(state), true
 			}
-			events, err := clientStreamEvents(state, bridge, chunk, includeChatUsage)
+			chunks, err := clientStreamChunks(bridge, chunk)
 			if err != nil {
 				state.MarkProviderCompleted()
 				bifrostErr := stogas.UpstreamProtocolError(err)
@@ -784,92 +946,22 @@ func (s *Server) startSSEStream(ctx *requestContext, run *providerRun, started p
 				sendStreamError(bifrostErr)
 				return
 			}
-			delivered := false
-			for index, event := range events {
-				encoded, err := marshalPayload(event.payload)
-				if err == nil {
-					state.Export.Event(encoded)
-					if event.client != nil {
-						clear(encoded)
-						encoded, err = marshalPayload(event.client)
-					}
-				}
-				if err != nil {
-					failure := responseEncodingFailure()
-					state.MarkProviderCompleted()
-					retainResponseFailure(state, failure)
-					sendStreamError(failure)
-					return
-				}
-				if event.exportOnly {
-					clear(encoded)
-					continue
-				}
-				frame := frameSSEEvent(streamEventName(includeEventName, event.name), encoded)
-				clear(encoded)
-				if inferenceStreamResponseLimitExceeded(responseBytes, len(frame)) {
-					clear(frame)
-					bifrostErr := stogas.UpstreamProtocolError(stogas.ErrProviderResponseTooLarge)
-					state.MarkProviderCompleted()
-					state.BifrostError = bifrostErr
-					sendStreamError(bifrostErr)
-					return
-				}
-				if !responseMemory.grow(len(frame)) {
-					clear(frame)
-					bifrostErr := streamMemoryCapacityError()
-					state.MarkProviderCompleted()
-					retainResponseFailure(state, bifrostErr)
-					sendStreamError(bifrostErr)
-					return
-				}
-				responseBytes += len(frame)
-				if terminal && index == len(events)-1 && !sendDone && streamProof != nil {
-					finishSuccess(frame)
-					return
-				}
-				if !clientConnected {
-					clear(frame)
-					continue
-				}
-				// Read before handing ownership to the delivery reader, which clears
-				// consumed bytes. Failed delivery cannot produce normal completion.
-				if streamProof != nil {
-					streamProof.SentEvent(frame)
-				}
-				sent, deliveryCapacityExceeded := reader.send(deliveryContext, frame)
-				if !sent {
-					if deliveryCapacityExceeded {
-						clear(frame)
-						bifrostErr := streamMemoryCapacityError()
-						state.MarkProviderCompleted()
-						retainResponseFailure(state, bifrostErr)
-						sendStreamError(bifrostErr)
-						return
-					}
-					if wait.timedOut() {
-						finishClientTimeout()
-					} else if request.Err() != nil {
-						finishRequestTimeout()
-						stopDelivery()
-					} else {
-						state.MarkClientStopped()
-						stopDelivery()
-					}
-					continue
-				}
-				keepalive.Reset(responseKeepaliveInterval)
-				delivered = true
+			if !replyChecked {
+				reply, replyChecked = stogas.NewReplyRedaction(state, replyGrowth(responseMemory)), true
 			}
-			if delivered {
-				if chunk.BifrostChatResponse != nil {
-					state.ObserveChatStreamOutput(chunk.BifrostChatResponse)
-				} else if chunk.BifrostResponsesStreamResponse != nil {
-					state.ObserveResponsesStreamOutput(chunk.BifrostResponsesStreamResponse)
+			if reply == nil {
+				if deliver(chunk, chunks, terminal) {
+					return
 				}
+				continue
 			}
-			if terminal {
-				finishSuccess(nil)
+			// The client gets the chunks of a reply that a redaction changes once the
+			// redaction has every chunk that it reads together (stogas.ReplyRedaction.Holds).
+			if failure := holdChunk(chunk, chunks); failure != nil {
+				failStream(failure)
+				return
+			}
+			if (terminal || !reply.Holds(chunks)) && flushHeld(terminal) {
 				return
 			}
 		}
@@ -900,19 +992,27 @@ type streamEvent struct {
 	payload    any
 	client     any
 	exportOnly bool
+	// responses is the Responses event that payload holds.
+	responses *schemas.BifrostResponsesStreamResponse
 }
 
-// clientStreamEvents returns the events of a chunk that the state took. A
-// bridged request's chunk gives the events of the chunks that convert it.
-func clientStreamEvents(state *stogas.State, bridge *stogas.BridgedStream, chunk *schemas.BifrostStreamChunk, includeChatUsage bool) ([]streamEvent, error) {
-	chunks := []*schemas.BifrostStreamChunk{chunk}
-	if bridge != nil {
-		converted, err := bridge.Convert(chunk)
-		if err != nil {
-			return nil, err
-		}
-		chunks = converted
+// heldChunk is a provider chunk of a held reply with the client's chunks for it.
+type heldChunk struct {
+	provider *schemas.BifrostStreamChunk
+	client   []*schemas.BifrostStreamChunk
+}
+
+// clientStreamChunks returns the chunks that the client gets for a chunk that the state took:
+// the chunk itself, or the chunks that convert it for a bridged request.
+func clientStreamChunks(bridge *stogas.BridgedStream, chunk *schemas.BifrostStreamChunk) ([]*schemas.BifrostStreamChunk, error) {
+	if bridge == nil {
+		return []*schemas.BifrostStreamChunk{chunk}, nil
 	}
+	return bridge.Convert(chunk)
+}
+
+// clientStreamEvents returns the events of the client's chunks.
+func clientStreamEvents(state *stogas.State, chunks []*schemas.BifrostStreamChunk, includeChatUsage bool) []streamEvent {
 	model := servedModel(state)
 	events := make([]streamEvent, 0, len(chunks))
 	for _, chunk := range chunks {
@@ -920,7 +1020,7 @@ func clientStreamEvents(state *stogas.State, bridge *stogas.BridgedStream, chunk
 			events = append(events, event)
 		}
 	}
-	return events, nil
+	return events
 }
 
 // clientStreamEvent returns the event of a chunk on the client's interface,
@@ -943,7 +1043,7 @@ func clientStreamEvent(chunk *schemas.BifrostStreamChunk, model string, includeC
 		return event, true
 	case chunk.BifrostResponsesStreamResponse != nil:
 		payload := responsesStreamPayload(chunk.BifrostResponsesStreamResponse, model)
-		return streamEvent{name: string(chunk.BifrostResponsesStreamResponse.Type), payload: payload}, payload != nil
+		return streamEvent{name: string(chunk.BifrostResponsesStreamResponse.Type), payload: payload, responses: chunk.BifrostResponsesStreamResponse}, payload != nil
 	default:
 		return streamEvent{}, false
 	}

@@ -78,18 +78,50 @@ type match struct {
 	end      int
 	entity   Entity
 	priority uint8
+	// restore marks a match that only restoring detectors found.
+	restore bool
 }
 
+// Summary counts what one walk replaced. ItemsRestored counts the placeholders of a response
+// that got their values back.
 type Summary struct {
 	ItemsRedacted uint32 `json:"items_redacted"`
+	ItemsRestored uint32 `json:"items_restored,omitempty"`
 	DurationUS    uint32 `json:"duration_us"`
 }
 
-// Redactor is request-local. It retains only a count and elapsed duration,
-// never source values, hashes, offsets, or replacement maps.
+// RefusedError reports text that a refusing redaction matched. It names the kind of value and
+// never the value.
+type RefusedError struct {
+	Entity Entity
+}
+
+func (e *RefusedError) Error() string {
+	return "text holds a value that a redaction refuses: " + placeholder(e.Entity)
+}
+
+// Placeholder names the kind of value that the redaction refused, as its placeholder.
+func (e *RefusedError) Placeholder() string { return placeholder(e.Entity) }
+
+// Redactor is local to one request or one response. It retains counts and elapsed duration,
+// and never hashes or offsets. The values that restoring redactions replaced stay in it, and
+// in the Restorer that it gives, for as long as the request runs.
 type Redactor struct {
 	policy *Policy
-	items  uint32
+	// part is the part of the exchange that the walk reads.
+	part  Part
+	items uint32
+	// restorer numbers the values that restoring redactions replace in a request. values holds
+	// those of the request that a response answers, and restored counts the ones it put back.
+	restorer *Restorer
+	values   *Restorer
+	restored uint32
+	// reply marks the walk of a response, and argumentsJSON a string that holds a JSON document,
+	// where a restored value must stay inside its JSON string.
+	reply         bool
+	argumentsJSON bool
+	// keepPlaceholders is set while a reply's walk reads reasoning, which gets no value back.
+	keepPlaceholders bool
 	// input measures the provider-bound text that the walk passes, after redaction.
 	input            inputText
 	countHidden      bool
@@ -109,16 +141,41 @@ type Redactor struct {
 // NewWithPolicy creates request-local state for an immutable compiled policy.
 // A nil policy leaves text unchanged.
 func NewWithPolicy(policy *Policy) *Redactor {
-	return &Redactor{policy: policy}
+	return &Redactor{policy: policy, part: partUnknown}
+}
+
+// NewReply creates the state that redacts one response: the policy's detectors for the
+// response, and the values that the request's restoring redactions replaced. It returns nil
+// when neither changes a response.
+func NewReply(policy *Policy, values *Restorer) *Redactor {
+	if !policy.ReadsResponse() && values == nil {
+		return nil
+	}
+	return &Redactor{policy: policy, part: PartResponse, reply: true, values: values}
+}
+
+// ReadsResponse reports whether a redaction of the response's own reads it. Such a reply is
+// changed whole, and one that only gets values back is changed as its text arrives.
+func (r *Redactor) ReadsResponse() bool {
+	return r != nil && r.policy.ReadsResponse()
+}
+
+// Restorer returns the values that the walk replaced with numbered placeholders, or nil when
+// it replaced none.
+func (r *Redactor) Restorer() *Restorer {
+	if r == nil || r.restorer == nil || len(r.restorer.values) == 0 {
+		return nil
+	}
+	return r.restorer
 }
 
 // Summary is absent when no redaction rules were applied. A configured scan
 // retains its metrics even when it finds no matches.
 func (r *Redactor) Summary() *Summary {
-	if r == nil || !r.policy.Enabled() {
+	if r == nil || !r.policy.Enabled() && r.values == nil {
 		return nil
 	}
-	return &Summary{ItemsRedacted: r.items, DurationUS: boundedDurationMicroseconds(r.duration)}
+	return &Summary{ItemsRedacted: r.items, ItemsRestored: r.restored, DurationUS: boundedDurationMicroseconds(r.duration)}
 }
 
 // InputTextBytes counts decoded UTF-8 text after transformation. It uses the
@@ -201,24 +258,79 @@ func (r *Redactor) redactBytes(text []byte) ([]byte, bool, error) {
 		}
 		return text, false, nil
 	}
-	policy := r.policy
-	if policy == nil {
+	refuse, replace, restore := r.policy.at(r.part, ActionRefuse), r.policy.at(r.part, ActionReplace), r.policy.at(r.part, ActionRestore)
+	if refuse == nil && replace == nil && restore == nil {
 		return text, false, nil
 	}
-	if len(text) < policy.minimumBytes {
-		return text, false, nil
+	if refused, err := r.scan(refuse, text); err != nil {
+		return nil, false, err
+	} else if len(refused) > 0 {
+		return nil, false, &RefusedError{Entity: refused[0].entity}
 	}
-
-	matches, err := r.scanBuiltinMatches(text)
+	matches, err := r.scan(replace, text)
 	if err != nil {
 		return nil, false, err
+	}
+	if restore != nil {
+		restorable, err := r.scan(restore, text)
+		if err != nil {
+			return nil, false, err
+		}
+		matches = mergeRestorable(matches, restorable)
+	}
+	if len(matches) == 0 {
+		return text, false, nil
+	}
+	if len(matches) > maxMatchesPerText || uint64(r.items)+uint64(len(matches)) > maxMatchesPerRequest {
+		return nil, false, ErrMatchLimit
+	}
+
+	placeholders := make([]string, len(matches))
+	outputSize := len(text)
+	for i, found := range matches {
+		placeholders[i] = placeholder(found.entity)
+		if found.restore {
+			numbered, err := r.numbered(found.entity, text[found.start:found.end])
+			if err != nil {
+				return nil, false, err
+			}
+			placeholders[i] = numbered
+		}
+		outputSize += len(placeholders[i]) - (found.end - found.start)
+	}
+	if outputSize < 0 {
+		return nil, false, ErrMatchLimit
+	}
+	if err := r.reserveGrowth(outputSize - len(text)); err != nil {
+		return nil, false, err
+	}
+	out := make([]byte, 0, outputSize)
+	position := 0
+	for i, found := range matches {
+		out = append(out, text[position:found.start]...)
+		out = append(out, placeholders[i]...)
+		position = found.end
+	}
+	out = append(out, text[position:]...)
+	r.items += uint32(len(matches))
+	return out, true, nil
+}
+
+// scan returns the matches of one set of detectors in text, merged where they overlap.
+func (r *Redactor) scan(policy *Policy, text []byte) ([]match, error) {
+	if policy == nil || len(text) < policy.minimumBytes {
+		return nil, nil
+	}
+	matches, err := r.scanBuiltinMatches(policy, text)
+	if err != nil {
+		return nil, err
 	}
 	// Each requirement scans the original text. A combined alternation would
 	// hide overlapping matches from another scope before interval merging.
 	for _, expression := range policy.custom {
 		matches, err = r.scanCustomPatterns(text, matches, expression)
 		if err != nil {
-			return nil, false, err
+			return nil, err
 		}
 	}
 	longestRun, neededRun := 0, 0
@@ -234,56 +346,62 @@ func (r *Redactor) redactBytes(text []byte) ([]byte, bool, error) {
 		}
 		matches, err = r.scanLiterals(text, matches, matcher)
 		if err != nil {
-			return nil, false, err
+			return nil, err
 		}
 	}
 	if len(matches) == 0 {
-		return text, false, nil
+		return nil, nil
 	}
+	return normalizeMatches(filterEnabledMatches(matches, policy.entities)), nil
+}
 
-	matches = filterEnabledMatches(matches, policy.entities)
-	matches = normalizeMatches(matches)
-	if len(matches) == 0 {
-		return text, false, nil
+// mergeRestorable joins the matches that restoring detectors found into those that replacing
+// detectors found. A value that a replacing detector reaches is replaced for good, so a
+// restoring match that overlaps one joins it, and only the rest get their values back.
+func mergeRestorable(replaced, restorable []match) []match {
+	if len(restorable) == 0 {
+		return replaced
 	}
-	if len(matches) > maxMatchesPerText || uint64(r.items)+uint64(len(matches)) > maxMatchesPerRequest {
-		return nil, false, ErrMatchLimit
+	for i := range restorable {
+		restorable[i].restore = true
 	}
-
-	outputSize := len(text)
-	for _, found := range matches {
-		outputSize += len(placeholder(found.entity)) - (found.end - found.start)
+	if len(replaced) == 0 {
+		return restorable
 	}
-	if outputSize < 0 {
-		return nil, false, ErrMatchLimit
+	all := append(replaced, restorable...)
+	sort.SliceStable(all, func(i, j int) bool {
+		if all[i].start != all[j].start {
+			return all[i].start < all[j].start
+		}
+		return !all[i].restore && all[j].restore
+	})
+	out := all[:0]
+	for _, candidate := range all {
+		if len(out) == 0 || candidate.start >= out[len(out)-1].end {
+			out = append(out, candidate)
+			continue
+		}
+		current := &out[len(out)-1]
+		current.end = max(current.end, candidate.end)
+		if current.restore && !candidate.restore {
+			current.entity, current.priority, current.restore = candidate.entity, candidate.priority, false
+		}
 	}
-	if err := r.reserveGrowth(outputSize - len(text)); err != nil {
-		return nil, false, err
-	}
-	out := make([]byte, 0, outputSize)
-	position := 0
-	for _, found := range matches {
-		out = append(out, text[position:found.start]...)
-		out = append(out, placeholder(found.entity)...)
-		position = found.end
-	}
-	out = append(out, text[position:]...)
-	r.items += uint32(len(matches))
-	return out, true, nil
+	return out
 }
 
 // Built-in PII cannot consist of surrounding whitespace. Retain one original
 // boundary byte on either side, so detectors keep their boundary context while
 // avoiding a complete padding scan for every detector. Custom rules still see
 // the entire original text.
-func (r *Redactor) scanBuiltinMatches(text []byte) ([]match, error) {
-	if r.policy.entities == 0 {
+func (r *Redactor) scanBuiltinMatches(policy *Policy, text []byte) ([]match, error) {
+	if policy.entities == 0 {
 		return nil, nil
 	}
 	start := max(0, len(text)-len(bytes.TrimLeft(text, " \t\r\n"))-1)
 	end := start + len(bytes.TrimRight(text[start:], " \t\r\n"))
 	end = min(len(text), end+1)
-	matches, err := r.scanBuiltinText(text[start:end])
+	matches, err := r.scanBuiltinText(policy, text[start:end])
 	for i := range matches {
 		matches[i].start += start
 		matches[i].end += start
@@ -291,8 +409,7 @@ func (r *Redactor) scanBuiltinMatches(text []byte) ([]match, error) {
 	return matches, err
 }
 
-func (r *Redactor) scanBuiltinText(text []byte) ([]match, error) {
-	policy := r.policy
+func (r *Redactor) scanBuiltinText(policy *Policy, text []byte) ([]match, error) {
 	var matches []match
 	var err error
 	if policy.entities&secretEntityMask != 0 {

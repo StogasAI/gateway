@@ -42,7 +42,7 @@ func TestPromptCachingRequirementsAndDefaults(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := (&Config{Plugins: inspected}).PromptCaching(); got != tc.want {
+			if got := (&Config{Plugins: inspected.flat()}).PromptCaching(); got != tc.want {
 				t.Fatalf("inspection gives %q, and execution %q", got, tc.want)
 			}
 		})

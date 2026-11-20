@@ -336,7 +336,7 @@ func (v *Inspector) Finish() (*Inspection, error) {
 	}
 	// The preview may flatten plugin descriptions; runtime composition continues
 	// sharing the original immutable plugin sections and their matchers.
-	compiled.Plugins = plugins
+	compiled.Plugins = plugins.flat()
 	if len(opaque) > 0 {
 		effective["uncheckedPlugins"] = opaque
 	}
@@ -382,12 +382,34 @@ func validateInspectionPlugins(plugins *Plugins) error {
 	return redaction.ValidateCustomPatterns(patterns)
 }
 
-func inspectionPlugins(parts []*Plugins) (*Plugins, error) {
+// inspectedPlugins are the plugins that a request's policies combine to. Redactions combine by
+// the parts they read and what a match does, so the view lists one redaction for each.
+type inspectedPlugins struct {
+	*Plugins
+	// Redaction hides the union that Plugins holds for validation.
+	Redaction  *struct{}    `json:"redaction,omitempty"`
+	Redactions []*Redaction `json:"redactions,omitempty"`
+}
+
+// flat returns the plugins with their redactions as one.
+func (p *inspectedPlugins) flat() *Plugins {
+	if p == nil {
+		return nil
+	}
+	return p.Plugins
+}
+
+func inspectionPlugins(parts []*Plugins) (*inspectedPlugins, error) {
 	if len(parts) == 0 {
 		return nil, nil
 	}
-	presets, patterns := map[string]bool{}, map[string]bool{}
-	selected := &Redaction{Presets: []string{}}
+	all := &Redaction{Presets: []string{}}
+	type group struct {
+		selected          *Redaction
+		presets, patterns map[string]bool
+	}
+	groups := map[string]*group{}
+	var order []string
 	plugins := &Plugins{TextExtraction: combineTextExtraction(parts), PromptCaching: combinePromptCaching(parts), Classification: combineClassification(parts)}
 	var exports []*exportconfig.Config
 	for _, part := range parts {
@@ -397,14 +419,21 @@ func inspectionPlugins(parts []*Plugins) (*Plugins, error) {
 		if part.Redaction == nil {
 			continue
 		}
-		plugins.Redaction = selected
+		plugins.Redaction = all
+		key := strings.Join(part.Redaction.Parts, ",") + "/" + part.Redaction.Action
+		selected := groups[key]
+		if selected == nil {
+			selected = &group{selected: &Redaction{Presets: []string{}, Parts: part.Redaction.Parts, Action: part.Redaction.Action}, presets: map[string]bool{}, patterns: map[string]bool{}}
+			groups[key] = selected
+			order = append(order, key)
+		}
 		for _, preset := range part.Redaction.Presets {
-			presets[preset] = true
+			selected.presets[preset] = true
 		}
 		for _, pattern := range part.Redaction.CustomPatterns {
-			patterns[pattern] = true
+			selected.patterns[pattern] = true
 		}
-		selected.Literals = append(selected.Literals, part.Redaction.Literals...)
+		selected.selected.Literals = append(selected.selected.Literals, part.Redaction.Literals...)
 	}
 	if len(exports) > 0 {
 		var err error
@@ -413,18 +442,37 @@ func inspectionPlugins(parts []*Plugins) (*Plugins, error) {
 			return nil, err
 		}
 	}
+	inspected := &inspectedPlugins{Plugins: plugins}
+	sort.Strings(order)
+	presets, patterns := map[string]bool{}, map[string]bool{}
+	for _, key := range order {
+		selected := groups[key]
+		for preset := range selected.presets {
+			selected.selected.Presets = append(selected.selected.Presets, preset)
+			presets[preset] = true
+		}
+		for pattern := range selected.patterns {
+			selected.selected.CustomPatterns = append(selected.selected.CustomPatterns, pattern)
+			patterns[pattern] = true
+		}
+		sort.Strings(selected.selected.Presets)
+		sort.Strings(selected.selected.CustomPatterns)
+		all.Literals = append(all.Literals, selected.selected.Literals...)
+		// Each section passed its own bounds when its policy compiled, and the
+		// union of several policies has none.
+		selected.selected.Literals = redaction.NormalizeLiterals(selected.selected.Literals)
+		inspected.Redactions = append(inspected.Redactions, selected.selected)
+	}
 	for preset := range presets {
-		selected.Presets = append(selected.Presets, preset)
+		all.Presets = append(all.Presets, preset)
 	}
 	for pattern := range patterns {
-		selected.CustomPatterns = append(selected.CustomPatterns, pattern)
+		all.CustomPatterns = append(all.CustomPatterns, pattern)
 	}
-	sort.Strings(selected.Presets)
-	sort.Strings(selected.CustomPatterns)
-	// Each section passed its own bounds when its policy compiled, and the
-	// union of several policies has none.
-	selected.Literals = redaction.NormalizeLiterals(selected.Literals)
-	return plugins, nil
+	sort.Strings(all.Presets)
+	sort.Strings(all.CustomPatterns)
+	all.Literals = redaction.NormalizeLiterals(all.Literals)
+	return inspected, nil
 }
 
 // inspectionSetBy names the policies that set each combined setting outside

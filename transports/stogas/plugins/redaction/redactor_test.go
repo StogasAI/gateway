@@ -468,8 +468,8 @@ func FuzzRedactBytes(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, source []byte) {
 		if len(source) <= 8192 {
-			bounded, boundedErr := newTestRedactor().scanBuiltinMatches(source)
-			original, originalErr := newTestRedactor().scanBuiltinText(source)
+			bounded, boundedErr := newTestRedactor().scanBuiltinMatches(testDetectorPolicy, source)
+			original, originalErr := newTestRedactor().scanBuiltinText(testDetectorPolicy, source)
 			if boundedErr == nil && originalErr == nil && !reflect.DeepEqual(normalizeMatches(bounded), normalizeMatches(original)) {
 				t.Fatalf("padding optimization changed built-in matches: %v != %v", bounded, original)
 			}

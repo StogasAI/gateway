@@ -666,6 +666,8 @@ type sourceRedaction struct {
 		WholeWord  *bool    `json:"wholeWord"`
 		Fuzzy      bool     `json:"fuzzy"`
 	} `json:"literals"`
+	Parts  []string `json:"parts"`
+	Action *string  `json:"action"`
 }
 
 func compileSourceRedaction(source *sourceRedaction) (*Redaction, error) {
@@ -706,11 +708,53 @@ func compileSourceRedaction(source *sourceRedaction) (*Redaction, error) {
 		}
 		selected.Literals = redaction.NormalizeLiterals(selected.Literals)
 	}
+	if source.Parts != nil {
+		if len(source.Parts) == 0 {
+			return nil, configError("redaction parts require at least one part")
+		}
+		parts, err := redactionParts(source.Parts)
+		if err != nil {
+			return nil, err
+		}
+		selected.Parts = canonicalRedactionParts(parts)
+	}
+	if source.Action != nil {
+		if _, known := RedactionActions[*source.Action]; !known {
+			return nil, configError("unknown redaction action %q", *source.Action)
+		}
+		// The default action has one spelling, so that equal redactions share a matcher.
+		if *source.Action != "replace" {
+			selected.Action = *source.Action
+		}
+	}
 	compiled := &Plugins{Redaction: selected}
 	if err := compiled.validate(); err != nil {
 		return nil, err
 	}
 	return selected, nil
+}
+
+// canonicalRedactionParts names parts in one spelling: nothing for the whole request, which is
+// the default, and "request" wherever every request part is read.
+func canonicalRedactionParts(parts redaction.Parts) []string {
+	if parts == redaction.RequestParts {
+		return nil
+	}
+	var names []string
+	for _, name := range RedactionParts {
+		named := redaction.PartsOf(redaction.PartResponse)
+		if part, ok := redactionRequestParts[name]; ok {
+			named = redaction.PartsOf(part)
+		} else if name == "request" {
+			named = redaction.RequestParts
+		}
+		whole := parts&redaction.RequestParts == redaction.RequestParts
+		if parts&named != named || whole && name != "request" && name != "response" {
+			continue
+		}
+		names = append(names, name)
+	}
+	return names
 }
 
 // OpenSource compiles the complete plaintext policy inside the gateway. Source

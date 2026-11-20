@@ -24,7 +24,12 @@ func CompileRedaction(config *Config) (*redaction.Policy, error) {
 	var patterns []redaction.Pattern
 	var custom []redaction.CustomPattern
 	var literals []redaction.Literal
+	options := redaction.Options{Parts: redaction.RequestParts}
 	if config != nil && config.Plugins != nil && config.Plugins.Redaction != nil {
+		var err error
+		if options.Parts, options.Action, err = config.Plugins.Redaction.scope(); err != nil {
+			return nil, err
+		}
 		literals = config.Plugins.Redaction.Literals
 		for _, preset := range config.Plugins.Redaction.Presets {
 			patterns = append(patterns, redaction.Pattern(preset))
@@ -33,5 +38,6 @@ func CompileRedaction(config *Config) (*redaction.Policy, error) {
 			custom = append(custom, redaction.CustomPattern{Expression: expression})
 		}
 	}
-	return redaction.CompilePolicy(redaction.Options{Patterns: patterns, CustomPatterns: custom, Literals: literals})
+	options.Patterns, options.CustomPatterns, options.Literals = patterns, custom, literals
+	return redaction.CompilePolicy(options)
 }

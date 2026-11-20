@@ -16,7 +16,7 @@ func (s *Server) exportLease() exporter.Lease {
 
 // Unary exports keep the provider result even when the caller stopped waiting
 // or its receipt failed; the canonical event records those outcomes.
-func captureUnaryResult(state *stogas.State, response *schemas.BifrostResponse, outcome *schemas.BifrostError) {
+func captureUnaryResult(state *stogas.State, memory *requestMemoryLease, response *schemas.BifrostResponse, outcome *schemas.BifrostError) {
 	if outcome != nil {
 		captureExportError(state, outcome)
 		return
@@ -24,7 +24,13 @@ func captureUnaryResult(state *stogas.State, response *schemas.BifrostResponse, 
 	if state == nil || !state.Export.Active() {
 		return
 	}
-	encoded, err := marshalPayload(unaryResponsePayload(response, servedModel(state)))
+	// The export keeps the reply as the caller would have got it.
+	payload, failure := unaryReplyPayload(state, memory, response)
+	if failure != nil {
+		captureExportError(state, failure)
+		return
+	}
+	encoded, err := marshalPayload(payload)
 	if err == nil {
 		state.Export.Response(encoded)
 		clear(encoded)

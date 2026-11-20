@@ -82,7 +82,7 @@ func TestExportCompositionRulesAndInspection(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			exported, err := (&Config{Plugins: inspected}).ExportConfig()
+			exported, err := (&Config{Plugins: inspected.flat()}).ExportConfig()
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -42,6 +43,10 @@ type jsonReplacement struct {
 	end   int
 	value []byte
 	items uint32
+	// restored counts the placeholders of the string that got their values back, and refused
+	// is the kind of value that a refusing redaction found in it.
+	restored uint32
+	refused  Entity
 }
 
 type jsonValueContext uint8
@@ -62,6 +67,14 @@ const (
 	jsonContextSearchAction
 	jsonContextSearchResults
 	jsonContextSearchResult
+	// The contexts below read a response. Only the reply's own content is text: a Chat
+	// choice's message or delta, and a Responses output. The fields around them are protocol
+	// values, or settings that the provider repeats from the request.
+	jsonContextReplyChat
+	jsonContextReplyChoices
+	jsonContextReplyChoice
+	jsonContextReplyResponses
+	jsonContextReplyEvent
 )
 
 // RedactRequestFields changes only provider-bound text containers. Routing,
@@ -77,6 +90,7 @@ func (r *Redactor) RedactRequestFields(raw map[string]json.RawMessage, surface S
 	defer func() {
 		r.duration += time.Since(startedAt)
 		r.reserveExpansion = nil
+		r.part = partUnknown
 	}()
 	var fields []string
 	switch surface {
@@ -106,6 +120,7 @@ func (r *Redactor) RedactRequestFields(raw map[string]json.RawMessage, surface S
 		} else if surface == SurfaceResponses && field == "tools" {
 			context = jsonContextResponsesTools
 		}
+		r.part = requestFieldPart(field, value)
 		redacted, changed, err := r.redactJSONContext(value, context)
 		if err != nil {
 			r.items = baseItems
@@ -136,6 +151,15 @@ func (r *Redactor) redactJSONContext(source []byte, context jsonValueContext) ([
 	}
 	if len(replacements) == 0 {
 		return source, false, nil
+	}
+	// A refusal counts only once the walk has passed every marker of protected replay, as an
+	// ASCII violation does.
+	for _, replacement := range replacements {
+		if replacement.refused != 0 {
+			r.items = baseItems
+			r.input = baseInput
+			return nil, false, &RefusedError{Entity: replacement.refused}
+		}
 	}
 	if r.asciiOnly {
 		// Object markers can appear after their text. Resolve protected replay
@@ -180,6 +204,14 @@ func (r *Redactor) walkJSONValue(source []byte, position int, allow bool, replac
 		}
 		return end, r.redactJSONString(source, position, end, escaped, replacements)
 	case '{':
+		if r.reply && context == jsonContextResponsesInputItem && !r.keepPlaceholders {
+			// A reasoning item gets no value back (RedactReply).
+			_, itemType, _ := objectRoleAndType(source, position)
+			r.keepPlaceholders = itemType == "reasoning"
+			end, err := r.walkJSONObject(source, position, allow, replacements, depth+1, context)
+			r.keepPlaceholders = false
+			return end, err
+		}
 		return r.walkJSONObject(source, position, allow, replacements, depth+1, context)
 	case '[':
 		return r.walkJSONArray(source, position, allow, replacements, depth+1, context)
@@ -197,7 +229,15 @@ func (r *Redactor) walkJSONValue(source []byte, position int, allow bool, replac
 
 func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, replacements *[]jsonReplacement, depth int, context jsonValueContext) (int, error) {
 	baseReplacements := len(*replacements)
-	baseItems, baseInput := r.items, r.input
+	baseItems, baseInput, baseRestored := r.items, r.input, r.restored
+	// A generated image is base64 that no detector reads. A reply holds megabytes of it, so the
+	// walk learns the item's type before it reaches the image.
+	generatedImage := false
+	keepPlaceholders := r.keepPlaceholders
+	if r.reply && context == jsonContextResponsesInputItem {
+		_, early, _ := objectRoleAndType(source, position)
+		generatedImage = early == "image_generation_call"
+	}
 	hasEncryptedContent := false
 	// A reasoning detail with a signature or encrypted data, and a reasoning item with encrypted
 	// content or a signature, is the provider's own: a provider refuses a changed one, so it stays
@@ -267,6 +307,46 @@ func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, repla
 		}
 		valueAllowed := allow
 		valueContext := jsonContextGeneral
+		switch context {
+		case jsonContextReplyChat:
+			valueAllowed = allow && key == jsonKeyChoices
+			valueContext = jsonContextReplyChoices
+		case jsonContextReplyChoice:
+			valueAllowed = allow && key == jsonKeyMessage
+			valueContext = jsonContextChatMessage
+		case jsonContextReplyResponses:
+			valueAllowed = allow && key == jsonKeyOutput
+			valueContext = jsonContextResponsesInput
+		case jsonContextReplyEvent:
+			switch key {
+			case jsonKeyItem:
+				valueContext = jsonContextResponsesInputItem
+			case jsonKeyPart:
+				valueContext = jsonContextContentBlock
+			case jsonKeyResponse:
+				valueContext = jsonContextReplyResponses
+			}
+		}
+		if r.reply {
+			// A reply's media, encrypted values, signatures, citations and metadata are the
+			// provider's values, and its log probabilities repeat its text token by token.
+			switch key {
+			case jsonKeyOpaqueMedia, jsonKeyLogProbs, jsonKeyProviderData:
+				valueAllowed = false
+			case jsonKeyContext:
+				if context == jsonContextChatMessage {
+					valueAllowed = false
+				}
+			case jsonKeyData, jsonKeyEncryptedContent, jsonKeySignature, jsonKeyOpaqueText:
+				if source[position] == '"' {
+					valueAllowed = false
+				}
+			case jsonKeyResult:
+				if generatedImage {
+					valueAllowed = false
+				}
+			}
+		}
 		// A tool output in parts holds text and attachments as a message's content does.
 		if (context == jsonContextChatMessage || context == jsonContextResponsesInputItem) && key == jsonKeyContent ||
 			context == jsonContextResponsesInputItem && key == jsonKeyOutput {
@@ -311,7 +391,27 @@ func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, repla
 			}
 		}
 		settingStart, settingInput := position, r.input
+		// A function call's arguments are a JSON document in a string.
+		argumentsJSON := r.argumentsJSON
+		if key == jsonKeyArguments {
+			r.argumentsJSON = true
+		}
+		// The provider runs the call of a hosted tool and writes the result into the call's own
+		// item, so the result is a tool result and the rest of the item is the model's.
+		if r.reply && context == jsonContextChatMessage && (key == jsonKeyReasoning || key == jsonKeyReasoningDetails) {
+			r.keepPlaceholders = true
+		}
+		part := r.part
+		if !r.reply && r.part == PartAssistant &&
+			(context == jsonContextResponsesInputItem && (key == jsonKeyOutput || key == jsonKeyCallResult) ||
+				context == jsonContextSearchAction && key == jsonKeySources) {
+			r.part = PartToolResults
+		}
 		position, err = r.walkJSONValue(source, position, valueAllowed, replacements, depth, valueContext)
+		r.argumentsJSON, r.part = argumentsJSON, part
+		if context == jsonContextChatMessage {
+			r.keepPlaceholders = keepPlaceholders
+		}
 		if err != nil {
 			return position, err
 		}
@@ -361,6 +461,7 @@ func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, repla
 				*replacements = (*replacements)[:baseReplacements]
 				r.items = baseItems
 				r.input = baseInput
+				r.restored = baseRestored
 			}
 			return position + 1, nil
 		default:
@@ -390,8 +491,19 @@ func (r *Redactor) walkJSONArray(source []byte, position int, allow bool, replac
 			childContext = jsonContextReasoningDetail
 		case jsonContextSearchResults:
 			childContext = jsonContextSearchResult
+		case jsonContextReplyChoices:
+			childContext = jsonContextReplyChoice
+		}
+		// Each message of a request, and each item of its input, is one part of the request.
+		part := r.part
+		if !r.reply && (context == jsonContextChatMessages || context == jsonContextResponsesInput) {
+			r.part = partUnknown
+			if !r.policy.uniform() {
+				r.part = objectPart(source, position, context)
+			}
 		}
 		position, err = r.walkJSONValue(source, position, allow, replacements, depth, childContext)
+		r.part = part
 		if err != nil {
 			return position, err
 		}
@@ -412,35 +524,39 @@ func (r *Redactor) walkJSONArray(source []byte, position int, allow bool, replac
 
 func (r *Redactor) redactJSONString(source []byte, start, end int, escaped bool, replacements *[]jsonReplacement) error {
 	encoded := source[start:end]
-	if !escaped {
-		baseItems := r.items
-		redacted, changed, err := r.redactBytes(source[start+1 : end-1])
-		if errors.Is(err, ErrNonASCII) {
-			return r.recordASCIIViolation(start, end, replacements)
-		}
+	decoded := source[start+1 : end-1]
+	if escaped {
+		text, err := decodeJSONString(encoded)
 		if err != nil {
-			return err
+			return errInvalidJSON
 		}
-		r.measure(redacted)
-		if changed {
-			*replacements = append(*replacements, jsonReplacement{start: start + 1, end: end - 1, value: redacted, items: r.items - baseItems})
-		}
-		return nil
+		decoded = []byte(text)
 	}
-	decoded, err := decodeJSONString(encoded)
-	if err != nil {
-		return errInvalidJSON
+	// A reply gets the request's values back before its own redactions read it.
+	text, restored := decoded, uint32(0)
+	if !r.keepPlaceholders {
+		text, restored = r.values.restore(decoded, r.argumentsJSON)
 	}
 	baseItems := r.items
-	redacted, changed, err := r.redactBytes([]byte(decoded))
+	redacted, changed, err := r.redactBytes(text)
 	if errors.Is(err, ErrNonASCII) {
 		return r.recordASCIIViolation(start, end, replacements)
+	}
+	if refused := (*RefusedError)(nil); errors.As(err, &refused) {
+		return r.recordRefusal(start, end, refused.Entity, replacements)
 	}
 	if err != nil {
 		return err
 	}
 	r.measure(redacted)
 	if r.asciiOnly {
+		return nil
+	}
+	if !escaped && restored == 0 {
+		// The text had no escape and a placeholder needs none.
+		if changed {
+			*replacements = append(*replacements, jsonReplacement{start: start + 1, end: end - 1, value: redacted, items: r.items - baseItems})
+		}
 		return nil
 	}
 	// Normalize escaped text once, including when no PII matched. Retaining an
@@ -454,13 +570,26 @@ func (r *Redactor) redactJSONString(source []byte, start, end int, escaped bool,
 		return err
 	}
 	encodedRedacted := buffer.Bytes()[:buffer.Len()-1]
-	if !changed && bytes.Equal(encodedRedacted, encoded) {
+	if !changed && restored == 0 && bytes.Equal(encodedRedacted, encoded) {
 		return nil
 	}
-	if err := r.reserveGrowth(len(encodedRedacted) - len(encoded) - max(0, len(redacted)-len(decoded))); err != nil {
+	// redactBytes reserved what its placeholders added to text.
+	if err := r.reserveGrowth(len(encodedRedacted) - len(encoded) - max(0, len(redacted)-len(text))); err != nil {
 		return err
 	}
-	*replacements = append(*replacements, jsonReplacement{start: start, end: end, value: encodedRedacted, items: r.items - baseItems})
+	r.restored += restored
+	*replacements = append(*replacements, jsonReplacement{start: start, end: end, value: encodedRedacted, items: r.items - baseItems, restored: restored})
+	return nil
+}
+
+// recordRefusal keeps a refusal for the end of the walk, which reports it unless protected
+// replay holds its text.
+func (r *Redactor) recordRefusal(start, end int, entity Entity, replacements *[]jsonReplacement) error {
+	if r.items >= maxMatchesPerRequest {
+		return ErrMatchLimit
+	}
+	r.items++
+	*replacements = append(*replacements, jsonReplacement{start: start, end: end, items: 1, refused: entity})
 	return nil
 }
 
@@ -483,6 +612,7 @@ func (r *Redactor) discardJSONReplacements(replacements *[]jsonReplacement, firs
 		replacement := values[read]
 		if replacement.start >= start && replacement.end <= end {
 			r.items -= replacement.items
+			r.restored -= replacement.restored
 			continue
 		}
 		values[write] = replacement
@@ -632,6 +762,19 @@ const (
 	jsonKeyOpaqueMedia
 	jsonKeyAction
 	jsonKeySources
+	jsonKeyArguments
+	jsonKeyCallResult
+	// The keys below matter only in a response.
+	jsonKeyChoices
+	jsonKeyMessage
+	jsonKeyItem
+	jsonKeyPart
+	jsonKeyResponse
+	jsonKeyLogProbs
+	jsonKeyOpaqueText
+	jsonKeyResult
+	jsonKeyProviderData
+	jsonKeyContext
 )
 
 func classifyJSONKey(encoded []byte, escaped bool) (jsonKeyKind, error) {
@@ -660,6 +803,30 @@ func classifyJSONKey(encoded []byte, escaped bool) (jsonKeyKind, error) {
 		return jsonKeyAction, nil
 	case "sources":
 		return jsonKeySources, nil
+	case "arguments":
+		return jsonKeyArguments, nil
+	case "outputs", "results", "error":
+		return jsonKeyCallResult, nil
+	case "choices":
+		return jsonKeyChoices, nil
+	case "message":
+		return jsonKeyMessage, nil
+	case "item":
+		return jsonKeyItem, nil
+	case "part":
+		return jsonKeyPart, nil
+	case "response":
+		return jsonKeyResponse, nil
+	case "logprobs":
+		return jsonKeyLogProbs, nil
+	case "b64_json", "partial_image_b64", "obfuscation":
+		return jsonKeyOpaqueText, nil
+	case "result":
+		return jsonKeyResult, nil
+	case "annotations", "annotation", "extra_content":
+		return jsonKeyProviderData, nil
+	case "context":
+		return jsonKeyContext, nil
 	case "type":
 		return jsonKeyType, nil
 	case "signature":
@@ -680,4 +847,161 @@ func classifyJSONKey(encoded []byte, escaped bool) (jsonKeyKind, error) {
 	default:
 		return jsonKeyOther, nil
 	}
+}
+
+// requestFieldPart is the part of a request that one of its top-level text fields belongs to.
+// Messages and input items each say their own.
+func requestFieldPart(field string, value []byte) Part {
+	switch field {
+	case "messages":
+		return partUnknown
+	case "input":
+		// An input that is one string is the user's message.
+		if position := skipJSONSpace(value, 0); position < len(value) && value[position] == '"' {
+			return PartUser
+		}
+		return partUnknown
+	case "instructions", "context_management":
+		return PartSystem
+	case "prediction":
+		return PartUser
+	}
+	return PartTools
+}
+
+// objectPart is the part of a request that a message, or an item of a Responses input, belongs
+// to. An object that does not say, or says twice, is read as every part, so no redaction of
+// the request passes it by.
+func objectPart(source []byte, position int, context jsonValueContext) Part {
+	role, itemType, ok := objectRoleAndType(source, position)
+	if !ok {
+		return partUnknown
+	}
+	if context == jsonContextResponsesInput && itemType != "" && itemType != "message" {
+		// The model makes a call and the client returns its output.
+		switch {
+		case role != "":
+			return partUnknown
+		case itemType == "mcp_approval_response", itemType == "mcp_list_tools", strings.HasSuffix(itemType, "_output"):
+			return PartToolResults
+		case itemType == "reasoning", itemType == "compaction", itemType == "mcp_approval_request", strings.HasSuffix(itemType, "_call"):
+			return PartAssistant
+		}
+		return partUnknown
+	}
+	switch role {
+	case "system", "developer":
+		return PartSystem
+	case "user":
+		return PartUser
+	case "assistant":
+		return PartAssistant
+	case "tool", "function":
+		return PartToolResults
+	}
+	return partUnknown
+}
+
+// objectRoleAndType reads the role and the type of the object at position without walking its
+// values. It fails for a value that is no object, for malformed JSON, and for an object that
+// holds either key twice or with a value that is no string, since readers disagree on which of
+// two keys counts.
+func objectRoleAndType(source []byte, position int) (role, itemType string, ok bool) {
+	if position >= len(source) || source[position] != '{' {
+		return "", "", false
+	}
+	position = skipJSONSpace(source, position+1)
+	if position < len(source) && source[position] == '}' {
+		return "", "", true
+	}
+	seenRole, seenType := false, false
+	for {
+		keyEnd, keyEscaped, err := jsonStringEnd(source, position)
+		if err != nil {
+			return "", "", false
+		}
+		key := string(source[position+1 : keyEnd-1])
+		if keyEscaped {
+			if key, err = decodeJSONString(source[position:keyEnd]); err != nil {
+				return "", "", false
+			}
+		}
+		position = skipJSONSpace(source, keyEnd)
+		if position >= len(source) || source[position] != ':' {
+			return "", "", false
+		}
+		position = skipJSONSpace(source, position+1)
+		if key == "role" || key == "type" {
+			valueEnd, _, err := jsonStringEnd(source, position)
+			if err != nil {
+				return "", "", false
+			}
+			value, err := decodeJSONString(source[position:valueEnd])
+			if err != nil {
+				return "", "", false
+			}
+			if key == "role" {
+				if seenRole {
+					return "", "", false
+				}
+				role, seenRole = value, true
+			} else {
+				if seenType {
+					return "", "", false
+				}
+				itemType, seenType = value, true
+			}
+			position = valueEnd
+		} else if position, ok = jsonValueEnd(source, position); !ok {
+			return "", "", false
+		}
+		position = skipJSONSpace(source, position)
+		if position >= len(source) {
+			return "", "", false
+		}
+		switch source[position] {
+		case ',':
+			position = skipJSONSpace(source, position+1)
+		case '}':
+			return role, itemType, true
+		default:
+			return "", "", false
+		}
+	}
+}
+
+// jsonValueEnd returns the position after the value at position. It checks only what it needs
+// to find the end: the walk that follows validates the value.
+func jsonValueEnd(source []byte, position int) (int, bool) {
+	depth := 0
+	for position < len(source) {
+		switch source[position] {
+		case '"':
+			end, _, err := jsonStringEnd(source, position)
+			if err != nil {
+				return position, false
+			}
+			position = end
+			if depth == 0 {
+				return position, true
+			}
+			continue
+		case '{', '[':
+			depth++
+		case '}', ']':
+			if depth == 0 {
+				return position, true
+			}
+			depth--
+			if depth == 0 {
+				return position + 1, true
+			}
+		case ',':
+			if depth == 0 {
+				return position, true
+			}
+		}
+		position++
+	}
+	return position, false
 }

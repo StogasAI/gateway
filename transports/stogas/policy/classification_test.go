@@ -43,7 +43,7 @@ func TestClassificationRequirementsAndDefaults(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := (&Config{Plugins: inspected}).Classification(); !slices.Equal(got, tc.want) {
+			if got := (&Config{Plugins: inspected.flat()}).Classification(); !slices.Equal(got, tc.want) {
 				t.Fatalf("inspection gives %q, and execution %q", got, tc.want)
 			}
 		})

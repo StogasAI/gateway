@@ -28,6 +28,10 @@ type requestBodyVariant struct {
 	responses *openaiprovider.OpenAIResponsesRequest
 	estimate  func(Deployment) (int, error)
 	summary   *redaction.Summary
+	// redaction and restored are what the reply of the request needs: the policy, when it reads
+	// responses, and the values that the request's restoring redactions replaced.
+	redaction *redaction.Policy
+	restored  *redaction.Restorer
 	textBytes int
 	files     inputfiles.Stats
 	// language and hidden are what the policy's classifiers found in the input.
@@ -705,7 +709,7 @@ func (v *requestVariants) prepareBody(selection routingSelection, value RequestP
 	asciiOnly := value.Config != nil && value.Config.Input != nil && value.Config.Input.ASCIIOnly
 	// check names the setting that reads all input text, as routing named it.
 	check := value.Config.InputCheck()
-	if check == "" && compiled.Enabled() {
+	if check == "" && compiled.ReadsRequest() {
 		check = "plugins.redaction"
 	}
 	options := inputfiles.Options{Reserve: reserveExpansion}
@@ -758,6 +762,11 @@ func (v *requestVariants) prepareBody(selection routingSelection, value RequestP
 		}
 		return nil, refusal
 	}
+	// Log probabilities repeat the reply token by token, so they would give back what a
+	// redaction of the response replaces.
+	if compiled.ReadsResponse() && requestsLogProbs(fields) {
+		return nil, APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Param: "logprobs", Message: "Log probabilities are unavailable while a policy redacts responses"}
+	}
 	if asciiOnly {
 		if err := redaction.ValidateASCII(fields, surface); err != nil {
 			return nil, piiRedactionError(err)
@@ -776,6 +785,10 @@ func (v *requestVariants) prepareBody(selection routingSelection, value RequestP
 		}
 	}
 	variant := &requestBodyVariant{exports: exports, body: body, fields: fields, summary: redactor.Summary(), textBytes: redactor.InputTextBytes()}
+	variant.restored = redactor.Restorer()
+	if compiled.ReadsResponse() {
+		variant.redaction = compiled
+	}
 	variant.files = files
 	variant.hidden = redactor.HiddenCharacters()
 	if slices.Contains(classifiers, policy.ClassifierLanguage) {
@@ -801,4 +814,19 @@ func (v *requestVariants) prepareBody(selection routingSelection, value RequestP
 		return nil, ErrInvalidJSON
 	}
 	return variant, nil
+}
+
+// requestsLogProbs reports whether a request asks for the log probabilities of its reply:
+// logprobs or top_logprobs in either interface, or the Responses include value.
+func requestsLogProbs(fields map[string]json.RawMessage) bool {
+	var enabled bool
+	if json.Unmarshal(fields["logprobs"], &enabled) == nil && enabled {
+		return true
+	}
+	var top int
+	if json.Unmarshal(fields["top_logprobs"], &top) == nil && top > 0 {
+		return true
+	}
+	var include []string
+	return json.Unmarshal(fields["include"], &include) == nil && slices.Contains(include, "message.output_text.logprobs")
 }

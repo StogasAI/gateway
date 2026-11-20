@@ -463,6 +463,79 @@ type Redaction struct {
 	CustomPatterns []string            `json:"customPatterns,omitempty"`
 	Presets        []string            `json:"presets"`
 	Literals       []redaction.Literal `json:"literals,omitempty"`
+	// Parts are the parts of the exchange that the redaction reads, in the order of
+	// RedactionParts, and Action is what a match does. Both are empty for the defaults: the
+	// whole request, and replacing the match.
+	Parts  []string `json:"parts,omitempty"`
+	Action string   `json:"action,omitempty"`
+}
+
+// RedactionParts names the parts that a redaction can read. "request" is every part of a
+// request, and a redaction that names no part reads those.
+var RedactionParts = []string{"request", "system", "user", "assistant", "toolResults", "tools", "response"}
+
+var redactionRequestParts = map[string]redaction.Part{
+	"system": redaction.PartSystem, "user": redaction.PartUser, "assistant": redaction.PartAssistant,
+	"toolResults": redaction.PartToolResults, "tools": redaction.PartTools,
+}
+
+// RedactionActions names what a redaction does with a match. "replace" writes a placeholder,
+// "restore" writes a numbered placeholder and puts the value back in the response, and "refuse"
+// fails the request.
+var RedactionActions = map[string]redaction.Action{
+	"replace": redaction.ActionReplace, "restore": redaction.ActionRestore, "refuse": redaction.ActionRefuse,
+}
+
+// redactionParts reads the parts that a redaction names. It refuses a part that is unknown or
+// named twice, and a request part beside "request", which already holds it.
+func redactionParts(names []string) (redaction.Parts, error) {
+	if len(names) == 0 {
+		return redaction.RequestParts, nil
+	}
+	var parts redaction.Parts
+	for _, name := range names {
+		named := redaction.PartsOf(redaction.PartResponse)
+		if part, ok := redactionRequestParts[name]; ok {
+			named = redaction.PartsOf(part)
+		} else if name == "request" {
+			named = redaction.RequestParts
+		} else if name != "response" {
+			return 0, configError("unknown redaction part %q", name)
+		}
+		if parts&named != 0 {
+			return 0, configError("redaction part %q is named twice", name)
+		}
+		parts |= named
+	}
+	return parts, nil
+}
+
+// scope returns the parts and the action of the redaction as its matcher takes them.
+func (r *Redaction) scope() (redaction.Parts, redaction.Action, error) {
+	parts, err := redactionParts(r.Parts)
+	if err != nil {
+		return 0, 0, err
+	}
+	action, known := RedactionActions[r.Action]
+	if r.Action == "" {
+		action, known = redaction.ActionReplace, true
+	}
+	if !known {
+		return 0, 0, configError("unknown redaction action %q", r.Action)
+	}
+	if action == redaction.ActionRestore && parts&redaction.PartsOf(redaction.PartResponse) != 0 {
+		return 0, 0, configError("a redaction that restores values reads only request parts")
+	}
+	return parts, action, nil
+}
+
+// ReadsRequest reports whether the redaction has a detector that reads a part of the request.
+func (r *Redaction) ReadsRequest() bool {
+	if r == nil || len(r.Presets) == 0 && len(r.CustomPatterns) == 0 && len(r.Literals) == 0 {
+		return false
+	}
+	parts, _, err := r.scope()
+	return err == nil && parts&redaction.RequestParts != 0
 }
 
 // pluginUnits are the plugins that combine on their own: a required plugin
@@ -718,6 +791,12 @@ func (p *Plugins) validate() error {
 		}
 		seen[pattern] = true
 	}
+	if _, _, err := selected.scope(); err != nil {
+		return err
+	}
+	if (len(selected.Parts) > 0 || selected.Action != "") && len(selected.Presets) == 0 && len(selected.CustomPatterns) == 0 && len(selected.Literals) == 0 {
+		return configError("redaction parts and action need a preset, a custom pattern or literals")
+	}
 	return nil
 }
 
@@ -871,6 +950,7 @@ var exactFieldTypes = map[string]string{
 	"deployment.dataHandling.tee": "boolean", "deployment.dataHandling.teeVerified": "boolean",
 	"deployment.dataHandling.trainingUse": "boolean", "deployment.dataHandling.zeroDataRetention": "boolean",
 	"deployment.dataHandling.isolatedPromptCache": "boolean", "deployment.dataHandling.certifications": "string_list",
+	"deployment.documentFormats.extensions": "string_list", "deployment.documentFormats.mediaTypes": "string_list",
 	"deployment.hosting": "string", "deployment.companies": "string_list", "deployment.dataHandling.sharedWith": "string_list",
 	"deployment.inputModalities": "string_list", "deployment.maxOutputTokens": "integer",
 	"deployment.modelId": "string", "deployment.outputModalities": "string_list",
@@ -894,7 +974,6 @@ var exactFieldTypes = map[string]string{
 	"request.mcpTools": "string_list",
 	"request.model":    "string", "request.store": "boolean", "request.storedInput": "boolean",
 	"request.systemMessages": "boolean", "request.time": "timestamp",
-	"route.documentFormats.extensions": "string_list", "route.documentFormats.mediaTypes": "string_list",
 	"route.interfaces": "string_list", "route.providerId": "string", "route.id": "string",
 }
 
@@ -902,7 +981,7 @@ func init() {
 	for _, capability := range []string{
 		"explicitPromptCaching", "functionCalling", "implicitPromptCaching",
 		"parallelFunctionCalling", "streaming", "structuredOutputs", "systemMessages",
-		"toolChoice", "toolResultDocuments", "toolResultImages",
+		"toolChoice", "toolChoiceNone", "toolResultDocuments", "toolResultImages",
 	} {
 		exactFieldTypes["deployment.capabilities."+capability] = "boolean"
 	}

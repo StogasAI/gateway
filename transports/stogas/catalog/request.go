@@ -261,6 +261,8 @@ type ResolvedRequest struct {
 	outputTokenLimit   int
 	pricing            requestPricingContext
 	redactionSummary   *redaction.Summary
+	replyRedaction     *redaction.Policy
+	restored           *redaction.Restorer
 	// classifiers are the classifiers that the pair's policy runs, and inputLanguage and
 	// inputHidden what they found in the input.
 	classifiers   []string
@@ -347,6 +349,7 @@ func (r *ResolvedRequest) retainVariant(variant *requestBodyVariant, config *pol
 	r.inputTextBytes = &textBytes
 	r.inputFiles = variant.files
 	r.redactionSummary = variant.summary
+	r.replyRedaction, r.restored = variant.redaction, variant.restored
 	r.inputLanguage, r.inputHidden = variant.language, variant.hidden
 	r.ExportConfig = variant.exports
 	r.retainPolicyDecision(config)
@@ -661,6 +664,15 @@ func (r *ResolvedRequest) StructuredPIIRedactionSummary() *redaction.Summary {
 		return nil
 	}
 	return r.redactionSummary
+}
+
+// ReplyRedactor returns the redactor of the response that answers the request, or nil when no
+// policy changes it: the request's redactions restore no value and none reads responses.
+func (r *ResolvedRequest) ReplyRedactor() *redaction.Redactor {
+	if r == nil {
+		return nil
+	}
+	return redaction.NewReply(r.replyRedaction, r.restored)
 }
 
 // Classifiers are the classifiers that the pair's policy runs, sorted.
@@ -1272,6 +1284,9 @@ func resolveResponsesRequests(input RequestInput, route Route) (*ResolvedRequest
 func piiRedactionError(err error) error {
 	if errors.Is(err, redaction.ErrNonASCII) {
 		return APIError{Code: "input_ascii_required", StatusCode: 400, Type: "invalid_request_error", Message: "Policy requires ASCII input text"}
+	}
+	if refused := (*redaction.RefusedError)(nil); errors.As(err, &refused) {
+		return APIError{Code: "redaction_refused", StatusCode: 400, Type: "invalid_request_error", Message: "Policy refuses input text that matches " + refused.Placeholder()}
 	}
 	// One request has one scan budget, which every pattern and term list of its policies
 	// spends on the text, so the message says which of the two to reduce.
