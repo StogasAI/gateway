@@ -811,10 +811,11 @@ func TestWriteInferenceJSONAddsContentReceipt(t *testing.T) {
 		t.Fatal("missing response metadata")
 	}
 	wantMeters, _ := json.Marshal(state.FinalEvent.Usage.Meters)
-	gotMeters, _ := json.Marshal(response.Stogas.Meters)
-	if !bytes.Equal(wantMeters, gotMeters) || response.Stogas.UpstreamCostUSD != "0.002" || response.Stogas.BilledCostUSD != "0.00004" ||
-		response.Stogas.CacheReadSavingsUSD == nil || *response.Stogas.CacheReadSavingsUSD != "0.0006" ||
-		response.Stogas.CacheWriteOverheadUSD == nil || *response.Stogas.CacheWriteOverheadUSD != "0" {
+	usage := response.Stogas.Usage
+	gotMeters, _ := json.Marshal(usage.Meters)
+	if !bytes.Equal(wantMeters, gotMeters) || usage.UpstreamCostUSD != "0.002" || usage.BilledCostUSD != "0.00004" ||
+		usage.CacheReadSavingsUSD == nil || *usage.CacheReadSavingsUSD != "0.0006" ||
+		usage.CacheWriteOverheadUSD == nil || *usage.CacheWriteOverheadUSD != "0" {
 		t.Fatal("response metadata differs from final request history")
 	}
 	if !prooftest.VerifyReceipt(publicKey, response.Stogas, boot, request, sent) {
@@ -826,7 +827,7 @@ func TestWriteInferenceJSONAddsContentReceipt(t *testing.T) {
 	if prooftest.VerifyReceipt(publicKey, response.Stogas, boot, request, []byte(`{"ok":false}`)) {
 		t.Fatal("receipt accepted another response")
 	}
-	response.Stogas.Meters["total_input_tokens"] = billing.EventMeter{Quantity: "1301"}
+	response.Stogas.Usage.Meters["total_input_tokens"] = billing.EventMeter{Quantity: "1301"}
 	if prooftest.VerifyReceipt(publicKey, response.Stogas, boot, request, sent) {
 		t.Fatal("receipt accepted a changed informational meter")
 	}

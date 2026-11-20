@@ -25,7 +25,7 @@ func FinalMetadata(ctx context.Context, state *State) proof.Metadata {
 		},
 
 		Provider: chutese2ee.InvocationMetadata(ctx),
-		Meters:   billing.EventMeters{}, UpstreamCostUSD: "0", BilledCostUSD: "0",
+		Usage:    billing.RequestUsage{Meters: billing.EventMeters{}, UpstreamCostUSD: "0", BilledCostUSD: "0"},
 	}
 	if event := state.FinalEvent; event != nil {
 		recordMetadata(&metadata, event)
@@ -33,15 +33,17 @@ func FinalMetadata(ctx context.Context, state *State) proof.Metadata {
 	return metadata
 }
 
-// recordMetadata copies the request record's time, timing, usage and costs,
-// and the hash of the policies it names.
+// recordMetadata copies the request record's time, times and usage, and the hash of the policies
+// it names.
 func recordMetadata(metadata *proof.Metadata, event *billing.RequestEvent) {
 	metadata.CreatedAt = event.CreatedAt
 	if event.PolicyVersions != nil {
 		metadata.PolicyVersionsSHA512 = event.PolicyVersions.SHA512()
 	}
-	metadata.Timing = proof.Timing{TotalMS: event.Performance.TotalMS, ProviderMS: event.ProviderMS(), TTFTMS: event.Performance.TTFTMS}
-	metadata.Meters = event.Usage.Meters
-	metadata.UpstreamCostUSD, metadata.BilledCostUSD = event.Usage.UpstreamCostUSD, event.Usage.BilledCostUSD
-	metadata.CacheReadSavingsUSD, metadata.CacheWriteOverheadUSD = event.Usage.CacheReadSavingsUSD, event.Usage.CacheWriteOverheadUSD
+	performance := event.Performance
+	metadata.Performance = proof.Performance{
+		TotalMS: performance.TotalMS, ProviderMS: event.ProviderMS(), RateLimitWaitMS: performance.RateLimitWaitMS,
+		FirstOutputMS: performance.FirstOutputMS, TTFTMS: performance.TTFTMS,
+	}
+	metadata.Usage = event.Usage
 }

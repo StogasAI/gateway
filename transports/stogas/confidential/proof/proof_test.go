@@ -16,11 +16,11 @@ func TestMetadataValidation(t *testing.T) {
 		"invalid chain hash":     func(value *Metadata) { value.Catalog.ChainHash = "sha256:wrong" },
 		"noncanonical timestamp": func(value *Metadata) { value.CreatedAt = "2026-08-24T12:34:56Z" },
 		"noncanonical USD": func(value *Metadata) {
-			value.BilledCostUSD = "020"
+			value.Usage.BilledCostUSD = "020"
 		},
 		"TTFT after request end": func(value *Metadata) {
-			ttft := value.Timing.TotalMS + 1
-			value.Timing.TTFTMS = &ttft
+			ttft := value.Performance.TotalMS + 1
+			value.Performance.TTFTMS = &ttft
 		},
 	} {
 		invalid := cloneMetadata(input.Metadata)
@@ -31,8 +31,8 @@ func TestMetadataValidation(t *testing.T) {
 	}
 
 	requestScopedTTFT := cloneMetadata(input.Metadata)
-	ttft := requestScopedTTFT.Timing.ProviderMS + 1
-	requestScopedTTFT.Timing.TTFTMS = &ttft
+	ttft := requestScopedTTFT.Performance.ProviderMS + 1
+	requestScopedTTFT.Performance.TTFTMS = &ttft
 	if !ValidMetadata(requestScopedTTFT) {
 		t.Fatal("TTFT may exceed provider duration when gateway work or retries occur first")
 	}
@@ -48,11 +48,13 @@ func testMetadata() Metadata {
 			Version:      7,
 			SelectionIDs: testCatalogSelectionIDs(),
 		},
-		Meters: map[string]Meter{
-			"input_tokens": billing.PricedMeter("10", "input_tokens", "2", "20"),
+		Usage: billing.RequestUsage{
+			Meters: map[string]Meter{
+				"input_tokens": billing.PricedMeter("10", "input_tokens", "2", "20"),
+			},
+			UpstreamCostUSD: "20", BilledCostUSD: "20",
 		},
-		UpstreamCostUSD: "20", BilledCostUSD: "20",
-		Timing: Timing{
+		Performance: Performance{
 			TotalMS:    20,
 			ProviderMS: 15,
 			TTFTMS:     &ttft,
@@ -72,14 +74,14 @@ func testCatalogSelectionIDs() []string {
 
 func cloneMetadata(metadata Metadata) Metadata {
 	metadata.Catalog.SelectionIDs = append([]string(nil), metadata.Catalog.SelectionIDs...)
-	meters := make(map[string]Meter, len(metadata.Meters))
-	for key, meter := range metadata.Meters {
+	meters := make(map[string]Meter, len(metadata.Usage.Meters))
+	for key, meter := range metadata.Usage.Meters {
 		meters[key] = meter
 	}
-	metadata.Meters = meters
-	if metadata.Timing.TTFTMS != nil {
-		value := *metadata.Timing.TTFTMS
-		metadata.Timing.TTFTMS = &value
+	metadata.Usage.Meters = meters
+	if metadata.Performance.TTFTMS != nil {
+		value := *metadata.Performance.TTFTMS
+		metadata.Performance.TTFTMS = &value
 	}
 	return metadata
 }

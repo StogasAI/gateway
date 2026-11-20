@@ -20,24 +20,27 @@ type Catalog struct {
 	SelectionIDs []string `json:"selection_ids"`
 }
 
-type Timing struct {
-	TotalMS    uint32  `json:"total_ms"`
-	ProviderMS uint32  `json:"provider_ms"`
-	TTFTMS     *uint32 `json:"ttft_ms,omitempty"`
+// Performance holds the times that the request record's performance holds, and the provider time
+// that the record's attempts give, because the metadata lists no attempts.
+type Performance struct {
+	TotalMS         uint32  `json:"total_ms"`
+	ProviderMS      uint32  `json:"provider_ms"`
+	RateLimitWaitMS uint32  `json:"rate_limit_wait_ms"`
+	FirstOutputMS   *uint32 `json:"first_output_ms"`
+	TTFTMS          *uint32 `json:"ttft_ms"`
 }
 
+// Metadata is what the request record says about the request under the record's own names, for
+// the caller: the record itself also names the organization's policies, credentials and members,
+// which a key's holder may not read.
 type Metadata struct {
-	RequestID             string              `json:"request_id"`
-	CreatedAt             string              `json:"created_at"`
-	Catalog               Catalog             `json:"catalog"`
-	PolicyVersionsSHA512  string              `json:"policy_versions_sha512,omitempty"`
-	Meters                billing.EventMeters `json:"meters"`
-	UpstreamCostUSD       string              `json:"upstream_cost_usd"`
-	BilledCostUSD         string              `json:"billed_cost_usd"`
-	CacheReadSavingsUSD   *string             `json:"cache_read_savings_usd"`
-	CacheWriteOverheadUSD *string             `json:"cache_write_overhead_usd"`
-	Timing                Timing              `json:"timing"`
-	Provider              map[string]any      `json:"provider,omitempty"`
+	RequestID            string               `json:"request_id"`
+	CreatedAt            string               `json:"created_at"`
+	Catalog              Catalog              `json:"catalog"`
+	PolicyVersionsSHA512 string               `json:"policy_versions_sha512,omitempty"`
+	Performance          Performance          `json:"performance"`
+	Usage                billing.RequestUsage `json:"usage"`
+	Provider             map[string]any       `json:"provider,omitempty"`
 }
 
 type Input struct {
@@ -92,21 +95,21 @@ func ValidMetadata(metadata Metadata) bool {
 		!validCreatedAt(metadata.CreatedAt) ||
 		!ValidCatalog(metadata.Catalog) ||
 		(metadata.PolicyVersionsSHA512 != "" && !isLowerHex(metadata.PolicyVersionsSHA512, 64)) ||
-		!validMeterCosts(metadata) ||
-		metadata.Timing.ProviderMS > metadata.Timing.TotalMS ||
-		(metadata.Timing.TTFTMS != nil && *metadata.Timing.TTFTMS > metadata.Timing.TotalMS) {
+		!validUsage(metadata.Usage) ||
+		metadata.Performance.ProviderMS > metadata.Performance.TotalMS ||
+		(metadata.Performance.TTFTMS != nil && *metadata.Performance.TTFTMS > metadata.Performance.TotalMS) {
 		return false
 	}
 	return true
 }
 
-func validMeterCosts(metadata Metadata) bool {
-	if len(metadata.Meters) > 64 || !isUSD(metadata.UpstreamCostUSD) || !isUSD(metadata.BilledCostUSD) ||
-		metadata.CacheReadSavingsUSD != nil && !isUSD(*metadata.CacheReadSavingsUSD) ||
-		metadata.CacheWriteOverheadUSD != nil && !isUSD(*metadata.CacheWriteOverheadUSD) {
+func validUsage(usage billing.RequestUsage) bool {
+	if len(usage.Meters) > 64 || !isUSD(usage.UpstreamCostUSD) || !isUSD(usage.BilledCostUSD) ||
+		usage.CacheReadSavingsUSD != nil && !isUSD(*usage.CacheReadSavingsUSD) ||
+		usage.CacheWriteOverheadUSD != nil && !isUSD(*usage.CacheWriteOverheadUSD) {
 		return false
 	}
-	_, err := billing.ValidateMeters(metadata.Meters)
+	_, err := billing.ValidateMeters(usage.Meters)
 	return err == nil
 }
 

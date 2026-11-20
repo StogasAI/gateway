@@ -88,8 +88,8 @@ func TestReceiptSignsContentAndFinalMetadata(t *testing.T) {
 	if err := json.Unmarshal(output.Export, &exported); err != nil || exported["salts"] != nil || exported["receipt"] == nil {
 		t.Fatalf("export holds the salts or lacks the receipt: %s", output.Export)
 	}
-	input.Metadata.BilledCostUSD = "21"
-	input.Metadata.Timing.TotalMS++
+	input.Metadata.Usage.BilledCostUSD = "21"
+	input.Metadata.Performance.TotalMS++
 	other, err := service.Build(context.Background(), input)
 	if err != nil || other.Object.Receipt == decoded.Receipt || *other.Object.Salts == *decoded.Salts {
 		t.Fatal("a new receipt reused a signature or salts", err)
@@ -115,14 +115,14 @@ func TestStreamSignsTheAssembledResponseAndFinalMetadataOnce(t *testing.T) {
 		stream.SentEvent([]byte(event))
 	}
 	final := testMetadata()
-	final.BilledCostUSD = "21"
+	final.Usage.BilledCostUSD = "21"
 	stream.SetMetadata(final)
 	output, err := service.FinishStream(context.Background(), stream)
 	if err != nil {
 		t.Fatal(err)
 	}
 	completion := []byte(`{"object":"chat.completion","choices":[{"index":0,"message":{"content":"one two"}}]}`)
-	if output.Object.BilledCostUSD != "21" || !prooftest.VerifyReceipt(public, output.Object, boot, request, completion) {
+	if output.Object.Usage.BilledCostUSD != "21" || !prooftest.VerifyReceipt(public, output.Object, boot, request, completion) {
 		t.Fatal("stream signature or final metadata differs")
 	}
 	stream.SentEvent([]byte("late"))
@@ -203,11 +203,13 @@ func testMetadata() proof.Metadata {
 			Version:      7,
 			SelectionIDs: append([]string(nil), testCatalogSelectionIDs...),
 		},
-		Meters: map[string]proof.Meter{
-			"input_tokens": billing.PricedMeter("10", "input_tokens", "2", "20"),
+		Usage: billing.RequestUsage{
+			Meters: map[string]proof.Meter{
+				"input_tokens": billing.PricedMeter("10", "input_tokens", "2", "20"),
+			},
+			UpstreamCostUSD: "20", BilledCostUSD: "20",
 		},
-		UpstreamCostUSD: "20", BilledCostUSD: "20",
-		Timing: proof.Timing{
+		Performance: proof.Performance{
 			TotalMS:    20,
 			ProviderMS: 15,
 			TTFTMS:     &ttft,

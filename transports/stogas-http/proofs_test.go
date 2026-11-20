@@ -16,7 +16,7 @@ func TestFinalMetadataKeepsCanonicalRequestTiming(t *testing.T) {
 	ttftMS := uint32(150)
 	credentialID := "0198f4cc-6c25-7000-8000-000000000001"
 	event := &billing.RequestEvent{
-		Performance: billing.RequestPerformance{TotalMS: 180, TTFTMS: &ttftMS},
+		Performance: billing.RequestPerformance{TotalMS: 180, RateLimitWaitMS: 4, FirstOutputMS: &ttftMS, TTFTMS: &ttftMS},
 		// Provider time runs from the first call's start at 10 ms to the last call's end at 150 ms.
 		ProviderAttempts: []billing.ProviderAttempt{
 			{
@@ -37,12 +37,12 @@ func TestFinalMetadataKeepsCanonicalRequestTiming(t *testing.T) {
 			BilledCostUSD: "2"},
 	}
 
-	timing := stogas.FinalMetadata(context.Background(), &stogas.State{Pair: stogas.Pair{Resolution: testResolution()}, FinalEvent: event}).Timing
-	if timing.TotalMS != 180 || timing.ProviderMS != 140 {
-		t.Fatalf("proof timing = %#v, want total=180 provider=140", timing)
+	timing := stogas.FinalMetadata(context.Background(), &stogas.State{Pair: stogas.Pair{Resolution: testResolution()}, FinalEvent: event}).Performance
+	if timing.TotalMS != 180 || timing.ProviderMS != 140 || timing.RateLimitWaitMS != 4 {
+		t.Fatalf("proof timing = %#v, want total=180 provider=140 wait=4", timing)
 	}
-	if timing.TTFTMS == nil || *timing.TTFTMS != 150 {
-		t.Fatalf("proof TTFT = %#v, want 150", timing.TTFTMS)
+	if timing.TTFTMS == nil || *timing.TTFTMS != 150 || timing.FirstOutputMS == nil || *timing.FirstOutputMS != 150 {
+		t.Fatalf("proof TTFT = %#v and first output = %#v, want 150", timing.TTFTMS, timing.FirstOutputMS)
 	}
 }
 
