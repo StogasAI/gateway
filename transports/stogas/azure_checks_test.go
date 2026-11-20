@@ -374,22 +374,26 @@ func TestAzureChecksDropMarksThatPassed(t *testing.T) {
 }
 
 // While this gateway's checks fail, requests keep their targets until the last confirmation is
-// two hours old, and then stop until a check succeeds.
+// past the failure's grace, and then stop until a check succeeds: a day for an outage of Resource
+// Manager, and two hours for throttling, which the account's owner can cause.
 func TestAzureChecksServeThroughFailuresOnlyWithinGrace(t *testing.T) {
 	for _, test := range []struct {
-		name string
-		age  time.Duration
-		want error
+		name   string
+		status int
+		age    time.Duration
+		want   error
 	}{
-		{"within grace", 90 * time.Minute, nil},
-		{"past grace", 3 * time.Hour, billing.ErrByok},
-		{"never confirmed", 0, billing.ErrByok},
+		{"outage within its grace", http.StatusServiceUnavailable, 23 * time.Hour, nil},
+		{"outage past its grace", http.StatusServiceUnavailable, 25 * time.Hour, billing.ErrByok},
+		{"outage, never confirmed", http.StatusServiceUnavailable, 0, billing.ErrByok},
+		{"throttled within its grace", http.StatusTooManyRequests, 90 * time.Minute, nil},
+		{"throttled past its grace", http.StatusTooManyRequests, 3 * time.Hour, billing.ErrByok},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := &fakeAzureCheckStore{claims: []billing.AzureClaim{{Claimed: true, StartedAt: time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)}}}
 			checks, requests, clock := newTestAzureChecks(t, store,
-				map[string]any{"status": http.StatusServiceUnavailable},
-				map[string]any{"status": http.StatusServiceUnavailable},
+				map[string]any{"status": test.status},
+				map[string]any{"status": test.status},
 				map[string]any{"value": []any{}})
 			verifiedAt := time.Time{}
 			if test.age > 0 {

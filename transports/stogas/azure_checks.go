@@ -30,8 +30,14 @@ import (
 const (
 	// A request whose targets were confirmed longer ago than this starts a check.
 	azureCheckFresh = 10 * time.Minute
-	// While checks here fail, requests keep their targets until the last confirmation is this old.
+	// While checks here fail for a reason that the account's owner can cause, a refusal or
+	// throttling, requests keep their targets until the last confirmation is this old, so an owner
+	// who takes away the read cannot hide a changed account for longer.
 	azureCheckGrace = 2 * time.Hour
+	// While they fail for any other reason, such as an outage of Resource Manager, which leaves
+	// inference working and deployments unchangeable, requests keep their targets this long: longer
+	// than Resource Manager's longest outage on record, about seven hours on January 21, 2024.
+	azureOutageGrace = 24 * time.Hour
 	// A gateway starts a credential's checks no closer together than this.
 	azureCheckPace = 5 * time.Second
 	// A gateway retries a failed check no sooner than this.
@@ -52,7 +58,10 @@ const (
 var (
 	errAzureCheck = errors.New("azure deployments unavailable")
 	// Azure refused the application: its sign-in, or Resource Manager the account.
-	errAzureRefused         = errors.New("azure refused the application")
+	errAzureRefused = errors.New("azure refused the application")
+	// Resource Manager throttled the read. Its limits count each application in each subscription,
+	// so the owner can use them up.
+	errAzureThrottled       = errors.New("azure throttled the application")
 	azureDeploymentNamePart = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,255}$`)
 	// Control's account ID schema, so a hold can name only an account that discovery accepted.
 	azureAccountIDPattern = regexp.MustCompile(`^/subscriptions/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/resourcegroups/[-\w.()\p{L}\p{N}]{0,89}[-\w()\p{L}\p{N}]/providers/microsoft\.cognitiveservices/accounts/[a-z0-9][a-z0-9-]{1,63}$`)
@@ -89,6 +98,8 @@ type azureCheckMark struct {
 	until time.Time
 	// The last check here failed.
 	failed bool
+	// It failed for a reason that the account's owner can cause.
+	owner bool
 }
 
 type AzureChecks struct {
@@ -122,8 +133,8 @@ func NewAzureChecks(ctx context.Context, store azureCheckStore, tokens azureToke
 
 // Confirm reports whether a request may use its Azure target, which its hold found in service,
 // and starts the check or discovery that is due. It refuses only a credential whose checks fail
-// here and whose last confirmation is past its grace, so an account that this gateway cannot read
-// stops serving instead of serving whatever its deployments became.
+// here and whose last confirmation is past the grace of that failure, so an account that this
+// gateway cannot read stops serving instead of serving whatever its deployments became.
 func (c *AzureChecks) Confirm(_ context.Context, target azureCheckTarget) error {
 	if !azureAccountIDPattern.MatchString(target.AccountID) || target.ByokID == "" {
 		return billing.ErrByok
@@ -135,7 +146,7 @@ func (c *AzureChecks) Confirm(_ context.Context, target azureCheckTarget) error 
 	}
 	// The answer rests on the checks that ended before the request, so the check that it starts
 	// decides only later requests, however fast that check ends.
-	refused := age >= azureCheckGrace && c.failing(target.ByokID)
+	refused := c.pastGrace(target.ByokID, age)
 	c.background(target, target.ByokID, azureCheckFresh)
 	if refused {
 		return billing.ErrByok
@@ -145,7 +156,7 @@ func (c *AzureChecks) Confirm(_ context.Context, target azureCheckTarget) error 
 
 func (c *AzureChecks) age(verifiedAt time.Time) time.Duration {
 	if verifiedAt.IsZero() {
-		return azureCheckGrace
+		return azureOutageGrace
 	}
 	return c.now().Sub(verifiedAt)
 }
@@ -276,6 +287,21 @@ func (c *AzureChecks) failing(key string) bool {
 	return c.marks[key].failed
 }
 
+// pastGrace reports whether the last check here failed and a confirmation of the given age is
+// past that failure's grace.
+func (c *AzureChecks) pastGrace(key string, age time.Duration) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	mark := c.marks[key]
+	if !mark.failed {
+		return false
+	}
+	if mark.owner {
+		return age >= azureCheckGrace
+	}
+	return age >= azureOutageGrace
+}
+
 // wait holds off the next check while another gateway runs one, which says nothing about whether
 // checks here fail.
 func (c *AzureChecks) wait(key string) {
@@ -298,12 +324,12 @@ func (c *AzureChecks) fail(key string) {
 	c.mark(key, azureCheckMark{until: c.now().Add(azureCheckRetry), failed: true})
 }
 
-// refuse marks a check that Azure refused as failed and waits as long as after a success before
-// the next one; a discovery or a fixed credential confirms the targets sooner.
+// refuse marks a check that Azure refused or throttled as failed by the owner's doing, and holds
+// off the next one for wait.
 func (c *AzureChecks) refuse(key string, wait time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.mark(key, azureCheckMark{until: c.now().Add(wait), failed: true})
+	c.mark(key, azureCheckMark{until: c.now().Add(wait), failed: true, owner: true})
 }
 
 // mark records a credential's mark; the caller holds mu. The map holds only credentials checked
@@ -344,12 +370,15 @@ func (c *AzureChecks) check(ctx context.Context, target azureCheckTarget, key st
 		reason = "record_failed"
 		c.fail(key)
 	case errors.Is(err, errAzureRefused):
-		// Azure refused the application, which trying again soon does not fix. The credential's
-		// discovery becomes due, and it records why on the credential, where its owner sees it.
+		// Azure refused the application, which trying again soon does not fix, so the next check
+		// waits as long as after a success. The credential's discovery becomes due, and it records
+		// why on the credential, where its owner sees it.
 		if c.store.RefuseAzureCheck(ctx, target.ByokID, startedAt) != nil {
 			reason = "record_failed"
 		}
 		c.refuse(key, fresh)
+	case errors.Is(err, errAzureThrottled):
+		c.refuse(key, azureCheckRetry)
 	default:
 		c.fail(key)
 	}
@@ -437,6 +466,9 @@ func (c *AzureChecks) armPage(ctx context.Context, pageURL string, token string)
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, armMaxResponseBytes))
 		if armRefused(response.StatusCode) {
 			return nil, fmt.Sprintf("status_%d", response.StatusCode), errAzureRefused
+		}
+		if response.StatusCode == http.StatusTooManyRequests {
+			return nil, "status_429", errAzureThrottled
 		}
 		return nil, fmt.Sprintf("status_%d", response.StatusCode), errAzureCheck
 	}
