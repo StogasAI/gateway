@@ -65,7 +65,7 @@ var (
 	azureProjectNamePattern  = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{1,63}$`)
 	azureEndpointLabel       = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`)
 	azureInstantVersion      = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
-	azureAzureHostedFormats  = map[string]bool{"deepseek": true, "moonshotai": true, "openai": true, "openai-oss": true}
+	azureAzureHostedFormats  = map[string]bool{"deepseek": true, "mistral ai": true, "moonshotai": true, "openai": true, "openai-oss": true, "xai": true}
 	azureDiscoveryDateLayout = []string{time.RFC3339Nano, "2006-01-02T15:04:05.999999999", "2006-01-02T15:04", "2006-01-02"}
 )
 
