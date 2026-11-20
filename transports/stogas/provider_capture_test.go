@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/bytedance/sonic"
@@ -161,9 +160,10 @@ func TestRecordedProviderRefusalsKeepTheirMeaning(t *testing.T) {
 	}
 }
 
-// TestRecordedReasoningStreamKeepsEachEventsEncryptedReasoning replays a recorded OpenAI stream.
-// OpenAI encrypts an item's reasoning again for response.completed, so the two values differ, and
-// the gateway returns each bound to the account.
+// TestRecordedReasoningStreamKeepsEachEventsEncryptedReasoning replays a recorded OpenAI stream,
+// which carries an item's encrypted reasoning in response.output_item.done and again in
+// response.completed. The gateway returns each event's own value bound to the account, so a client
+// can send back either one, whether or not OpenAI encrypts the two apart.
 func TestRecordedReasoningStreamKeepsEachEventsEncryptedReasoning(t *testing.T) {
 	stream := exchange(t, providerCapture(t, "openai/encrypted-reasoning-stream"), "stream")
 	var fields map[string]json.RawMessage
@@ -180,24 +180,35 @@ func TestRecordedReasoningStreamKeepsEachEventsEncryptedReasoning(t *testing.T) 
 	if err := state.Adapter.ValidateRequest(state); err != nil {
 		t.Fatal(err)
 	}
-	var done, completed string
-	for _, event := range stream.responsesStream(t) {
-		if err := state.Adapter.IngestChunk(state, &schemas.BifrostStreamChunk{BifrostResponsesStreamResponse: event}); err != nil {
-			t.Fatalf("recorded %s event refused: %v", event.Type, err)
-		}
-		if event.Type == schemas.ResponsesStreamResponseTypeOutputItemDone && event.Item != nil && event.Item.ResponsesReasoning != nil && event.Item.ResponsesReasoning.EncryptedContent != nil {
-			done = *event.Item.ResponsesReasoning.EncryptedContent
+	// encrypted returns the event's encrypted reasoning, which ingesting the event replaces.
+	encrypted := func(event *schemas.BifrostResponsesStreamResponse) *string {
+		if event.Type == schemas.ResponsesStreamResponseTypeOutputItemDone && event.Item != nil && event.Item.ResponsesReasoning != nil {
+			return event.Item.ResponsesReasoning.EncryptedContent
 		}
 		if event.Type == schemas.ResponsesStreamResponseTypeCompleted {
 			for _, item := range event.Response.Output {
 				if item.ResponsesReasoning != nil && item.ResponsesReasoning.EncryptedContent != nil {
-					completed = *item.ResponsesReasoning.EncryptedContent
+					return item.ResponsesReasoning.EncryptedContent
 				}
 			}
 		}
+		return nil
 	}
-	prefix := boundReasoning("")
-	if !strings.HasPrefix(done, prefix) || !strings.HasPrefix(completed, prefix) || done == completed || len(done) != len(completed) {
-		t.Fatalf("item done %.30s… (%d bytes), completed %.30s… (%d bytes)", done, len(done), completed, len(completed))
+	values := 0
+	for _, event := range stream.responsesStream(t) {
+		sent := encrypted(event)
+		if err := state.Adapter.IngestChunk(state, &schemas.BifrostStreamChunk{BifrostResponsesStreamResponse: event}); err != nil {
+			t.Fatalf("recorded %s event refused: %v", event.Type, err)
+		}
+		if sent == nil {
+			continue
+		}
+		values++
+		if returned := encrypted(event); returned == nil || *returned != boundReasoning(*sent) {
+			t.Fatalf("%s returned %v, want OpenAI's value bound to the account", event.Type, returned)
+		}
+	}
+	if values != 2 {
+		t.Fatalf("stream carried encrypted reasoning in %d events, want response.output_item.done and response.completed", values)
 	}
 }
