@@ -110,7 +110,7 @@ func (c *chargedConn) Close() error {
 // takes the record lock, so releasing the record erases the payload safely.
 type deliveryBody struct {
 	record       *record
-	content      bool
+	form         form
 	part, offset int
 }
 
@@ -118,13 +118,10 @@ func (b *deliveryBody) Read(dst []byte) (int, error) {
 	r := b.record
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	parts := r.metadataParts
-	if b.content {
-		parts = r.parts
-	}
-	if parts == nil {
+	if r.released {
 		return 0, errRecordReleased
 	}
+	parts := r.payloads[b.form].parts
 	n := 0
 	for b.part < len(parts) && n < len(dst) {
 		copied := copy(dst[n:], parts[b.part][b.offset:])
@@ -148,22 +145,24 @@ type attempt struct {
 }
 
 func (c deliveryClient) send(ctx context.Context, d destination, r *record) attempt {
-	content := d.content
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.URL, &deliveryBody{record: r, content: content})
+	form := d.form()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.URL, &deliveryBody{record: r, form: form})
 	if err != nil || (!c.local && req.URL.Scheme != "https") {
 		return attempt{}
 	}
-	req.ContentLength = r.metadataSize
-	if content {
-		req.ContentLength = r.size
-	}
+	r.mu.Lock()
+	req.ContentLength = r.payloads[form].size
+	r.mu.Unlock()
 	// The key lets receivers drop retried duplicates and lets net/http replay a
 	// request whose reused connection closed before the receiver saw it.
-	req.GetBody = func() (io.ReadCloser, error) { return &deliveryBody{record: r, content: content}, nil }
+	req.GetBody = func() (io.ReadCloser, error) { return &deliveryBody{record: r, form: form}, nil }
 	for key, value := range d.Headers {
 		req.Header.Set(key, value)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if d.Format == exportconfig.FormatOTLP {
+		req.Header.Set("Content-Type", "application/x-protobuf")
+	}
 	req.Header.Set("Idempotency-Key", r.requestID)
 	response, err := c.client.Do(req)
 	if errors.Is(err, errConnectionMemory) {

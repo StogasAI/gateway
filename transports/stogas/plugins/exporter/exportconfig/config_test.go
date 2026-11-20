@@ -300,3 +300,24 @@ func TestCombineSendsWhatAnyDuplicateSends(t *testing.T) {
 		t.Fatal("combining changed a policy's own destination")
 	}
 }
+
+func TestFormatNamesAKnownShape(t *testing.T) {
+	for raw, valid := range map[string]bool{
+		`{"url":"https://receiver.example/"}`:                                     true,
+		`{"url":"https://receiver.example/v1/traces","format":"otlp-genai-1.41"}`: true,
+		`{"url":"https://receiver.example/","format":"otlp"}`:                     false,
+		`{"url":"https://receiver.example/","format":"json"}`:                     false,
+		`{"url":"https://receiver.example/","format":"OTLP-GenAI-1.41"}`:          false,
+	} {
+		var d Destination
+		if err := json.Unmarshal([]byte(raw), &d); err != nil || (d.Validate() == nil) != valid {
+			t.Errorf("%s: valid = %v, want %v", raw, d.Validate() == nil, valid)
+		}
+	}
+	// One URL that takes two formats is two receivers, and each gets its record.
+	record, trace := Destination{URL: "https://receiver.example/"}, Destination{URL: "https://receiver.example/", Format: FormatOTLP}
+	combined, err := Combine(&Config{Destinations: []Destination{record}}, &Config{Destinations: []Destination{trace, trace}})
+	if err != nil || len(combined.Destinations) != 2 || record.Identity() == trace.Identity() {
+		t.Fatalf("combined = %+v, %v", combined, err)
+	}
+}

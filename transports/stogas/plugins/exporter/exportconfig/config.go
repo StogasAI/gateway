@@ -24,6 +24,12 @@ const (
 	MaxHeaderBytes  = 8 << 10
 )
 
+// FormatOTLP posts each record as one OTLP/HTTP trace export in binary Protobuf, whose spans
+// carry the attributes of the OpenTelemetry GenAI semantic conventions 1.41. Those conventions
+// are in development and rename attributes between versions, so the value names the version: a
+// later version takes a new value, and this one keeps its attributes.
+const FormatOTLP = "otlp-genai-1.41"
+
 var ErrConfig = errors.New("invalid export configuration")
 
 type Config struct {
@@ -32,11 +38,12 @@ type Config struct {
 
 // Destination is immutable after validation. URL is the complete ingestion URL;
 // no path is appended. Headers authenticate export delivery, never inference.
-// Sample nil sends every record, and Content nil sends each of them with its
-// request and response bodies.
+// Format empty posts the record as JSON. Sample nil sends every record, and
+// Content nil sends each of them with its request and response bodies.
 type Destination struct {
 	URL     string            `json:"url"`
 	Headers map[string]string `json:"headers,omitempty"`
+	Format  string            `json:"format,omitempty"`
 	Content *Content          `json:"content,omitempty"`
 	Sample  *Sample           `json:"sample,omitempty"`
 }
@@ -258,6 +265,9 @@ func (d *Destination) Validate() error {
 	if headerBytes > MaxHeaderBytes || len(d.Headers) > 32 {
 		return ErrConfig
 	}
+	if d.Format != "" && d.Format != FormatOTLP {
+		return ErrConfig
+	}
 	if d.Content != nil {
 		for _, rate := range d.Content {
 			if !(rate >= 0 && rate <= 1) {
@@ -271,8 +281,8 @@ func (d *Destination) Validate() error {
 	return nil
 }
 
-// Combine unions independent required destinations. The same URL and headers
-// name one receiver, which gets one record: two would share an Idempotency-Key.
+// Combine unions independent required destinations. The same URL, headers and
+// format name one receiver, which gets one record: two would share an Idempotency-Key.
 // It gets that record if any duplicate does, and with bodies if a duplicate
 // that gets the record sends them. Every destination reads the same position,
 // so the highest rate of each outcome says exactly that, for records and for

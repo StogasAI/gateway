@@ -1611,7 +1611,7 @@ func TestRequestAgentReadsStogasThenClientHeaders(t *testing.T) {
 	}
 }
 
-func TestRequestTraceIDFollowsW3CTraceContext(t *testing.T) {
+func TestRequestTraceFollowsW3CTraceContext(t *testing.T) {
 	trace := "4bf92f3577b34da6a3ce929d0e0e4736"
 	valid := "00-" + trace + "-00f067aa0ba902b7-01"
 	for _, tc := range []struct {
@@ -1640,8 +1640,12 @@ func TestRequestTraceIDFollowsW3CTraceContext(t *testing.T) {
 			for _, value := range tc.values {
 				header.Add("traceparent", value)
 			}
-			if got := RequestTraceID(header); got != tc.want {
-				t.Fatalf("RequestTraceID(%q) = %q, want %q", tc.values, got, tc.want)
+			wantParent := ""
+			if tc.want != "" {
+				wantParent = "00f067aa0ba902b7"
+			}
+			if got, parent := RequestTrace(header); got != tc.want || parent != wantParent {
+				t.Fatalf("RequestTrace(%q) = %q, %q, want %q, %q", tc.values, got, parent, tc.want, wantParent)
 			}
 		})
 	}

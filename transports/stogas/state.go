@@ -52,7 +52,8 @@ type State struct {
 	StartedAt   time.Time
 	RequestType string
 	SessionID   string
-	TraceID     string
+	// TraceID and ParentSpanID are the caller's, from its traceparent header.
+	TraceID, ParentSpanID string
 	// EncryptionKeyIDs are the roots the request needs, sorted: those of
 	// every pair it may try.
 	EncryptionKeyIDs []string

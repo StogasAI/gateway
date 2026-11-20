@@ -106,11 +106,12 @@ func (s *Server) recordAdmissionRejection(ctx *requestContext, status int, code 
 	if s.secure != nil {
 		nodeID = s.secure.NodeID()
 	}
+	traceID, _ := stogas.RequestTrace(ctx.request.Header)
 	s.runtime.Billing().RecordRejection(billing.RejectionInput{
 		PolicyVersions: ctx.policyVersions, Claims: claims, RequestID: requestID, RequestType: requestType, Code: code,
 		StatusCode: status, Limit: limit, CreatedAt: startedAt, NodeID: nodeID, GatewayVersion: stogas.GatewayVersion,
 		Transport: ctx.transport(), EncryptionKeyIDs: ctx.encryptionKeyIDs,
-		TraceID: stogas.RequestTraceID(ctx.request.Header),
+		TraceID: traceID,
 	}, export)
 	export = nil
 }

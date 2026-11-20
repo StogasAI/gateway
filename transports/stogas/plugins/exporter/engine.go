@@ -80,6 +80,36 @@ type destination struct {
 	content bool
 }
 
+// form is the shape of a record that a destination takes: its format, with or
+// without bodies.
+type form int
+
+const (
+	formJSON form = iota
+	formJSONContent
+	formTrace
+	formTraceContent
+	forms
+)
+
+func (d destination) form() form {
+	f := formJSON
+	if d.Format == exportconfig.FormatOTLP {
+		f = formTrace
+	}
+	if d.content {
+		f++
+	}
+	return f
+}
+
+// Trace is what a trace export needs and the request record does not hold:
+// the model that the request named, and the caller's trace and span from its
+// traceparent header, both empty without one.
+type Trace struct {
+	Model, TraceID, ParentSpanID string
+}
+
 // Capture owns detached public JSON until Finish transfers it to delivery.
 // Its methods run on the request's single processing goroutine.
 type Capture struct {
@@ -90,6 +120,7 @@ type Capture struct {
 	position                    float64
 	reach                       exportconfig.Sample
 	content                     bool
+	trace                       Trace
 	request, response, metadata []byte
 	events                      [][]byte
 	reservation                 *reservation
@@ -119,16 +150,23 @@ func (c *Capture) measure(startedAt time.Time) {
 	c.duration += time.Since(startedAt)
 }
 
-// record owns one finished payload shared by its destination deliveries.
-// metadataParts leaves out the content of parts and shares its buffers.
+// payload is a record in one form, as parts that a delivery sends in order.
+type payload struct {
+	parts [][]byte
+	size  int64
+}
+
+// record owns one finished record, in each form that its destination
+// deliveries take. The JSON form without bodies shares the buffers of the
+// form with them.
 type record struct {
-	ctx                  context.Context
-	cancel               context.CancelFunc
-	requestID            string
-	size, metadataSize   int64
-	mu                   sync.Mutex
-	parts, metadataParts [][]byte
-	reservation          *reservation
+	ctx         context.Context
+	cancel      context.CancelFunc
+	requestID   string
+	mu          sync.Mutex
+	payloads    [forms]payload
+	released    bool
+	reservation *reservation
 	// Guarded by Engine.mu.
 	remaining int
 	element   *list.Element
@@ -139,14 +177,16 @@ type record struct {
 // Reclaim calls it for a record it takes, and the last delivery for any other.
 func (r *record) release() int64 {
 	r.mu.Lock()
-	parts := r.parts
-	r.parts, r.metadataParts = nil, nil
+	released, payloads := r.released, r.payloads
+	r.released, r.payloads = true, [forms]payload{}
 	r.mu.Unlock()
-	if parts == nil {
+	if released {
 		return 0
 	}
-	for _, part := range parts {
-		clear(part)
+	for _, payload := range payloads {
+		for _, part := range payload.parts {
+			clear(part)
+		}
 	}
 	bytes := int64(r.reservation.bytes)
 	r.reservation.release()
@@ -166,7 +206,7 @@ func New(ctx context.Context, options Options) *Engine {
 // sample reaches this request however it ends. Such a request copies nothing. A
 // capture dropped here still marks the request record as exported, so receivers
 // can find the records that never arrived.
-func (e *Engine) Start(config *exportconfig.Config, requestID string) *Capture {
+func (e *Engine) Start(config *exportconfig.Config, requestID string, trace Trace) *Capture {
 	if e == nil || config == nil || len(config.Destinations) == 0 {
 		return nil
 	}
@@ -202,12 +242,12 @@ func (e *Engine) Start(config *exportconfig.Config, requestID string) *Capture {
 		e.memoryDropped.Add(uint64(reached))
 		return dropped
 	}
-	c := &Capture{engine: e, position: dropped.position, reach: dropped.reach, reservation: r}
+	c := &Capture{engine: e, position: dropped.position, reach: dropped.reach, trace: trace, reservation: r}
 	for _, d := range config.Destinations {
 		if c.position >= d.Reach() {
 			continue
 		}
-		copy := exportconfig.Destination{URL: strings.Clone(d.URL), Headers: make(map[string]string, len(d.Headers))}
+		copy := exportconfig.Destination{URL: strings.Clone(d.URL), Headers: make(map[string]string, len(d.Headers)), Format: d.Format}
 		for key, value := range d.Headers {
 			copy.Headers[strings.Clone(key)] = strings.Clone(value)
 		}
@@ -271,6 +311,7 @@ type Held struct {
 	destinations []destination
 	position     float64
 	content      bool
+	trace        Trace
 	response     []byte
 	reservation  *reservation
 }
@@ -281,7 +322,7 @@ func (c *Capture) Hold() *Held {
 	if !c.held() {
 		return nil
 	}
-	h := &Held{engine: c.engine, destinations: c.destinations, position: c.position, content: c.content, response: c.response}
+	h := &Held{engine: c.engine, destinations: c.destinations, position: c.position, content: c.content, trace: c.trace, response: c.response}
 	c.destinations, c.response = nil, nil
 	c.Discard()
 	size := len(h.response)
@@ -305,7 +346,7 @@ func (h *Held) Finish(requestID, outcome string, event any, finalMetadata any) {
 	if h == nil || h.reservation == nil {
 		return
 	}
-	c := &Capture{engine: h.engine, destinations: h.destinations, position: h.position, content: h.content, response: h.response, reservation: h.reservation}
+	c := &Capture{engine: h.engine, destinations: h.destinations, position: h.position, content: h.content, trace: h.trace, response: h.response, reservation: h.reservation}
 	h.destinations, h.response, h.reservation = nil, nil, nil
 	if !c.take(outcome) {
 		c.Discard()
@@ -401,12 +442,29 @@ func (c *Capture) finish(requestID string, event any, finalMetadata any) {
 		}
 	}
 	parts = append(parts, []byte{'}'})
-	r := &record{requestID: requestID, parts: parts, metadataParts: metadataParts, reservation: c.reservation, remaining: len(c.destinations)}
-	for _, part := range parts {
-		r.size += int64(len(part))
+	r := &record{requestID: requestID, reservation: c.reservation, remaining: len(c.destinations)}
+	r.payloads[formJSON].parts, r.payloads[formJSONContent].parts = metadataParts, parts
+	for _, d := range c.destinations {
+		f := d.form()
+		if f != formTrace && f != formTraceContent || r.payloads[f].parts != nil {
+			continue
+		}
+		trace, ok := c.traceForm(encoded, f == formTraceContent)
+		if !ok {
+			clear(encoded)
+			for _, built := range r.payloads[formTrace:] {
+				for _, part := range built.parts {
+					clear(part)
+				}
+			}
+			return
+		}
+		r.payloads[f].parts = [][]byte{trace}
 	}
-	for _, part := range metadataParts {
-		r.metadataSize += int64(len(part))
+	for f := range r.payloads {
+		for _, part := range r.payloads[f].parts {
+			r.payloads[f].size += int64(len(part))
+		}
 	}
 	destinations := c.destinations
 	c.request, c.response, c.metadata, c.events, c.destinations, c.reservation = nil, nil, nil, nil, nil, nil

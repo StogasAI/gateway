@@ -120,7 +120,7 @@ func TestFullJSONDeliveryAndDetachedOwnership(t *testing.T) {
 			config := testConfig(receiver.URL + "/webhook")
 			config.Destinations[0].Headers = map[string]string{"Authorization": "Bearer destination-secret"}
 			config.Destinations = append(config.Destinations, config.Destinations[0])
-			c := e.Start(config, "id")
+			c := e.Start(config, "id", Trace{})
 			config.Destinations[0].Headers["Authorization"] = "changed"
 			message, _ := json.Marshal(strings.Repeat("large prompt 世界 ", 65536))
 			body := map[string]json.RawMessage{"input": message, "temperature": json.RawMessage(`0.25`), "tools": json.RawMessage(`[{"type":"custom","name":"freeform"}]`)}
@@ -206,7 +206,7 @@ func TestDestinationsWithoutContent(t *testing.T) {
 	for _, streaming := range []bool{false, true} {
 		clear(received)
 		e := New(context.Background(), testOptions(true, 16<<20))
-		c := e.Start(&exportconfig.Config{Destinations: []exportconfig.Destination{{URL: receiver.URL + "/content"}, withoutContent}}, "id")
+		c := e.Start(&exportconfig.Config{Destinations: []exportconfig.Destination{{URL: receiver.URL + "/content"}, withoutContent}}, "id", Trace{})
 		c.Input(map[string]json.RawMessage{"input": json.RawMessage(`"prompt"`)}, true)
 		output, field := `{"output":"answer"}`, "response"
 		if streaming {
@@ -228,7 +228,7 @@ func TestDestinationsWithoutContent(t *testing.T) {
 	}
 	clear(received)
 	e := New(context.Background(), testOptions(true, 16<<20))
-	c := e.Start(&exportconfig.Config{Destinations: []exportconfig.Destination{withoutContent}}, "id")
+	c := e.Start(&exportconfig.Config{Destinations: []exportconfig.Destination{withoutContent}}, "id", Trace{})
 	reserved := e.Diagnostics().ReservedBytes
 	c.Input(map[string]json.RawMessage{"input": json.RawMessage(`"` + strings.Repeat("prompt ", 4096) + `"`)}, true)
 	c.Response([]byte(`{"output":"answer"}`))
@@ -246,7 +246,7 @@ func TestMemoryPressureDropsWholeCapture(t *testing.T) {
 	defer receiver.Close()
 	e := New(context.Background(), testOptions(true, 8192+deliveryStateBytes))
 	defer e.Close()
-	c := e.Start(testConfig(receiver.URL), "id")
+	c := e.Start(testConfig(receiver.URL), "id", Trace{})
 	c.Input(map[string]json.RawMessage{"model": json.RawMessage(`"model"`)}, false)
 	c.Event([]byte(`{"delta":"hello"}`))
 	c.Event([]byte(`{"delta":"` + strings.Repeat("x", 8192) + `"}`))
@@ -262,7 +262,7 @@ func TestMemoryPressureDropsWholeCapture(t *testing.T) {
 func TestMemoryPressureAtStartKeepsExportCoverage(t *testing.T) {
 	e := New(context.Background(), testOptions(true, deliveryStateBytes))
 	defer e.Close()
-	c := e.Start(testConfig("http://127.0.0.1:1"), "id")
+	c := e.Start(testConfig("http://127.0.0.1:1"), "id", Trace{})
 	if c == nil || c.Active() || *c.Duration() != 0 {
 		t.Fatalf("dropped capture = %+v, want an inactive capture with zero duration", c)
 	}
@@ -283,7 +283,7 @@ func TestConnectionsSpendSharedMemoryUntilClosed(t *testing.T) {
 	var spent atomic.Int64
 	export := func(budget int64) Diagnostics {
 		e := New(context.Background(), Options{Local: true, NewLease: func() Lease { return &budgetLease{spent: &spent, budget: budget} }})
-		e.Start(testConfig(receiver.URL), "id").Finish("id", "success", testRecord("id"), testMetadata())
+		e.Start(testConfig(receiver.URL), "id", Trace{}).Finish("id", "success", testRecord("id"), testMetadata())
 		await(t, func() bool { return e.Diagnostics().PendingDeliveries == 0 })
 		// The finished record is released; only the idle connection stays charged.
 		if budget > connectionBytes && spent.Load() != connectionBytes {
@@ -358,7 +358,7 @@ func retryCases(t *testing.T, target string) {
 			}))
 			defer receiver.Close()
 			e := New(context.Background(), testOptions(true, connectionBytes))
-			e.Start(testConfig(receiver.URL), "id").Finish("id", "success", testRecord("id"), testMetadata())
+			e.Start(testConfig(receiver.URL), "id", Trace{}).Finish("id", "success", testRecord("id"), testMetadata())
 			await(t, func() bool { return e.Diagnostics().PendingDeliveries == 0 })
 			e.Close()
 			d := e.Diagnostics()
@@ -388,10 +388,10 @@ func TestSlowReceiverDoesNotDelayOtherDestinations(t *testing.T) {
 	defer e.Close()
 	defer close(release)
 	for i := range 4 * maxConnsPerHost {
-		e.Start(testConfig(slow.URL), "id").Finish(fmt.Sprint("slow", i), "success", testRecord("slow"), testMetadata())
+		e.Start(testConfig(slow.URL), "id", Trace{}).Finish(fmt.Sprint("slow", i), "success", testRecord("slow"), testMetadata())
 	}
 	for i := range 20 {
-		e.Start(testConfig(fast.URL), "id").Finish(fmt.Sprint("fast", i), "success", testRecord("fast"), testMetadata())
+		e.Start(testConfig(fast.URL), "id", Trace{}).Finish(fmt.Sprint("fast", i), "success", testRecord("fast"), testMetadata())
 	}
 	// Wait for the exporter's own count: the receiver sees a request before its response is recorded.
 	await(t, func() bool { return e.Diagnostics().Delivered == 20 })
@@ -416,7 +416,7 @@ func TestReclaimReleasesOldestRecordsFirst(t *testing.T) {
 	reserved := make([]int64, 3)
 	for i := range reserved {
 		before := e.Diagnostics().ReservedBytes
-		c := e.Start(testConfig(receiver.URL), "id")
+		c := e.Start(testConfig(receiver.URL), "id", Trace{})
 		c.Input(map[string]json.RawMessage{"input": json.RawMessage(`"` + strings.Repeat("x", 16<<20) + `"`)}, true)
 		c.Finish(fmt.Sprint(i), "success", testRecord(fmt.Sprint(i)), testMetadata())
 		reserved[i] = e.Diagnostics().ReservedBytes - before
@@ -453,7 +453,7 @@ func TestConcurrentDeliveryAndShutdownRelease(t *testing.T) {
 		go func(w int) {
 			defer workers.Done()
 			for i := range 120 {
-				e.Start(config, "id").Finish(fmt.Sprint(w, i), "success", testRecord(fmt.Sprint(w, i)), testMetadata())
+				e.Start(config, "id", Trace{}).Finish(fmt.Sprint(w, i), "success", testRecord(fmt.Sprint(w, i)), testMetadata())
 			}
 		}(w)
 	}
@@ -464,7 +464,7 @@ func TestConcurrentDeliveryAndShutdownRelease(t *testing.T) {
 		go func() { defer workers.Done(); e.Close() }()
 	}
 	workers.Wait()
-	if d := e.Diagnostics(); d.PendingDeliveries != 0 || d.ReservedBytes != 0 || d.Failed != 720 || e.Start(config, "id").Active() {
+	if d := e.Diagnostics(); d.PendingDeliveries != 0 || d.ReservedBytes != 0 || d.Failed != 720 || e.Start(config, "id", Trace{}).Active() {
 		t.Fatalf("shutdown leak: %+v", d)
 	}
 }
@@ -486,7 +486,7 @@ func TestHTTPSCertificateValidationAndPublicNetworkBoundary(t *testing.T) {
 				roots.AddCert(receiver.Certificate())
 				e.client.transport.TLSClientConfig.RootCAs = roots
 			}
-			e.Start(testConfig(receiver.URL), "id").Finish("id", "success", testRecord("id"), testMetadata())
+			e.Start(testConfig(receiver.URL), "id", Trace{}).Finish("id", "success", testRecord("id"), testMetadata())
 			await(t, func() bool { return e.Diagnostics().PendingDeliveries == 0 })
 			if (e.Diagnostics().Delivered == 1) != tc.want {
 				t.Fatalf("TLS delivery %+v", e.Diagnostics())
@@ -517,8 +517,9 @@ func TestHTTPEarlyRejectionReleasesRequestBody(t *testing.T) {
 			roots.AddCert(receiver.Certificate())
 			e.client.transport.TLSClientConfig.RootCAs = roots
 			for range 32 {
-				payload := []byte(strings.Repeat("x", 2<<20))
-				r := &record{ctx: context.Background(), cancel: func() {}, requestID: "id", size: int64(len(payload)), parts: [][]byte{payload}, reservation: &reservation{engine: e, lease: &testLease{}}}
+				body := []byte(strings.Repeat("x", 2<<20))
+				r := &record{ctx: context.Background(), cancel: func() {}, requestID: "id", reservation: &reservation{engine: e, lease: &testLease{}}}
+				r.payloads[formJSONContent] = payload{parts: [][]byte{body}, size: int64(len(body))}
 				result := e.client.send(context.Background(), destination{Destination: testConfig(receiver.URL).Destinations[0], content: true}, r)
 				// The last delivery can erase the payload while the transport still reads.
 				r.release()
@@ -573,7 +574,7 @@ func TestHostileReceiverResponsesStayBounded(t *testing.T) {
 			defer receiver.Close()
 			e := New(context.Background(), testOptions(true, connectionBytes))
 			defer e.Close()
-			e.Start(testConfig(receiver.URL), "id").Finish("id", "success", testRecord("id"), testMetadata())
+			e.Start(testConfig(receiver.URL), "id", Trace{}).Finish("id", "success", testRecord("id"), testMetadata())
 			await(t, func() bool { return e.Diagnostics().PendingDeliveries == 0 })
 			if d := e.Diagnostics(); attempts.Load() != tc.attempts || (d.Delivered == 1) != tc.delivered || d.ReservedBytes != 0 {
 				t.Fatalf("attempts %d, diagnostics %+v", attempts.Load(), d)
@@ -592,7 +593,7 @@ func TestHostedDeliveryRejectsLoopbackHostnames(t *testing.T) {
 	roots.AddCert(receiver.Certificate())
 	e.client.transport.TLSClientConfig.RootCAs = roots
 	url := strings.Replace(receiver.URL, "127.0.0.1", "localhost", 1)
-	e.Start(testConfig(url), "id").Finish("id", "success", testRecord("id"), testMetadata())
+	e.Start(testConfig(url), "id", Trace{}).Finish("id", "success", testRecord("id"), testMetadata())
 	await(t, func() bool { return e.Diagnostics().PendingDeliveries == 0 })
 	if received.Load() != 0 || e.Diagnostics().Delivered != 0 {
 		t.Fatal("hosted delivery reached a loopback receiver through its hostname")
@@ -636,7 +637,7 @@ func TestHeldExportKeepsOnlyWhatItSendsLater(t *testing.T) {
 	}
 	hold := func(e *Engine) *Held {
 		t.Helper()
-		c := e.Start(config, "id")
+		c := e.Start(config, "id", Trace{})
 		c.Response(response)
 		held := c.Hold()
 		if held == nil || c.Active() {
@@ -660,7 +661,7 @@ func TestHeldExportKeepsOnlyWhatItSendsLater(t *testing.T) {
 	if d := e.Diagnostics(); d.ReservedBytes != 0 {
 		t.Fatalf("a discarded export kept memory: %+v", d)
 	}
-	if e.Start(&exportconfig.Config{}, "id").Hold() != nil {
+	if e.Start(&exportconfig.Config{}, "id", Trace{}).Hold() != nil {
 		t.Fatal("a capture without destinations holds nothing")
 	}
 
@@ -669,7 +670,7 @@ func TestHeldExportKeepsOnlyWhatItSendsLater(t *testing.T) {
 	pressed := New(context.Background(), budget(kept+started+deliveryStateBytes/2))
 	defer pressed.Close()
 	held := hold(pressed)
-	other := pressed.Start(config, "id")
+	other := pressed.Start(config, "id", Trace{})
 	held.Finish("first-repeat", "success", testRecord("first-repeat"), testMetadata())
 	if d := pressed.Diagnostics(); d.MemoryDropped != 1 || d.ReservedBytes != started || d.PendingDeliveries != 0 {
 		t.Fatalf("memory pressure: %+v", d)
@@ -771,7 +772,7 @@ func TestSampleChoosesRecordsByRequestAndOutcome(t *testing.T) {
 				want[path][id], deliveries = true, deliveries+1
 			}
 		}
-		c := e.Start(config, id)
+		c := e.Start(config, id, Trace{})
 		c.Input(map[string]json.RawMessage{"input": json.RawMessage(`"prompt"`)}, true)
 		c.Response([]byte(`{"output":"answer"}`))
 		if !c.Due(outcome) {
@@ -808,7 +809,7 @@ func TestRecordsThatNoDestinationGetsCostNothing(t *testing.T) {
 	inside, outside := requestAt(t, 0, 0.1), requestAt(t, 0.3, 1)
 	tenth := &exportconfig.Config{Destinations: []exportconfig.Destination{{URL: receiver.URL, Sample: &exportconfig.Sample{0.1, 0.1, 0.1, 0.1, 0.1}}}}
 
-	c := e.Start(tenth, outside)
+	c := e.Start(tenth, outside, Trace{})
 	if c != nil || c.Active() || c.Duration() != nil || c.Hold() != nil || e.Diagnostics().ReservedBytes != 0 {
 		t.Fatalf("a request outside every sample started a capture: %+v", e.Diagnostics())
 	}
@@ -825,10 +826,10 @@ func TestRecordsThatNoDestinationGetsCostNothing(t *testing.T) {
 
 	// The highest rate of any outcome decides whether the request starts a capture.
 	successes := &exportconfig.Config{Destinations: []exportconfig.Destination{{URL: receiver.URL, Sample: &exportconfig.Sample{0.3, 0, 0, 0, 0}}}}
-	if e.Start(successes, outside) != nil {
+	if e.Start(successes, outside, Trace{}) != nil {
 		t.Fatal("a request outside the highest rate started a capture")
 	}
-	c = e.Start(successes, inside)
+	c = e.Start(successes, inside, Trace{})
 	c.Input(map[string]json.RawMessage{"input": json.RawMessage(`"prompt"`)}, true)
 	c.Response([]byte(`{"error":{}}`))
 	if !c.Active() || !c.Due("success") || c.Due("failed") || c.Due("rejected") || c.Due("cancelled") || c.Due("unknown") || c.Due("") {
@@ -845,14 +846,14 @@ func TestRecordsThatNoDestinationGetsCostNothing(t *testing.T) {
 		{URL: receiver.URL + "/content", Sample: &exportconfig.Sample{0.1, 0.1, 0.1, 0.1, 0.1}},
 		{URL: receiver.URL + "/metadata", Content: &off},
 	}}
-	c = e.Start(mixed, outside)
+	c = e.Start(mixed, outside, Trace{})
 	reserved := e.Diagnostics().ReservedBytes
 	c.Input(map[string]json.RawMessage{"input": json.RawMessage(`"` + strings.Repeat("prompt ", 4096) + `"`)}, true)
 	if c == nil || c.Active() || e.Diagnostics().ReservedBytes != reserved || reserved >= 2*deliveryStateBytes {
 		t.Fatalf("a request outside the content destination's sample copied content or reserved its delivery: %+v", e.Diagnostics())
 	}
 	c.Finish(outside, "success", testRecord(outside), testMetadata())
-	if both := e.Start(mixed, inside); !both.Active() {
+	if both := e.Start(mixed, inside, Trace{}); !both.Active() {
 		t.Fatal("a request inside the content destination's sample copies content")
 	} else {
 		both.Finish(inside, "success", testRecord(inside), testMetadata())
@@ -870,7 +871,7 @@ func TestRecordsThatNoDestinationGetsCostNothing(t *testing.T) {
 		{URL: receiver.URL, Sample: &exportconfig.Sample{0, 1, 0, 1, 0}},
 		{URL: receiver.URL + "/tenth", Sample: &exportconfig.Sample{0.1, 0.1, 0.1, 0.1, 0.1}},
 	}}
-	c = pressed.Start(failures, outside)
+	c = pressed.Start(failures, outside, Trace{})
 	if c == nil || c.held() || !c.Due("failed") || !c.Due("rejected") || c.Due("success") || *c.Duration() != 0 {
 		t.Fatalf("dropped capture = %+v", c)
 	}
@@ -898,7 +899,7 @@ func TestHeldExportFollowsTheSample(t *testing.T) {
 	}}
 	e := New(context.Background(), testOptions(true, 16<<20))
 	for _, id := range []string{inside, outside} {
-		c := e.Start(config, id)
+		c := e.Start(config, id, Trace{})
 		c.Response([]byte(`{"error":{}}`))
 		held := c.Hold()
 		if held == nil {
@@ -918,7 +919,7 @@ func TestHeldExportFollowsTheSample(t *testing.T) {
 func TestCapturedInputOmitsToolCredentials(t *testing.T) {
 	e := New(context.Background(), testOptions(true, 16<<20))
 	defer e.Close()
-	c := e.Start(testConfig("https://example.com/webhook"), "id")
+	c := e.Start(testConfig("https://example.com/webhook"), "id", Trace{})
 	defer c.Discard()
 	tools := json.RawMessage(`[{"type":"mcp","server_label":"wiki","server_url":"https://user:pass@mcp.example.com:8443/s/path-secret/mcp?api_key=query-secret#x","authorization":"token-secret","headers":{"X-Api-Key":"header-secret"}},{"type":"mcp","server_label":"odd","server_url":"not a url"},{"type":"function","name":"lookup"}]`)
 	body := map[string]json.RawMessage{"input": json.RawMessage(`"hi"`), "tools": tools}
