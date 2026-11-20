@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -26,11 +27,17 @@ func boundReasoning(content string) string {
 }
 
 // historyDeployments are a deployment of each kind that takes back different reasoning: Claude,
-// OpenAI's models on OpenAI and Azure, and open models on Azure and Chutes.
-var historyDeployments = []string{"anthropic-claude-sonnet-4-6", "provider:openai gpt-5.5", "azure-gpt-5.6-sol", "azure-deepseek-v4-flash-0423", "chutes-glm-5.2"}
+// OpenAI's models on OpenAI and Azure, Gemini on Google Cloud, and open models on Azure and Chutes.
+var historyDeployments = []string{"anthropic-claude-sonnet-4-6", "provider:openai gpt-5.5", "azure-gpt-5.6-sol", "google-cloud-gemini-3.8-flash", "azure-deepseek-v4-flash-0423", "chutes-glm-5.2"}
 
 // openModels are the deployments of historyDeployments that take back plain reasoning.
 var openModels = []string{"azure-deepseek-v4-flash-0423", "chutes-glm-5.2"}
+
+// providerHistory is the conversation of a provider's body: OpenAI's input or messages, or Gemini's
+// contents.
+func providerHistory(body map[string]json.RawMessage) string {
+	return string(body["input"]) + string(body["messages"]) + string(body["contents"])
+}
 
 // testPair is the state of a pair whose credential reaches the test account.
 func testPair(resolution *catalog.ResolvedRequest) *State {
@@ -342,6 +349,10 @@ func TestReasoningHistoryChecksAreTheSameOnEveryDeployment(t *testing.T) {
 			`{"role":"assistant","content":"Hello."},{"role":"user","content":"again"}]`, "input[1].encrypted_content must be sent back unchanged"},
 		{"altered account detail", "/v1/chat/completions", `"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"Hello.",` +
 			`"reasoning_details":[{"index":0,"type":"reasoning.encrypted","id":"rs_1","data":"openai::gAAAA"}]},{"role":"user","content":"again"}]`, "reasoning_details[0].data must be sent back unchanged"},
+		{"altered Gemini signature", "/v1/chat/completions", `"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"Hello.",` +
+			`"reasoning_details":[{"index":0,"type":"reasoning.encrypted","data":"gemini::AQID"}]},{"role":"user","content":"again"}]`, "reasoning_details[0].data must be sent back unchanged"},
+		{"altered Gemini item", "/v1/responses", `"input":[{"role":"user","content":"hi"},{"type":"reasoning","id":"rs_1","summary":[],"encrypted_content":"gemini:acct-test"},` +
+			`{"role":"assistant","content":"Hello."},{"role":"user","content":"again"}]`, "input[1].encrypted_content must be sent back unchanged"},
 		{"signed item with two blocks", "/v1/responses", `"input":[{"role":"user","content":"hi"},{"type":"reasoning","id":"rs_1","summary":[],"signature":"sig",` +
 			`"content":[{"type":"reasoning_text","text":"One."},{"type":"reasoning_text","text":"Two."}]},{"role":"assistant","content":"Hello."},{"role":"user","content":"again"}]`,
 			"input[1].content must hold at most one block when signature is set"},
@@ -374,7 +385,7 @@ func TestReasoningItemsWithNothingToContinueFromAreLeftOut(t *testing.T) {
 		`{"type":"function_call_output","call_id":"call_1","output":"18 C and sunny"}]`
 	for _, model := range historyDeployments {
 		body, _, _ := providerBody(t, "/v1/responses", `{"model":"`+model+`",`+weatherTool+`,`+input+`}`)
-		history := string(body["input"]) + string(body["messages"])
+		history := providerHistory(body)
 		if !strings.Contains(history, "get_weather") || !strings.Contains(history, "18 C and sunny") {
 			t.Fatalf("%s lost the tool call or its result: %s", model, history)
 		}
@@ -397,7 +408,7 @@ func TestEmptyReplyArraysInChatHistoryAreAccepted(t *testing.T) {
 		`{"role":"user","content":"again"}]`
 	for _, model := range historyDeployments {
 		body, _, _ := providerBody(t, "/v1/chat/completions", `{"model":"`+model+`",`+messages+`}`)
-		history := string(body["input"]) + string(body["messages"])
+		history := providerHistory(body)
 		if !strings.Contains(history, "Hello.") || strings.Contains(history, "annotations") || strings.Contains(history, "reasoning_details") {
 			t.Fatalf("%s history = %s", model, history)
 		}
@@ -487,7 +498,7 @@ func TestOpenRouterReasoningDetailsAreAccepted(t *testing.T) {
 		`{"role":"user","content":"Done?"}]`
 	for _, model := range historyDeployments {
 		body, _, _ := providerBody(t, "/v1/chat/completions", `{"model":"`+model+`",`+messages+`}`)
-		history := string(body["input"]) + string(body["messages"])
+		history := providerHistory(body)
 		for _, gone := range []string{"Summed up.", "gAAAAforeign", "format", "gemini-signature", "gemini-sig", "Gemini thought."} {
 			if strings.Contains(history, gone) {
 				t.Fatalf("%s got %q: %s", model, gone, history)
@@ -532,7 +543,7 @@ func TestOpenRouterReasoningItemsAreAccepted(t *testing.T) {
 				t.Fatalf("Claude's assistant blocks =\n%s", got)
 			}
 		}
-		history := string(body["input"]) + string(body["messages"])
+		history := providerHistory(body)
 		for _, gone := range []string{"Summed up.", "gAAAAforeign", "format", "anthropic-claude-v1", "xai-encrypted", "gemini-sig", "Gemini thought."} {
 			if strings.Contains(history, gone) {
 				t.Fatalf("%s got %q: %s", model, gone, history)
@@ -544,6 +555,62 @@ func TestOpenRouterReasoningItemsAreAccepted(t *testing.T) {
 		if plain := strings.Contains(history, "Plain thought."); plain != slices.Contains(openModels, model) {
 			t.Fatalf("%s plain reasoning sent = %v: %s", model, plain, history)
 		}
+	}
+}
+
+// A conversation can move from Gemini to any deployment, on either interface. Only Gemini, through
+// the account that produced them, gets the thought signatures of a recorded reply back, and no
+// deployment gets the summary of its thoughts, which a client shows. Through another account, Gemini
+// gets Google's placeholder in place of each call's signature.
+func TestGeminiReasoningGoesBackOnlyToItsAccount(t *testing.T) {
+	recorded := exchange(t, providerCapture(t, "google-cloud/generate-content-tools"), "tools at mode AUTO")
+	message := geminiClientReply(t, geminiAsk+`}`, recorded).Choices[0].Message
+	const summary = "My Thought Process for Fulfilling Your Weather Request"
+	details := message.ChatAssistantMessage.ReasoningDetails
+	if len(details) != 2 || details[1].Data == nil || !strings.Contains(*message.ChatAssistantMessage.Reasoning, summary) {
+		t.Fatalf("the client got details %+v", details)
+	}
+	signature := strings.TrimPrefix(*details[1].Data, "gemini:"+testAccount+":")
+	weather := `"tools":[{"type":"function","name":"get_weather","description":"Returns a city's weather.","strict":false,"parameters":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"],"additionalProperties":false}}]`
+	state, err := resolveGoogleState(t, "/v1/responses", `{"model":"google-cloud-gemini-3.8-flash","input":"What is the weather in Paris and in Rome? Look up each city.",`+weather+`}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reply := ingestBridgedReply(t, state, &schemas.BifrostResponse{ChatResponse: geminiChatReply(t, recorded)})
+	input := []string{`{"role":"user","content":"What is the weather in Paris and in Rome? Look up each city."}`}
+	for _, item := range reply.Output {
+		encoded, err := json.Marshal(item)
+		if err != nil {
+			t.Fatal(err)
+		}
+		input = append(input, string(encoded))
+		if item.Type != nil && *item.Type == schemas.ResponsesMessageTypeFunctionCall {
+			input = append(input, `{"type":"function_call_output","call_id":`+strconv.Quote(*item.CallID)+`,"output":"Sunny, 21 C"}`)
+		}
+	}
+	for _, model := range historyDeployments {
+		gemini := strings.HasPrefix(model, "google-cloud-gemini")
+		for path, request := range map[string]string{
+			"/v1/chat/completions": `{"model":"` + model + `","messages":` + geminiCallsBackMessages(t, message) + `,` + geminiWeather + `}`,
+			"/v1/responses":        `{"model":"` + model + `","input":[` + strings.Join(input, ",") + `],` + weather + `}`,
+		} {
+			body, _, _ := providerBody(t, path, request)
+			history := providerHistory(body)
+			if strings.Contains(history, summary) || strings.Contains(history, "gemini:") || strings.Contains(history, signature) != gemini {
+				t.Fatalf("%s on %s got %s", model, path, history)
+			}
+		}
+	}
+	other := *message
+	other.ChatAssistantMessage = &schemas.ChatAssistantMessage{
+		Reasoning:        message.ChatAssistantMessage.Reasoning,
+		ReasoningDetails: slices.Clone(details),
+		ToolCalls:        message.ChatAssistantMessage.ToolCalls,
+	}
+	other.ChatAssistantMessage.ReasoningDetails[1].Data = schemas.Ptr("gemini:acct-other:" + signature)
+	body, _, _ := providerBody(t, "/v1/chat/completions", `{"model":"google-cloud-gemini-3.8-flash","messages":`+geminiCallsBackMessages(t, &other)+`,`+geminiWeather+`}`)
+	if history := providerHistory(body); strings.Contains(history, signature) || strings.Count(history, `"thoughtSignature":"skip_thought_signature_validator"`) != 2 {
+		t.Fatalf("another account's calls reached Gemini as %s", history)
 	}
 }
 

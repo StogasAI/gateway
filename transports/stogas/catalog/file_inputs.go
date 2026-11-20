@@ -122,8 +122,9 @@ func attachmentError(provider schemas.ModelProvider, deployment Deployment, atta
 		return attachmentRefusal(attachment.Path, " "+modality+" input is not supported by "+subject)
 	}
 	// A Claude file ID names a file in the Files API of Anthropic's own platform, which Claude that
-	// a cloud hosts, on Azure too, lacks.
-	if claude && attachment.ID != "" && deployment.Hosting != CompanyAnthropic {
+	// a cloud hosts, on Azure too, lacks. Agent Platform has no Files API for Gemini either, and core
+	// leaves a file ID out of a Gemini body.
+	if attachment.ID != "" && (claude && deployment.Hosting != CompanyAnthropic || provider == ProviderGoogleCloud && !claude) {
 		return attachmentRefusal(attachment.Path, " file IDs are not supported by "+subject)
 	}
 	// A model that AWS or Google runs fetches no URL: Bedrock takes an image only inline or from S3

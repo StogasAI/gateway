@@ -55,8 +55,8 @@ var (
 	googleProviderPattern = regexp.MustCompile(`^projects/[0-9]{1,20}/locations/global/workloadIdentityPools/[a-z0-9-]{4,32}/providers/[a-z0-9-]{4,32}$`)
 )
 
-// vertexHosts are Vertex AI's endpoints for Claude by location: the global
-// endpoint and the us and eu multi-regions.
+// vertexHosts are Agent Platform's (Vertex AI's) endpoints by location: the
+// global endpoint and the us and eu multi-regions.
 var vertexHosts = map[string]string{
 	"global": "aiplatform.googleapis.com",
 	"us":     "aiplatform.us.rep.googleapis.com",
@@ -316,12 +316,18 @@ func newCloudRequest(ctx context.Context, provider schemas.ModelProvider, organi
 			if !ok || !vertexModelPattern.MatchString(upstream.Model) {
 				return cloudRequest{}, billing.ErrByokTarget
 			}
-			method := ":rawPredict"
-			if streaming {
-				method = ":streamRawPredict"
+			// Agent Platform takes Claude's Messages body raw and Gemini's generateContent body.
+			publisher, method := "google", ":generateContent"
+			switch {
+			case catalog.UsesClaudeWire(provider, deployment.ModelID) && streaming:
+				publisher, method = "anthropic", ":streamRawPredict"
+			case catalog.UsesClaudeWire(provider, deployment.ModelID):
+				publisher, method = "anthropic", ":rawPredict"
+			case streaming:
+				method = ":streamGenerateContent?alt=sse"
 			}
 			request.url = "https://" + host + "/v1/projects/" + credential.ProjectID + "/locations/" + upstream.InferenceGeo +
-				"/publishers/anthropic/models/" + upstream.Model + method
+				"/publishers/" + publisher + "/models/" + upstream.Model + method
 		case hostingAnthropic:
 			if credential.WorkspaceID == "" {
 				return cloudRequest{}, billing.ErrByokTarget

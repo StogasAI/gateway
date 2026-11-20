@@ -1,0 +1,889 @@
+{
+	"shows": "On Agent Platform's generateContent, Gemini 3.8 Flash calls a function at modes AUTO, ANY and ANY with allowedFunctionNames, answers in text at NONE, returns an ID for each call and a thought signature on the first, takes the calls back with their IDs and signatures, or with Google's placeholder signature, refuses a call without a signature, and answers in the JSON schema of responseJsonSchema.",
+	"recorded": "2026-11-20",
+	"exchanges": [
+		{
+			"name": "tools at mode AUTO",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.8-flash:generateContent",
+				"body": {
+					"model": "gemini-3.8-flash",
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "LOW"
+						}
+					},
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "What is the weather in Paris and in Rome? Look up each city."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"tools": [
+						{
+							"functionDeclarations": [
+								{
+									"description": "Returns a city's weather.",
+									"name": "get_weather",
+									"parametersJsonSchema": {
+										"type": "object",
+										"properties": {
+											"city": {
+												"type": "string"
+											}
+										},
+										"required": [
+											"city"
+										],
+										"additionalProperties": false
+									}
+								}
+							]
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**My Thought Process for Fulfilling Your Weather Request**\n\nAlright, so I've received your query, and I understand perfectly what you need. You're looking for the weather forecast for two specific, rather lovely, locations: Paris and Rome.\n\nMy internal process immediately identifies the core task: retrieving weather information. I've assessed the available tools at my disposal, and the `get_weather` function is precisely what I need. It's designed for this very purpose – to fetch meteorological data.\n\nGiven that you've requested weather for *two* distinct cities, my next logical step is to utilize the `get_weather` tool twice. I'll initiate one call to `get_weather` specifically for Paris, and a separate, independent call for Rome. This ensures I gather the precise information you're asking for, without any conflation. It's a straightforward, parallel processing approach to fulfill your dual request efficiently.\n\n",
+										"thought": true
+									},
+									{
+										"functionCall": {
+											"name": "get_weather",
+											"args": {
+												"city": "Paris"
+											},
+											"id": "call_9239791051818444879"
+										},
+										"thoughtSignature": "AY89a1+Dd/ruWIpaSZ2Ehlg/kdyNsYc1//Ui0EE4K4qL3oaV+XSjcflRJS+h/6+xaVtPvRQy/NS8gkHl9MMHD1MyrX5f49DryV2xGr6d7d9dpefhvXDLmAQT5F4g+VPs2zyXE1528JI4f5nd3mcurtYyTczzpiOR3aTIgrY/UPtnUyDvOoajaWQwGaVFvo123pHnU/6BiHvTaIL+CsWzXWfb2awnmIwOkjVwViFG0LKUt1nddlKod5M6oa+hpgpVY0YzUPbgvm/NN2b4WITDA9ADBENZwP1q85sE8+kM53fuRY3vQjjSTd19R6Thm3MtVvP1Sb+hi6aDedAcjDkcBnwNu+jPYjat0fES7Fb+FA9r+xfVurONCg=="
+									},
+									{
+										"functionCall": {
+											"name": "get_weather",
+											"args": {
+												"city": "Rome"
+											},
+											"id": "call_9239791051818444592"
+										}
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 39,
+						"candidatesTokenCount": 32,
+						"totalTokenCount": 109,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 39
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 32
+							}
+						],
+						"thoughtsTokenCount": 38
+					},
+					"modelVersion": "gemini-3.8-flash",
+					"createTime": "2026-11-20T06:14:13.538772Z",
+					"responseId": "NeX_apTxIMmtotQP4-W9yAo"
+				}
+			}
+		},
+		{
+			"name": "mode ANY",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.8-flash:generateContent",
+				"body": {
+					"model": "gemini-3.8-flash",
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "LOW"
+						}
+					},
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "What is the weather in Paris and in Rome? Look up each city."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"tools": [
+						{
+							"functionDeclarations": [
+								{
+									"description": "Returns a city's weather.",
+									"name": "get_weather",
+									"parametersJsonSchema": {
+										"type": "object",
+										"properties": {
+											"city": {
+												"type": "string"
+											}
+										},
+										"required": [
+											"city"
+										],
+										"additionalProperties": false
+									}
+								}
+							]
+						}
+					],
+					"toolConfig": {
+						"functionCallingConfig": {
+							"mode": "ANY"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"functionCall": {
+											"name": "get_weather",
+											"args": {
+												"city": "Paris"
+											},
+											"id": "call_4011422236305646498"
+										},
+										"thoughtSignature": "AY89a197GvQHl7YKhUzj0cRY+lwfuTv/lmaiKbpjrEcwXeWsdstXowqgpEQRyMUhHUz0J/WaAbfe1bZb5XT0+6TdgpGBjkzj+R70IsAGqemi0ckKRqStN0GjHNBPJmS5LF9i7fhxKjK1dAkrbVckzYaR4mo5tkW5e5dXQ8QLgw=="
+									},
+									{
+										"functionCall": {
+											"name": "get_weather",
+											"args": {
+												"city": "Rome"
+											},
+											"id": "call_4011422236305648597"
+										}
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 39,
+						"candidatesTokenCount": 32,
+						"totalTokenCount": 71,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 39
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 32
+							}
+						]
+					},
+					"modelVersion": "gemini-3.8-flash",
+					"createTime": "2026-11-20T06:14:18.467730Z",
+					"responseId": "OuX_apLGHIGbotQPkZTMyAU"
+				}
+			}
+		},
+		{
+			"name": "mode ANY with allowedFunctionNames",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.8-flash:generateContent",
+				"body": {
+					"model": "gemini-3.8-flash",
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "LOW"
+						}
+					},
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "What is the weather in Paris and in Rome? Look up each city."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"tools": [
+						{
+							"functionDeclarations": [
+								{
+									"description": "Returns a city's weather.",
+									"name": "get_weather",
+									"parametersJsonSchema": {
+										"type": "object",
+										"properties": {
+											"city": {
+												"type": "string"
+											}
+										},
+										"required": [
+											"city"
+										],
+										"additionalProperties": false
+									}
+								}
+							]
+						}
+					],
+					"toolConfig": {
+						"functionCallingConfig": {
+							"mode": "ANY",
+							"allowedFunctionNames": [
+								"get_weather"
+							]
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"functionCall": {
+											"name": "get_weather",
+											"args": {
+												"city": "Paris"
+											},
+											"id": "call_8085708601686391060"
+										},
+										"thoughtSignature": "AY89a1/3bXzJG4Q72POWiOnd48uNEGFgmYMgSA9ZaCouka+pwRRnIq2QDn8qhkEcGmrGgVuRtvtVChxAuCBca8rDEy2koxc2w4co0+/6dyLCG9zzD/s/Lv87D6NQbJFA8UyEp4O0DKyRqw3aWHAwmH86BhEQDq5kX7Tf1mNEfw=="
+									},
+									{
+										"functionCall": {
+											"name": "get_weather",
+											"args": {
+												"city": "Rome"
+											},
+											"id": "call_8085708601686390403"
+										}
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 39,
+						"candidatesTokenCount": 32,
+						"totalTokenCount": 71,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 39
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 32
+							}
+						]
+					},
+					"modelVersion": "gemini-3.8-flash",
+					"createTime": "2026-11-20T06:14:19.687741Z",
+					"responseId": "O-X_av38KYuZotQPrufR6AU"
+				}
+			}
+		},
+		{
+			"name": "mode NONE",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.8-flash:generateContent",
+				"body": {
+					"model": "gemini-3.8-flash",
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "LOW"
+						}
+					},
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "What is the weather in Paris and in Rome? Look up each city."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"tools": [
+						{
+							"functionDeclarations": [
+								{
+									"description": "Returns a city's weather.",
+									"name": "get_weather",
+									"parametersJsonSchema": {
+										"type": "object",
+										"properties": {
+											"city": {
+												"type": "string"
+											}
+										},
+										"required": [
+											"city"
+										],
+										"additionalProperties": false
+									}
+								}
+							]
+						}
+					],
+					"toolConfig": {
+						"functionCallingConfig": {
+							"mode": "NONE"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "I cannot provide the current, real-time weather conditions for Paris and Rome, as I do not have access to live meteorological data or a real-time internet browsing tool. \n\nPlease check a live weather service such as [weather.com](https://weather.com) or your preferred weather app to see the current forecasts for both cities.",
+										"thoughtSignature": "AY89a19LwIVLtr28wtU5z026o+Bl/wWNTT8gthuELUsGI4CqNfA+wZdujn0cLKdI4MaFlxXRqKRG39kxRAOROjJbGlOxHt447kUxXALrHRJ/2VGYjNzt+yHHM5qdnvX4cdFGJ65Ya0Ig7r6HgQqWODSwBs24UU6j8N0Ep6TwwA=="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 15,
+						"candidatesTokenCount": 70,
+						"totalTokenCount": 85,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 15
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 70
+							}
+						]
+					},
+					"modelVersion": "gemini-3.8-flash",
+					"createTime": "2026-11-20T06:14:21.778500Z",
+					"responseId": "PeX_aoTCL96ll7oP5JzigQg"
+				}
+			}
+		},
+		{
+			"name": "the calls back with their signatures",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.8-flash:generateContent",
+				"body": {
+					"model": "gemini-3.8-flash",
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "LOW"
+						}
+					},
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "What is the weather in Paris and in Rome? Look up each city."
+								}
+							],
+							"role": "user"
+						},
+						{
+							"parts": [
+								{
+									"thoughtSignature": "AY89a1+Dd/ruWIpaSZ2Ehlg/kdyNsYc1//Ui0EE4K4qL3oaV+XSjcflRJS+h/6+xaVtPvRQy/NS8gkHl9MMHD1MyrX5f49DryV2xGr6d7d9dpefhvXDLmAQT5F4g+VPs2zyXE1528JI4f5nd3mcurtYyTczzpiOR3aTIgrY/UPtnUyDvOoajaWQwGaVFvo123pHnU/6BiHvTaIL+CsWzXWfb2awnmIwOkjVwViFG0LKUt1nddlKod5M6oa+hpgpVY0YzUPbgvm/NN2b4WITDA9ADBENZwP1q85sE8+kM53fuRY3vQjjSTd19R6Thm3MtVvP1Sb+hi6aDedAcjDkcBnwNu+jPYjat0fES7Fb+FA9r+xfVurONCg==",
+									"functionCall": {
+										"id": "call_9239791051818444879",
+										"args": {
+											"city": "Paris"
+										},
+										"name": "get_weather"
+									}
+								},
+								{
+									"thoughtSignature": "skip_thought_signature_validator",
+									"functionCall": {
+										"id": "call_9239791051818444592",
+										"args": {
+											"city": "Rome"
+										},
+										"name": "get_weather"
+									}
+								}
+							],
+							"role": "model"
+						},
+						{
+							"parts": [
+								{
+									"functionResponse": {
+										"id": "call_9239791051818444879",
+										"name": "get_weather",
+										"response": {
+											"content": "Sunny, 21 C"
+										}
+									}
+								},
+								{
+									"functionResponse": {
+										"id": "call_9239791051818444592",
+										"name": "get_weather",
+										"response": {
+											"content": "Rain, 14 C"
+										}
+									}
+								}
+							],
+							"role": "user"
+						}
+					],
+					"tools": [
+						{
+							"functionDeclarations": [
+								{
+									"description": "Returns a city's weather.",
+									"name": "get_weather",
+									"parametersJsonSchema": {
+										"type": "object",
+										"properties": {
+											"city": {
+												"type": "string"
+											}
+										},
+										"required": [
+											"city"
+										],
+										"additionalProperties": false
+									}
+								}
+							]
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "The weather in the requested cities is as follows:\n\n* **Paris:** Sunny, 21°C\n* **Rome:** Rain, 14°C",
+										"thoughtSignature": "AY89a19bsI820y8aDq8q3UhW3WRnIKpbL6MGzFTbGp/8b9iLGz4c+LWTpPtqbMR/Nh2KILHEOXA7ybmoAgnD+bN2F0H+xBxl6WvkfAoVDqUHPMd5c2dhgAKvIPXjASwyDxxa1+mCWP22N/XvFCOHDy3heOKM5aBxfAWsCV686Q=="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 123,
+						"candidatesTokenCount": 34,
+						"totalTokenCount": 157,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 123
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 34
+							}
+						]
+					},
+					"modelVersion": "gemini-3.8-flash",
+					"createTime": "2026-11-20T06:14:24.663829Z",
+					"responseId": "QOX_apXCKMmtotQP7Ni22As"
+				}
+			}
+		},
+		{
+			"name": "the calls back with the placeholder signature",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.8-flash:generateContent",
+				"body": {
+					"model": "gemini-3.8-flash",
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "LOW"
+						}
+					},
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "What is the weather in Paris and in Rome? Look up each city."
+								}
+							],
+							"role": "user"
+						},
+						{
+							"parts": [
+								{
+									"thoughtSignature": "skip_thought_signature_validator",
+									"functionCall": {
+										"id": "call_9239791051818444879",
+										"args": {
+											"city": "Paris"
+										},
+										"name": "get_weather"
+									}
+								},
+								{
+									"thoughtSignature": "skip_thought_signature_validator",
+									"functionCall": {
+										"id": "call_9239791051818444592",
+										"args": {
+											"city": "Rome"
+										},
+										"name": "get_weather"
+									}
+								}
+							],
+							"role": "model"
+						},
+						{
+							"parts": [
+								{
+									"functionResponse": {
+										"id": "call_9239791051818444879",
+										"name": "get_weather",
+										"response": {
+											"content": "Sunny, 21 C"
+										}
+									}
+								},
+								{
+									"functionResponse": {
+										"id": "call_9239791051818444592",
+										"name": "get_weather",
+										"response": {
+											"content": "Rain, 14 C"
+										}
+									}
+								}
+							],
+							"role": "user"
+						}
+					],
+					"tools": [
+						{
+							"functionDeclarations": [
+								{
+									"description": "Returns a city's weather.",
+									"name": "get_weather",
+									"parametersJsonSchema": {
+										"type": "object",
+										"properties": {
+											"city": {
+												"type": "string"
+											}
+										},
+										"required": [
+											"city"
+										],
+										"additionalProperties": false
+									}
+								}
+							]
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "The current weather is:\n- **Paris**: Sunny, 21°C\n- **Rome**: Rain, 14°C",
+										"thoughtSignature": "AY89a1/R6c4AhVwh0LAEfHiCaOSN3GLsLLqRPB7y2O37a4rLfdclQSavnT1PYlIiBQE/lcV9n+ZXXZ4F2KF6wWGkcwWqu+QzH3FiFI7em5810bNQjEY9rIPOfZlWKz0tCBtD4+7iiRQ81djFeP5EuFbvxdiE2vQ56+w0rEqB7A=="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 85,
+						"candidatesTokenCount": 29,
+						"totalTokenCount": 114,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 85
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 29
+							}
+						]
+					},
+					"modelVersion": "gemini-3.8-flash",
+					"createTime": "2026-11-20T06:14:26.285273Z",
+					"responseId": "QuX_atm0Ed-TsbwPn8zF6Qc"
+				}
+			}
+		},
+		{
+			"name": "the calls back without signatures",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.8-flash:generateContent",
+				"body": {
+					"model": "gemini-3.8-flash",
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "LOW"
+						}
+					},
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "What is the weather in Paris and in Rome? Look up each city."
+								}
+							],
+							"role": "user"
+						},
+						{
+							"parts": [
+								{
+									"functionCall": {
+										"id": "call_9239791051818444879",
+										"args": {
+											"city": "Paris"
+										},
+										"name": "get_weather"
+									}
+								},
+								{
+									"functionCall": {
+										"id": "call_9239791051818444592",
+										"args": {
+											"city": "Rome"
+										},
+										"name": "get_weather"
+									}
+								}
+							],
+							"role": "model"
+						},
+						{
+							"parts": [
+								{
+									"functionResponse": {
+										"id": "call_9239791051818444879",
+										"name": "get_weather",
+										"response": {
+											"content": "Sunny, 21 C"
+										}
+									}
+								},
+								{
+									"functionResponse": {
+										"id": "call_9239791051818444592",
+										"name": "get_weather",
+										"response": {
+											"content": "Rain, 14 C"
+										}
+									}
+								}
+							],
+							"role": "user"
+						}
+					],
+					"tools": [
+						{
+							"functionDeclarations": [
+								{
+									"description": "Returns a city's weather.",
+									"name": "get_weather",
+									"parametersJsonSchema": {
+										"type": "object",
+										"properties": {
+											"city": {
+												"type": "string"
+											}
+										},
+										"required": [
+											"city"
+										],
+										"additionalProperties": false
+									}
+								}
+							]
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": 400,
+						"message": "Function call is missing a thought_signature in functionCall parts. This is required for tools to work correctly, and missing thought_signature may lead to degraded model performance. Additional data, function call `default_api:get_weather` , position 2. Please refer to https://aistudio.google.com/docs/thought-signatures for more details.",
+						"status": "INVALID_ARGUMENT"
+					}
+				}
+			}
+		},
+		{
+			"name": "responseJsonSchema",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.8-flash:generateContent",
+				"body": {
+					"model": "gemini-3.8-flash",
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "LOW"
+						},
+						"responseJsonSchema": {
+							"type": "object",
+							"properties": {
+								"city": {
+									"type": "string"
+								}
+							},
+							"required": [
+								"city"
+							],
+							"additionalProperties": false
+						},
+						"responseMimeType": "application/json"
+					},
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Name the capital of France."
+								}
+							],
+							"role": "user"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "{\"city\": \"Paris\"}",
+										"thoughtSignature": "AY89a19Bp9qTh6JPogsBcw/GkwiCPRK+FJbLA0936ss5GG6uFRsNgD06gLWenT3oVhflkbQONqZV4dufL401ghDvNWqRIA/5hIHsQEeq4meN54ItQbyG4tNwaSwxJlw5671J9ZMf1ggz/TMeyOkrrpDdQ+hP4Js07E8pSiIhpA=="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 51,
+						"candidatesTokenCount": 6,
+						"totalTokenCount": 57,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 51
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 6
+							}
+						]
+					},
+					"modelVersion": "gemini-3.8-flash",
+					"createTime": "2026-11-20T06:14:27.480066Z",
+					"responseId": "Q-X_asKmHb2aotQP6vaniAc"
+				}
+			}
+		}
+	]
+}

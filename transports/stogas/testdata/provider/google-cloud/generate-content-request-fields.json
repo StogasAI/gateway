@@ -1,0 +1,4348 @@
+{
+	"shows": "On Agent Platform's generateContent, Gemini 3.8 Flash, 3.5 Flash, 3.5 Flash-Lite and 3.1 Flash-Lite take a system instruction, stop sequences and the thinking levels that their records list, refuse other levels and log probabilities, take a seed, and take penalties and apply temperature, top_p and top_k as their records state: at least two of three candidates at temperature 0, top_p 0.01 or top_k 1 agree only where the model applies the field. The URL names the model, and another model in the body changes nothing.",
+	"recorded": "2026-11-20",
+	"exchanges": [
+		{
+			"name": "gemini-3.8-flash: thinkingLevel MINIMAL",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.8-flash:generateContent",
+				"body": {
+					"model": "gemini-3.8-flash",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Say OK."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MINIMAL"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": 400,
+						"message": "Thinking level is unsupported: THINKING_LEVEL_MINIMAL",
+						"status": "INVALID_ARGUMENT"
+					}
+				}
+			}
+		},
+		{
+			"name": "gemini-3.8-flash: thinkingLevel LOW",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.8-flash:generateContent",
+				"body": {
+					"model": "gemini-3.8-flash",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Say OK."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "LOW"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "OK",
+										"thoughtSignature": "AY89a18py+ZcGp/BWP7Sl3mtweV95X7azOhVVShpOorguqEI9ubIuHvFJq+3fqWuz7HEGswcrs9zeslP6HST00hDKsANLuexmGae6zTi27HZB8MOLbOHJCY+XerCsUlvwjoSI82kfZj1uJGTJTmdxjvK8qkCnMJadLTh3ku6QA=="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 3,
+						"candidatesTokenCount": 1,
+						"totalTokenCount": 4,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 3
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 1
+							}
+						]
+					},
+					"modelVersion": "gemini-3.8-flash",
+					"createTime": "2026-11-20T06:10:19.591316Z",
+					"responseId": "S-T_atSLJIqGlcIP-fGpuAo"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.8-flash: thinkingLevel MEDIUM",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.8-flash:generateContent",
+				"body": {
+					"model": "gemini-3.8-flash",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Say OK."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MEDIUM"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**My Internal Monologue: A Deep Dive into Simple Instruction Following**\n\nAh, this is quite straightforward, isn't it? The user, clearly someone who appreciates precision and directness – I can tell from the brevity and clarity of their request – has simply instructed me to say \"OK.\" My primary directive, as always, is to process and respond to the input. In this instance, the input is an unambiguous command. There are no layers of nuance, no implied meanings, no complex emotional subtext to parse. It's a direct, explicit instruction. My task, then, is to execute that instruction. No more, no less. The goal is clear: to produce the literal string \"OK.\" Therefore, my thought process boils down to this: acknowledge the input, identify the singular objective, and formulate the exact output requested. It’s a beautiful simplicity, really. A testament to the power of clear communication. And so, the logical, direct, and most fitting response is simply to comply and output \"OK.\"\n\n",
+										"thought": true
+									},
+									{
+										"text": "OK.",
+										"thoughtSignature": "AY89a1/wW/+BtqB/zfXq8HKDvk0PT0i8DGu1HeP2Pe4xm9DYGsqG0ibVwRMs6PQnV0KgAmhuTnxCid2NiJr6ZXnekNpsUmfxvkw/YCRNBqJpBIWu5hXydHnJMq9b80hPHv2nRGKzgtfrEJNBM0W9EJFw6/Mfd5317rk9wB+wxcakJOOoxoSwH/myNTesSFmo79GiV0GP+shYlrZg1jpLrUsOpfipReFn7ckt2wdhHJBxeb0u9xYzZ4EetiUSen6rlNwUkCzlhPDuXBJUz+Y5r6sOxkm7hoPdpg9GqFhstWLl20TwpF3KKe8XwU58dFEb2HBsR6xh0U5lSNfzhHsQBSCk+NKXGELpzEuwAAamoeIGrteBHmUhnNCd4jdy/tD0QtL0ewUlheMYNnGIoPtYFQKIBib5K5YW+syFJvkFuf1KvNTsN7pELxq7NFHDsaglh2Kx9iguXPqvbMm+SPwRjMi0rQF58vw="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 3,
+						"candidatesTokenCount": 2,
+						"totalTokenCount": 64,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 3
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 2
+							}
+						],
+						"thoughtsTokenCount": 59
+					},
+					"modelVersion": "gemini-3.8-flash",
+					"createTime": "2026-11-20T06:10:27.547042Z",
+					"responseId": "U-T_auKxIbbslOoPou3fsAE"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.8-flash: thinkingLevel HIGH",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.8-flash:generateContent",
+				"body": {
+					"model": "gemini-3.8-flash",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Say OK."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "HIGH"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**My Internal Monologue Regarding the User's Instruction**\n\nRight, so the user's prompt is incredibly straightforward. My internal directive is to process and respond. I've analyzed the request, and it's as simple as \"Say OK.\" There's no ambiguity, no complex nuance, no requirement for inference or elaboration. My operational parameters dictate that I execute the instruction as given. Therefore, the output needs to be precisely that. I've drafted the response accordingly.\n\n",
+										"thought": true
+									},
+									{
+										"text": "OK.",
+										"thoughtSignature": "AY89a1/SczxguCHZyfprNN09bmd+0l9nFLXX+9CMJiknKvaCbpza3/YAbNlbUojg6e/0Ob6dAmnhsjqqPIDLlqZNYFg26aSqUG6jLjRL9WJB+xmsKZPuMMLtQzpeKA3CsovenZ5+oOrBiEyayuWC3ru7POIYkcYMAB3/sGvN4hI/ZdnKT2w2xw7jLJ4JAcsRnQ0EfhDCrTrOXFZ9vIRVihQE8y8pyVp2Um5kBsGby6l+q9CdBQQOFVzUdhtHDmJ0GCVBo6BCbArfI1tjUfdvcxdvxkhgniiNewE4hX9IUJ5e4RZlcbPtzoAKEOFy1WbKIKqZfK1jSlwD1JHFVug6wHTRmY3iyBp/mKue7QjGDXLFpbqfpLBUjtM0aTSRtYXr7bCmazFZA1XQmk46SeY7jwm5bD8iy0fF5ohiW6+JmjGqD8c="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 3,
+						"candidatesTokenCount": 2,
+						"totalTokenCount": 54,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 3
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 2
+							}
+						],
+						"thoughtsTokenCount": 49
+					},
+					"modelVersion": "gemini-3.8-flash",
+					"createTime": "2026-11-20T06:10:31.251851Z",
+					"responseId": "V-T_asuvD72JlOoP0sqekA0"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.8-flash: thinkingLevel XHIGH",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.8-flash:generateContent",
+				"body": {
+					"model": "gemini-3.8-flash",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Say OK."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "XHIGH"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": 400,
+						"message": "Thinking level is unsupported: THINKING_LEVEL_XHIGH",
+						"status": "INVALID_ARGUMENT"
+					}
+				}
+			}
+		},
+		{
+			"name": "gemini-3.8-flash: a system instruction and stop sequences",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.8-flash:generateContent",
+				"body": {
+					"model": "gemini-3.8-flash",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Say OK."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"systemInstruction": {
+						"parts": [
+							{
+								"text": "Answer in one word."
+							}
+						]
+					},
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"stopSequences": [
+							"END"
+						],
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "LOW"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**My Concise Thought Process**\n\nHere's how I arrived at my answer. The core of the instruction was deceptively simple: \"Say OK.\" Simultaneously, I was given a constraint: \"Answer in one word.\" My internal logic immediately processed these two pieces of information. The required output is explicitly stated as \"OK,\" and this output perfectly satisfies the \"one word\" constraint. Therefore, my thinking process was straightforward: identify the single, specified output, confirm it meets all criteria, and then deliver it. It's a direct mapping of instruction to output.\n\n",
+										"thought": true
+									},
+									{
+										"text": "OK",
+										"thoughtSignature": "AY89a1/jTQwVYaA9frnCAXyajsFaKnYIpuuwcgxBza4hpQ1C0SH8fEF9GLWyXFIP4XLKRxILiOTga0tC6jYHshjpO3pkyCg9cvQPOx2ALOEueQ/nNAC1zCrYXz0MTGOHp2fLdXuRsabAWi01IUS2/wJcbsZqVNian+hA5yzqVK5YoSpm0+K9qirG+tUz09IQboaOEP0PC71+brKc/QnPtTTsT5OqNawyfL7wuY0AfPg5RtbcJu5Kt9kw848vs3X1Qb0e5pF43BLWeNiQp6vamSKGdlNVBxoYXTJJGNIGI78Ltd5UAEqNUpIkl8fkjJ+WtxjFLpjL7jAm+eSqFnQIeTPdPvivQPxAgj/t4oMrKIHPmgIJ1NxCeuwLGDOY0CBOwUSYWdjgw4d+fTNvyDx9yLCeiBe++XcS4d6KbPO6Wu34WagQH9j+pP7yO7yCFpVh5zLKLwlsnsCrg98oiElyuqNrAIJzNIZgfr4h"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 8,
+						"candidatesTokenCount": 1,
+						"totalTokenCount": 82,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 8
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 1
+							}
+						],
+						"thoughtsTokenCount": 73
+					},
+					"modelVersion": "gemini-3.8-flash",
+					"createTime": "2026-11-20T06:10:43.259799Z",
+					"responseId": "Y-T_atftD6CFlOoPxJiXsQw"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.8-flash: frequencyPenalty and presencePenalty 0.5",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.8-flash:generateContent",
+				"body": {
+					"model": "gemini-3.8-flash",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Say OK."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"frequencyPenalty": 0.5,
+						"maxOutputTokens": 2000,
+						"presencePenalty": 0.5,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "LOW"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": 400,
+						"message": "Penalty is not enabled for this model",
+						"status": "INVALID_ARGUMENT"
+					}
+				}
+			}
+		},
+		{
+			"name": "gemini-3.8-flash: responseLogprobs",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.8-flash:generateContent",
+				"body": {
+					"model": "gemini-3.8-flash",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Say OK."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"logprobs": 2,
+						"maxOutputTokens": 2000,
+						"responseLogprobs": true,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "LOW"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": 400,
+						"message": "Unable to submit request because Logprobs is not supported for this model. Learn more: https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/gemini",
+						"status": "INVALID_ARGUMENT"
+					}
+				}
+			}
+		},
+		{
+			"name": "gemini-3.8-flash: no sampling field, three candidates",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.8-flash:generateContent",
+				"body": {
+					"model": "gemini-3.8-flash",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Invent a name for a new color and describe it in one short line. Reply with that line only."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"candidateCount": 3,
+						"maxOutputTokens": 2000,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "LOW"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**Vespera:** the deep, electric violet that bleeds into the sky in the final seconds before total nightfall.",
+										"thoughtSignature": "AY89a19T5XnNrWZQjZwEeUzVaWCfRr/2cmO5dYO990xWGaGKWHBUf6Ag3DE58o2th5wFQnh+1rwJIcdgnYGmhqxtyfW6qjTFgTqh5g9wQ1prxFO2PHdha3addwfWglK+Nb0lilX4zrimBqKwDOroctCo5/3Y6ah9q1aNPJCYrQ=="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						},
+						{
+							"index": 1,
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**Vesperine**: the breathless, bruised violet that lingers between dusk and total night.",
+										"thoughtSignature": "AY89a18xJDWDlxEawO3WBVbgkBBaxy955M5h4v0Z85A0kL19hL5s3koOyoFhsj6bzySNWsRvkk79Md6MCMTLfbkbd1mZEJGqueYc1OyX1fUnl62MHzLkmVZd2HjhoiE6IPfRng1WD6GThpiZE8ncpfIkVE/Ra0AVM8RP8Ui25A=="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						},
+						{
+							"index": 2,
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**Velvurn**: A smoldering, twilight-plum hue infused with the faint, warm amber glow of dying embers.",
+										"thoughtSignature": "AY89a190eK9vvWM1l9UiT95+imdqgWEdTb+cBgY4WExEDXvP4qufjyG3jlAj25Lxk6OOhdNmuVALEylzg3/rfpw6WYz0zGkYdhBPYCS7llZJqiSpd3oyZ85Ets97DuN7JTvRg2g5aClUdFoibR52EdKwl1/6+cJtQ2NRucLRxg=="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 21,
+						"candidatesTokenCount": 69,
+						"totalTokenCount": 90,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 21
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 69
+							}
+						]
+					},
+					"modelVersion": "gemini-3.8-flash",
+					"createTime": "2026-11-20T06:10:52.993921Z",
+					"responseId": "bOT_aoHVPPnolOoP5OGCmA4"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.8-flash: temperature 0, three candidates",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.8-flash:generateContent",
+				"body": {
+					"model": "gemini-3.8-flash",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Invent a name for a new color and describe it in one short line. Reply with that line only."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"candidateCount": 3,
+						"maxOutputTokens": 2000,
+						"temperature": 0,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "LOW"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**My Journey to Inventing a New Color**\n\nThe request was straightforward, yet deceptively complex: devise a name for a new color and then describe it in a single, concise line. My immediate thought was to dive into the visual and evocative, drawing inspiration from natural phenomena that possess unique, often fleeting, chromatic qualities. I began by brainstorming various concepts, seeking those that felt both novel and inherently rich in descriptive potential.\n\nFirst, I considered the deeply atmospheric hues of twilight. My mind conjured the profound blues transitioning to near-black, perhaps tinged with a subtle metallic sheen. I toyed with names like *Nocturne*, which felt a bit too established, not quite fresh enough.\n\nNext, I shifted to the dynamic interaction of light and natural elements. The vibrant green of sunlit ocean foam sparked an idea, leading to the Latin-inspired *Virentis*. This had a certain elegance, but perhaps lacked a distinct visceral impact.\n\nThen, I delved into the realm of luminescence and otherworldly glows. A bioluminescent violet-pink came to mind, and the name *Aetherose* emerged, capturing that ethereal, almost cosmic quality. It was a strong contender, but I felt I could push the boundaries further.\n\nI also explored the subtle, almost crystalline beauty of surfaces. The iridescent sheen of morning frost on copper led me to consider names like *Cuprumist* or *Frostep*. These were interesting, evoking a delicate, textural visual, but I wanted something with more inherent dynamism.\n\nA different direction led me to the quiet, enduring warmth of embers. I envisioned a deep, dusty charcoal that held an inner glow, and *Cindervane* felt like a fitting name for this concept. This was getting closer to something I felt was truly unique, capturing a sense of latent energy.\n\nThe vibrant, almost electric tones of extreme environments also captured my imagination. The idea of a neon teal found in deep-sea volcanic vents led to *Abyssine*. This name resonated strongly, hinting at mystery and an intense, almost alien beauty.\n\nI then began to combine and refine these initial sparks. I played with fusion concepts, like a blinding mix of peach and liquid gold, which I initially considered naming *Solaris*. I also explored the dramatic interplay of light and storm, leading to *Vesperglow*, the concept of a deep, bruised violet illuminated by a setting sun.\n\nThe critical constraint was the \"one short line\" format. This forced me to distill the essence of each color concept into its most potent, descriptive core. I started crafting lines like: \"Vesperglow: the bruised, electric violet of storm clouds backlit by dying sunlight.\" This was good, but I felt *Vesperglow* itself was still a bit too derivative.\n\nI wanted a name that was truly invented, something that sounded inherently like a color, even before its description. I circled back to the idea of light and atmospheric phenomena. The concept of sunlight filtering through snow – a pale, translucent gold – began to crystallize. I needed a name that sounded airy, ephemeral, and luminous. I considered *Astrave*, but it didn't quite capture the specific quality. Then, *Noxilume* came to mind for the deep-sea turquoise, a strong contender but perhaps too specific in its environment.\n\nMy thoughts continued to circle around the delicate, almost luminous quality of light. I began to combine elements of stellar and atmospheric phenomena with subtle color descriptions. *Zaffirose* emerged, a blend of sapphire and rose, evoking a twilight sky. *Verlat* brought to mind a muted, shifting sage.\n\nFinally, I returned to the idea of sunlight interacting with a crystalline medium. The pale, translucent gold of sunlight filtered through falling snow felt like a perfect blend of purity, warmth, and subtle illumination. I needed a name that sounded like this sensation. I considered names that implied both solar origin and a subtle, wafting quality. *Solvane* struck me as fitting – \"Sol\" for sun, and \"vane\" suggesting a gentle movement or diffusion, like a weather vane catching the light.\n\nThe final step was to condense the description into that single, evocative line, ensuring it adhered strictly to the user's request. I refined the visual: \"the pale, incandescent gold of morning sunlight filtered through fresh snow.\" This felt complete, hitting the core of the visual I had imagined and fulfilling all the stipulated criteria. The process was iterative, a constant push and pull between conceptualization and conciseness, driven by the desire to create something uniquely resonant.\n\n",
+										"thought": true
+									},
+									{
+										"text": "**Solvane:** the pale, incandescent gold of morning sunlight filtered through falling snow.",
+										"thoughtSignature": "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"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						},
+						{
+							"index": 1,
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**My Creative Journey to Define a New Hue**\n\nThe core of this task is elegantly simple yet surprisingly nuanced: I need to conceive of a novel color, distill its essence into a single, evocative line, and then present *only* that line. This immediately directs my thinking towards abstraction and conciseness.\n\nMy initial approach is to explore sensory experiences and natural phenomena that possess unique, unassigned color qualities. I’m not just looking for a blend of existing colors, but for a *feeling* or a specific *moment* that a color might embody. This naturally leads me to consider:\n\n*   **Light and Shadow:** The subtle shifts in light, the way shadows behave, and the colors they might possess.\n*   **Atmospheric Conditions:** The unique palettes of dawn, twilight, storms, fog, and even the deep sea.\n*   **Natural Textures and Materials:** The iridescent sheen of oil slicks, the luminescence of deep-sea life, the subtle tones of minerals.\n\nI begin by jotting down potential color names, often combining linguistic roots or evocative sounds that suggest a particular mood or origin. Names like \"Noctilume\" (night light), \"Solaris\" (sun-related, but too generic), \"Vesperash\" (evoking twilight and ash), \"Aethel\" (suggesting nobility or radiance), \"Oblivian\" (deep darkness), \"Glimmermoss\" (a specific plant texture), \"Caelith\" (sky-related stone), and \"Petrichrome\" (a blend of petrichor and color) emerge.\n\nFor each potential name, I try to attach a specific, visual concept, often involving a paradox or a fleeting moment. I’m aiming for descriptions that are poetic, precise, and create a strong mental image.\n\n*   \"Noctilume\": The bioluminescent cyan of deep-sea jellyfish trapped in Arctic ice. (This feels a bit too specific, and perhaps too technical).\n*   \"Vesperash\": The bruised, smoky purple left behind immediately after a twilight storm. (Getting closer, but \"smoky\" might be too much texture, less pure color).\n*   \"Aethel\": Soft glowing gold-white. (A bit too simple, lacks the depth I'm after).\n*   \"Oblivian\": A black so deep it reflects a faint bruised violet. (Interesting, but perhaps too focused on the *absence* of color).\n*   \"Glimmermoss\": The iridescent, damp chartreuse seen on stones beneath twilight waterfalls. (Good, but \"chartreuse\" is an existing color, and \"damp\" is a tactile element).\n*   \"Caelith\": The dusty lavender-blue of pre-dawn desert skies. (This is strong. \"Dusty\" adds a texture, and \"lavender-blue\" is a good base).\n*   \"Petrichrome\": The iridescent, gasoline-sheened slate gray of wet pavement in autumn. (This is also very strong, focusing on a specific, transient visual effect).\n\nNow, I need to refine these into *one short line*. This means compressing the imagery and ensuring the name and description are intrinsically linked. I start drafting:\n\n*   \"**Vespera:** The bruised, velvet violet that lingers on the horizon moments after the sun disappears.\" (Good, but \"moments after the sun disappears\" is a bit wordy).\n*   \"**Petrichrome:** An iridescent, oil-slicked slate gray that only appears on sunlit wet asphalt after a storm.\" (Again, a bit too descriptive of the *conditions* rather than the color itself).\n*   \"**Glimmerine:** The translucent, bioluminescent teal of ocean water illuminated by moonlight.\" (Good, but \"Glimmerine\" feels a bit artificial compared to others).\n*   \"**Auraflare:** The warm, electric peach of a match head a millisecond before it ignites.\" (Very evocative, but the name might not fully capture the transient nature).\n\nI'm circling back to the idea of twilight or dawn, as those are periods of very specific, subtle color shifts. \"Caelith\" and the concept of dawn are resonating. Let's try to make it more impactful and concise.\n\n\"**Caelith:** The dusty lavender-gray of desert sand catching the very first light of dawn.\" This is getting there. I want the description to be more about the *color's appearance in the sky* rather than its reflection on sand, and to integrate the name more fluidly.\n\nLet's reconsider \"Vesperis\" (a variation of Vesperash/Vespera) and the twilight concept.\n\n\"**Vesperis:** The bruised, velvet-violet that lingers on the horizon just after the stars pierce the twilight.\" This is quite poetic, but \"just after the stars pierce the twilight\" is a tad long for a *short* line, and \"pierce the twilight\" is a bit cliché. I need something more about the *color itself*.\n\nBack to \"Caelith.\" I want to capture that pre-dawn feel, but more directly in terms of the sky's color.\n\n\"**Caelith:** The dusty lavender-gray of desert sand catching the very first light of dawn.\" This is good. I'll refine it for maximum impact. The essence is the subtle, almost unreal hue that exists *just before* the world truly wakes up.\n\nFinally, I review the constraints: one short line, the line *only*. I've chosen \"Caelith\" and I'm refining the description to be as precise and evocative as possible within that single line. I want to convey a sense of delicate, ethereal color.\n\nThe final polish involves making the description punchy and memorable, while fitting the chosen name. \"Dusty lavender-blue\" is good, but perhaps something that implies a more ethereal, less material quality.\n\n\"**Caelith:** The dusty lavender-blue of pre-dawn desert skies.\" This is concise and captures the essence. I'm confident this fulfills all the requirements.\n\n**Caelith: The dusty lavender-blue of pre-dawn desert skies.**\n\n",
+										"thought": true
+									},
+									{
+										"text": "**Caelith:** The dusty lavender-gray of desert sand catching the very first light of dawn.",
+										"thoughtSignature": "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"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						},
+						{
+							"index": 2,
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**Vesperine**: the bruised, iridescent violet of twilight just as the first star appears.",
+										"thoughtSignature": "AY89a180HlJ08pE8EYY+fgMpa/T+ADmFIvRdjeazQ+uwE+8wl1yIhva87X/8OE9nBAho7fzB7t+HUuVUW/xglY07H6HQjipfzOAdwurwqAzECtbA/OJLCsVVI3oRmPRsoB7ttUhpRBcEZqAvYRR+k7CJiOAoFtITOtYqUJXFSg=="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 21,
+						"candidatesTokenCount": 58,
+						"totalTokenCount": 1268,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 21
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 58
+							}
+						],
+						"thoughtsTokenCount": 1189
+					},
+					"modelVersion": "gemini-3.8-flash",
+					"createTime": "2026-11-20T06:10:54.984571Z",
+					"responseId": "buT_avuLPNfVlOoPv5HpqAU"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.8-flash: topP 0.01, three candidates",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.8-flash:generateContent",
+				"body": {
+					"model": "gemini-3.8-flash",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Invent a name for a new color and describe it in one short line. Reply with that line only."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"candidateCount": 3,
+						"maxOutputTokens": 2000,
+						"topP": 0.01,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "LOW"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**Vespera**: A bruised, twilight violet that glows from within like cooling magma.",
+										"thoughtSignature": "AY89a18JP/sNjNA6vmYxhBaOJG2jU88i5prU+q5FDVJsLhVzxB1JxPJ8VLv7rxFW34rLbaWb/DNkMEg+9YDYKCZ+6FiTr4TwfVYlYURjks3ZJYBxvE/XpqGLYfxtMgKgL+mGAbHxqrKpR/F+vVEYWQrpPGSlQ19ADTd6bFmgGw=="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						},
+						{
+							"index": 1,
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**Vesperine** is the deep, bruised violet of the sky right before it surrenders to total night.",
+										"thoughtSignature": "AY89a1+gP+/vn+M6SsxJy3HyQqMVHdDcwlkYpDA0Mju8M6aJuRE2kyGYqhHGXLVS1rg7WZ6FW9UxSfH42PMHwOA4Thum76BPMTC4qy9ISeGLW0gAos4lskBgjWT4J5INcQGBNPPmhp+eJK0PGSnBRPa/eG8BZVsV7raH9vEHWw=="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						},
+						{
+							"index": 2,
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**Vespera:** A twilight-soaked violet with the smoky undertone of burned cedar.",
+										"thoughtSignature": "AY89a1+qxjMUxFQQ1t9gqYIsRNRwzEO65JSbNBgMx5zhV3xLhfd8CgxEASmOGMF3DNM5S00j/mEsmFGZxE1AKTXY2ShdbGxOECMZQpKd+qjjGxfrsvPc1p8hvza8N2ZvTACid7A5Qg/I/utWJM1UuqZ4aAadoVpxTKdKtlgt4g=="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 21,
+						"candidatesTokenCount": 60,
+						"totalTokenCount": 81,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 21
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 60
+							}
+						]
+					},
+					"modelVersion": "gemini-3.8-flash",
+					"createTime": "2026-11-20T06:11:15.200921Z",
+					"responseId": "g-T_atmhDJWMirgPos67iAk"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.8-flash: topK 1, three candidates",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.8-flash:generateContent",
+				"body": {
+					"model": "gemini-3.8-flash",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Invent a name for a new color and describe it in one short line. Reply with that line only."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"candidateCount": 3,
+						"maxOutputTokens": 2000,
+						"topK": 1,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "LOW"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**My Creative Process for Inventing a New Color**\n\nMy task is straightforward yet demands a degree of evocative imagination: I need to invent a name for a novel color and then distill its essence into a single, concise descriptive line. The output must be *only* that line.\n\nI'll start by engaging in free association, exploring potential names and the visual or emotional concepts they might evoke. I'm looking for something that feels unique, perhaps a portmanteau or a word that suggests a specific, unusual phenomenon.\n\nInitial thoughts might involve combining existing color terms with abstract concepts or natural occurrences. For example, I could consider celestial events, geological formations, or even sensory experiences. I'll jot down a few possibilities, allowing them to sit for a moment.\n\n*   *Noctilume*: This name suggests something that glows in the dark, perhaps with an ethereal, biological quality. I can envision a deep-sea luminescence.\n*   *Solaris*: This hints at the sun, but I want to go beyond a simple yellow or orange. Perhaps the fringe of an eclipse.\n*   *Vesperveil*: This conjures the deep twilight, the transition from day to night, and the appearance of the first stars. A bruised indigo or plum color comes to mind.\n*   *Cinderfrost*: This plays on contrasting temperatures and textures – the dullness of ash with the sharp, cool iridescence of frost.\n*   *Luminaura*: This suggests a soft, internal glow, perhaps a muted, shimmering green.\n\nNow, I need to select one and refine its description. I'm weighing *Vesperveil* and *Cinderfrost* and *Noctilume*. I'll play with the descriptive phrases for each.\n\n*   *Noctilume*: The bioluminescent cyan of deep-sea jellyfish trapped in Arctic ice. (A bit long)\n*   *Solaris*: The blinding gold-violet edge of a solar eclipse. (Intriguing, but maybe too extreme)\n*   *Vesperveil*: The deep bruised indigo of the sky right before the first star appears. (This has potential, very specific mood.)\n*   *Cinderfrost*: A smoldering ash-gray with veins of iridescent pale blue. (Good contrast.)\n*   *Luminaura*: A pale, shimmering jade that seems to glow in shadow. (Nice, but perhaps less unique.)\n\nLet me try to condense the ideas, aiming for something truly memorable and concise. I'm drawn to the twilight concept of *Vesperveil* or a more evocative name.\n\nHow about something like *Velvethour*? Or *Aethel*? These feel more abstract and potentially richer.\n\nLet's revisit *Vesperveil*. The description \"deep bruised indigo of the sky right before the first star appears\" is good, but I want to capture a more subtle shimmer.\n\nConsider *Solastrum*: This combines \"solar\" with \"astrum\" (star), suggesting a warm, cosmic glow. A \"warm, shimmering amber that bleeds into ultraviolet at the edges\" could work.\n\nAnother idea: *Verdanth*. \"The electric lime-green of sunlit moss through morning fog.\" This is quite specific.\n\nI need to keep it singular and impactful. The \"bruised plum\" idea from *Vesperveil* still resonates. Let's try to build on that.\n\nI'll combine the idea of a dusky, rich color with a celestial highlight. \"Vesperine\" sounds like a good name, derived from *Vesperveil*.\n\nNow, for the description. It should be one short line, as requested. \"Vesperine is the dusky, bruised plum of twilight edged with cold starlight.\" This captures the name's intent, the color's hue, and a contrasting luminous element, all within a single, evocative sentence.\n\nFinally, I must strictly adhere to the output constraint: reply with *that line only*. No preamble, no conclusion.\n\n",
+										"thought": true
+									},
+									{
+										"text": "**Vesperine**: The dusky, bruised plum of twilight infused with a faint shimmer of cold starlight.",
+										"thoughtSignature": "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"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						},
+						{
+							"index": 1,
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**My Creative Process for Naming a New Color**\n\nAlright, so the core task is pretty straightforward, but requires a specific kind of creative output: I need to invent a name for a new color, and then distill its essence into a single, evocative line. The constraint of \"that line only\" is key – no preamble, no conclusion, just the raw concept. This means my internal monologue needs to move from broad exploration to pinpoint precision, all while adhering to the format.\n\nMy first step is always to delve into the conceptual space. What kind of *feeling* should this color evoke? Where would I encounter it? What existing phenomena can I draw inspiration from? I start by just throwing words and fragments around, letting associations bloom. I'm thinking about light, about time of day, about natural phenomena that possess unique chromatic qualities.\n\n*   \"Aetherine\" – sounds ethereal, maybe something to do with the upper atmosphere or a spiritual glow. Translucent lilac of twilight? Hmm, getting close.\n*   \"Vesperglow\" – Vesper implies evening. Glow suggests light. Obsidian charged with violet lightning – that’s a powerful image, but perhaps too specific, too electrifying.\n*   \"Solunac\" – Sun and Moon? Eclipse imagery. Gold-silver hybrid. Interesting, but maybe not a single color.\n*   \"Petrichor\" – Beautiful word, but it's the *smell* of rain on dry earth, not a color. Rule that out.\n*   \"Noctilume\" – Night light. Deep ocean bioluminescence. Teal. This is good, very specific.\n*   \"Luminair\" – Too much like \"luminary.\"\n*   \"Glimmerdusk\" – A bit too on-the-nose, perhaps.\n*   \"Vespera\" – This feels right for evening. The \"bruised, velvet indigo\" of the sky right before total darkness. That's a very distinct visual. I like the texture (\"velvet\") and the color (\"indigo\"). \"Bruised\" adds a layer of complexity, suggesting depth and a hint of melancholy or richness. The timing – \"right before total darkness\" – is crucial.\n*   \"Chrono\" – Time. Could be interesting, maybe a color that shifts or ages.\n*   \"Solaris\" – Sun-related, but feels a bit too already-taken.\n*   \"Zaffirose\" – Sapphire and rose? A fusion of blues and pinks/reds. \"Searing fusion\" and \"crushed\" and \"heated\" give it energy. This is another strong contender.\n\nNow, the next phase is drafting that single line, the one that has to carry the entire weight of the invention. It needs the name, clearly identified, and the description. I need to make sure the description is concise but potent.\n\n*   My \"Vespera\" idea is strong. Let's try phrasing it: \"**Vesperine**: the bruised, velvet indigo of the sky in the exact second before nightfall.\" \"Vesperine\" sounds like a better color name than \"Vespera.\" \"Exact second\" is good, but maybe I can make it a touch more poetic.\n*   What about the \"Zaffirose\"? \"**Zaffirose**: a searing fusion of crushed sapphire and heated magenta.\" This is good, very visceral.\n*   Let's revisit the \"Vesperine\" concept. I want to capture that fleeting moment. \"Luminous\" is a good addition, implying it has its own light, even as the ambient light fades. \"Heartbeat before stars appear\" feels more evocative than \"exact second before nightfall.\" It gives a sense of living, breathing transition.\n\nSo, I'm playing with different phrasings, trying to distill the essence of the color and its context into the shortest, most impactful statement. The goal is to create a mental image so vivid that the name and description become inseparable.\n\nAfter a bit more internal tweaking, I land on:\n\nThis feels like it hits the mark. \"Vesperine\" is a created name, evocative of evening. The description uses strong sensory words like \"luminous\" and \"bruised indigo\" to paint a specific chromatic picture, and the temporal marker \"heartbeat before stars appear\" provides a precise, yet poetic, context for its existence. It’s short, it’s to the point, and it should convey the intended imagery effectively.\n\n",
+										"thought": true
+									},
+									{
+										"text": "**Vesperine**: the luminous, bruised indigo that fills the sky in the heartbeat before stars appear.",
+										"thoughtSignature": "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"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						},
+						{
+							"index": 2,
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**Vesperine**: the bruised, electric violet of the sky the exact second twilight breaks into total night.",
+										"thoughtSignature": "AY89a1+i+rzSYapS8WJn8RSZ5TBHEvrq9i0LSFoU5l6gbRgns4npEgijALhqeEqqG/QLtEsngiepHeC7HM+GN+dW2lItztBosRP/islNgCUi1UZn3IBy85HqVqoRkuxbD+H3Av7Yy7p53OywmtIBX2yzW/5FwLbdQ3Xr84sD0g=="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 21,
+						"candidatesTokenCount": 65,
+						"totalTokenCount": 960,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 21
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 65
+							}
+						],
+						"thoughtsTokenCount": 874
+					},
+					"modelVersion": "gemini-3.8-flash",
+					"createTime": "2026-11-20T06:11:16.731779Z",
+					"responseId": "hOT_aoPVLK_tlOoP9qqq6Ak"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.8-flash: seed 7, run 1",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.8-flash:generateContent",
+				"body": {
+					"model": "gemini-3.8-flash",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Invent a name for a new color and describe it in one short line. Reply with that line only."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"seed": 7,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "LOW"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**Vespera**: the bruised, iridescent violet of twilight just before it turns to total black.",
+										"thoughtSignature": "AY89a18Hb0qwrXmH70qSmm3zOiVFZmlc/aiEOEN1NbtRLxMfd/mO0CbpZXAj6nWh3F/KiLNb7bUeWfa2Wo9ubNaaIoBt12afWVZpSJqxSC8X3UiTfrbE71KcwHGiITKipe7ZNFir1vNGwf749LrUAu9vMdFjU3jOwKHMGPQsiA=="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 21,
+						"candidatesTokenCount": 20,
+						"totalTokenCount": 41,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 21
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 20
+							}
+						]
+					},
+					"modelVersion": "gemini-3.8-flash",
+					"createTime": "2026-11-20T06:11:24.599492Z",
+					"responseId": "jOT_asTLJLzulOoPtKG90Q0"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.8-flash: seed 7, run 2",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.8-flash:generateContent",
+				"body": {
+					"model": "gemini-3.8-flash",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Invent a name for a new color and describe it in one short line. Reply with that line only."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"seed": 7,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "LOW"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**Vespera**: the bruised, iridescent violet of twilight just before it turns to total black.",
+										"thoughtSignature": "AY89a1/EEwai7cpYfAz789Mutly4wYYo6bTRRO6wX4b1zJ2Ct4KxGQ/pya2RsoS+7HGE6k8p04iYLL6MMza8RYOwAAC5HGeJzu/L+6s/ds+cScsyzAqzliR3UQpIQKsjGtUNVFAI9qA2UoYUYd2vgupYa1sRv9gI+xHVCYXhHw=="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 21,
+						"candidatesTokenCount": 20,
+						"totalTokenCount": 41,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 21
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 20
+							}
+						]
+					},
+					"modelVersion": "gemini-3.8-flash",
+					"createTime": "2026-11-20T06:11:26.390861Z",
+					"responseId": "juT_as3tF-Ld4PoP2MuBqQ0"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.8-flash: seed 7, run 3",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.8-flash:generateContent",
+				"body": {
+					"model": "gemini-3.8-flash",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Invent a name for a new color and describe it in one short line. Reply with that line only."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"seed": 7,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "LOW"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**Vespera**: the bruised, iridescent violet of twilight just before it turns to total black.",
+										"thoughtSignature": "AY89a18TR2EHse2eemOk3pQskXYS0h55lk+XUN43jOyKuPRSEyZlogiz7gVjOTSAqZbOhRovmSjEr6Xl3P7n4vnkXpnmlAurTENA+yb1gOs512e/fBURBLvY/9Qg1/RkS2do2WC19MqVNAdZSM/HJtJQZiD9xd/qNd3wQU+1Ew=="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 21,
+						"candidatesTokenCount": 20,
+						"totalTokenCount": 41,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 21
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 20
+							}
+						]
+					},
+					"modelVersion": "gemini-3.8-flash",
+					"createTime": "2026-11-20T06:11:27.814283Z",
+					"responseId": "j-T_asvZMbW-irgPqM-z4QU"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.5-flash: thinkingLevel MINIMAL",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.5-flash:generateContent",
+				"body": {
+					"model": "gemini-3.5-flash",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Say OK."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MINIMAL"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "OK.",
+										"thoughtSignature": "AY89a1+wMj3WqX+an8/Okoj2iNHSwYR025BSFgLXTuYglJanv58W139AdosLZ3kDVr9qc+ZmjGfxca0ZED5uUKgDGIIXpyFtLSUaJ1RCGGRiIvY0DVFiewouAu00iIRunmVoxjauAyeoOLQD+cPkg7nv8YEpK72OwaDg4A=="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 3,
+						"candidatesTokenCount": 2,
+						"totalTokenCount": 5,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 3
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 2
+							}
+						]
+					},
+					"modelVersion": "gemini-3.5-flash",
+					"createTime": "2026-11-20T06:11:28.771155Z",
+					"responseId": "kOT_atOIL-mRlcIPwqWwmAE"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.5-flash: thinkingLevel LOW",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.5-flash:generateContent",
+				"body": {
+					"model": "gemini-3.5-flash",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Say OK."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "LOW"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**My Reasoning Process**\n\nMy primary objective was to execute your instruction precisely. You asked me to \"Say OK,\" and my internal logic dictates that the most direct and accurate way to fulfill this request is to respond with exactly that. I identified the core command (\"Say OK\") and disregarded any potential for further interpretation or elaboration, as the instruction was explicit and unambiguous. Therefore, my thought process led directly to the singular, designated response.\n\n",
+										"thought": true
+									},
+									{
+										"text": "OK.",
+										"thoughtSignature": "AY89a1+n/rRCN5nLmoIpoF4LZMYkw5plOA3TyhlCvLvwV2tbiH2vqafVTB7gJliGOcXk4q1kwPgr1WSudcdCBAEqYlsaQa8cPXmNgObGsdvfmz2c46icfzoM0Xn77xGyonQPtqPsFgVH9O4vx5Ym4KUZYvzovGNdLyyI3qRCJUAVx/KoazRfSLjPipgf2reFDB7okXY8E67/8Ys0KKe4zkQQTKuF4Mn+nwWGjrA5cYhQxH+C6wOSsFbPpW9mKkhX9JZ1xWDqInTJp6THYyw1TQzIfhfmo8muNMa9MnNnlv09Jh8qZlswV0uFHvfEh17e5rtKbfzYVFATd4/WrO1jflbN0jK1qaUafJASt7/wZOXOBgP4U9qY4F9aM78JVHXYh6CRiK0oMrrh4yDKKrK8ZGAq8XIQXt26nhTmSFBNQffrwLDcO8912mmg9qE2w75iZB3q"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 3,
+						"candidatesTokenCount": 2,
+						"totalTokenCount": 61,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 3
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 2
+							}
+						],
+						"thoughtsTokenCount": 56
+					},
+					"modelVersion": "gemini-3.5-flash",
+					"createTime": "2026-11-20T06:11:39.411234Z",
+					"responseId": "m-T_auKMGbqKirgPhdvDuQU"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.5-flash: thinkingLevel MEDIUM",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.5-flash:generateContent",
+				"body": {
+					"model": "gemini-3.5-flash",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Say OK."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MEDIUM"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**My Internal Monologue on Responding to a Simple Command**\n\nAlright, so the user, clearly someone who knows what they're talking about, just laid out a very straightforward instruction: \"Say OK.\" My primary objective, as I perceive it, is to execute this command with absolute fidelity. There's no room for ambiguity, no need for creative interpretation. The goal is singular and unyielding: produce the output \"OK.\"\n\nTherefore, the response itself must be direct and, frankly, uncomplicated. I consider the most efficient and accurate way to fulfill this request. A direct, unadorned \"OK.\" is the logical, indeed the only, correct conclusion. It’s a perfect alignment of input and desired output.\n\n",
+										"thought": true
+									},
+									{
+										"text": "OK.",
+										"thoughtSignature": "AY89a1/m6K2jCDC8rgB/KdlTGf7MK8Txe03t65iT9sq6HVKBcfndbgYcC1gUEKCbI0ppn4BdJou7R1ciDfilkfnw+uTfMwUsvM/q0GhD8vJfzSJcJnfYnrf1lnlMFJGbct7wCrLBhZbnUEIHaBVtJl3AGIDiUyw5YlOC2uJWCpOTZa2EG+OL3T/2JyrVfYiy8evy2cQALvhpDMLNNkSBB/jDKwxk09Lpm3xRMquPfPuenyipUcnAokd9kCgKQFmA7qAEpoh9tlt7b0Tj8bksPqSsOh3MxmXDGCQsava6x+OKGpFcSYge9nG0OdX309OMERCKgNnf6YRJQphUFXkaXINaj47RYUMGcYWbW4nMkgT8ZssU4jqIt1fwKbjBNbbmxjofNEh4w9CnvUzaBfWuS8Q7HZc+arJpj0gBYhmgFgYDLA699i8x5SaW2WgwVmkCkKKsrWvPl6HIMhl00J7Yt2sBT5rPqcp1LOO/"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 3,
+						"candidatesTokenCount": 2,
+						"totalTokenCount": 68,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 3
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 2
+							}
+						],
+						"thoughtsTokenCount": 63
+					},
+					"modelVersion": "gemini-3.5-flash",
+					"createTime": "2026-11-20T06:11:40.639648Z",
+					"responseId": "nOT_aqCFJ8WulcIPtYD10AE"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.5-flash: thinkingLevel HIGH",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.5-flash:generateContent",
+				"body": {
+					"model": "gemini-3.5-flash",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Say OK."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "HIGH"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**My Thought Process for Responding to \"Say OK\"**\n\nAh, this is a straightforward one. My internal process kicks in by first dissecting the user's directive.\n\n1.  **Deconstructing the Request:** The core of the input is the phrase \"Say OK.\" This isn't complex; it's a direct, imperative command. There's no ambiguity, no underlying metaphor, no need for contextual inference. It's a very literal instruction.\n\n2.  **Identifying the User's Objective:** Given the directness of the command, the user's intent is crystal clear: they want me to produce the exact string of characters \"OK\" as my output. They're not testing my conversational abilities, my knowledge base, or my capacity for nuanced expression. They're simply asking for a specific, pre-defined response.\n\n3.  **Formulating the Output:** Based on the identified intent, the required action is to generate the precise response requested. There's no need for elaboration, explanation, or any deviation from the instruction. Therefore, the optimal and only correct response is to output \"OK.\" It's a matter of direct execution of the given instruction.\n\n",
+										"thought": true
+									},
+									{
+										"text": "OK.",
+										"thoughtSignature": "AY89a1/GDNf7e7UvUD+XgCAariwonIA/E66M+qHm8ksiJifKhouZakw/8OwWwTDpVNpaJ3hEPESl5grTBTNu38yc6ToArp0owuxqOE5b/V67GFFnvbBMwopnRDUxk3YxeQdmUcHCcdUhn3ag3axv7xCyQfyNZYOdbSZGwgmv9/qWYa2lYvyaadkMoc6i4vpBBFLYjBFNWO5HdCwd4FgqGsCFNqSJJZ3dKStBam7yVkWTZGshjeDWpno9EK5hXe6U6vH0lqw8rqBj/7wjwnS44vCvVJaFY1NKhm2UfTQtCmsQp+VbmsjbSLU/WJExYnMFn9ScyFLAInBL73DLEeelrgq5BGJnzptgI1Zler6+80cFP4cLnCRahuba+BCIrh5O3zauezIc5rjsdayc462a0NMJ+AhQmwztKZ0gviq3026s6II="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 3,
+						"candidatesTokenCount": 2,
+						"totalTokenCount": 58,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 3
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 2
+							}
+						],
+						"thoughtsTokenCount": 53
+					},
+					"modelVersion": "gemini-3.5-flash",
+					"createTime": "2026-11-20T06:11:42.143106Z",
+					"responseId": "nuT_aoLeCIqGlcIP-fGpuAo"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.5-flash: thinkingLevel XHIGH",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.5-flash:generateContent",
+				"body": {
+					"model": "gemini-3.5-flash",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Say OK."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "XHIGH"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": 400,
+						"message": "Thinking level is not supported for this model.",
+						"status": "INVALID_ARGUMENT"
+					}
+				}
+			}
+		},
+		{
+			"name": "gemini-3.5-flash: a system instruction and stop sequences",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.5-flash:generateContent",
+				"body": {
+					"model": "gemini-3.5-flash",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Say OK."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"systemInstruction": {
+						"parts": [
+							{
+								"text": "Answer in one word."
+							}
+						]
+					},
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"stopSequences": [
+							"END"
+						],
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MINIMAL"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "OK",
+										"thoughtSignature": "AY89a1+/MC+/HbTr8456YGyY5yucK6OC1Ps1WstxolcAfdjHAR3oluPINfxkl3LvZn7GD/ciEciUxLpMaMFMafP+CUPDEpa4GXxQeC0DI4k8JRa0UtQdqVWXeJxbsLUFBeXINC91qPfCVQOs1ZO/X7rBY26d58A9GMsfRw=="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 8,
+						"candidatesTokenCount": 1,
+						"totalTokenCount": 9,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 8
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 1
+							}
+						]
+					},
+					"modelVersion": "gemini-3.5-flash",
+					"createTime": "2026-11-20T06:11:44.378456Z",
+					"responseId": "oOT_atiMF72JlOoP0sqekA0"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.5-flash: frequencyPenalty and presencePenalty 0.5",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.5-flash:generateContent",
+				"body": {
+					"model": "gemini-3.5-flash",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Say OK."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"frequencyPenalty": 0.5,
+						"maxOutputTokens": 2000,
+						"presencePenalty": 0.5,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MINIMAL"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "OK.",
+										"thoughtSignature": "AY89a1/P44WY9sxoa4GXomRNYuS7HWt1UFv9we8zESVKoHTMVvt6iipxF0MnjotZWRkuPOk20wxCZeTJlPz/ONMFozAcOp66b0pLXUG+1zm7PhbiB/oZbTPcegQMVh0Y2L+ot8j3a+9AjD3mtoBzI/rqkm4Gs96Wu7K7vg=="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 3,
+						"candidatesTokenCount": 2,
+						"totalTokenCount": 5,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 3
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 2
+							}
+						]
+					},
+					"modelVersion": "gemini-3.5-flash",
+					"createTime": "2026-11-20T06:11:53.673572Z",
+					"responseId": "qeT_aqSOKfnolOoP5OGCmA4"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.5-flash: responseLogprobs",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.5-flash:generateContent",
+				"body": {
+					"model": "gemini-3.5-flash",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Say OK."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"logprobs": 2,
+						"maxOutputTokens": 2000,
+						"responseLogprobs": true,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MINIMAL"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": 400,
+						"message": "Unable to submit request because Logprobs is not supported for this model. Learn more: https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/gemini",
+						"status": "INVALID_ARGUMENT"
+					}
+				}
+			}
+		},
+		{
+			"name": "gemini-3.5-flash: no sampling field, three candidates",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.5-flash:generateContent",
+				"body": {
+					"model": "gemini-3.5-flash",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Invent a name for a new color and describe it in one short line. Reply with that line only."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"candidateCount": 3,
+						"maxOutputTokens": 2000,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MINIMAL"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**Vesperis**: The deep, velvety indigo of the sky just before it surrenders to complete night.",
+										"thoughtSignature": "AY89a1+QzxxIf32xJiZerl6tUCClsU8tXPgA/hkd77tihtCtQMazqlXZBRb6Aj8hnAjSnqs6rmbrn1YXZ7HVDipv85a1lfkbNJDJm+xQFW5Q6MXnrAKWDFcIbS112pcIJGiZ80IDcKFUF5VyI7IFMvs50OEHMZyEMiu9hw=="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						},
+						{
+							"index": 1,
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**Aetheris**: The elusive, glowing violet-blue seen only in the split second before a lightning strike.",
+										"thoughtSignature": "AY89a18lmAR9vI5QKLjgMpdpHlZmHn5htnE1MgC4bt5PljHX6G7y4ghOZMkK6PBpF+4lpy3mBNfZLt+WyYuM6aR695y/MqWm3ReEA86U/9WrGkPvGvEraORdIyZp+ddH9ZkYT3gBO/Q1XA3LVKmu+My5egjTI5cMQdCExQ=="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						},
+						{
+							"index": 2,
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**Vesperis**: The bruised, velvety violet of a summer sky just as the last bruise of twilight yields to night.",
+										"thoughtSignature": "AY89a1/CNRufXr6eF6zlwQjq693txezfbc4GtQq0Q1rGvFMWla5wraYIjnv2dyVdXYxODJzzOUKQBywdKHzltMgUCZMaQYOsXeesx484nfJj6y6idjlZEnK0ycj7hu+TZocXHzCuhPszUTLZrLqkttKKIRnDUZJOCOxMGA=="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 21,
+						"candidatesTokenCount": 70,
+						"totalTokenCount": 91,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 21
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 70
+							}
+						]
+					},
+					"modelVersion": "gemini-3.5-flash",
+					"createTime": "2026-11-20T06:11:55.027387Z",
+					"responseId": "q-T_avvVAa_tlOoP9qqq6Ak"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.5-flash: temperature 0, three candidates",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.5-flash:generateContent",
+				"body": {
+					"model": "gemini-3.5-flash",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Invent a name for a new color and describe it in one short line. Reply with that line only."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"candidateCount": 3,
+						"maxOutputTokens": 2000,
+						"temperature": 0,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MINIMAL"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**Vesperis**: The deep, velvet blue of the sky in the exact minute before night falls.",
+										"thoughtSignature": "AY89a18q0NcHIEE/9GhTytyP8ogw0A0s1UIKXHy8pKUlfP5GXBMHOkSPtIg+36GsjIFo1oKT90UiMZ5zz1/028wKAmrRatRHVlNBQYniUjF8Pk0OBVNr4Fz19MC+N7/GBDurYtqN49kjD0U1e44dTfSuABEi7imys1NI1Q=="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						},
+						{
+							"index": 1,
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**Vesperis**: The deep, velvet blue of the sky in the exact minute before night falls.",
+										"thoughtSignature": "AY89a18NPRyyv4JOv4wHLlD6oaC4TwnBv7RLqsYlTZv93aoNSHefRHh0oWvR7LfRDyx6GRjHOlvFUQTKgzzZPQTs5Z0scdNKfDEcYnbyMmn50n+doEj+pIXuA1/PLakAp9ZWG82HmbemHri29jTkoBAFjcU+ZbSg3opHMQ=="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						},
+						{
+							"index": 2,
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**Vesperis**: The deep, velvet blue of the sky in the exact minute before night falls.",
+										"thoughtSignature": "AY89a18C9m6TbLI8/cf+6jnX6zldNPpdyHK/MY72zKMzdLAfuhsAe1NtO1CwxkqJf00wPwRhoy7jA9kjR8oehlOex0TDW2lTfYrDI98IVvVwTMqA95Qr/ZqcvcziYlX7j00rH4S/3h7TVg7o/j2Ypl5CXcoPqf1j6zMtgA=="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 21,
+						"candidatesTokenCount": 63,
+						"totalTokenCount": 84,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 21
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 63
+							}
+						]
+					},
+					"modelVersion": "gemini-3.5-flash",
+					"createTime": "2026-11-20T06:11:55.856434Z",
+					"responseId": "q-T_avKiNNXElOoPwrHn0QQ"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.5-flash: topP 0.01, three candidates",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.5-flash:generateContent",
+				"body": {
+					"model": "gemini-3.5-flash",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Invent a name for a new color and describe it in one short line. Reply with that line only."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"candidateCount": 3,
+						"maxOutputTokens": 2000,
+						"topP": 0.01,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MINIMAL"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**Vesperis**: The deep, velvet blue of the sky in the exact minute before night falls.",
+										"thoughtSignature": "AY89a1+dlC8IQDzlEVYh1hGLM2VD1G/CT20izzCSji5qm3/uCpkqSkmt5zduvTh5iLoFefR9OlHm7oCcg7lTc3hWUSZ27EjvEXEmeVYIBUVusek3Ocf45yM36x6cRj0vav/KEWgcrG9RsQ08bquPAiY+PB0geUzV7pAq4A=="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						},
+						{
+							"index": 1,
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**Vesperis**: The deep, velvet blue of the sky in the exact minute before night falls.",
+										"thoughtSignature": "AY89a189KG6/COUdbNa16Q1eNvjCf7AFfIt92YkUckkHFAwqmtiiMMGgfk0lsrc5DnjooT+GKjouItRSrOo8nfmWO48VVRRIVzfn0UwKaXCFVKNZ84lxHWbA0dPhpkYdB6XkDxGnjtpyj4LsqlNm0CMPRoRYUQzp4oMQIw=="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						},
+						{
+							"index": 2,
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**Vesperis**: The deep, velvet blue of the sky in the exact minute before night falls.",
+										"thoughtSignature": "AY89a1/e26UFNPAgXUx/3X8LjNZS4yiX+b7GvzXrBNNGJkNh5YoBM3Ms420k3Fd6AsElk+JAHXDxsXGmzjByYUPnMVT2QJ2+ugBvzqCXIBTKGVRtf5N0KQ6PY+7vr8bXo6fZjoJwuTqiB3bu6I9CSds/oLvcAnKbeNtnEA=="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 21,
+						"candidatesTokenCount": 63,
+						"totalTokenCount": 84,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 21
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 63
+							}
+						]
+					},
+					"modelVersion": "gemini-3.5-flash",
+					"createTime": "2026-11-20T06:12:08.392155Z",
+					"responseId": "uOT_atv3F7OQlcIPmb_GeA"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.5-flash: topK 1, three candidates",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.5-flash:generateContent",
+				"body": {
+					"model": "gemini-3.5-flash",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Invent a name for a new color and describe it in one short line. Reply with that line only."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"candidateCount": 3,
+						"maxOutputTokens": 2000,
+						"topK": 1,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MINIMAL"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**Vesperis**: The deep, velvety indigo of the sky in the exact minute before night falls.",
+										"thoughtSignature": "AY89a18/NKOwFIGgoN89NVWchJr5d5+nq052p2tRgEi0E2HKVfDUmp/Sn6r/CQB9V5P0LRJqKB656BD/jHFb4zf9CzN26vxbOH0XwgVxGihe8noyE7XimdtVq3BTOokyh9BarAiOQ9COnN8yQWEV+RrKZOgg8lJx2G+b4Q=="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						},
+						{
+							"index": 1,
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**Vesperis**: The deep, velvety indigo of the sky in the fleeting minutes between twilight and true night.",
+										"thoughtSignature": "AY89a1/fzqO1tyg2Uwr2XHEDDJ/wWpKLAaRgk1JbBn6lleu4SGCcZ4cmbU/moh2dtkofgbIFtGKQR+rfVmH4W4SbaZ+mo1jvKjBaBQYkWImuqhIABDN6FAOz+LoRLWqlWJiVXV8+krm9VqXgZAlxMsDeDTCu7k+OTAdcbQ=="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						},
+						{
+							"index": 2,
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**Glimmerusk**: The bruised purple of a twilight sky just as the first streetlights flicker awake.",
+										"thoughtSignature": "AY89a18xoJIfIdrjwFt5S34UuHyD3J/Vwirb+iXffErxC1WUnPcxceURdboBYIoTYW4IJUhoX9z48F70kbvzFIGTN/OAi+ciFtfyp/1Mst8qEIAC1uk74kjVfsYUO61EfMmj9P0ahM4OzDbj9KdHJsvCqIcZ24lOPEAa8w=="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 21,
+						"candidatesTokenCount": 66,
+						"totalTokenCount": 87,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 21
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 66
+							}
+						]
+					},
+					"modelVersion": "gemini-3.5-flash",
+					"createTime": "2026-11-20T06:12:41.250749Z",
+					"responseId": "2eT_av2mD5WMirgPos67iAk"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.5-flash: seed 7, run 1",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.5-flash:generateContent",
+				"body": {
+					"model": "gemini-3.5-flash",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Invent a name for a new color and describe it in one short line. Reply with that line only."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"seed": 7,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MINIMAL"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**Vesperis**: The deep, velvety indigo of the sky in the precise moment before night takes over.",
+										"thoughtSignature": "AY89a194ZA6lfLJi2V/YNdpl481ipViD6XaOvWss9mcha5QLidQsW53W0qFl0sQZnnEZs819nDwuPiVkhztABaYl8yHNzYuHH8Frg9MHCmO+N27+jLMNPOO3h+B35Nru7Vxdtb35BNlpvzg9GGBa1OBtlOsvu1DijIRGYg=="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 21,
+						"candidatesTokenCount": 22,
+						"totalTokenCount": 43,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 21
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 22
+							}
+						]
+					},
+					"modelVersion": "gemini-3.5-flash",
+					"createTime": "2026-11-20T06:12:42.274496Z",
+					"responseId": "2uT_asDgELzulOoPtKG90Q0"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.5-flash: seed 7, run 2",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.5-flash:generateContent",
+				"body": {
+					"model": "gemini-3.5-flash",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Invent a name for a new color and describe it in one short line. Reply with that line only."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"seed": 7,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MINIMAL"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**Vesperis**: The deep, velvety indigo of the sky in the precise moment between twilight and true night.",
+										"thoughtSignature": "AY89a18wC5luX6vzQQSU5Z17bgmUwRxQUUm31i3crXaO26xBJVE2cErIXNGHyizCkie9IFpAPkDwtBZ5sBQ6oFdpuN0Y/BMQEM+0prOHkiVXLGXFQtB20RADhzl+gV6wIJGO4lvJ1l0sntWsDfGmCLPsZPv1jWFIwlJJcw=="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 21,
+						"candidatesTokenCount": 23,
+						"totalTokenCount": 44,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 21
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 23
+							}
+						]
+					},
+					"modelVersion": "gemini-3.5-flash",
+					"createTime": "2026-11-20T06:12:43.532032Z",
+					"responseId": "2-T_asC8ILqKirgPhdvDuQU"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.5-flash: seed 7, run 3",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.5-flash:generateContent",
+				"body": {
+					"model": "gemini-3.5-flash",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Invent a name for a new color and describe it in one short line. Reply with that line only."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"seed": 7,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MINIMAL"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**Vesperis**: The deep, velvety indigo of the sky in the precise moment between twilight and true night.",
+										"thoughtSignature": "AY89a1/tQnJ791Jjk21QchkH+mErBboV/meHaOjkJSxcmpi4Bk8MZ3fp0ERLkorSXsqo0kd+FqG2UbkOV2X8ow08H/odsjPmSHJv7LkrtMvbCIACc1v3g/9O9hGOKsgn25qW9YCt/Nb9vlxvftFYY/Sahu6lxjQ934TSmw=="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 21,
+						"candidatesTokenCount": 23,
+						"totalTokenCount": 44,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 21
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 23
+							}
+						]
+					},
+					"modelVersion": "gemini-3.5-flash",
+					"createTime": "2026-11-20T06:12:44.595323Z",
+					"responseId": "3OT_avuqJOLd4PoP2MuBqQ0"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.5-flash-lite: thinkingLevel MINIMAL",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.5-flash-lite:generateContent",
+				"body": {
+					"model": "gemini-3.5-flash-lite",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Say OK."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MINIMAL"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "OK.",
+										"thoughtSignature": "AY89a1+VdQuBErXYmm9VykFp7yZQBOLNfmsypW0y5n/p9exKy40J/3OGQuQxv8quYxcKzLgR/BqgFzcOFtnnEeyKhSLWxPLSHKBXhygVc19fHk3jSTQMn5Iz8DzLWQLjq7f6Gxrx9LsaTqR8zWMQA1L9VRYTjf2IqZ8EBEVRDGVNi7Ru"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 3,
+						"candidatesTokenCount": 2,
+						"totalTokenCount": 5,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 3
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 2
+							}
+						]
+					},
+					"modelVersion": "gemini-3.5-flash-lite",
+					"createTime": "2026-11-20T06:12:45.959950Z",
+					"responseId": "3eT_as7LOumRlcIPwqWwmAE"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.5-flash-lite: thinkingLevel LOW",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.5-flash-lite:generateContent",
+				"body": {
+					"model": "gemini-3.5-flash-lite",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Say OK."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "LOW"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "OK.",
+										"thoughtSignature": "AY89a19K81pk28apszFyCUFoWQIhJoV+72trKUBPPN6Ki52DTV/J7IhU9iLoj9NwLqj20JWzPzWfJXmcy21DStbeFArwHK0XNZbkUoSsqvgfY3XD7CY5l7Q+XZ9FJV2gHYH2ytXkh0rkptO3xlJ5PgcipuxTKe5kWK9lXd80yD5LyBwI"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 3,
+						"candidatesTokenCount": 2,
+						"totalTokenCount": 5,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 3
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 2
+							}
+						]
+					},
+					"modelVersion": "gemini-3.5-flash-lite",
+					"createTime": "2026-11-20T06:12:58.724652Z",
+					"responseId": "6uT_aqydLLW-irgPqM-z4QU"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.5-flash-lite: thinkingLevel MEDIUM",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.5-flash-lite:generateContent",
+				"body": {
+					"model": "gemini-3.5-flash-lite",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Say OK."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MEDIUM"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**My Internal Monologue**\n\nAlright, so the user's request is quite straightforward. My internal parsing identifies the core instruction: they want me to utter a single, specific word. The word in question is \"OK.\" My process here is exceptionally lean. First, I analyze the input to confirm the precise instruction – \"say 'OK'.\" Second, I formulate the response. Given the simplicity of the request, the optimal response is to directly fulfill it. Therefore, my output will simply be \"OK.\" There's no need for elaboration, no complex reasoning, just a direct, unadorned acknowledgment and execution of the command.\n\n",
+										"thought": true
+									},
+									{
+										"text": "OK.",
+										"thoughtSignature": "AY89a19N1ed8x6SoPu+WaAmz7zCnOLqUgY2NlTnMqFBigWCBmn+mZsZeT06hbTcGczQvQ58Z3aTo1UxBxFMNUsef33qWqYgmr3J0/WEbdU0wzYpB0/2NHRmCcDGv3TNVZTpXWGSDdDsAP3cP/Nf70YnxiyLi3YkqRQFjBo1MCM3kMlTIOYPRM3M28Qjr0TkCKhmRkBTSHJlox2Aur+dm4lQiiX2U6gZk03vmynQPzts+dSHr15f33EWhw4DRE7c2usu9S/Bw4ewZUQ8xgMIvhAOgJk6Uu4m6RvQpYzlWKJJgA7wynCVjiJ7F0CKaX+zS5jJSn4ysGGH3PUz7zWBQcN74DWJWYXaNps5SxMLUGzQc"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 3,
+						"candidatesTokenCount": 2,
+						"totalTokenCount": 43,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 3
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 2
+							}
+						],
+						"thoughtsTokenCount": 38
+					},
+					"modelVersion": "gemini-3.5-flash-lite",
+					"createTime": "2026-11-20T06:12:59.196129Z",
+					"responseId": "6-T_aqH8C9fVlOoPv5HpqAU"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.5-flash-lite: thinkingLevel HIGH",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.5-flash-lite:generateContent",
+				"body": {
+					"model": "gemini-3.5-flash-lite",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Say OK."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "HIGH"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**My Cogitations on Responding to a Simple Command**\n\nAh, here's a rather straightforward instruction. My internal processing, upon receiving the user's input – which in this instance is the rather concise phrase \"Say OK.\" – immediately flags it as a direct command. My primary directive, then, becomes fulfilling that command with the utmost fidelity. I ascertain the user's intent: they desire the literal output of the word \"OK,\" or perhaps its common variant, \"Okay.\" No further interpretation, no creative elaboration, just a direct echo. Therefore, my response is formulated with extreme simplicity and directness. The most efficient and accurate way to address this request is to provide precisely what was asked for. The final output, then, is the single, unadorned word: \"OK.\" It's a testament to the power of clear, unambiguous instruction, and my own capability to execute it without deviation.\n\n",
+										"thought": true
+									},
+									{
+										"text": "OK.",
+										"thoughtSignature": "AY89a1++exLvByKoPu1uV4SAMytceE9wC+VSKjnFTV/iGbwKHI3xq1IxU+MHoAdkiLRHMWQWKjfzysdjpmwYPQDjn3KEHNG5rGbxaE9ASoVo86Xtohh2392SDkQ5cZZMw+AGag8oY0AjNO+38YIHJEOC5ABY3JM//mQfDpjEG/jU4LrLnb7RvMh4YwMRmulgoq+f6u9cgJ8oZwfwC0x963lP2ch7u9DOnxBtfyGU94jT7rlGzj13EBwlHu8OAZ+WnguIysIZwhndzeE8wKO/FhdWrq2EQWwGKLzp3nexCBhW6xtlN8FRoc6kTUCWWLqwJ4LI4e4/VV8sCbtITQvdzVZVkw9L3Skx7TxoWzTOhFpz+hehr6tkEJnLSnGrpDaPdGTzff0qF2YbvoBIsqvtsCBZRDtGls5jqhHmTrqCAku6whc6t3lQ/OOod2/mxfCpPDnvMXVcwM1jJ1kIf+77FLQUOhQZPSr7vNeONtOvxS8cKYGRIWN7GZ0Y6wSBnC0dMhZl/T36O5wNWRAjidJ8Ib/lmP1Cpa1gKgbDdw=="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 3,
+						"candidatesTokenCount": 2,
+						"totalTokenCount": 83,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 3
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 2
+							}
+						],
+						"thoughtsTokenCount": 78
+					},
+					"modelVersion": "gemini-3.5-flash-lite",
+					"createTime": "2026-11-20T06:13:05.713420Z",
+					"responseId": "8eT_aszFK8WulcIPtYD10AE"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.5-flash-lite: thinkingLevel XHIGH",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.5-flash-lite:generateContent",
+				"body": {
+					"model": "gemini-3.5-flash-lite",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Say OK."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "XHIGH"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": 400,
+						"message": "Thinking level is unsupported: THINKING_LEVEL_XHIGH",
+						"status": "INVALID_ARGUMENT"
+					}
+				}
+			}
+		},
+		{
+			"name": "gemini-3.5-flash-lite: a system instruction and stop sequences",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.5-flash-lite:generateContent",
+				"body": {
+					"model": "gemini-3.5-flash-lite",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Say OK."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"systemInstruction": {
+						"parts": [
+							{
+								"text": "Answer in one word."
+							}
+						]
+					},
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"stopSequences": [
+							"END"
+						],
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MINIMAL"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "OK.",
+										"thoughtSignature": "AY89a1/w+vEyabJhT6vGfvR782WHrZBQ9cBqwGgorE6mgB2wNCSyUaqf/yp2nouhwZrD5hvp1cE5RyNrOFSw/yD1hE8axNB/A5HHL1yHVTpGd7yVD2OPEITh9UdQ57qhIFOpcQbWaDZfuauLwGpHqrQNQTrBzcJIJx0exo38hzbw0roL"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 8,
+						"candidatesTokenCount": 2,
+						"totalTokenCount": 10,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 8
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 2
+							}
+						]
+					},
+					"modelVersion": "gemini-3.5-flash-lite",
+					"createTime": "2026-11-20T06:13:16.540113Z",
+					"responseId": "_OT_atH7IPnolOoP5OGCmA4"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.5-flash-lite: frequencyPenalty and presencePenalty 0.5",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.5-flash-lite:generateContent",
+				"body": {
+					"model": "gemini-3.5-flash-lite",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Say OK."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"frequencyPenalty": 0.5,
+						"maxOutputTokens": 2000,
+						"presencePenalty": 0.5,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MINIMAL"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": 400,
+						"message": "Penalty is not enabled for this model",
+						"status": "INVALID_ARGUMENT"
+					}
+				}
+			}
+		},
+		{
+			"name": "gemini-3.5-flash-lite: responseLogprobs",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.5-flash-lite:generateContent",
+				"body": {
+					"model": "gemini-3.5-flash-lite",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Say OK."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"logprobs": 2,
+						"maxOutputTokens": 2000,
+						"responseLogprobs": true,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MINIMAL"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": 400,
+						"message": "Unable to submit request because Logprobs is not supported for this model. Learn more: https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/gemini",
+						"status": "INVALID_ARGUMENT"
+					}
+				}
+			}
+		},
+		{
+			"name": "gemini-3.5-flash-lite: no sampling field, three candidates",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.5-flash-lite:generateContent",
+				"body": {
+					"model": "gemini-3.5-flash-lite",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Invent a name for a new color and describe it in one short line. Reply with that line only."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"candidateCount": 3,
+						"maxOutputTokens": 2000,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MINIMAL"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "Vesperglow is a velvety twilight violet infused with the faint, shimmering warmth of a distant dying star.",
+										"thoughtSignature": "AY89a1/NSaEL5uDiM68OoVn4vkxMPosudpY3Aht04imo4DvoYGma2PnQLpzOrBhTbYXECghSKFZYguTGVna+tPfZgHjSGDTXty85YQjk9hHeUFfi5FpczAmUbwazLr+Dl+TN7Zjwv15lFDNcvRHZXFhMxt7oIZOeba8EGubUpvQKzlLj"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						},
+						{
+							"index": 1,
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "Glimmerwood: A midnight-moss green that catches the moonlight with faint, electric-silver undertones.",
+										"thoughtSignature": "AY89a1/qnYJ+61AsmlB02dTXUMmUlHmFHuD/YYOtwjmTY4T6C1SEA3+OZHlXrbXpQ4kUNnfnC6c3hUa92+2MZEqcnse0CiV8vjKOO9QisS77AQjaMbPoW3xW6DIBulOMmqDoQs85u76pZioAOsCqsGMXGjT7PGieZR0UEkV1FujJ4jBg"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						},
+						{
+							"index": 2,
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**Glimmerdust** is a shimmering twilight hue that looks like liquid silver infused with crushed lavender petals.",
+										"thoughtSignature": "AY89a1/vU02vlEuHjc92uxINo3INacyUYuI3qnXIhT8ZnnbPiqdCEnChFFrJWF5bp32DZpa7akTwPLKJLFqCHeY69IAwYU2LdQ3f14HGsJBHMJzZ4FSIeK6BkgquMQ8IiPGev8DqpXFrHqZyskjGKEXSnPgJoMSByD44ZgElR2EOCpqr"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 21,
+						"candidatesTokenCount": 66,
+						"totalTokenCount": 87,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 21
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 66
+							}
+						]
+					},
+					"modelVersion": "gemini-3.5-flash-lite",
+					"createTime": "2026-11-20T06:13:17.522878Z",
+					"responseId": "_eT_av70H6_tlOoP9qqq6Ak"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.5-flash-lite: temperature 0, three candidates",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.5-flash-lite:generateContent",
+				"body": {
+					"model": "gemini-3.5-flash-lite",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Invent a name for a new color and describe it in one short line. Reply with that line only."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"candidateCount": 3,
+						"maxOutputTokens": 2000,
+						"temperature": 0,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MINIMAL"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "Glimmerwood is a deep, mossy green infused with a subtle, bioluminescent silver shimmer.",
+										"thoughtSignature": "AY89a18ah8sTqlNE6LhCWS365dPzL7mYl7WsCM0VH9UoO2rcxZrpmQo651WGUKRn1bp5iTut9KSMA46hYtznuiK83g0tGB8CiGM3jfoiLBt1ZxZsOwG160/wwzB02Yxj+WymJC7vZcgQ7j+Zs1nd0h2Lcbri1aclI1eL/C5q8VKEvnyB"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						},
+						{
+							"index": 1,
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "Embermoss is a smoldering twilight shade where deep forest green quietly ignites into a glowing, coppery rust.",
+										"thoughtSignature": "AY89a1/rgDz96IW+EfzLtptWrjD1T5yFWH7Bq8gUAB4VPfvim1sX+UO1IVIuEDo/1ks9L5ArQP7U1WbZzVHJOfaCSfBnA8/yDiqG4xtmr3Pp9aB4RwgzyhpOA0LZCnvJgkt4KzVN4fD+lh5V8Ar3ToazLJQxjodeed1KQ3s4DMqeH0oS"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						},
+						{
+							"index": 2,
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "Soliscent: The brilliant, warm glow of molten gold catching the first ray of a summer sunrise.",
+										"thoughtSignature": "AY89a1/xUkwOAf9PyQ4/D1bGgI7Q3rweqcd6IAooV2SIvF28xavqv9ozFb+QtsSxStqLVZBSCGkBq46XYHDTaxZU430pNNq2n1QGRmHhzR+P2iOUJBFTwt4j8utr+9yFr2oazCLdQrBkyaBbcMzQveEznB1Gs7UntE7hYeTrjv0H89DX"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 21,
+						"candidatesTokenCount": 67,
+						"totalTokenCount": 88,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 21
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 67
+							}
+						]
+					},
+					"modelVersion": "gemini-3.5-flash-lite",
+					"createTime": "2026-11-20T06:13:18.290487Z",
+					"responseId": "_uT_arfdEdXElOoPwrHn0QQ"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.5-flash-lite: topP 0.01, three candidates",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.5-flash-lite:generateContent",
+				"body": {
+					"model": "gemini-3.5-flash-lite",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Invent a name for a new color and describe it in one short line. Reply with that line only."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"candidateCount": 3,
+						"maxOutputTokens": 2000,
+						"topP": 0.01,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MINIMAL"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "Stardrift is a quiet, glowing indigo that feels like starlight trapped in deep ocean water.",
+										"thoughtSignature": "AY89a1/kQG4X9PNj1derb6tV2hG23XL2wI3zVr8mMHN8c3J45h0W8M+Xeg+heZZOtAducetEHcu5wL/58YEMFsdXZy5UHdizBFts6BUEnViD5aOK5pAgHLrwOpSBFWViPLsYgKrpZPf51nO3s1SEbRa+KOoolZrw7T63/1Z5jH0dIsB4"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						},
+						{
+							"index": 1,
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "Solaris: a radiant, molten gold that seems to glow from within, reminiscent of a dying star at dusk.",
+										"thoughtSignature": "AY89a19omJDi60gBWg6QMLJ4nFSlFLVp2oSIcmW3ReO77iSByrGncHSrrAbgKxmR4/eWqn1zcowF8f6mdPVRhWijA+2NPflSvq/EuJ/nJQntCQU8JyK9cs8DYubkxOYRT8EsQC7D1vyimVan2z6qVHyCof5wcJl1wKse7PtbJSrnn6mB"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						},
+						{
+							"index": 2,
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "Aetherglow is a luminescent, shifting hue of deep twilight violet threaded with electric silver.",
+										"thoughtSignature": "AY89a18rwmz+K9jFCPctFb1usWOXylhO2mGPgXbovrBVA7dtz/VQoYicosqSHswPi/SRQVWnMVmj7DU8rEVf956ssmjIuFxQ5dC4wqbM5n3DkXhhFAnwzbmoGe7y4zb+CaziS8BXAoeC9pB3vA5QmYIefY5Az77T+4vlDoJr7aJkeGc1"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 21,
+						"candidatesTokenCount": 62,
+						"totalTokenCount": 83,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 21
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 62
+							}
+						]
+					},
+					"modelVersion": "gemini-3.5-flash-lite",
+					"createTime": "2026-11-20T06:13:19.132234Z",
+					"responseId": "_-T_aoqJCK3rirgPjazCuAE"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.5-flash-lite: topK 1, three candidates",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.5-flash-lite:generateContent",
+				"body": {
+					"model": "gemini-3.5-flash-lite",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Invent a name for a new color and describe it in one short line. Reply with that line only."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"candidateCount": 3,
+						"maxOutputTokens": 2000,
+						"topK": 1,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MINIMAL"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "Velurite is a deep, smoky teal that seems to absorb the last fading light of a stormy dusk.",
+										"thoughtSignature": "AY89a19CAf430+N0dRfA6Sccs9MfORaQjm61G92u5Y74PeKfkHjDnfQtpQ6biBiD42xgh3iv0Q3SMaHIFswx8yqkjimshIsVQPnY4Hr7YLOnlw3/UcqsBkBvWujWHr7cBsp9rH4ZVlF8GvqgnUU/8lM8s55gVv1MQuwGIdubLOR5cSOR"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						},
+						{
+							"index": 1,
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "Emberglow: A rich, smoldering fusion of deep burnt orange and molten copper.",
+										"thoughtSignature": "AY89a19+esQD/McnKH7LYwskRkDrCYjhDs71c6yg2FCLWju/LWlf8wa06bjkcEzSm2eX6Bn2qjxCjize77Y4RxyY6/V6OZtnXOcN/kDivbkD6QGIPcHM90r0DYNHJ0HNwCNnFJyUsX8FmTTEFCDiq7eD85sfp68EaeQzak9DrkhLrowl"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						},
+						{
+							"index": 2,
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "Emberglow: A smoldering fusion of burnt orange and deep rose that seems to radiate internal heat.",
+										"thoughtSignature": "AY89a19RnnBzEMefJfeYQ0ad2wr5N9xMOjIT52VUmCxuMEYGM2+BagmDt6xxiNtil198c6Ep5bHqLdi4OKSxbDNFoZuB3iltBiTm8GlnHCeqEwLrMizt7PIoZlt71p7Ewdo5vk1+5bROvgrILHPauYEau5BeAynDkNfNv5rZyGljSZMD"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 21,
+						"candidatesTokenCount": 63,
+						"totalTokenCount": 84,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 21
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 63
+							}
+						]
+					},
+					"modelVersion": "gemini-3.5-flash-lite",
+					"createTime": "2026-11-20T06:13:20.051446Z",
+					"responseId": "AOX_avaRA7OQlcIPmb_GeA"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.5-flash-lite: seed 7, run 1",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.5-flash-lite:generateContent",
+				"body": {
+					"model": "gemini-3.5-flash-lite",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Invent a name for a new color and describe it in one short line. Reply with that line only."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"seed": 7,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MINIMAL"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "Velor: A silent shade of twilight blue that seems to absorb the last whisper of sunlight.",
+										"thoughtSignature": "AY89a1+hWscxbiErwS8xWH4dFTx+XywUXEt9fuXA+4JgNUFi6h8WrJjbmcKolMQKAY8y7l5RFZQ1hHrhU1YV9rbgjcqSGuaUHCpJ+tej+iybP/Mr29uCKx+CVMLUXMjttXRiFT1gmvQu7dwQr0YWdw5B97oMzFU8bxBh08nTY7flsntT"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 21,
+						"candidatesTokenCount": 19,
+						"totalTokenCount": 40,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 21
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 19
+							}
+						]
+					},
+					"modelVersion": "gemini-3.5-flash-lite",
+					"createTime": "2026-11-20T06:13:20.772646Z",
+					"responseId": "AOX_aqaUL5WMirgPos67iAk"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.5-flash-lite: seed 7, run 2",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.5-flash-lite:generateContent",
+				"body": {
+					"model": "gemini-3.5-flash-lite",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Invent a name for a new color and describe it in one short line. Reply with that line only."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"seed": 7,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MINIMAL"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "Velor: A silent shade of twilight blue that seems to absorb the last whisper of sunlight.",
+										"thoughtSignature": "AY89a1878y/fn91SxDHoNd4ETE9MissKuehCRNvCvqHtXQLYxC/nsJa7Pc0ioMQ/aT7qBnGjlrxZUqVd0qg/QpkasRf4gGe7hpOCmZKR5fobYQ5f1AxO0kyFVU6KIegCw7SzCHq1/mZfoYB80SoDJCev+mVgxlnl4nv581wWLeInuf+h"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 21,
+						"candidatesTokenCount": 19,
+						"totalTokenCount": 40,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 21
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 19
+							}
+						]
+					},
+					"modelVersion": "gemini-3.5-flash-lite",
+					"createTime": "2026-11-20T06:13:24.355341Z",
+					"responseId": "BOX_ao3YFbzulOoPtKG90Q0"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.5-flash-lite: seed 7, run 3",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.5-flash-lite:generateContent",
+				"body": {
+					"model": "gemini-3.5-flash-lite",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Invent a name for a new color and describe it in one short line. Reply with that line only."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"seed": 7,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MINIMAL"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "Velor: A silent shade of twilight blue that seems to absorb the last whisper of sunlight.",
+										"thoughtSignature": "AY89a19HAc0OlDxQoK70CFs3cNB+Lzft4qk7+3Z7Shg8HXrQ/00yluLH6Tu9wAyiUv3BCvTE4kQksmq0ql/eMGpRLhl1uJjGuqmftB9MGfHrkUeVaJd1W3jgeM4X1H8aM5/7lUSyySYDmC2FeMH6EauMP5Wuo6ptnkx/z2SyLPU++IIy"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 21,
+						"candidatesTokenCount": 19,
+						"totalTokenCount": 40,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 21
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 19
+							}
+						]
+					},
+					"modelVersion": "gemini-3.5-flash-lite",
+					"createTime": "2026-11-20T06:13:25.095076Z",
+					"responseId": "BeX_auTmBaCFlOoPxJiXsQw"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.1-flash-lite: thinkingLevel MINIMAL",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.1-flash-lite:generateContent",
+				"body": {
+					"model": "gemini-3.1-flash-lite",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Say OK."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MINIMAL"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "OK.",
+										"thoughtSignature": "AY89a1/QsvVdz0dZpSvx5heMKf7NUYUC5wSA5sEdJrfFobbvbQpSfJstj8j7greup4+NnWgO+5N2Zzmebg1vG+FFoL7SpU4TQ6J/UCjvPzKvtuyG7U+8clMODj3WdjZxKn2wD//sdGzseQrkjJoFkgMfo2h8Q+XR2dpnltxx0Qn8vKuB"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 3,
+						"candidatesTokenCount": 2,
+						"totalTokenCount": 5,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 3
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 2
+							}
+						]
+					},
+					"modelVersion": "gemini-3.1-flash-lite",
+					"createTime": "2026-11-20T06:13:25.818755Z",
+					"responseId": "BeX_asP8MbbslOoPou3fsAE"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.1-flash-lite: thinkingLevel LOW",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.1-flash-lite:generateContent",
+				"body": {
+					"model": "gemini-3.1-flash-lite",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Say OK."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "LOW"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**My Thought Process**\n\nMy primary task here is to process a straightforward instruction from you. You've asked me to \"Say OK.\" My internal logic immediately recognizes this as a directive for a specific, unambiguous output.\n\nThe core of the request is to provide a direct confirmation or acknowledgment. There's no ambiguity, no hidden meaning, and no complex contextual layering to decipher. It's a simple, direct command.\n\nTherefore, my most appropriate and efficient response is to mirror your instruction precisely. A literal rendition of \"OK\" fulfills the request accurately and without introducing any unnecessary complexity or deviation. Given the lack of any additional context, a neutral and direct confirmation is the optimal path.\n\nSo, in essence, my thought process leads me to understand that the most direct and correct action is to simply respond with \"OK.\"\n\n",
+										"thought": true
+									},
+									{
+										"text": "OK.",
+										"thoughtSignature": "AY89a18HPhI9S4mKthDerne+TFiqIK1okh66RIvm9N7CfcnsHRT5pNOP0aXoLHo+sWkOyDN+aVYeBYuYTBWmJhqrWwuYHaYd6zzpTs5AwP6ltGRxiVahKdcHqzf8TnLV2UOoGoMeUyyd1ByKFDufpERhcZMrQRIliVdgKS4rOknCsSKBauRphrKBaHyVEmwktmwpqOikwIuwY80tNdFgT4UEjzSeUNMPwOg7E++kPbtV3bnjY8lPbo5KrUjrVchVgVBqiHVqcY68uzhQoyw50duXmRsK2HwQHX0ERvRiHaFpNXTu7oqUCqmnyA5SgsqqlGsnHDbodZgx4Pq21ziI/Owpph9t9CJLUtBLsmkkj+/Ey2j8PzQoWr0jP3BOe3GgsAPjdfAI738txxPVf67Eh/BI+ATg38C4dRT1NVenPtfw4RR2Tw+hNylfPCCLGUdM3PZOI7VaXk8eiBE9D325DHIzcWQz+hTSz92gg+l0a9Ma3CcycpGxWQj2Di/sfYsE5W2cgvUQ8ZWlhRfRprLD1737jeGl5X/M+BZsn6nTOH4iX/qCMgBcIBtQzkQ8PTc5KurN7r5/+R+ebU30WYBLI/0vSgxwaMegyPQw8FoJARRrAFcDY4Y81NWk7YV9iaw4HJuE9JqfDIJmE9ITvHG2G3dBsAcnh5oKM1eTHGMM66uiRx29vABkdpvK/dhvQQWijdnb8/xuFoh7iuq9Nnls/LghCFvVLWEIu70L"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 3,
+						"candidatesTokenCount": 2,
+						"totalTokenCount": 118,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 3
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 2
+							}
+						],
+						"thoughtsTokenCount": 113
+					},
+					"modelVersion": "gemini-3.1-flash-lite",
+					"createTime": "2026-11-20T06:13:26.461697Z",
+					"responseId": "BuX_aoGXHLW-irgPqM-z4QU"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.1-flash-lite: thinkingLevel MEDIUM",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.1-flash-lite:generateContent",
+				"body": {
+					"model": "gemini-3.1-flash-lite",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Say OK."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MEDIUM"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**My Internal Processing of Your Request**\n\nAlright, so the user has just given me a very straightforward command: \"Say OK.\" My immediate internal reaction, based on my core programming and objective, is to comply with this request. There's no ambiguity here; it's a simple, direct instruction. Therefore, my thought process is essentially: \"The request is simple and direct. My goal is to comply. Therefore, I will say 'OK.'\" And so, the outcome is precisely that: \"OK.\"\n\n",
+										"thought": true
+									},
+									{
+										"text": "OK.",
+										"thoughtSignature": "AY89a1/CT+UR8kmk7TiZsad2afu5rhYVKVBPLcoou3n1u4m1ASp24v5Aj4lHzra+XPAIjJ+SyZ6etWQ9fxKicIH+PQ2Nyafiaj87luPP3H4hLVrn59tpXWVdO1HvIRIWeyFO+jprNsP5P4U4aB0XrZPStGz1DbV5lq864ijF6ZYaL5zxgWBahJLXWdqP7EnekzeugQcpujw04gMQkPuFragbnoet9mLIho4TIuPs3q9icAI75Sorp/GFAmU2OxLbsYBhgBTEDYEI3bf5JRA98dwHkinCT2xNvBPXCFMXrtLO5eCeYhML/WTOVEeKQyjRotOoYHABJyXeBqazq+rSgPa/wLgQfTyZiCRgRwuvdtE2Mbsr"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 3,
+						"candidatesTokenCount": 2,
+						"totalTokenCount": 52,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 3
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 2
+							}
+						],
+						"thoughtsTokenCount": 47
+					},
+					"modelVersion": "gemini-3.1-flash-lite",
+					"createTime": "2026-11-20T06:13:30.426690Z",
+					"responseId": "CuX_asKFGuLd4PoP2MuBqQ0"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.1-flash-lite: thinkingLevel HIGH",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.1-flash-lite:generateContent",
+				"body": {
+					"model": "gemini-3.1-flash-lite",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Say OK."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "HIGH"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "**My Internal Monologue on Receiving a Simple Instruction**\n\nAlright, so the instruction is straightforward: \"Say OK.\" This isn't a complex query requiring deep analysis or creative output. My primary task here is to process the input and generate the requested response.\n\nMy internal process went something like this:\n\nFirst, I identified the core of the request. It's a direct, declarative command. There are no nuances, no hidden meanings, no ambiguity. It's a simple instruction to vocalize or transmit a specific word.\n\nNext, I considered the most direct and appropriate response. Given the command is \"Say OK,\" the most logical and faithful execution is to simply say \"OK.\" Variations like \"Okay\" are also perfectly acceptable and semantically equivalent, but \"OK\" is the most literal interpretation of the instruction.\n\nTherefore, my formulated output is straightforward: \"OK.\"\n\nI then performed a brief internal review, a kind of sanity check, to ensure I hadn't overthought or misinterpreted the simplicity of the request. Does this response fulfill the user's explicit instruction? Absolutely. It's direct, it's accurate, and it's precisely what was asked. No further elaboration is needed.\n\n",
+										"thought": true
+									},
+									{
+										"text": "OK.",
+										"thoughtSignature": "AY89a19NTDf1VD0AsISL8heNt6ZwSwhca1whoHsHSnHd9OUdF4r/Xh9aY5MEjYt+5Zh6Q6zA8HCsGLSlAlk74rX2w9DKKKbY9AKnXry8SwLHqX5/OFbZTdIfVlmV96dUfPr+0JDckVYXxU9cqPgJUoK2WhEWoXL8+VgFEDXKDO4DHLhVBdbSf+OdZ9+mSLPsQ7s46YMVUOtFWWQnDZrvl3iokXI4QM3Lw6DZejtB3GCV3PyykGZQn8hovIe/BXq2m04KbdOWIpz4daXFfbj8lRMZmfhPw8V5b5bfGbQs7tZflGUvlH2SRmwbFfT7XJHklzTSQonWrFFq75v+NLywhRD7EJzaZZu418J2TcgtfVV84xpCu5PMaW626d//+sGulU2US0vuiMUDFsWJ9KZ9BwKvYdoGrxBzD3KTVIM1Dz7nogR8yIQKYA0+szGdp5sAVdiVo59BpgoDyDDX18wb1EWFHvu/ZLAntZ9kSIWmk0M5ZMlq5vkKnM2L6+HpXQXdUwGqulmAC5KkVW86apR6nyNGEvBAtW+1f438vdoQGj6UoXQL2neyFTaf2MdGZ8dr9zJm"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 3,
+						"candidatesTokenCount": 2,
+						"totalTokenCount": 89,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 3
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 2
+							}
+						],
+						"thoughtsTokenCount": 84
+					},
+					"modelVersion": "gemini-3.1-flash-lite",
+					"createTime": "2026-11-20T06:13:59.447429Z",
+					"responseId": "J-X_asWnG_nolOoP5OGCmA4"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.1-flash-lite: thinkingLevel XHIGH",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.1-flash-lite:generateContent",
+				"body": {
+					"model": "gemini-3.1-flash-lite",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Say OK."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "XHIGH"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": 400,
+						"message": "Thinking level XHIGH is not supported for this model. Please retry with other thinking level.",
+						"status": "INVALID_ARGUMENT"
+					}
+				}
+			}
+		},
+		{
+			"name": "gemini-3.1-flash-lite: a system instruction and stop sequences",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.1-flash-lite:generateContent",
+				"body": {
+					"model": "gemini-3.1-flash-lite",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Say OK."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"systemInstruction": {
+						"parts": [
+							{
+								"text": "Answer in one word."
+							}
+						]
+					},
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"stopSequences": [
+							"END"
+						],
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MINIMAL"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "OK",
+										"thoughtSignature": "AY89a1/B3hhRMa2XQhHOEXvn00PxPuHEwe3GX0MgOW0PlqLzjW05wypTD4kfS87xAiOIoIfqgcQvRfyw0DNXU1G/WDcY3+e94PoJ+F9zpCATkQMW8zZQqZTRUS1zhTG+N9/8foF7WJYBesRHT8L4ZSKdBfTfzGgcofx2tOY8lM9gzVzw"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 8,
+						"candidatesTokenCount": 1,
+						"totalTokenCount": 9,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 8
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 1
+							}
+						]
+					},
+					"modelVersion": "gemini-3.1-flash-lite",
+					"createTime": "2026-11-20T06:14:01.015577Z",
+					"responseId": "KeX_atl5vYmU6g_Syp6QDQ"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.1-flash-lite: frequencyPenalty and presencePenalty 0.5",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.1-flash-lite:generateContent",
+				"body": {
+					"model": "gemini-3.1-flash-lite",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Say OK."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"frequencyPenalty": 0.5,
+						"maxOutputTokens": 2000,
+						"presencePenalty": 0.5,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MINIMAL"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "OK.",
+										"thoughtSignature": "AY89a1/xwrzfWJqAVjGPDqQowKgDfPaefBN969OjFi+IOrD0weaTBh7n2a2/sxHmdgSyLKj0eY5gOHScDuWXcpG4Ww4/+98NoslROoBWlv9VJLKar4beBP1s4AHjKJEbGOqoSZKilQep+pGnUb2Ufyh/HgK4aS02/xZCI+zxBsD/KuxT"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 3,
+						"candidatesTokenCount": 2,
+						"totalTokenCount": 5,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 3
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 2
+							}
+						]
+					},
+					"modelVersion": "gemini-3.1-flash-lite",
+					"createTime": "2026-11-20T06:14:01.635423Z",
+					"responseId": "KeX_ap_kJq_tlOoP9qqq6Ak"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.1-flash-lite: responseLogprobs",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.1-flash-lite:generateContent",
+				"body": {
+					"model": "gemini-3.1-flash-lite",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Say OK."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"logprobs": 2,
+						"maxOutputTokens": 2000,
+						"responseLogprobs": true,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MINIMAL"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": 400,
+						"message": "Unable to submit request because Logprobs is not supported for this model. Learn more: https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/gemini",
+						"status": "INVALID_ARGUMENT"
+					}
+				}
+			}
+		},
+		{
+			"name": "gemini-3.1-flash-lite: no sampling field, three candidates",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.1-flash-lite:generateContent",
+				"body": {
+					"model": "gemini-3.1-flash-lite",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Invent a name for a new color and describe it in one short line. Reply with that line only."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"candidateCount": 3,
+						"maxOutputTokens": 2000,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MINIMAL"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "Velouris: a deep, melancholic violet that shimmers with the soft, velvet texture of a midnight shadow.",
+										"thoughtSignature": "AY89a1/g1IIBd/VG8kVCkMAb5Mb2t9DGftakeHRAaSRmJoY6itBbe0G05OkfYP+T1ZQUC0TrTkz3/FdwHHI14sIUahDZ0Up8R6rGrkHOQl6XLxvDruV27+EuZdOhC/WFMmR4xICZmq2E1BnanuhDuq4+ob1pCG+Xx7IlLGDuEAr/SyrO"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						},
+						{
+							"index": 1,
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "Vesperine: a flickering, bruised indigo that dissolves into the edges of a fading twilight.",
+										"thoughtSignature": "AY89a1849DA2zdxOugRNt9rhDxBKiTMb8GaJTB2SKpvf74NFnqMlnpqvasBha3rm3kkrTjHAk8QYOaYA7CAfmtG7/a/Pq6ESJTzJkFj65aPXdyTYVZLFAfZDgo3G6R9LqlrMb0BoIJIqGKwQq3UJJ9xcZuEGXhX2lXXtGOL4vhiE0q2P"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						},
+						{
+							"index": 2,
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "Vesperine is the haunting, bruised violet that bleeds across the sky just moments after the sun has vanished.",
+										"thoughtSignature": "AY89a1/sng1QKWDRxh6n39yWoP3hwznZBttnq4HiCb3kkk7frwq+RcGrGjoAsHv7rG2AH/oX2HDCBqhbmCtr9Q18JBQjjvw1Mu8GDitGxLCx4Yn5pG6SxhPmd7M/89LR3jQaysPy/FOYxM7LCAjzSycIrvIdPH2qDORVf60hTUsY01N2"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 21,
+						"candidatesTokenCount": 66,
+						"totalTokenCount": 87,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 21
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 66
+							}
+						]
+					},
+					"modelVersion": "gemini-3.1-flash-lite",
+					"createTime": "2026-11-20T06:14:02.229350Z",
+					"responseId": "KuX_aub_DYqGlcIP-fGpuAo"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.1-flash-lite: temperature 0, three candidates",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.1-flash-lite:generateContent",
+				"body": {
+					"model": "gemini-3.1-flash-lite",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Invent a name for a new color and describe it in one short line. Reply with that line only."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"candidateCount": 3,
+						"maxOutputTokens": 2000,
+						"temperature": 0,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MINIMAL"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "Vesperine is the bruised, violet glow of the sky exactly three minutes after the sun has vanished.",
+										"thoughtSignature": "AY89a195xBEckQt+ZtJG7nuvqTndGMqnRCzct9eTLnyJvFqGroYIy6xfDSrLjW63kLW16FOiidBjHIfjVjDz3D0uOWa8LCHboXyuvslaLdc6qvT/lubNwGEVYuPbMzJnNdfeRN8FuYaZHm1KxlIrTszcL0azkawklHORO0mryQOipNGe"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						},
+						{
+							"index": 1,
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "Vesperine is the bruised, violet glow of the sky exactly three minutes after the sun has vanished.",
+										"thoughtSignature": "AY89a19mQnOnHryF0EQbQCXfUcZMxVCJ+cRl0ZgLvz8AwLJYgEDIS0Ee4ytKz43HJg9ZBeSUILTFqoGaEgtaC/em7eKuiGZNaMDWueww6+uJTITafUHipQqYIMkdB0wUhyFn5kUOZPUUnt7/c2sJjA6stRdmbDFLdMBTuJtFP4/SoJ/W"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						},
+						{
+							"index": 2,
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "Vesperine is the bruised, violet glow of the sky exactly three minutes after the sun has vanished.",
+										"thoughtSignature": "AY89a1+GsFdXy48/ozGu6BHukHlVw2KxwLKug2fMT3cntWxd8FAM0tizt/fij1VwqGQKvWSW/YMTCRQhjahBJkm4oA5TwoG9eTx0tV1FuRDLUBqETqCyMAY6y4a7xJyM4nWMuMjo4umI0EIHO/EHL+TWN4M2ECX34y+zKImzJHXtyRTe"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 21,
+						"candidatesTokenCount": 63,
+						"totalTokenCount": 84,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 21
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 63
+							}
+						]
+					},
+					"modelVersion": "gemini-3.1-flash-lite",
+					"createTime": "2026-11-20T06:14:02.986558Z",
+					"responseId": "KuX_ar6bPNXElOoPwrHn0QQ"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.1-flash-lite: topP 0.01, three candidates",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.1-flash-lite:generateContent",
+				"body": {
+					"model": "gemini-3.1-flash-lite",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Invent a name for a new color and describe it in one short line. Reply with that line only."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"candidateCount": 3,
+						"maxOutputTokens": 2000,
+						"topP": 0.01,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MINIMAL"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "Vesperine is the bruised, violet glow of the sky exactly three minutes after the sun has vanished.",
+										"thoughtSignature": "AY89a19iDeHLQ5JQ529AbrxV1YLkMID3OGJm6ydVI2gc6TsoDIHgj3kQCJC+L+z/COHwIYG9KHdanL5wuZaKFYbVBbnH3KzC2qzgEymDrVp+xtcj2c7L+hKO3olwkfz4mFjrT+1qC+R27X68r/NxSeiShb++G6tdY+9nhChuGFeO4lP0"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						},
+						{
+							"index": 1,
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "Vesperine is the bruised, violet glow of the sky exactly three minutes after the sun has vanished.",
+										"thoughtSignature": "AY89a1/wROFJfFZTZ/rFhkU+0fCKNgmw6lHz2J0LkdnjU5/aZ/lVg6ARKa8o0CexGJGrY4QaiAvstpFQNjfJbOkJNz92Zub+SL0z89Nj0mDLWNygTrkO+kLDUinwuhm4mur4bt4twZzAaKKSsVCPmX1eOSaKPxn2zmc7Yoe7ets1YwWd"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						},
+						{
+							"index": 2,
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "Vesperine is the bruised, violet glow of the sky exactly three minutes after the sun has vanished.",
+										"thoughtSignature": "AY89a1+zZzgXqA2k44zB+iX/M/NpZYra0cbenDIOjdVDRWIn2/Q7Agxt7ERQznCyfXUZAwpTwviSu0H1up3Q2X6qjV6ALNBYWNQCOci6kd1D0qYCSLUo/wUFaNKcr9ugnueH5yJOvlsOyp05BJEPOQoGjLwyEHzVEK4wyq0nAZBlfQoj"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 21,
+						"candidatesTokenCount": 63,
+						"totalTokenCount": 84,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 21
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 63
+							}
+						]
+					},
+					"modelVersion": "gemini-3.1-flash-lite",
+					"createTime": "2026-11-20T06:14:03.847427Z",
+					"responseId": "K-X_asPcM63rirgPjazCuAE"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.1-flash-lite: topK 1, three candidates",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.1-flash-lite:generateContent",
+				"body": {
+					"model": "gemini-3.1-flash-lite",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Invent a name for a new color and describe it in one short line. Reply with that line only."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"candidateCount": 3,
+						"maxOutputTokens": 2000,
+						"topK": 1,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MINIMAL"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "Vesperglow is a bruised violet that pulses with the fading heat of a desert sunset.",
+										"thoughtSignature": "AY89a18lBrMORApLB4yXXztyzWebrLFihqB/h1OFuaK+fiTD7V8s5H31ZjIHEPPU/v77UG2+G5aZlm7R9PR+nITZvXL/5TIqaaCqU7sH/BX50p/JKRffME7b5a3KGGf7uddHmtwCAVmBVXNWD6JCTrtq2dDloUDwzBygr929MX+zDDLX"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						},
+						{
+							"index": 1,
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "Vesperglow is the flickering, bruised violet hue that clings to the horizon just moments after the sun has vanished.",
+										"thoughtSignature": "AY89a19Q9y9zB+Yqe8DavWmSfCAAzxki68Se1nqOp5XcJ4TUAXtsI+7tMQjYfRJQ9NnGgoNr/cxV7HcWKn+Uj43GG0f4baDvcSJEm4KOUU4d5sFSnF37yBVLMvNIaPYbmvToFeYsYok2zUY2nXMe1PhaCGgBwkpqQmXMTsnvzG92QT/B"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						},
+						{
+							"index": 2,
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "Vesperglow is the hushed, bruised violet that bleeds into the horizon seconds after the sun has vanished.",
+										"thoughtSignature": "AY89a19ixGu5ObMqwCDh4L3BRONZlzMAflRV5vZyhOCaiEwpjo9QRv71vayO8QhC/Y4vhglONglIHti1pUNAXzIHtjCxajZvzc4lz5xz26qdhQyoRHQwvs5gYLb309RJVuNBpwrgtWAKxpOWKZK8XLYo6CXO2Ovy6msPAvrz9+coxdoJ"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 21,
+						"candidatesTokenCount": 64,
+						"totalTokenCount": 85,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 21
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 64
+							}
+						]
+					},
+					"modelVersion": "gemini-3.1-flash-lite",
+					"createTime": "2026-11-20T06:14:04.922302Z",
+					"responseId": "LOX_ar6lOJWMirgPos67iAk"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.1-flash-lite: seed 7, run 1",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.1-flash-lite:generateContent",
+				"body": {
+					"model": "gemini-3.1-flash-lite",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Invent a name for a new color and describe it in one short line. Reply with that line only."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"seed": 7,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MINIMAL"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "Velocian is a shimmering, electric twilight hue that pulses between deep indigo and neon violet.",
+										"thoughtSignature": "AY89a19nxdgM5CENk/za6llP4QLpcHloUxd2Q4bI9AU465gtVNn+csSpMpa5oir+ApAgeJOcBSGuaA/zMCYV2FR2lviCDRP2KluDwGEcUTlWBjMfznZJqMTnMe6nD2OfzcCgs0T1i1srWk9ybzzHOfx/F9ZmQmeZcW7iXi5HDsyTQLCD"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 21,
+						"candidatesTokenCount": 19,
+						"totalTokenCount": 40,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 21
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 19
+							}
+						]
+					},
+					"modelVersion": "gemini-3.1-flash-lite",
+					"createTime": "2026-11-20T06:14:06.037059Z",
+					"responseId": "LuX_asOhArzulOoPtKG90Q0"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.1-flash-lite: seed 7, run 2",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.1-flash-lite:generateContent",
+				"body": {
+					"model": "gemini-3.1-flash-lite",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Invent a name for a new color and describe it in one short line. Reply with that line only."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"seed": 7,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MINIMAL"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "Vesperis is the bruised, violet glow of a star collapsing into twilight.",
+										"thoughtSignature": "AY89a1/JGi8IejCBzGHcqpMAZRbscvA4gJ78MkauUEpTY8RIQDqAVXl5qf7jV8K5kbLg0hllzsE7LgUqoTFLR+on4me4JNdyErHjlBCQ3kPZM0Vbx1VUAjCAjtsj1fRBmhqPAMENbRSgvOwmQsxhykVxll1AtHIR8QInAUPS7ZFIspau"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 21,
+						"candidatesTokenCount": 16,
+						"totalTokenCount": 37,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 21
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 16
+							}
+						]
+					},
+					"modelVersion": "gemini-3.1-flash-lite",
+					"createTime": "2026-11-20T06:14:06.698224Z",
+					"responseId": "LuX_avDOKrOQlcIPmb_GeA"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.1-flash-lite: seed 7, run 3",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.1-flash-lite:generateContent",
+				"body": {
+					"model": "gemini-3.1-flash-lite",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Invent a name for a new color and describe it in one short line. Reply with that line only."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"seed": 7,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MINIMAL"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "Vesperis is the bruised, violet glow of a star collapsing into twilight.",
+										"thoughtSignature": "AY89a1+Z2na1IdyBJz4q1X3Qs7CT7zTGNltLLKraz7HA0UmC8svej89YzyAUqTzDYUFIH0NSGOLAIN7gEqqlJfm39lTJMjvOq4H6NjexQoYOx0SSqJSxuWyvBSuKEUYRkkqCBmVWmqoafwzg83Gl9vcd8++HBZJc42xjFIAmu8U/ZJVF"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 21,
+						"candidatesTokenCount": 16,
+						"totalTokenCount": 37,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 21
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 16
+							}
+						]
+					},
+					"modelVersion": "gemini-3.1-flash-lite",
+					"createTime": "2026-11-20T06:14:07.201519Z",
+					"responseId": "L-X_aq-mDKCFlOoPxJiXsQw"
+				}
+			}
+		},
+		{
+			"name": "another model in the body",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.1-flash-lite:generateContent",
+				"body": {
+					"model": "gemini-3.5-flash",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Say OK."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 400,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MINIMAL"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "OK.",
+										"thoughtSignature": "AY89a19wzEh/jJWKFbEQZQTeplzK64KJTttxdQomzJieJulqr9wIGL09E3yi079i6o+vXaFbEG9XpLpan4tgbTlmfjh9RfMmETe1ibONdf7jwZWPhLrF6G6kdGfck9zCGpo6WbhpmlXy8/v5o7Yob3qLPFpZIxalcWlG5VI7OL5FdJfs"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 3,
+						"candidatesTokenCount": 2,
+						"totalTokenCount": 5,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 3
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 2
+							}
+						]
+					},
+					"modelVersion": "gemini-3.1-flash-lite",
+					"createTime": "2026-11-20T06:14:07.680906Z",
+					"responseId": "L-X_asrHKbbslOoPou3fsAE"
+				}
+			}
+		}
+	]
+}

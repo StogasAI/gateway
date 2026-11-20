@@ -24,21 +24,29 @@ const (
 	// for each provider, so this one runs those requests while billing, routing and the adapter
 	// keep ProviderAWS.
 	CoreProviderAWSChatCompletions schemas.ModelProvider = "aws-bedrock-chat-completions"
+	// CoreProviderGoogleCloudGenerateContent sends a Google Cloud deployment of Gemini to Agent
+	// Platform's generateContent API through core's Gemini provider, as
+	// CoreProviderAWSChatCompletions does for AWS.
+	CoreProviderGoogleCloudGenerateContent schemas.ModelProvider = "google-cloud-agent-platform-generate-content"
 
 	canonicalAuthHeader = "authorization"
 )
 
 // CatalogProvider is the catalog provider that a core provider runs requests for.
 func CatalogProvider(core schemas.ModelProvider) schemas.ModelProvider {
-	if core == CoreProviderAWSChatCompletions {
+	switch core {
+	case CoreProviderAWSChatCompletions:
 		return ProviderAWS
+	case CoreProviderGoogleCloudGenerateContent:
+		return ProviderGoogleCloud
 	}
 	return core
 }
 
 // UsesClaudeWire reports whether a provider serves the model over Anthropic's Messages API, which
 // bills cache writes by duration and takes a manual thinking budget. Azure, AWS and Google Cloud
-// serve Claude over it and other models in OpenAI's format.
+// serve Claude over it. Azure and AWS serve other models in OpenAI's format, and Google Cloud
+// serves Gemini in its own.
 func UsesClaudeWire(provider schemas.ModelProvider, modelID string) bool {
 	switch provider {
 	case schemas.Anthropic:

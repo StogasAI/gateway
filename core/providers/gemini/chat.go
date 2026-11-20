@@ -389,6 +389,26 @@ func (response *GenerateContentResponse) ToBifrostChatResponse() *schemas.Bifros
 type GeminiStreamState struct {
 	nextToolCallIndex int
 	hadToolCalls      bool // true if any tool calls were seen in this stream
+	roleSent          bool // true once a delta carried the role
+	// A reasoning detail keeps one index across chunks, as clients join a stream's details by
+	// index: the thought text of every chunk takes thoughtIndex, and each signature the next one.
+	reasoningDetails int
+	thoughtIndex     int
+	thoughtOpened    bool
+}
+
+// thoughtDetailIndex returns the index of the stream's thought text.
+func (s *GeminiStreamState) thoughtDetailIndex() int {
+	if !s.thoughtOpened {
+		s.thoughtIndex, s.thoughtOpened = s.nextReasoningDetailIndex(), true
+	}
+	return s.thoughtIndex
+}
+
+// nextReasoningDetailIndex returns the index of a new reasoning detail.
+func (s *GeminiStreamState) nextReasoningDetailIndex() int {
+	s.reasoningDetails++
+	return s.reasoningDetails - 1
 }
 
 // NewGeminiStreamState returns initialised stream state for one streaming response.
@@ -564,13 +584,15 @@ func (response *GenerateContentResponse) toBifrostChatCompletionStreamDelta(stat
 
 	// Process content parts
 	if candidate.Content != nil && len(candidate.Content.Parts) > 0 {
-		// Set role from the first chunk (Gemini uses "model" for assistant)
-		if candidate.Content.Role != "" {
+		// Set role from the first chunk (Gemini uses "model" for assistant). Gemini repeats it in
+		// every chunk, and Chat Completions sends it once.
+		if candidate.Content.Role != "" && !state.roleSent {
 			role := candidate.Content.Role
 			if role == string(RoleModel) {
 				role = string(schemas.ChatMessageRoleAssistant)
 			}
 			delta.Role = &role
+			state.roleSent = true
 		}
 
 		var textContent string
@@ -584,9 +606,16 @@ func (response *GenerateContentResponse) toBifrostChatCompletionStreamDelta(stat
 			}
 			switch {
 			case part.Text != "" && part.Thought:
-				// Thought/reasoning content - add to reasoning details
+				// Thought/reasoning content - add to reasoning details. Thought parts of one chunk
+				// join, since a delta holds each index once.
+				index := state.thoughtDetailIndex()
+				if last := len(reasoningDetails) - 1; last >= 0 && reasoningDetails[last].Index == index {
+					joined := *reasoningDetails[last].Text + part.Text
+					reasoningDetails[last].Text = &joined
+					break
+				}
 				reasoningDetails = append(reasoningDetails, schemas.ChatReasoningDetails{
-					Index: len(reasoningDetails),
+					Index: index,
 					Type:  schemas.BifrostReasoningDetailsTypeText,
 					Text:  &part.Text,
 				})
@@ -641,7 +670,7 @@ func (response *GenerateContentResponse) toBifrostChatCompletionStreamDelta(stat
 						}
 					}
 					reasoningDetails = append(reasoningDetails, schemas.ChatReasoningDetails{
-						Index:     len(reasoningDetails),
+						Index:     state.nextReasoningDetailIndex(),
 						Type:      schemas.BifrostReasoningDetailsTypeEncrypted,
 						Signature: &thoughtSig,
 						ID:        schemas.Ptr(fmt.Sprintf("tool_call_%s", baseCallID)),
@@ -686,7 +715,7 @@ func (response *GenerateContentResponse) toBifrostChatCompletionStreamDelta(stat
 			if len(part.ThoughtSignature) > 0 && part.FunctionCall == nil {
 				thoughtSig := base64.StdEncoding.EncodeToString(part.ThoughtSignature)
 				reasoningDetails = append(reasoningDetails, schemas.ChatReasoningDetails{
-					Index:     len(reasoningDetails),
+					Index:     state.nextReasoningDetailIndex(),
 					Type:      schemas.BifrostReasoningDetailsTypeEncrypted,
 					Signature: &thoughtSig,
 				})

@@ -318,6 +318,8 @@ func chatProviderBody(ctx *schemas.BifrostContext, request *schemas.BifrostChatR
 		return restoreStrictTools(body, hosting, strict)
 	case schemas.OpenAI, catalog.CoreProviderAWSChatCompletions:
 		return prepareOpenAIChatBody(ctx, request, streaming)
+	case catalog.CoreProviderGoogleCloudGenerateContent:
+		return prepareGeminiChatBody(ctx, request)
 	case schemas.Azure:
 		if schemas.IsAnthropicModelFamily(ctx, request.Model) {
 			return anthropicprovider.BuildAnthropicChatRequestBody(ctx, request, anthropicprovider.AnthropicRequestBuildConfig{

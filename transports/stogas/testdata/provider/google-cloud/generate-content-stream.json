@@ -1,0 +1,185 @@
+{
+	"shows": "On Agent Platform, Gemini 3.8 Flash streams summaries of its thoughts as parts marked thought, then the answer, and its last event's usageMetadata counts thoughtsTokenCount apart from candidatesTokenCount, both within totalTokenCount. Without includeThoughts a reply holds no thoughts and still counts them.",
+	"recorded": "2026-11-20",
+	"exchanges": [
+		{
+			"name": "stream with thought summaries",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.8-flash:streamGenerateContent?alt=sse",
+				"body": {
+					"model": "gemini-3.8-flash",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "What is 17*23? Answer with the number only."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 4000,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MEDIUM"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"events": [
+					{
+						"candidates": [
+							{
+								"content": {
+									"role": "model",
+									"parts": [
+										{
+											"text": "**Calculating Target Value**\n\nI've successfully determined the target value. The calculation for $17 \\times 23$ yielded 391, and I've explored an alternative algebraic approach as well, confirming the result.\n\n",
+											"thought": true
+										}
+									]
+								}
+							}
+						],
+						"usageMetadata": {
+							"trafficType": "ON_DEMAND"
+						},
+						"modelVersion": "gemini-3.8-flash",
+						"createTime": "2026-11-20T06:15:02.378746Z",
+						"responseId": "ZuX_avqOF-7AsbwP9_3D8QY"
+					},
+					{
+						"candidates": [
+							{
+								"content": {
+									"role": "model",
+									"parts": [
+										{
+											"text": "391"
+										}
+									]
+								}
+							}
+						],
+						"usageMetadata": {
+							"trafficType": "ON_DEMAND"
+						},
+						"modelVersion": "gemini-3.8-flash",
+						"createTime": "2026-11-20T06:15:02.378746Z",
+						"responseId": "ZuX_avqOF-7AsbwP9_3D8QY"
+					},
+					{
+						"candidates": [
+							{
+								"content": {
+									"role": "model",
+									"parts": [
+										{
+											"text": "",
+											"thoughtSignature": "AY89a1+Ii/sabNNf9QOTcvViTxuxdS4f28rpWbi68z3OaVO8VnRTOHs5+E6ruLTyGupkwNQCBVX/0XY5R11zB6sBjwF+5I5CgUfP35V5GfWAsvW7pBHmD2gsW4HzEkxscQB0IWfBobHcOZQiGQxt1GfUaPbg7IEXEduaYY/7YYRGfLZOOihZTiiZYv5OSluQ4OUdrmetzYSI1IRn3yFU2qlDUMlI5vP7fpYZlRAWugFFMFag2tpLWZmNOOAtJtiO0ARUGCA7KZ3P7h0+Lr0dtd8SCUqvrfJUcIwAYf44Bkl8hFJDCS5bpWGZihJzeEmVF5qeRSHFrmtjZsgYbnqHS103ZjjtTageDuzSq9x9lX/O2SARcTZh72Ix5pkeo5YRYc9Xw/k94J5um+hwKBB9f6tX9ZvP+WReK+BHkpiebhzCxY0ncVwVNiTCk8mgFuwkJENQROjK2Ie5yYstAoSiFN/gPDkF9GgsnrId3QFJOIoSsauWpl1uEOlHCndrGvjvvaWMvBkZlLDxm4JGUWKC9aiTCpygD0jH3mrxFM+dFoKqynvs9axbk9skWR0IpjaoGdIFXOrlH7a0UJl3hM4JpPf966Mhd2VZrK1in1Oyye8ONwOXSVWFZpneXB4Cknoh6ngS+yTOJDqw/6s+DXu4mVPhWXgaVFtMf7fhVL5TQW+3bBoTef35WxzdPKhbn6a+BTmFlRus7OXu4kk/xbWzUPlMozn7+4QqYTidE5l9OYSqwUbZSVMYAnlXRsRGVfTvTWPPfl6B"
+										}
+									]
+								},
+								"finishReason": "STOP"
+							}
+						],
+						"usageMetadata": {
+							"promptTokenCount": 15,
+							"candidatesTokenCount": 3,
+							"totalTokenCount": 172,
+							"trafficType": "ON_DEMAND",
+							"promptTokensDetails": [
+								{
+									"modality": "TEXT",
+									"tokenCount": 15
+								}
+							],
+							"candidatesTokensDetails": [
+								{
+									"modality": "TEXT",
+									"tokenCount": 3
+								}
+							],
+							"thoughtsTokenCount": 154
+						},
+						"modelVersion": "gemini-3.8-flash",
+						"createTime": "2026-11-20T06:15:02.378746Z",
+						"responseId": "ZuX_avqOF-7AsbwP9_3D8QY"
+					}
+				]
+			}
+		},
+		{
+			"name": "reply without thoughts",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.8-flash:generateContent",
+				"body": {
+					"model": "gemini-3.8-flash",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "What is 17*23? Answer with the number only."
+								}
+							],
+							"role": "user"
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 4000,
+						"thinkingConfig": {
+							"includeThoughts": false,
+							"thinkingLevel": "MEDIUM"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "391",
+										"thoughtSignature": "AY89a1/8VfwHDWadmOJJ1cGDhCYpuilZufwA75zX4fy33qH5TAv8CQ+X9lUCiJn6CI+72rKl3nfOFq3Ras/HcL55NvPRNYKQAOeFxwhkR+mgOpZtjqjZs1MiJiAV3jXmUqQ4LzBOA8fe9KZFEU/m+4XlQFuNl+x9OLbROE81ffOpDFZUajs3Mlsrv5Ojdbg0SglMawYw40ODHBQhGE1l3MAIORM6NCFwk1/p2NTKMwA0vpa+4tYXxiET0IykmLjtsvMNscS21+3EcN+D2keIVJ7FW50PSX/zyuuFELtDZ0oZ6uXRBOJ5L5BzGMomIbVnzoSzUTWrLa3pDY3vu0vCGiXk4dQT155LJNceIq4XJFQxfo0wImjf7ZZv5bmmlfFp4R7s"
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 15,
+						"candidatesTokenCount": 3,
+						"totalTokenCount": 94,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 15
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 3
+							}
+						],
+						"thoughtsTokenCount": 76
+					},
+					"modelVersion": "gemini-3.8-flash",
+					"createTime": "2026-11-20T06:15:04.819076Z",
+					"responseId": "aOX_aoT_Mf_bl7oP4s_QyQQ"
+				}
+			}
+		}
+	]
+}

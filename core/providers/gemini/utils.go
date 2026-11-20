@@ -2619,6 +2619,20 @@ func convertBifrostMessagesToGemini(messages []schemas.ChatMessage, allowedImage
 			}
 		}
 
+		// Gemini signs the last text part of a reply that calls no function, and the reply's
+		// conversion carries that signature in an encrypted reasoning detail that names no tool
+		// call. Gemini does not require it back, but reasons better with it.
+		if message.ChatAssistantMessage != nil {
+			if signature := textThoughtSignature(message.ChatAssistantMessage.ReasoningDetails); signature != nil {
+				for i := len(parts) - 1; i >= 0; i-- {
+					if parts[i].Text != "" && !parts[i].Thought {
+						parts[i].ThoughtSignature = signature
+						break
+					}
+				}
+			}
+		}
+
 		// Handle tool calls for assistant messages
 		if message.ChatAssistantMessage != nil && message.ChatAssistantMessage.ToolCalls != nil {
 			for _, toolCall := range message.ChatAssistantMessage.ToolCalls {
@@ -2723,6 +2737,23 @@ func convertBifrostMessagesToGemini(messages []schemas.ChatMessage, allowedImage
 	}
 
 	return contents, systemInstruction, nil
+}
+
+// textThoughtSignature returns the signature of an assistant message's text: the last encrypted
+// reasoning detail with a signature and without the ID of a tool call, as ToBifrostChatResponse
+// and the stream's conversion return it.
+func textThoughtSignature(details []schemas.ChatReasoningDetails) []byte {
+	var signature []byte
+	for _, detail := range details {
+		if detail.Type != schemas.BifrostReasoningDetailsTypeEncrypted || detail.Signature == nil ||
+			detail.ID != nil && strings.HasPrefix(*detail.ID, "tool_call_") {
+			continue
+		}
+		if decoded, err := base64.StdEncoding.DecodeString(*detail.Signature); err == nil && len(decoded) > 0 {
+			signature = decoded
+		}
+	}
+	return signature
 }
 
 func convertSystemChatMessageToGeminiUserContent(message schemas.ChatMessage) Content {

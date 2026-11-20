@@ -466,11 +466,17 @@ func (r *ResolvedRequest) ToBifrost(ctx *schemas.BifrostContext) (*schemas.Bifro
 	}
 }
 
-// CoreProvider is the core provider that runs the request: Provider, or the one that sends an AWS
-// deployment of a model other than Claude to Bedrock's Chat Completions API.
+// CoreProvider is the core provider that runs the request: Provider, or the one that sends a cloud
+// deployment of a model other than Claude in that model's format.
 func (r *ResolvedRequest) CoreProvider() schemas.ModelProvider {
-	if r.Provider == ProviderAWS && !UsesClaudeWire(r.Provider, r.Deployment.ModelID) {
+	if UsesClaudeWire(r.Provider, r.Deployment.ModelID) {
+		return r.Provider
+	}
+	switch r.Provider {
+	case ProviderAWS:
 		return CoreProviderAWSChatCompletions
+	case ProviderGoogleCloud:
+		return CoreProviderGoogleCloudGenerateContent
 	}
 	return r.Provider
 }
@@ -496,6 +502,11 @@ func (r *ResolvedRequest) takesPromptCacheKey() bool {
 // Azure in the OpenAI model format.
 func (r *ResolvedRequest) RunsOpenAIModel() bool {
 	return r.Provider == schemas.OpenAI || r.Provider == schemas.Azure && r.Deployment.Upstream.ModelFormat == "OpenAI"
+}
+
+// RunsGeminiModel reports whether the deployment runs Gemini, which takes Gemini's own API.
+func (r *ResolvedRequest) RunsGeminiModel() bool {
+	return r.CoreProvider() == CoreProviderGoogleCloudGenerateContent
 }
 
 // Retries is how many more times this pair may be called after a failure

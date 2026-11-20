@@ -81,6 +81,7 @@ func NewGeminiProvider(config *schemas.ProviderConfig, logger schemas.Logger) *G
 	client := &fasthttp.Client{
 		ReadTimeout:         requestTimeout,
 		WriteTimeout:        requestTimeout,
+		MaxResponseBodySize: config.NetworkConfig.MaxResponseBodySize,
 		MaxConnsPerHost:     config.NetworkConfig.MaxConnsPerHost,
 		MaxIdleConnDuration: time.Second * time.Duration(config.NetworkConfig.KeepAliveTimeoutInSeconds),
 		MaxConnWaitTimeout:  requestTimeout,
@@ -92,6 +93,9 @@ func NewGeminiProvider(config *schemas.ProviderConfig, logger schemas.Logger) *G
 	client = providerUtils.ConfigureProxy(client, config.ProxyConfig, logger)
 	client = providerUtils.ConfigureDialer(client, config.NetworkConfig.AllowPrivateNetwork)
 	client = providerUtils.ConfigureTLS(client, config.NetworkConfig, logger)
+	if config.NetworkConfig.Transport != nil {
+		client.Transport = config.NetworkConfig.Transport
+	}
 	streamingClient := providerUtils.BuildStreamingClient(client)
 
 	// Set default BaseURL if not provided
@@ -116,6 +120,33 @@ func (provider *GeminiProvider) GetProviderKey() schemas.ModelProvider {
 	return providerUtils.GetProviderName(schemas.Gemini, provider.customProviderConfig)
 }
 
+// generateContentURL is the URL of a generateContent call: a full URL that the context names,
+// such as an Agent Platform endpoint, or the path on the base URL.
+func (provider *GeminiProvider) generateContentURL(ctx *schemas.BifrostContext, defaultPath string, requestType schemas.RequestType) string {
+	path, isCompleteURL := providerUtils.GetRequestPath(ctx, defaultPath, provider.customProviderConfig, requestType)
+	if isCompleteURL {
+		return path
+	}
+	return provider.networkConfig.BaseURL + path
+}
+
+// signRequest sets the headers of the context's body signer, if any, for the exact body sent.
+// They go on last, so a signer's Authorization replaces any other credential.
+func signRequest(ctx *schemas.BifrostContext, req *fasthttp.Request, body []byte) *schemas.BifrostError {
+	signer := providerUtils.ContextBodySigner(ctx)
+	if signer == nil {
+		return nil
+	}
+	headers, bifrostErr := signer(body)
+	if bifrostErr != nil {
+		return bifrostErr
+	}
+	for name, value := range headers {
+		req.Header.Set(name, value)
+	}
+	return nil
+}
+
 // completeRequest handles the common HTTP request pattern for Gemini API calls.
 // When large response streaming is activated (BifrostContextKeyLargeResponseMode set in ctx),
 // returns (nil, nil, latency, nil) — callers must check the context flag.
@@ -135,7 +166,7 @@ func (provider *GeminiProvider) completeRequest(ctx *schemas.BifrostContext, mod
 	providerUtils.SetExtraHeaders(ctx, req, provider.networkConfig.ExtraHeaders, nil)
 
 	// Use Gemini's generateContent endpoint
-	req.SetRequestURI(provider.networkConfig.BaseURL + providerUtils.GetPathFromContext(ctx, "/models/"+model+endpoint))
+	req.SetRequestURI(provider.generateContentURL(ctx, "/models/"+model+endpoint, schemas.ChatCompletionRequest))
 	req.Header.SetMethod(http.MethodPost)
 	req.Header.SetContentType("application/json")
 	setGeminiAuthHeader(req, key.Value.GetValue())
@@ -146,6 +177,9 @@ func (provider *GeminiProvider) completeRequest(ctx *schemas.BifrostContext, mod
 	if !usedLargePayloadBody {
 		jsonBody = normalizeRawGenerateContentBody(ctx, jsonBody, provider.GetProviderKey(), model)
 		req.SetBody(jsonBody)
+		if bifrostErr := signRequest(ctx, req, jsonBody); bifrostErr != nil {
+			return nil, nil, 0, nil, bifrostErr
+		}
 	}
 
 	// Send the request with optional large response streaming
@@ -461,7 +495,7 @@ func (provider *GeminiProvider) ChatCompletionStream(ctx *schemas.BifrostContext
 	return HandleGeminiChatCompletionStream(
 		ctx,
 		provider.streamingClient,
-		provider.networkConfig.BaseURL+providerUtils.GetPathFromContext(ctx, "/models/"+request.Model+":streamGenerateContent?alt=sse"),
+		provider.generateContentURL(ctx, "/models/"+request.Model+":streamGenerateContent?alt=sse", schemas.ChatCompletionStreamRequest),
 		jsonData,
 		headers,
 		provider.networkConfig.ExtraHeaders,
@@ -521,6 +555,10 @@ func HandleGeminiChatCompletionStream(
 	if !providerUtils.ApplyLargePayloadRequestBody(ctx, req) {
 		jsonBody = normalizeRawGenerateContentBody(ctx, jsonBody, providerName, model)
 		req.SetBody(jsonBody)
+		if bifrostErr := signRequest(ctx, req, jsonBody); bifrostErr != nil {
+			defer providerUtils.ReleaseStreamingResponse(ctx, resp)
+			return nil, bifrostErr
+		}
 	}
 
 	startTime := time.Now()

@@ -1,0 +1,4 @@
+groups:
+  authorId: google
+  name: 'Gemini 4'
+  parentIds: [gemini]

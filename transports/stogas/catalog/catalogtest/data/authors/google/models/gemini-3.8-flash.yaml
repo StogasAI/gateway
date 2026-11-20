@@ -1,0 +1,23 @@
+models:
+  authorId: google
+  name: Gemini 3.8 Flash
+  groupIds: [gemini-3, gemini-flash]
+  contextWindowTokens: 1048576
+  maxOutputTokens: 65536
+  inputModalities: [text, image, audio, video]
+  outputModalities: [text]
+  # Thinking cannot be turned off. Reviewed 2026-11-20: https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-8-flash
+  reasoning: required
+  reasoningEfforts: [low, medium, high]
+  reasoningDefault: medium
+  openWeights: false
+  # Agent Platform refuses penalties, and three candidates at temperature 0, top_p 0.01 or top_k 1
+  # all differ (capture google-cloud/generate-content-request-fields).
+  sampling:
+    temperature: false
+    topP: false
+    topK: false
+    frequencyPenalty: false
+    presencePenalty: false
+  releaseDate: 2026-09-02
+  succeeds: gemini-3.5-flash

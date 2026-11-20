@@ -1,0 +1,4 @@
+groups:
+  authorId: google
+  name: 'Gemini Flash'
+  parentIds: [gemini]

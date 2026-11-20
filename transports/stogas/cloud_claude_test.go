@@ -125,13 +125,18 @@ func resolveCloudState(t *testing.T, path, deploymentID, extra string) *State {
 	return state
 }
 
-// resolveCloudRequest routes a request for Claude at the deployment's provider with a credential
-// that serves only that deployment.
+// resolveCloudRequest routes a request for the model of a deployment of AWS, Azure or Google Cloud
+// at the deployment's provider with a credential that serves only that deployment.
 func resolveCloudRequest(t *testing.T, path, deploymentID, extra string) (*State, error) {
 	t.Helper()
-	provider, rest, _ := strings.Cut(deploymentID, "-claude")
+	var provider string
+	for _, cloud := range []schemas.ModelProvider{catalog.ProviderAWS, schemas.Azure, catalog.ProviderGoogleCloud} {
+		if strings.HasPrefix(deploymentID, string(cloud)+"-") {
+			provider = string(cloud)
+		}
+	}
 	// The model is the deployment ID without its provider and its offering or geography.
-	model := "claude" + rest
+	model := strings.TrimPrefix(deploymentID, provider+"-")
 	for _, suffix := range []string{"-anthropic-hosted", "-us", "-eu", "-jp", "-au", "-in", "-ca"} {
 		model = strings.TrimSuffix(model, suffix)
 	}
@@ -412,6 +417,24 @@ func TestCloudClaudeRequestReachesEachOfferingWithItsOwnSignIn(t *testing.T) {
 			headers:    map[string]string{}, auth: map[string]string{"Authorization": "Bearer ya29.test"},
 		},
 		{
+			name: "Gemini global", provider: catalog.ProviderGoogleCloud, secret: googleSecret(t, ""),
+			deployment: "google-cloud-gemini-3.8-flash",
+			url:        "https://aiplatform.googleapis.com/v1/projects/stogas-test/locations/global/publishers/google/models/gemini-3.8-flash:generateContent",
+			headers:    map[string]string{}, auth: map[string]string{"Authorization": "Bearer ya29.test"},
+		},
+		{
+			name: "Gemini eu streaming", provider: catalog.ProviderGoogleCloud, secret: googleSecret(t, ""),
+			deployment: "google-cloud-gemini-3.8-flash-eu", streaming: true,
+			url:     "https://aiplatform.eu.rep.googleapis.com/v1/projects/stogas-test/locations/eu/publishers/google/models/gemini-3.8-flash:streamGenerateContent?alt=sse",
+			headers: map[string]string{}, auth: map[string]string{"Authorization": "Bearer ya29.test"},
+		},
+		{
+			name: "Gemini us", provider: catalog.ProviderGoogleCloud, secret: googleSecret(t, ""),
+			deployment: "google-cloud-gemini-3.8-flash-us",
+			url:        "https://aiplatform.us.rep.googleapis.com/v1/projects/stogas-test/locations/us/publishers/google/models/gemini-3.8-flash:generateContent",
+			headers:    map[string]string{}, auth: map[string]string{"Authorization": "Bearer ya29.test"},
+		},
+		{
 			name: "Claude on Google Cloud", provider: catalog.ProviderGoogleCloud, secret: googleSecret(t, testWorkspaceID),
 			deployment: "google-cloud-claude-fable-5-1-anthropic-hosted", streaming: true,
 			url:     "https://claude.googleapis.com/v1/projects/stogas-test/locations/global/workspaces/" + testWorkspaceID + "/invoke/v1/messages",
@@ -679,6 +702,10 @@ func TestCloudClaudeAdapterRefusesWhatTheCloudLacks(t *testing.T) {
 		{"azure-claude-haiku-5-5", "/v1/responses", `"input":[{"role":"user","content":[{"type":"input_file","file_id":"file_123"}]}],`, "input[0].content[0] file IDs are not supported by any deployment that this request can use"},
 		{"aws-claude-fable-5-1-anthropic-hosted", "/v1/responses", `"input":[{"role":"user","content":[{"type":"input_file","file_id":"file_123"}]}],`, "input[0].content[0] is a provider file ID, which only a BYOK credential can read"},
 		{"azure-claude-haiku-5-5-anthropic-hosted", "/v1/responses", `"input":[{"role":"user","content":[{"type":"input_file","file_id":"file_123"}]}],`, "input[0].content[0] is a provider file ID, which only a BYOK credential can read"},
+		// Gemini on Google Cloud has no Files API either.
+		{"google-cloud-gemini-3.8-flash", "/v1/chat/completions", `"messages":[{"role":"user","content":[{"type":"text","text":"Summarize."},{"type":"file","file":{"file_id":"gs://bucket/doc.pdf"}}]}],`, "messages[0].content[1] file IDs are not supported by any deployment that this request can use"},
+		{"google-cloud-gemini-3.8-flash", "/v1/responses", `"input":[{"role":"user","content":[{"type":"input_file","file_id":"file_123"}]}],`, "input[0].content[0] file IDs are not supported by any deployment that this request can use"},
+		{"google-cloud-gemini-3.8-flash-eu", "/v1/chat/completions", `"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/a.png"}}]}],`, "messages[0].content[0] URLs are not supported by any deployment that this request can use; send the content inline"},
 		{"aws-claude-fable-5-1-us", "/v1/responses", `"input":[{"role":"user","content":[{"type":"input_image","image_url":"https://example.com/a.png"}]}],`, "input[0].content[0] URLs are not supported by any deployment that this request can use; send the content inline"},
 		{"google-cloud-claude-fable-5-1-us", "/v1/chat/completions", `"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/a.png"}}]}],`, "messages[0].content[0] URLs are not supported by any deployment that this request can use; send the content inline"},
 		// Of file IDs and URL sources, Claude that Azure hosts lacks only file IDs, which need the

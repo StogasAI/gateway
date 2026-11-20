@@ -26,13 +26,13 @@ import (
 // reasoning history (chatThroughResponses).
 //
 // bridgedProviders names, for each interface, the providers whose deployments serve it through the
-// other. Chutes, Azure and AWS serve Responses through Chat Completions. OpenAI's only deployment without
+// other. Chutes, Azure, AWS and Google Cloud serve Responses through Chat Completions. OpenAI's only deployment without
 // Responses is its search model, whose searches only Chat Completions' web_search_options prices.
 // OpenAI and Azure serve Chat Completions through Responses, for the deployments that take only
 // Responses, such as Pro, and for requests with tools, summarized reasoning or reasoning history.
 var bridgedProviders = map[Route]map[schemas.ModelProvider]bool{
 	RouteChat:      {schemas.OpenAI: true, schemas.Azure: true},
-	RouteResponses: {ProviderChutes: true, schemas.Azure: true, ProviderAWS: true},
+	RouteResponses: {ProviderChutes: true, schemas.Azure: true, ProviderAWS: true, ProviderGoogleCloud: true},
 }
 
 // bridgeWire is the interface on which a bridged deployment takes the requests on an interface.
@@ -409,14 +409,30 @@ func rawResponsesGap(raw map[string]json.RawMessage) error {
 	return conversionGapError(request.ToBifrostChatRequest(nil).ResponsesGap(), "Responses")
 }
 
-// chatReasoning is the Chat Completions reasoning control of a Responses request: its effort and
-// token budget. Its mode selected the deployment, and Chat Completions return the model's
-// reasoning text whatever summary it asks for.
+// chatReasoning is the Chat Completions reasoning control of a Responses request: its effort, its
+// token budget, and the display that its summary asks for, as Claude's names and OpenAI's map to
+// Claude's displays. Its mode selected the deployment. Of the deployments that take Chat
+// Completions alone, only Gemini has a display to choose, and the others return their reasoning
+// whole whatever the display.
 func chatReasoning(reasoning *schemas.ResponsesParametersReasoning) *schemas.ChatReasoning {
-	if reasoning == nil || (reasoning.Effort == nil && reasoning.MaxTokens == nil) {
+	if reasoning == nil {
 		return nil
 	}
-	return &schemas.ChatReasoning{Effort: reasoning.Effort, MaxTokens: reasoning.MaxTokens}
+	var display *string
+	if reasoning.Summary != nil {
+		switch *reasoning.Summary {
+		case "auto", "concise", "detailed":
+			display = schemas.Ptr("summarized")
+		case "none":
+			display = schemas.Ptr("omitted")
+		case "updates":
+			display = schemas.Ptr("updates")
+		}
+	}
+	if reasoning.Effort == nil && reasoning.MaxTokens == nil && display == nil {
+		return nil
+	}
+	return &schemas.ChatReasoning{Effort: reasoning.Effort, MaxTokens: reasoning.MaxTokens, Display: display}
 }
 
 // chatWireFields are the fields of a Chat Completions request in the form in which a Chat

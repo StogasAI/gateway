@@ -1,0 +1,16 @@
+# Agent Platform's global endpoint, which routes to any region with capacity.
+# Standard PayGo prices from the Cloud Billing Catalog (Agent Platform, Gemini 3.8 Flash Global), reviewed
+# 2026-11-20: https://cloud.google.com/skus and https://cloud.google.com/model-garden/pricing
+deployments:
+  modelId: gemini-3.8-flash
+  routeIds: [google-cloud-agent-platform-generate-content]
+  upstream:
+    model: gemini-3.8-flash
+    inferenceGeo: global
+  pricing:
+    input_tokens:
+      per_mill_tokens: '1.5'
+    cached_input_tokens:
+      per_mill_tokens: '0.15'
+    output_tokens:
+      per_mill_tokens: '7.5'

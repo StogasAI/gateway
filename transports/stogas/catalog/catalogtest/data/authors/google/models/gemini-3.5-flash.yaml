@@ -1,0 +1,16 @@
+models:
+  authorId: google
+  name: Gemini 3.5 Flash
+  groupIds: [gemini-3, gemini-flash]
+  contextWindowTokens: 1048576
+  maxOutputTokens: 65536
+  inputModalities: [text, image, audio, video]
+  outputModalities: [text]
+  # Thinking cannot be turned off. Reviewed 2026-11-20: https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-5-flash
+  reasoning: required
+  reasoningEfforts: [minimal, low, medium, high]
+  openWeights: false
+  # Google fixes top_k at 64 (capture google-cloud/generate-content-request-fields).
+  sampling:
+    topK: false
+  releaseDate: 2026-05-19

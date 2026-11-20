@@ -74,6 +74,10 @@ var compiledRouteContracts = map[string]struct {
 		providerID: "chutes",
 		interfaces: []string{"chat_completions"},
 	},
+	"google-cloud-agent-platform-generate-content": {
+		providerID: "google-cloud",
+		interfaces: []string{"chat_completions"},
+	},
 	"google-cloud-agent-platform-messages": {
 		providerID: "google-cloud",
 		interfaces: []string{"chat_completions", "responses"},
@@ -1197,14 +1201,15 @@ func validateAzureUpstreamSelector(deploymentID string, deployment *compiledDepl
 
 // cloudRoutes are the routes of AWS and Google Cloud, with whether Anthropic runs the model there,
 // behind the cloud's sign-in and billing, in place of the cloud's own company, and whether the
-// route serves Claude, over Anthropic's Messages API, or other models, in OpenAI's format. Each
-// product has its own endpoint and sign-in.
+// route serves Claude, over Anthropic's Messages API, or other models: in OpenAI's format on AWS
+// and Gemini's on Google Cloud. Each product has its own endpoint and sign-in.
 var cloudRoutes = map[string]struct{ anthropicRuns, claude bool }{
-	"aws-bedrock-chat-completions":            {anthropicRuns: false, claude: false},
-	"aws-bedrock-messages":                    {anthropicRuns: false, claude: true},
-	"aws-claude-platform-messages":            {anthropicRuns: true, claude: true},
-	"google-cloud-agent-platform-messages":    {anthropicRuns: false, claude: true},
-	"google-cloud-anthropic-managed-messages": {anthropicRuns: true, claude: true},
+	"aws-bedrock-chat-completions":                 {anthropicRuns: false, claude: false},
+	"aws-bedrock-messages":                         {anthropicRuns: false, claude: true},
+	"aws-claude-platform-messages":                 {anthropicRuns: true, claude: true},
+	"google-cloud-agent-platform-generate-content": {anthropicRuns: false, claude: false},
+	"google-cloud-agent-platform-messages":         {anthropicRuns: false, claude: true},
+	"google-cloud-anthropic-managed-messages":      {anthropicRuns: true, claude: true},
 }
 
 // BedrockSourceRegions are, for each geography of Bedrock's inference profiles but global, the

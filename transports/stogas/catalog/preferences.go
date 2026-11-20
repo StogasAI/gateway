@@ -295,10 +295,11 @@ func (r *ResolvedRequest) keepCarriedContent() {
 // carriedChatMessage returns a message as the deployment gets it and whether it differs.
 func (r *ResolvedRequest) carriedChatMessage(message openaiprovider.OpenAIMessage, claude bool) (openaiprovider.OpenAIMessage, bool) {
 	changed := false
-	// A name tells OpenAI's models who speaks. Claude and OpenAI's Responses have no place for it,
-	// as Anthropic's own OpenAI-compatible endpoint ignores it, and Azure refuses it for Mistral's
-	// models outside a tool message (testdata/provider/azure/other-model-formats-request-fields.json).
-	if message.Name != nil && (claude || r.WireRoute() != RouteChat || r.Provider == schemas.Azure &&
+	// A name tells OpenAI's models who speaks. Claude, Gemini and OpenAI's Responses have no place
+	// for it, as Anthropic's own OpenAI-compatible endpoint ignores it, and Azure refuses it for
+	// Mistral's models outside a tool message
+	// (testdata/provider/azure/other-model-formats-request-fields.json).
+	if message.Name != nil && (claude || r.RunsGeminiModel() || r.WireRoute() != RouteChat || r.Provider == schemas.Azure &&
 		r.Deployment.Upstream.ModelFormat == "Mistral AI" && message.Role != schemas.ChatMessageRoleTool) {
 		message.Name, changed = nil, true
 	}
@@ -323,14 +324,15 @@ func (r *ResolvedRequest) carriedChatMessage(message openaiprovider.OpenAIMessag
 	if len(copied.Annotations) > 0 && !r.usesOpenAIWire() {
 		copied.Annotations, changed = nil, true
 	}
-	if claude {
-		// Claude has no refusal field, so an earlier refusal is the text that the assistant wrote.
-		if copied.Refusal != nil {
-			if chatMessageWithoutText(message.Content) && strings.TrimSpace(*copied.Refusal) != "" {
-				message.Content = &schemas.ChatMessageContent{ContentStr: copied.Refusal}
-			}
-			copied.Refusal, changed = nil, true
+	// Claude and Gemini have no refusal field, so an earlier refusal is the text that the assistant
+	// wrote.
+	if copied.Refusal != nil && r.refusalAsText(claude) {
+		if chatMessageWithoutText(message.Content) && strings.TrimSpace(*copied.Refusal) != "" {
+			message.Content = &schemas.ChatMessageContent{ContentStr: copied.Refusal}
 		}
+		copied.Refusal, changed = nil, true
+	}
+	if claude {
 		for index, call := range copied.ToolCalls {
 			if call.ID == nil {
 				continue
@@ -347,6 +349,13 @@ func (r *ResolvedRequest) carriedChatMessage(message openaiprovider.OpenAIMessag
 		message.OpenAIChatAssistantMessage = &copied
 	}
 	return message, changed
+}
+
+// refusalAsText reports whether the deployment gets an earlier refusal as the text that the
+// assistant wrote, and an earlier reply without its log probabilities: Claude and Gemini, which take
+// neither.
+func (r *ResolvedRequest) refusalAsText(claude bool) bool {
+	return claude || r.RunsGeminiModel()
 }
 
 // chatMessageWithoutText reports whether a message holds no text.
@@ -401,7 +410,7 @@ func carriedBreakpoint(breakpoint *schemas.PromptCacheBreakpoint, marks bool) *s
 func (r *ResolvedRequest) carriedResponsesItem(item schemas.ResponsesMessage, claude bool) (schemas.ResponsesMessage, bool) {
 	changed := false
 	if content := item.Content; content != nil {
-		if blocks, differs := r.carriedResponsesBlocks(content.ContentBlocks, claude); differs {
+		if blocks, differs := r.carriedResponsesBlocks(content.ContentBlocks, r.refusalAsText(claude)); differs {
 			item.Content, changed = &schemas.ResponsesMessageContent{ContentStr: content.ContentStr, ContentBlocks: blocks}, true
 		}
 	}
@@ -417,7 +426,7 @@ func (r *ResolvedRequest) carriedResponsesItem(item schemas.ResponsesMessage, cl
 		}
 	}
 	if output := copied.Output; output != nil {
-		if blocks, differs := r.carriedResponsesBlocks(output.ResponsesFunctionToolCallOutputBlocks, claude); differs {
+		if blocks, differs := r.carriedResponsesBlocks(output.ResponsesFunctionToolCallOutputBlocks, r.refusalAsText(claude)); differs {
 			without := *output
 			without.ResponsesFunctionToolCallOutputBlocks = blocks
 			copied.Output, toolChanged = &without, true
@@ -430,10 +439,10 @@ func (r *ResolvedRequest) carriedResponsesItem(item schemas.ResponsesMessage, cl
 }
 
 // carriedResponsesBlocks returns content blocks as the deployment gets them and whether they
-// differ: without OpenAI's prompt cache breakpoints where the deployment marks no cache, and for
-// Claude without the log probabilities of an earlier reply and with an earlier refusal as the
-// text that the assistant wrote.
-func (r *ResolvedRequest) carriedResponsesBlocks(blocks []schemas.ResponsesMessageContentBlock, claude bool) ([]schemas.ResponsesMessageContentBlock, bool) {
+// differ: without OpenAI's prompt cache breakpoints where the deployment marks no cache, and where
+// refusals become text (refusalAsText) without the log probabilities of an earlier reply and with
+// an earlier refusal as the text that the assistant wrote.
+func (r *ResolvedRequest) carriedResponsesBlocks(blocks []schemas.ResponsesMessageContentBlock, asText bool) ([]schemas.ResponsesMessageContentBlock, bool) {
 	marks := r.marksPromptCache()
 	// Responses takes a breakpoint's ttl, and a deployment that serves Responses through Chat
 	// Completions gets each breakpoint as Chat Completions takes it.
@@ -442,7 +451,7 @@ func (r *ResolvedRequest) carriedResponsesBlocks(blocks []schemas.ResponsesMessa
 		return breakpoint != nil && !marks || chat && breakpointDiffers(breakpoint, marks)
 	}
 	differs := func(block schemas.ResponsesMessageContentBlock) bool {
-		return breakpointChanges(block.PromptCacheBreakpoint) || claude && (block.Type == schemas.ResponsesOutputMessageContentTypeRefusal ||
+		return breakpointChanges(block.PromptCacheBreakpoint) || asText && (block.Type == schemas.ResponsesOutputMessageContentTypeRefusal ||
 			block.ResponsesOutputMessageContentText != nil && len(block.ResponsesOutputMessageContentText.LogProbs) > 0)
 	}
 	if !slices.ContainsFunc(blocks, differs) {
@@ -454,7 +463,7 @@ func (r *ResolvedRequest) carriedResponsesBlocks(blocks []schemas.ResponsesMessa
 		if breakpointChanges(block.PromptCacheBreakpoint) {
 			block.PromptCacheBreakpoint = carriedBreakpoint(block.PromptCacheBreakpoint, marks)
 		}
-		if !claude {
+		if !asText {
 			continue
 		}
 		if block.Type == schemas.ResponsesOutputMessageContentTypeRefusal && block.ResponsesOutputMessageContentRefusal != nil {

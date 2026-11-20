@@ -1,0 +1,360 @@
+{
+	"shows": "On Agent Platform's generateContent, Gemini 3.8 Flash takes back a function call and its result under an ID that another provider wrote, with Google's placeholder signature: Kimi's, Claude's, and one of 64 bytes with spaces, punctuation and a letter outside ASCII.",
+	"recorded": "2026-11-20",
+	"exchanges": [
+		{
+			"name": "Kimi's ID",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.8-flash:generateContent",
+				"body": {
+					"model": "gemini-3.8-flash",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "What is the weather in Paris? Look it up."
+								}
+							],
+							"role": "user"
+						},
+						{
+							"parts": [
+								{
+									"thoughtSignature": "skip_thought_signature_validator",
+									"functionCall": {
+										"id": "functions.get_weather:0",
+										"name": "get_weather",
+										"args": {
+											"city": "Paris"
+										}
+									}
+								}
+							],
+							"role": "model"
+						},
+						{
+							"parts": [
+								{
+									"functionResponse": {
+										"id": "functions.get_weather:0",
+										"name": "get_weather",
+										"response": {
+											"content": "Sunny, 21 C"
+										}
+									}
+								}
+							],
+							"role": "user"
+						}
+					],
+					"tools": [
+						{
+							"functionDeclarations": [
+								{
+									"description": "Returns a city's weather.",
+									"name": "get_weather",
+									"parametersJsonSchema": {
+										"type": "object",
+										"properties": {
+											"city": {
+												"type": "string"
+											}
+										},
+										"required": [
+											"city"
+										],
+										"additionalProperties": false
+									}
+								}
+							]
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "LOW"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "The weather in Paris is sunny with a temperature of 21°C.",
+										"thoughtSignature": "AY89a1+5/2dDkcUzq+/EL6uRcpOnpxlgzjnsHoSaldPlPw/SzzPnr2GWH+48R1kYXGHacANX7cqFdEwVCFtAJ+WlKG61sT5dj3pe+joAPvDWZK4PerIsqP+pNrnlDlwJceIU2tkQSd3sYGqZ32xZEzzSE191hpbaLYDeOK1w0Q=="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 58,
+						"candidatesTokenCount": 16,
+						"totalTokenCount": 74,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 58
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 16
+							}
+						]
+					},
+					"modelVersion": "gemini-3.8-flash",
+					"createTime": "2026-11-20T07:25:15.777227Z",
+					"responseId": "2_X_aou4L63rirgPjazCuAE"
+				}
+			}
+		},
+		{
+			"name": "Claude's ID",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.8-flash:generateContent",
+				"body": {
+					"model": "gemini-3.8-flash",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "What is the weather in Paris? Look it up."
+								}
+							],
+							"role": "user"
+						},
+						{
+							"parts": [
+								{
+									"thoughtSignature": "skip_thought_signature_validator",
+									"functionCall": {
+										"id": "toolu_01A09q90qw90lq917835lq9",
+										"name": "get_weather",
+										"args": {
+											"city": "Paris"
+										}
+									}
+								}
+							],
+							"role": "model"
+						},
+						{
+							"parts": [
+								{
+									"functionResponse": {
+										"id": "toolu_01A09q90qw90lq917835lq9",
+										"name": "get_weather",
+										"response": {
+											"content": "Sunny, 21 C"
+										}
+									}
+								}
+							],
+							"role": "user"
+						}
+					],
+					"tools": [
+						{
+							"functionDeclarations": [
+								{
+									"description": "Returns a city's weather.",
+									"name": "get_weather",
+									"parametersJsonSchema": {
+										"type": "object",
+										"properties": {
+											"city": {
+												"type": "string"
+											}
+										},
+										"required": [
+											"city"
+										],
+										"additionalProperties": false
+									}
+								}
+							]
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "LOW"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "The weather in Paris is currently sunny with a temperature of 21°C.",
+										"thoughtSignature": "AY89a18qBDbYKrBJ4HDtO20xEIIkfoX0vH757kwtoh6Pvxe3eL8aP4nP71L2Mt3dHs/vUWVTtd8s8wo7QH/AgAG15z6ia+MM7N8sGfgYwC9s55pPyUNTazOgKqWGuE7LhVUqtmXlG+vnB2tBQ5EUbdK1b+77eRibNG1+yLtRkw=="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 58,
+						"candidatesTokenCount": 17,
+						"totalTokenCount": 75,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 58
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 17
+							}
+						]
+					},
+					"modelVersion": "gemini-3.8-flash",
+					"createTime": "2026-11-20T07:25:23.315322Z",
+					"responseId": "4_X_arqfE6_tlOoP9qqq6Ak"
+				}
+			}
+		},
+		{
+			"name": "an ID of 64 bytes",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.8-flash:generateContent",
+				"body": {
+					"model": "gemini-3.8-flash",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "What is the weather in Paris? Look it up."
+								}
+							],
+							"role": "user"
+						},
+						{
+							"parts": [
+								{
+									"thoughtSignature": "skip_thought_signature_validator",
+									"functionCall": {
+										"id": "call 1/2+3=4|x.y:z#äaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+										"name": "get_weather",
+										"args": {
+											"city": "Paris"
+										}
+									}
+								}
+							],
+							"role": "model"
+						},
+						{
+							"parts": [
+								{
+									"functionResponse": {
+										"id": "call 1/2+3=4|x.y:z#äaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+										"name": "get_weather",
+										"response": {
+											"content": "Sunny, 21 C"
+										}
+									}
+								}
+							],
+							"role": "user"
+						}
+					],
+					"tools": [
+						{
+							"functionDeclarations": [
+								{
+									"description": "Returns a city's weather.",
+									"name": "get_weather",
+									"parametersJsonSchema": {
+										"type": "object",
+										"properties": {
+											"city": {
+												"type": "string"
+											}
+										},
+										"required": [
+											"city"
+										],
+										"additionalProperties": false
+									}
+								}
+							]
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 2000,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "LOW"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": "The weather in Paris is currently sunny with a temperature of 21°C.",
+										"thoughtSignature": "AY89a1+iEQ3VDrEIX3ERQSuofgOquy9Ztnswm1z2Q3AnpeBZMQEV6kY5+SV1gdtzfiIFoOhAP5zYjBkuuC1Lyi6ab/E9OWiuppsrl7qX0TGhHm5Ly6T8zGdV018lflsnjPPumlEjZfgGEJMNZ3t/bb7/PcOG7cS92F5xp7rPXg=="
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 58,
+						"candidatesTokenCount": 17,
+						"totalTokenCount": 75,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 58
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 17
+							}
+						]
+					},
+					"modelVersion": "gemini-3.8-flash",
+					"createTime": "2026-11-20T07:25:25.445847Z",
+					"responseId": "5fX_apebG4qGlcIP-fGpuAo"
+				}
+			}
+		}
+	]
+}

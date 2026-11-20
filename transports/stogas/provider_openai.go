@@ -204,7 +204,7 @@ func validateOpenAIWireChatPolicy(state *State) error {
 	}
 	// Claude's context edits change what the model reads and what the reply holds.
 	if rawJSONValueSet(raw["context_management"]) {
-		return invalidRequest("context_management is not supported for OpenAI-format deployments")
+		return invalidRequest("context_management is supported only for Claude")
 	}
 	if err := validateOpenAIChatWebSearchOptions(raw["web_search_options"]); err != nil {
 		return err
@@ -231,7 +231,7 @@ func validateOpenAIWireResponsesPolicy(state *State) error {
 	// context edits change what the model reads and what the reply holds.
 	for _, name := range []string{"context_management", "stop_sequences"} {
 		if rawJSONValueSet(raw[name]) {
-			return invalidRequest(name + " is not supported for OpenAI-format deployments")
+			return invalidRequest(name + " is supported only for Claude")
 		}
 	}
 	return validateResponsesToolPolicy(state, raw, func(tools []schemas.ResponsesTool) error {

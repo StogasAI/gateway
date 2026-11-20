@@ -104,7 +104,7 @@ func TestChatPolicyRejectsUnsupportedFields(t *testing.T) {
 		{"metadata NUL key", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"metadata":{"a\u0000":"b"}}`, "metadata keys must be valid strings up to 64 bytes without control characters"},
 		{"anthropic cache control bad ttl", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"cache_control":{"type":"ephemeral","ttl":"24h"}}`, "cache_control.ttl must be 5m or 1h"},
 		{"anthropic cache control bad type", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"cache_control":{"type":"persisted","ttl":"1h"}}`, "cache_control.type must be ephemeral"},
-		{"openai context management", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"context_management":{"edits":[{"type":"compact_20260112"}]}}`, "context_management is not supported for OpenAI-format"},
+		{"openai context management", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"context_management":{"edits":[{"type":"compact_20260112"}]}}`, "context_management is supported only for Claude"},
 		{"anthropic logit bias", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"logit_bias":{"123":1}}`, "logit_bias is not supported for the selected deployment"},
 		{"anthropic logprobs", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"logprobs":true}`, "logprobs is not supported for Anthropic-format"},
 		{"prompt cache isolation key", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"prompt_cache_isolation_key":"tenant-a"}`, "prompt_cache_isolation_key is not supported"},
@@ -1773,7 +1773,7 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 		{"anthropic responses json object format", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","text":{"format":{"type":"json_object"}}}`, "must be json_schema for Anthropic-format"},
 		{"anthropic responses stream obfuscation", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","stream":true,"stream_options":{"include_obfuscation":true}}`, "cannot be preserved on Anthropic-format"},
 		{"responses stop unsupported before stop sequences conflict", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","stop":["DONE"],"stop_sequences":["END"]}`, "stop is not supported"},
-		{"openai context management", `{"model":"provider:openai gpt-5.5","input":"hi","context_management":{"edits":[{"type":"compact_20260112"}]}}`, "context_management is not supported for OpenAI-format"},
+		{"openai context management", `{"model":"provider:openai gpt-5.5","input":"hi","context_management":{"edits":[{"type":"compact_20260112"}]}}`, "context_management is supported only for Claude"},
 		{"reasoning effort bad type", `{"model":"provider:openai gpt-5.5","input":"hi","reasoning.effort":3}`, "reasoning.effort must be a string"},
 		{"responses bad reasoning object", `{"model":"provider:openai gpt-5.5","input":"hi","reasoning":"low"}`, "reasoning must be an object"},
 		{"responses bad reasoning max tokens", `{"model":"provider:openai gpt-5.5","input":"hi","reasoning":{"max_tokens":0}}`, "reasoning.max_tokens is outside the supported range"},
@@ -2077,6 +2077,11 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 			EnableThinking bool `json:"enable_thinking"`
 			Thinking       bool `json:"thinking"`
 		} `json:"chat_template_kwargs"`
+		GenerationConfig struct {
+			ThinkingConfig struct {
+				ThinkingLevel string `json:"thinkingLevel"`
+			} `json:"thinkingConfig"`
+		} `json:"generationConfig"`
 	}
 
 	deployments := map[string]matrixDeployment{}
@@ -2101,11 +2106,15 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 			provider := schemas.ModelProvider(route.ProviderID)
 			cloudClaude := (provider == catalog.ProviderAWS || provider == catalog.ProviderGoogleCloud) && catalog.UsesClaudeWire(provider, source.ModelID)
 			usesAnthropicWire := provider == schemas.Anthropic || routeID == "azure-anthropic-messages" || cloudClaude
-			// Bedrock's Chat Completions API, which serves the models of other authors, has its own
-			// core provider.
+			gemini := provider == catalog.ProviderGoogleCloud && !cloudClaude
+			// Bedrock's Chat Completions API and Gemini's API on Google Cloud, which serve the models
+			// of other authors, have core providers of their own.
 			coreProvider := provider
-			if provider == catalog.ProviderAWS && !cloudClaude {
+			switch {
+			case provider == catalog.ProviderAWS && !cloudClaude:
 				coreProvider = catalog.CoreProviderAWSChatCompletions
+			case gemini:
+				coreProvider = catalog.CoreProviderGoogleCloudGenerateContent
 			}
 			for _, interfaceName := range route.Interfaces {
 				var (
@@ -2224,7 +2233,7 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 							if bifrostErr != nil {
 								t.Fatalf("build Anthropic-family Responses wire request: %v", bifrostErr)
 							}
-						case provider == schemas.OpenAI || provider == schemas.Azure || provider == catalog.ProviderAWS:
+						case provider == schemas.OpenAI || provider == schemas.Azure || provider == catalog.ProviderAWS || gemini:
 							// The gateway writes these bodies itself, which can change what core
 							// converts, such as the effort of a model that Azure hosts for another author.
 							ctx.SetValue(schemas.BifrostContextKeyHTTPRequestType, request.RequestType)
@@ -2297,10 +2306,10 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 							}
 						case catalog.ProviderAWS, catalog.ProviderGoogleCloud:
 							wantInferenceGeo, wantVersion, wantSpeed := "", "", ""
-							switch source.Hosting {
-							case hostingAnthropic:
+							switch {
+							case source.Hosting == hostingAnthropic:
 								wantInferenceGeo = source.Upstream.InferenceGeo
-							case hostingGoogle:
+							case source.Hosting == hostingGoogle && cloudClaude:
 								wantVersion = "vertex-2023-10-16"
 							}
 							if source.Upstream.ServiceTier == "fast" {
@@ -2333,6 +2342,8 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 							wireEffort = wire.ReasoningEffort
 						case provider == schemas.OpenAI || provider == schemas.Azure:
 							wireEffort = wire.Reasoning.Effort
+						case gemini:
+							wireEffort, wantEffort = wire.GenerationConfig.ThinkingConfig.ThinkingLevel, strings.ToUpper(effort)
 						case provider == catalog.ProviderChutes:
 							wireEffort = wire.ReasoningEffort
 							control, supported := chutesReasoningWireControl(deploymentID, effort)

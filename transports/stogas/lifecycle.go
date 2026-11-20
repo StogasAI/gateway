@@ -270,7 +270,7 @@ func literalSecret(value string) schemas.SecretVar {
 	return schemas.SecretVar{Val: value, SecretType: schemas.SecretTypePlainText}
 }
 
-// modelCapabilities overrides three of core's per-model defaults for every model.
+// modelCapabilities overrides four of core's per-model defaults for every model.
 //
 // Speed: the catalog decides which deployments run at Fast, and the adapters send speed for no
 // others. Core's own list of Fast models names them one by one and drops speed from a model it does
@@ -285,10 +285,16 @@ func literalSecret(value string) schemas.SecretVar {
 // result, and routing refuses them for every other deployment. Core names the media of a Chat
 // Completions tool message in text for every model, which would hide an image from Kimi on Bedrock,
 // which reads it.
+//
+// A final assistant message: core drops it for every Gemini model, which changes what the reply
+// holds, while Gemini 3.5 Flash and 3.1 Flash-Lite continue its text and Gemini 3.8 Flash and 3.5
+// Flash-Lite refuse it (capture google-cloud/generate-content-trailing-model-turn). The provider
+// decides, as for every other model.
 var modelCapabilities = schemas.ModelCapabilities{
 	SupportsFastMode:             schemas.Ptr(true),
 	SupportsEagerInputStreaming:  schemas.Ptr(false),
 	SupportsMultimodalToolOutput: schemas.Ptr(true),
+	SupportsAssistantPrefill:     schemas.Ptr(true),
 }
 
 func resolveModelCapabilities(schemas.ModelProvider, string) *schemas.ModelCapabilities {

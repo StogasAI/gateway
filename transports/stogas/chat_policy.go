@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/bytedance/sonic"
+	anthropicprovider "github.com/maximhq/bifrost/core/providers/anthropic"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
@@ -725,6 +726,66 @@ type chatMessageInputValidation struct {
 	pending    map[string]bool
 }
 
+// keepsLaterSystemMessages reports whether the deployment keeps a system message in place after the
+// conversation starts. Anthropic documents the role on every platform that runs Claude, so the
+// model alone decides, and a conversation keeps its messages on every hosting. Gemini takes system
+// instructions only before the conversation.
+func keepsLaterSystemMessages(state *State) bool {
+	return stateUsesClaudeWire(state) &&
+		anthropicprovider.DefaultSupportsMidConversationSystem(schemas.Anthropic, state.Resolution.Deployment.Upstream.Model)
+}
+
+// checksSystemPlacement reports whether the deployment has rules for where a system or developer
+// message stands: Claude's and Gemini's. The other deployments take one anywhere.
+func checksSystemPlacement(state *State) bool {
+	return stateUsesClaudeWire(state) || stateRunsGemini(state)
+}
+
+// The side of the conversation that an input item belongs to. A server tool result, such as a web
+// search with its results, belongs to the assistant's turn.
+const (
+	placementSystem = iota
+	placementUser
+	placementAssistant
+	placementServerResult
+)
+
+// systemPlacement checks where a system or developer message stands after the conversation starts.
+// Claude keeps one in place as it requires: right after a user message, tool results or an
+// assistant turn that ends in a server tool result, and last or right before the assistant's turn.
+// Consecutive system messages count as one. Anywhere else, and on Gemini anywhere after the start,
+// it gets 400, because moving it or turning it into user text would change what it means.
+type systemPlacement struct {
+	started   bool   // a user or assistant item has come
+	afterUser bool   // the last such item was on the user side or a server tool result
+	pending   string // the path of a system message that waits for the assistant's turn
+}
+
+func (p *systemPlacement) next(state *State, side int, path string) error {
+	deployment := "this Anthropic-format deployment"
+	if stateRunsGemini(state) {
+		deployment = "Gemini on Google Cloud"
+	}
+	if side == placementSystem {
+		if !p.started {
+			return nil
+		}
+		if !keepsLaterSystemMessages(state) {
+			return invalidRequest(path + ".role cannot be preserved after the conversation starts on " + deployment)
+		}
+		if !p.afterUser {
+			return invalidRequest(path + ".role must immediately follow a user message or tool result on " + deployment)
+		}
+		p.pending = path
+		return nil
+	}
+	if p.pending != "" && side != placementAssistant && side != placementServerResult {
+		return invalidRequest(p.pending + ".role must be last or immediately precede an assistant turn on " + deployment)
+	}
+	p.started, p.afterUser, p.pending = true, side == placementUser || side == placementServerResult, ""
+	return nil
+}
+
 func validateChatMessagesTextOnly(state *State, raw json.RawMessage) error {
 	if !rawJSONValueSet(raw) {
 		return invalidRequest("messages must be a non-empty array")
@@ -740,7 +801,7 @@ func validateChatMessagesTextOnly(state *State, raw json.RawMessage) error {
 		allCallIDs: make(map[string]bool),
 		pending:    make(map[string]bool),
 	}
-	var placement claudeSystemPlacement
+	var placement systemPlacement
 	var turn inputTurn
 	for index, messageRaw := range rawMessages {
 		message, err := rawjson.Object(messageRaw)
@@ -794,13 +855,13 @@ func validateChatMessagesTextOnly(state *State, raw json.RawMessage) error {
 		default:
 			return invalidRequest(path + ".role is not supported")
 		}
-		if responsesUsesAnthropicWire(state) {
-			side := claudeUserItem
+		if checksSystemPlacement(state) {
+			side := placementUser
 			switch schemas.ChatMessageRole(role) {
 			case schemas.ChatMessageRoleSystem, schemas.ChatMessageRoleDeveloper:
-				side = claudeSystemItem
+				side = placementSystem
 			case schemas.ChatMessageRoleAssistant:
-				side = claudeAssistantItem
+				side = placementAssistant
 			}
 			if err := placement.next(state, side, path); err != nil {
 				return err

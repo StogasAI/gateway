@@ -1,0 +1,25 @@
+models:
+  authorId: google
+  name: Gemini 4 Hydrogen
+  groupIds: [gemini-4]
+  # Input and output share the window. Long decodes on v1beta1 extend one reply to the whole window.
+  contextWindowTokens: 1048576
+  maxOutputTokens: 1048576
+  inputModalities: [text, image, audio, video]
+  outputModalities: [text]
+  # Thinking cannot be turned off. Reviewed 2026-11-20: https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/4-hydrogen
+  reasoning: required
+  reasoningEfforts: [low, medium, high, xhigh]
+  reasoningDefault: high
+  openWeights: false
+  # Google ignores custom temperature, top_p and top_k. It states nothing about penalties or a
+  # seed for the model, so the gateway sends neither. Reviewed 2026-11-20: https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/4-hydrogen
+  sampling:
+    temperature: false
+    topP: false
+    topK: false
+    frequencyPenalty: false
+    presencePenalty: false
+    seed: false
+  promptCacheMinimumTokens: 4096
+  releaseDate: 2026-11-12

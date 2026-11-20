@@ -1,0 +1,45 @@
+# Gemini on Agent Platform, formerly Vertex AI, which Google runs:
+# https://{host}/v1/projects/{project}/locations/{location}/publishers/google/models/{model}:generateContent
+# and :streamGenerateContent?alt=sse, in Gemini's own format. The gateway serves Chat Completions
+# and Responses requests through it. The catalog lists none of its hosted tools: Grounding with
+# Google Search keeps queries for three days whatever a project sets, and none has a price here.
+# An explicit context cache is a resource that a request names, which the gateway never creates.
+# Reviewed 2026-11-20: https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-1-flash-lite
+# and https://docs.cloud.google.com/gemini-enterprise-agent-platform/resources/zero-data-retention
+routes:
+  providerId: google-cloud
+  interfaces: [chat_completions]
+  inputModalities: [text, image, audio]
+  # Core sends a tool result to Gemini as text, so the images and files of one are not carried.
+  capabilities:
+    streaming: true
+    functionCalling: true
+    parallelFunctionCalling: true
+    implicitPromptCaching: true
+    explicitPromptCaching: false
+    structuredOutputs: true
+    systemMessages: true
+    toolChoice: true
+    toolResultImages: false
+    toolResultDocuments: false
+  # The fields of generateContent's generationConfig. Each model states the ones that it refuses or
+  # ignores, and Google makes only a best effort at the same reply for one seed
+  # (capture google-cloud/generate-content-request-fields).
+  sampling:
+    temperature: true
+    topP: true
+    topK: true
+    frequencyPenalty: true
+    presencePenalty: true
+    repetitionPenalty: false
+    seed: true
+    logitBias: false
+  # Images and PDFs share the 3,000 parts of a request, and each file holds at most 3,000 pages.
+  inputLimits:
+    images:
+      count: 3000
+    documents:
+      count: 3000
+  documentFormats:
+    extensions: [.pdf, .txt]
+    mediaTypes: [application/pdf, text/plain]

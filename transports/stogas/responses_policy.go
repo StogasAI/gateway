@@ -1355,11 +1355,11 @@ type responsesInputValidation struct {
 	// heldCalls reports a request that continues a reply or a conversation that the provider
 	// holds, whose outputs can answer calls that only the provider has. The provider matches
 	// those itself.
-	heldCalls     bool
-	meaningful    bool
-	outputs       map[string]bool
-	pendingCalls  int
-	claudeSystems claudeSystemPlacement
+	heldCalls    bool
+	meaningful   bool
+	outputs      map[string]bool
+	pendingCalls int
+	systems      systemPlacement
 }
 
 // output records the client's output of the call callID, a call of kind.
@@ -1545,17 +1545,17 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 			}
 			return invalidRequest("Only text messages, tool calls, tool outputs and reasoning items are supported")
 		}
-		if responsesUsesAnthropicWire(state) {
-			side := claudeUserItem
+		if checksSystemPlacement(state) {
+			side := placementUser
 			switch {
 			case isSystemMessage:
-				side = claudeSystemItem
+				side = placementSystem
 			case itemType == "web_search_call", itemType == "web_fetch_call":
-				side = claudeServerResultItem
+				side = placementServerResult
 			case itemType == "function_call", itemType == "reasoning", role == "assistant":
-				side = claudeAssistantItem
+				side = placementAssistant
 			}
-			if err := validation.claudeSystems.next(state, side, path); err != nil {
+			if err := validation.systems.next(state, side, path); err != nil {
 				return err
 			}
 		}

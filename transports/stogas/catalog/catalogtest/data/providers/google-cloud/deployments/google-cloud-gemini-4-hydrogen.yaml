@@ -1,0 +1,20 @@
+# Agent Platform's global endpoint, which routes to any region with capacity.
+# Standard PayGo prices from the Cloud Billing Catalog (Agent Platform, Gemini 4 Hydrogen Global), reviewed
+# 2026-11-20: https://cloud.google.com/skus and https://cloud.google.com/model-garden/pricing
+deployments:
+  modelId: gemini-4-hydrogen
+  routeIds: [google-cloud-agent-platform-generate-content]
+  upstream:
+    model: gemini-4-hydrogen
+    inferenceGeo: global
+  overrides:
+    # One generateContent reply on v1 is one foreground segment of at most 65,536 tokens, and
+    # a longer reply needs v1beta1. Reviewed 2026-11-20: https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/4-hydrogen
+    maxOutputTokens: 65536
+  pricing:
+    input_tokens:
+      per_mill_tokens: '1.5'
+    cached_input_tokens:
+      per_mill_tokens: '0.075'
+    output_tokens:
+      per_mill_tokens: '7.5'

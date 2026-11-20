@@ -1,0 +1,244 @@
+{
+	"shows": "On Agent Platform, Gemini 3.5 Flash and 3.1 Flash-Lite continue the text of a model turn that ends the conversation, and Gemini 3.8 Flash and 3.5 Flash-Lite refuse the request.",
+	"recorded": "2026-11-20",
+	"exchanges": [
+		{
+			"name": "gemini-3.8-flash: a trailing model turn",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.8-flash:generateContent",
+				"body": {
+					"model": "gemini-3.8-flash",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Name one primary color. Answer with one short sentence."
+								}
+							],
+							"role": "user"
+						},
+						{
+							"parts": [
+								{
+									"text": "The primary color I name is"
+								}
+							],
+							"role": "model"
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 500,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "LOW"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": 400,
+						"message": "Requests ending with a model turn are not supported.",
+						"status": "INVALID_ARGUMENT"
+					}
+				}
+			}
+		},
+		{
+			"name": "gemini-3.5-flash: a trailing model turn",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.5-flash:generateContent",
+				"body": {
+					"model": "gemini-3.5-flash",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Name one primary color. Answer with one short sentence."
+								}
+							],
+							"role": "user"
+						},
+						{
+							"parts": [
+								{
+									"text": "The primary color I name is"
+								}
+							],
+							"role": "model"
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 500,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MINIMAL"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": " **blue**."
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 17,
+						"candidatesTokenCount": 3,
+						"totalTokenCount": 20,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 17
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 3
+							}
+						]
+					},
+					"modelVersion": "gemini-3.5-flash",
+					"createTime": "2026-11-20T07:12:26.643732Z",
+					"responseId": "2vL_apSlJ5WMirgPos67iAk"
+				}
+			}
+		},
+		{
+			"name": "gemini-3.5-flash-lite: a trailing model turn",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.5-flash-lite:generateContent",
+				"body": {
+					"model": "gemini-3.5-flash-lite",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Name one primary color. Answer with one short sentence."
+								}
+							],
+							"role": "user"
+						},
+						{
+							"parts": [
+								{
+									"text": "The primary color I name is"
+								}
+							],
+							"role": "model"
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 500,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MINIMAL"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": 400,
+						"message": "Requests ending with a model turn are not supported.",
+						"status": "INVALID_ARGUMENT"
+					}
+				}
+			}
+		},
+		{
+			"name": "gemini-3.1-flash-lite: a trailing model turn",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/google/models/gemini-3.1-flash-lite:generateContent",
+				"body": {
+					"model": "gemini-3.1-flash-lite",
+					"contents": [
+						{
+							"parts": [
+								{
+									"text": "Name one primary color. Answer with one short sentence."
+								}
+							],
+							"role": "user"
+						},
+						{
+							"parts": [
+								{
+									"text": "The primary color I name is"
+								}
+							],
+							"role": "model"
+						}
+					],
+					"generationConfig": {
+						"maxOutputTokens": 500,
+						"thinkingConfig": {
+							"includeThoughts": true,
+							"thinkingLevel": "MINIMAL"
+						}
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"candidates": [
+						{
+							"content": {
+								"role": "model",
+								"parts": [
+									{
+										"text": " red."
+									}
+								]
+							},
+							"finishReason": "STOP"
+						}
+					],
+					"usageMetadata": {
+						"promptTokenCount": 17,
+						"candidatesTokenCount": 2,
+						"totalTokenCount": 19,
+						"trafficType": "ON_DEMAND",
+						"promptTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 17
+							}
+						],
+						"candidatesTokensDetails": [
+							{
+								"modality": "TEXT",
+								"tokenCount": 2
+							}
+						]
+					},
+					"modelVersion": "gemini-3.1-flash-lite",
+					"createTime": "2026-11-20T07:12:27.600151Z",
+					"responseId": "2_L_atfQJOmRlcIPwqWwmAE"
+				}
+			}
+		}
+	]
+}
