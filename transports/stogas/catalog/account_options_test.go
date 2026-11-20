@@ -30,6 +30,19 @@ func TestAccountOptionsSetFactsBeforeToolsJoin(t *testing.T) {
 	if got := deployment.AppliedOptions(held); !slices.Equal(got, []HeldOption{held[1], held[0]}) {
 		t.Fatalf("applied options %v, want the deployment's two in the provider's order", got)
 	}
+	// Two options of one group are two values of one setting, which no account has.
+	retention := "data-retention"
+	grouped := deployment
+	grouped.AccountOptions = []AccountOption{zeroRetention, {ID: "modified-abuse-monitoring", Group: &retention, Routes: []string{"responses"},
+		DataHandling: AccountOptionDataHandling{TrainingUse: &no}}, agreement}
+	grouped.AccountOptions[0].Group = &retention
+	both := append(slices.Clone(held), HeldOption{ID: "modified-abuse-monitoring", Declared: true})
+	if got := grouped.AppliedOptions(both); !slices.Equal(got, []HeldOption{held[0]}) {
+		t.Fatalf("applied options %v, want neither option of the group that the credential states twice", got)
+	}
+	if got := grouped.AppliedOptions(held); !slices.Equal(got, []HeldOption{held[1], held[0]}) {
+		t.Fatalf("applied options %v, want the one stated option of the group", got)
+	}
 	alone := deployment.EffectiveDataHandling(held, nil, false)
 	if alone.StorageLocation != "none" || *alone.RetentionDays != 0 || !alone.ZeroDataRetention ||
 		!slices.Equal(alone.Certifications, []string{"soc2-type2", "hipaa-eligible", "hipaa"}) {

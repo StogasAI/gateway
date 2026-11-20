@@ -41,15 +41,30 @@ type HeldOption = billing.HeldOption
 const eligibleSuffix = "-eligible"
 
 // AppliedOptions returns, in the provider's order, the options among held that reach the
-// deployment.
+// deployment. An account holds one option of a group at most, so a credential that states several
+// of one group states no fact that an account can have, and none of them applies.
 func (d Deployment) AppliedOptions(held []HeldOption) []HeldOption {
 	var applied []HeldOption
+	var groups []*string
 	for _, option := range d.AccountOptions {
 		if i := slices.IndexFunc(held, func(h HeldOption) bool { return h.ID == option.ID }); i >= 0 {
 			applied = append(applied, held[i])
+			groups = append(groups, option.Group)
 		}
 	}
-	return applied
+	stated := make(map[string]int)
+	for _, group := range groups {
+		if group != nil {
+			stated[*group]++
+		}
+	}
+	kept := applied[:0]
+	for i, option := range applied {
+		if groups[i] == nil || stated[*groups[i]] == 1 {
+			kept = append(kept, option)
+		}
+	}
+	return kept
 }
 
 // optionsKey names a set of applied options, so that pairs with equal options share a candidate.
