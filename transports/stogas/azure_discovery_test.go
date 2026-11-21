@@ -478,3 +478,32 @@ func TestAzureGeographiesAreTheCatalogsAccountLocations(t *testing.T) {
 		t.Errorf("Azure geographies give %v, the catalog lists %v", geographies, listed)
 	}
 }
+
+// Azure lists an account's capabilities by name, some with a value. The list here is a real
+// Foundry account's of November 20, 2026, shortened. Microsoft adds ContentLogging with the value
+// false only for a subscription that it approved for modified abuse monitoring.
+func TestAzureReportsModifiedAbuseMonitoringFromItsCapabilities(t *testing.T) {
+	listed := `{"name":"VirtualNetworks"},{"name":"EnabledApimVnet","value":"true"},` +
+		`{"name":"CustomerManagedKey"},{"name":"MaxFineTuneCount","value":"500"},` +
+		`{"name":"RaiMonitor"},{"name":"chatCompletion","value":"true"}`
+	for name, test := range map[string]struct {
+		capabilities string
+		held         bool
+	}{
+		"an account that lists no ContentLogging": {"[" + listed + "]", false},
+		"ContentLogging false":                    {"[" + listed + `,{"name":"ContentLogging","value":"false"}]`, true},
+		"ContentLogging False":                    {`[{"name":"ContentLogging","value":"False"}]`, true},
+		"ContentLogging true":                     {"[" + listed + `,{"name":"ContentLogging","value":"true"}]`, false},
+		"ContentLogging without a value":          {`[{"name":"ContentLogging"}]`, false},
+		"no capabilities":                         {"", false},
+		"capabilities of another shape":           {`{"ContentLogging":"false"}`, false},
+	} {
+		properties := map[string]json.RawMessage{}
+		if test.capabilities != "" {
+			properties["capabilities"] = json.RawMessage(test.capabilities)
+		}
+		if got := azureReportedOptions(properties); len(got) != 1 || got[azureAbuseMonitoringOption] != test.held {
+			t.Errorf("%s: reported %v, want held %t", name, got, test.held)
+		}
+	}
+}
