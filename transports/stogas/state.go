@@ -38,13 +38,13 @@ type Pair struct {
 
 type State struct {
 	Pair
-	observedUsage       *StandardSignals
-	Signals             Signals
-	RawAPIKey           string
-	APIKeyClaims        *billing.APIKeyClaims
-	DashboardCredential *billing.DashboardCredential
-	BillingFinalized    bool
-	RequestLifetime     time.Duration
+	observedUsage    *StandardSignals
+	Signals          Signals
+	RawAPIKey        string
+	APIKeyClaims     *billing.APIKeyClaims
+	TokenCredential  *billing.TokenCredential
+	BillingFinalized bool
+	RequestLifetime  time.Duration
 	// KeepMemory keeps the request's memory charge after the request ends,
 	// until the returned function runs.
 	KeepMemory  func() (release func())
@@ -241,8 +241,8 @@ func NewPair(resolution *catalog.ResolvedRequest, adapter Adapter) Pair {
 	return pair
 }
 
-func (s *State) SetDashboardCredential(credential *billing.DashboardCredential) {
-	s.DashboardCredential = credential
+func (s *State) SetTokenCredential(credential *billing.TokenCredential) {
+	s.TokenCredential = credential
 }
 
 func (s *State) MarkProviderCompleted() {

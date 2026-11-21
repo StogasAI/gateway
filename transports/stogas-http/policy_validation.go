@@ -73,7 +73,7 @@ func (s *Server) validatePolicy(ctx *requestContext) {
 	if credential.PolicyCheck != nil {
 		organizationID = credential.PolicyCheck.OrganizationID
 	} else {
-		claims, err := s.runtime.Billing().AuthorizePolicyValidation(ctx.request.Context(), credential.Raw, credential.Dashboard)
+		claims, err := s.runtime.Billing().AuthorizePolicyValidation(ctx.request.Context(), credential.Raw, credential.Token)
 		if err != nil {
 			s.writeBillingError(ctx, err)
 			return

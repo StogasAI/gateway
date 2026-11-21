@@ -78,7 +78,7 @@ func TestOnlyDatabaseRefusalsHoldBack(t *testing.T) {
 // limit. A dashboard session can select other keys, so it waits generically.
 func TestKeyRefusalsRepeatDuringTheHoldBack(t *testing.T) {
 	claims := &APIKeyClaims{admissionKey: "api:secret"}
-	dashboard := &DashboardCredential{ActorUserID: "actor", SessionID: "session"}
+	dashboard := &TokenCredential{ActorUserID: "actor", SessionID: "session"}
 	for _, want := range []*RequestError{
 		ErrOrganizationRestricted, ErrAPIKeyDisabled, ErrAPIKeyExpired, ErrGrantDisabled,
 		policyResultErrors["organization_disabled"], policyResultErrors["member_expired"], ErrAPIKeyConfigSize,
@@ -94,7 +94,7 @@ func TestKeyRefusalsRepeatDuringTheHoldBack(t *testing.T) {
 			t.Errorf("%s outlasted the hold-back: %v", want.Code, err)
 		}
 		s.RecordRefusal(claims, dashboard, want.Code)
-		if err := s.refusals.get(dashboardAdmissionKey(dashboard), now); !errors.Is(err, ErrRateLimit) {
+		if err := s.refusals.get(tokenAdmissionKey(dashboard), now); !errors.Is(err, ErrRateLimit) {
 			t.Errorf("%s did not hold the dashboard session back: %v", want.Code, err)
 		}
 	}
@@ -151,13 +151,13 @@ func TestRefusalsIsolateSecretsAndDashboardSessions(t *testing.T) {
 			t.Fatalf("another secret shared the refusal: %v", err)
 		}
 	}
-	dashboard := &DashboardCredential{ActorUserID: "actor", SessionID: "session", KeyID: currentClaims.KeyID}
-	if service.refusals.get(dashboardAdmissionKey(dashboard), time.Now()) != nil {
+	dashboard := &TokenCredential{ActorUserID: "actor", SessionID: "session", KeyID: currentClaims.KeyID}
+	if service.refusals.get(tokenAdmissionKey(dashboard), time.Now()) != nil {
 		t.Fatal("a replaced secret held back a dashboard session")
 	}
 	// Dashboard requests carry the selected key's claims.
 	service.RecordRefusal(currentClaims, dashboard, ErrDashboardKeyDenied.Code)
-	if err := service.refusals.get(dashboardAdmissionKey(dashboard), time.Now()); !errors.Is(err, ErrRateLimit) {
+	if err := service.refusals.get(tokenAdmissionKey(dashboard), time.Now()); !errors.Is(err, ErrRateLimit) {
 		t.Fatalf("dashboard session was not held back: %v", err)
 	}
 	if _, err := service.ParseAPIKey(current); err != nil {

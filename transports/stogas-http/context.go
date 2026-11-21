@@ -62,7 +62,7 @@ func newRequestContext(ctx *requestContext, startedAt time.Time, resolution *cat
 	// delivery, so a silent provider stream may last the request lifetime.
 	bifrostCtx.SetValue(schemas.BifrostContextKeyStreamIdleTimeout, billing.GatewayRequestLifetime)
 	state := stogas.NewState(resolution, credential.Raw, credential.Claims, stogas.AdapterFor(resolution.Provider))
-	state.SetDashboardCredential(credential.Dashboard)
+	state.SetTokenCredential(credential.Token)
 	state.NodeID = strings.ToLower(strings.TrimSpace(nodeID))
 	state.RequestID = requestID
 	state.SessionID, err = stogas.RequestSessionID(resolution.RawBody(), ctx.request.Header)

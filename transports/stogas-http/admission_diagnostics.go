@@ -85,7 +85,7 @@ func (s *Server) recordAdmissionRejection(ctx *requestContext, status int, code 
 	if s.runtime == nil || s.runtime.Billing() == nil {
 		return
 	}
-	dashboard := ctx.dashboard
+	dashboard := ctx.tokenCredential
 	s.runtime.Billing().RecordRefusal(claims, dashboard, code)
 	if claims == nil {
 		return

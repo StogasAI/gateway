@@ -25,15 +25,16 @@ type UncheckedPolicyPlugin struct {
 	Plugin string `json:"plugin"`
 }
 
-func (s *Service) AuthorizePolicyValidation(ctx context.Context, rawKey string, dashboard *DashboardCredential) (*APIKeyClaims, error) {
+func (s *Service) AuthorizePolicyValidation(ctx context.Context, rawKey string, token *TokenCredential) (*APIKeyClaims, error) {
 	if s == nil || s.db == nil {
 		return nil, ErrGatewayUnavailable
 	}
-	// The database finds the key by the ID in its MAC, or the one a dashboard credential selected.
-	var hash, keyID, actorID, sessionID *string
+	// The database finds the key by the ID in its MAC, or the one a token credential names.
+	var hash, keyID *string
 	var expected *APIKeyClaims
-	if dashboard != nil {
-		keyID, actorID, sessionID = &dashboard.KeyID, &dashboard.ActorUserID, &dashboard.SessionID
+	actorID, sessionID, workloadIdentityID := token.authority()
+	if token != nil {
+		keyID = &token.KeyID
 	} else {
 		signed, keyHash, _, err := s.parseVerifiedAPIKey(rawKey)
 		if err != nil {
@@ -46,7 +47,7 @@ func (s *Service) AuthorizePolicyValidation(ctx context.Context, rawKey string, 
 	var result string
 	var claims *APIKeyClaims
 	query := "select result, key_claims from (" + strings.TrimSuffix(s.keyConfigQuery, ";") + ") as policy_authorization"
-	if err := s.queryForTool(ctx, query, []any{hash, keyID, actorID, sessionID, nil, "use"}, &result, &claims); err != nil {
+	if err := s.queryForTool(ctx, query, []any{hash, keyID, actorID, sessionID, nil, "use", workloadIdentityID}, &result, &claims); err != nil {
 		return nil, err
 	}
 	if err := authorizationResultError(result, nil, RefusedLimit{}); err != nil {

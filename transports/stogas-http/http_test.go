@@ -322,7 +322,7 @@ func TestDenseJSONIsRejectedBeforeConfigurationFetchOrPolicyCompilation(t *testi
 			case policyValidationPath:
 				server.validatePolicy(ctx)
 			case policySimulationPath:
-				ctx.credential = &apiCredential{Dashboard: &billing.DashboardCredential{}}
+				ctx.credential = &apiCredential{Token: &billing.TokenCredential{}}
 				server.simulatePolicy(ctx)
 			default:
 				server.inference(ctx)

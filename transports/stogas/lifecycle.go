@@ -101,7 +101,7 @@ func AuthorizeState(ctx *schemas.BifrostContext, caller context.Context, billing
 	}
 	state.RequestType = string(state.Resolution.RequestType)
 
-	if state.RawAPIKey == "" && state.DashboardCredential == nil {
+	if state.RawAPIKey == "" && state.TokenCredential == nil {
 		return gatewaybilling.ErrInvalidAPIKey
 	}
 	requestID, ok := ctx.Value(schemas.BifrostContextKeyRequestID).(string)
@@ -121,7 +121,7 @@ func AuthorizeState(ctx *schemas.BifrostContext, caller context.Context, billing
 	textBytes, _ := state.Resolution.InputTextBytes()
 	authorization, err := billing.Authorize(caller, gatewaybilling.HoldRequest{
 		RawAPIKey:                state.RawAPIKey,
-		Dashboard:                state.DashboardCredential,
+		Token:                    state.TokenCredential,
 		RequestID:                requestID,
 		ProviderKey:              hold.ProviderKey,
 		ProductKey:               hold.ProductKey,

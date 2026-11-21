@@ -160,8 +160,8 @@ func TestAuthorizeStateForwardsThePairAndReleasesItsCredential(t *testing.T) {
 		Provider:    schemas.OpenAI,
 		Model:       "gpt-5",
 	}, "", nil, DefaultAdapter{})
-	dashboard := &billing.DashboardCredential{ActorUserID: "actor", KeyID: "key", SessionID: "session"}
-	state.SetDashboardCredential(dashboard)
+	dashboard := &billing.TokenCredential{ActorUserID: "actor", KeyID: "key", SessionID: "session"}
+	state.SetTokenCredential(dashboard)
 	state.PreparedCredential = &billing.PreparedCredential{}
 	state.Hold = HoldEstimate{ProviderKey: "openai", ProductKey: "gpt-5", EstimatedUpstreamCostUSD: "1000"}
 	kept := 0
@@ -179,7 +179,7 @@ func TestAuthorizeStateForwardsThePairAndReleasesItsCredential(t *testing.T) {
 		t.Fatalf("authorizations = %d, want 1", len(authorizer.requests))
 	}
 	request := authorizer.requests[0]
-	if request.Dashboard != dashboard || request.Snapshot != keyConfig || request.EncryptionKeys.Identity() != keys.Identity() ||
+	if request.Token != dashboard || request.Snapshot != keyConfig || request.EncryptionKeys.Identity() != keys.Identity() ||
 		request.Previous != previous || request.ProviderKey != "openai" || request.EstimatedUpstreamCostUSD != "1000" {
 		t.Fatalf("hold request = %#v", request)
 	}

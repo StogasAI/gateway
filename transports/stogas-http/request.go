@@ -14,7 +14,7 @@ import (
 type apiCredential struct {
 	EncryptionKeys customerkey.Keys
 	Claims         *billing.APIKeyClaims
-	Dashboard      *billing.DashboardCredential
+	Token          *billing.TokenCredential
 	// Check is the grant that a credential check carries instead of an API key.
 	Check *billing.ByokCheckGrant
 	// Stored is the grant with which Control uses a stored credential.
@@ -29,7 +29,8 @@ var (
 	errConflictingAPIKeyHeader = errors.New("conflicting API key headers")
 )
 
-// With its composite signature, a dashboard credential is about 4.9 KB, the longest valid value.
+// With its composite signature, a dashboard or workload credential is about 4.9 KB, the longest
+// valid value.
 const maximumCredentialLength = 8 << 10
 
 // authorizationToken reads "Bearer <key>", or a bare key as the other key
@@ -164,20 +165,22 @@ func (s *Server) requireAPIKey(ctx *requestContext) (apiCredential, bool) {
 		clearInferenceCredentials(ctx)
 		return apiCredential{PolicyCheck: grant}, true
 	}
-	if ctx.encrypted && billing.IsDashboardCredential(token) {
-		dashboard, dashboardErr := s.runtime.ParseDashboardCredential(token)
-		if dashboard != nil {
-			ctx.dashboard = dashboard
+	// The dashboard sends its session's token only in encrypted requests. A workload's token
+	// replaces an API key wherever one goes.
+	if billing.IsWorkloadCredential(token) || ctx.encrypted && billing.IsDashboardCredential(token) {
+		credential, credentialErr := s.runtime.ParseTokenCredential(token)
+		if credential != nil {
+			ctx.tokenCredential = credential
 		}
-		if dashboard != nil && dashboard.Claims != nil {
-			ctx.claims = dashboard.Claims
+		if credential != nil && credential.Claims != nil {
+			ctx.claims = credential.Claims
 		}
-		if dashboardErr != nil {
-			s.writeBillingError(ctx, dashboardErr)
+		if credentialErr != nil {
+			s.writeBillingError(ctx, credentialErr)
 			return apiCredential{}, false
 		}
 		clearInferenceCredentials(ctx)
-		return apiCredential{Dashboard: dashboard}, true
+		return apiCredential{Token: credential}, true
 	}
 	claims, err := s.runtime.ParseAPIKey(token)
 	if claims != nil {

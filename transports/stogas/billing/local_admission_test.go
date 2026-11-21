@@ -92,20 +92,20 @@ func TestLocalLimitsChargeCredentialsAndTheirOrganization(t *testing.T) {
 	if _, err := service.ParseAPIKey(other); err != nil {
 		t.Fatalf("one organization blocked another: %v", err)
 	}
-	credential := &DashboardCredential{ActorUserID: "actor", SessionID: "session", KeyID: "key"}
+	credential := &TokenCredential{ActorUserID: "actor", SessionID: "session", KeyID: "key"}
 	snapshot := keyConfigSnapshot(1, strings.Repeat("a", 64))
 	snapshot.Claims = &APIKeyClaims{OrganizationID: org}
-	service.keyConfigs.put(dashboardConfigCacheKey(credential), snapshot, time.Now())
-	// ParseDashboardCredential charges the session, and the key it selects
+	service.keyConfigs.put(tokenConfigCacheKey(credential), snapshot, time.Now())
+	// ParseTokenCredential charges the session, and the key it selects
 	// names the organization.
-	if err := service.admitCredential(dashboardAdmissionKey(credential), org, time.Now()); err != nil {
+	if err := service.admitCredential(tokenAdmissionKey(credential), org, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	empty()
-	if _, err := service.ConfigForDashboard(context.Background(), credential, nil); !errors.Is(err, ErrRateLimit) {
+	if _, err := service.ConfigForToken(context.Background(), credential, nil); !errors.Is(err, ErrRateLimit) {
 		t.Fatalf("dashboard escaped the organization's bucket: %v", err)
 	}
-	if allowance, _ := entry(&service.credentialRequests, dashboardAdmissionKey(credential)); allowance.tokens != credentialRequestLimit(defaultPlatformRequestsPerSecond).burst {
+	if allowance, _ := entry(&service.credentialRequests, tokenAdmissionKey(credential)); allowance.tokens != credentialRequestLimit(defaultPlatformRequestsPerSecond).burst {
 		t.Fatal("the organization's refusal spent the dashboard session's allowance")
 	}
 	before := service.credentialRequests.attempts.Load() + service.organizationRequests.attempts.Load()

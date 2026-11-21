@@ -181,21 +181,21 @@ func TestConfigDigestAndDashboardCacheIdentityAreClosed(t *testing.T) {
 		}
 	}
 
-	first := dashboardConfigCacheKey(&DashboardCredential{
+	first := tokenConfigCacheKey(&TokenCredential{
 		ActorUserID: "actor-a",
 		KeyID:       "key-a",
 		SessionID:   "session-a",
 	})
-	for _, credential := range []*DashboardCredential{
+	for _, credential := range []*TokenCredential{
 		{ActorUserID: "actor-b", KeyID: "key-a", SessionID: "session-a"},
 		{ActorUserID: "actor-a", KeyID: "key-b", SessionID: "session-a"},
 		{ActorUserID: "actor-a", KeyID: "key-a", SessionID: "session-b"},
 	} {
-		if candidate := dashboardConfigCacheKey(credential); candidate == first || candidate == "" {
+		if candidate := tokenConfigCacheKey(credential); candidate == first || candidate == "" {
 			t.Fatalf("dashboard cache identities collided: %q", candidate)
 		}
 	}
-	if dashboardConfigCacheKey(nil) != "" {
+	if tokenConfigCacheKey(nil) != "" {
 		t.Fatal("nil dashboard credential produced a cache identity")
 	}
 }

@@ -26,7 +26,8 @@ const keyConfigArguments = `
   $3::text,
   $4::text,
   $5::jsonb,
-  $6::text
+  $6::text,
+  $7::uuid
 `
 
 const keyConfigColumns = "result, key_id, policy_sources, key_claims, credentials_generation, credentials, credential_sources, encryption_keys"
@@ -133,15 +134,15 @@ func (s *Service) ConfigForAPIKey(
 	return s.cachedOrFetchKeyConfig(ctx, cacheKey, &apiKeyHash, nil, claims.KeyID, encryptionKeys, claims)
 }
 
-func (s *Service) ConfigForDashboard(
+func (s *Service) ConfigForToken(
 	ctx context.Context,
-	credential *DashboardCredential,
+	credential *TokenCredential,
 	encryptionKeys customerkey.Keys,
 ) (*KeyConfigSnapshot, error) {
 	if s == nil || credential == nil {
 		return nil, ErrInvalidAPIKey
 	}
-	cacheKey := dashboardConfigCacheKey(credential)
+	cacheKey := tokenConfigCacheKey(credential)
 	snapshot, err := s.cachedOrFetchKeyConfig(
 		ctx,
 		cacheKey,
@@ -155,16 +156,16 @@ func (s *Service) ConfigForDashboard(
 		return nil, err
 	}
 	credential.Claims = snapshot.Claims
-	// Dashboard tokens sign the actor/session, not the caller-selected key ID.
-	// Charge the shared organization only after resolving that key's authority.
-	return snapshot, s.admitOrganization(dashboardAdmissionKey(credential), snapshot.Claims.OrganizationID, time.Now())
+	// The organization is known only once the database resolved the key's authority, so it is
+	// charged only then.
+	return snapshot, s.admitOrganization(tokenAdmissionKey(credential), snapshot.Claims.OrganizationID, time.Now())
 }
 
 func (s *Service) cachedOrFetchKeyConfig(
 	ctx context.Context,
 	cacheKey string,
 	hashedKey *string,
-	dashboard *DashboardCredential,
+	token *TokenCredential,
 	expectedKeyID string,
 	encryptionKeys customerkey.Keys,
 	claims *APIKeyClaims,
@@ -182,7 +183,7 @@ func (s *Service) cachedOrFetchKeyConfig(
 			ctx,
 			cacheKey,
 			hashedKey,
-			dashboard,
+			token,
 			expectedKeyID,
 			encryptionKeys,
 			claims,
@@ -217,7 +218,7 @@ func (s *Service) fetchKeyConfig(
 	ctx context.Context,
 	cacheKey string,
 	hashedKey *string,
-	dashboard *DashboardCredential,
+	token *TokenCredential,
 	expectedKeyID string,
 	encryptionKeys customerkey.Keys,
 	claims *APIKeyClaims,
@@ -227,11 +228,7 @@ func (s *Service) fetchKeyConfig(
 	}
 	queryCtx, cancel := context.WithTimeout(ctx, keyConfigFetchTimeout)
 	defer cancel()
-	var dashboardActorUserID, dashboardSessionID *string
-	if dashboard != nil {
-		dashboardActorUserID = &dashboard.ActorUserID
-		dashboardSessionID = &dashboard.SessionID
-	}
+	actorUserID, sessionID, workloadIdentityID := token.authority()
 	row := keyConfigRow{}
 	previous := s.keyConfigs.pinForRefresh(cacheKey)
 	if previous != nil {
@@ -248,10 +245,11 @@ func (s *Service) fetchKeyConfig(
 		s.keyConfigQuery,
 		hashedKey,
 		&expectedKeyID,
-		dashboardActorUserID,
-		dashboardSessionID,
+		actorUserID,
+		sessionID,
 		pins.known,
 		"use",
+		workloadIdentityID,
 	).Scan(
 		&row.Result,
 		&row.KeyID,
@@ -380,14 +378,14 @@ func (s *Service) queryForTool(ctx context.Context, query string, arguments []an
 
 // A hold renews only the snapshot it actually checked, measured from before the
 // database call. A delayed response cannot extend or evict a newer snapshot.
-func (s *Service) confirmKeyConfig(apiKeyHash string, dashboard *DashboardCredential, snapshot *KeyConfigSnapshot, current bool, checkedAt time.Time) {
+func (s *Service) confirmKeyConfig(apiKeyHash string, token *TokenCredential, snapshot *KeyConfigSnapshot, current bool, checkedAt time.Time) {
 	key := "api:" + apiKeyHash
 	var hash *string = &apiKeyHash
 	expectedKeyID := snapshot.Claims.KeyID
-	if dashboard != nil {
-		copy := *dashboard
-		dashboard = &copy
-		key, hash = dashboardConfigCacheKey(dashboard), nil
+	if token != nil {
+		copy := *token
+		token = &copy
+		key, hash = tokenConfigCacheKey(token), nil
 	}
 	if !s.keyConfigs.confirm(key, snapshot, current, checkedAt, time.Now()) {
 		return
@@ -398,7 +396,7 @@ func (s *Service) confirmKeyConfig(apiKeyHash string, dashboard *DashboardCreden
 		if existing, err := s.keyConfigs.current(key, time.Now()); existing != nil || err != nil {
 			return existing, err
 		}
-		return s.fetchKeyConfig(context.Background(), key, hash, dashboard, expectedKeyID, nil, snapshot.Claims)
+		return s.fetchKeyConfig(context.Background(), key, hash, token, expectedKeyID, nil, snapshot.Claims)
 	})
 }
 
@@ -414,9 +412,12 @@ func validConfigDigest(value string) bool {
 	return true
 }
 
-func dashboardConfigCacheKey(credential *DashboardCredential) string {
+func tokenConfigCacheKey(credential *TokenCredential) string {
 	if credential == nil {
 		return ""
+	}
+	if credential.WorkloadIdentityID != "" {
+		return "workload-config:" + credential.WorkloadIdentityID + ":" + credential.KeyID
 	}
 	return "dashboard-config:" + credential.ActorUserID + ":" + credential.SessionID + ":" + credential.KeyID
 }

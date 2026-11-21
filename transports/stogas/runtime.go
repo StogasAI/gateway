@@ -146,11 +146,11 @@ func (r *Runtime) ParseAPIKey(rawAPIKey string) (*billing.APIKeyClaims, error) {
 	return r.billing.ParseAPIKey(rawAPIKey)
 }
 
-func (r *Runtime) ParseDashboardCredential(raw string) (*billing.DashboardCredential, error) {
+func (r *Runtime) ParseTokenCredential(raw string) (*billing.TokenCredential, error) {
 	if r == nil || r.billing == nil {
 		return nil, billing.ErrInvalidAPIKey
 	}
-	return r.billing.ParseDashboardCredential(raw)
+	return r.billing.ParseTokenCredential(raw)
 }
 
 func (r *Runtime) ParseByokCheckGrant(raw string) (*billing.ByokCheckGrant, error) {

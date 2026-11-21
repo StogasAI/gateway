@@ -53,9 +53,9 @@ var keyRefusals = func() map[string]*RequestError {
 // API key secret, or the dashboard actor's session. Sibling keys, a key's
 // replaced secret and other sessions never share it; aggregate organization
 // admission is separate.
-func callerAdmissionKey(claims *APIKeyClaims, dashboard *DashboardCredential) string {
-	if dashboard != nil {
-		return dashboardAdmissionKey(dashboard)
+func callerAdmissionKey(claims *APIKeyClaims, token *TokenCredential) string {
+	if token != nil {
+		return tokenAdmissionKey(token)
 	}
 	if claims != nil {
 		return claims.admissionKey
@@ -67,24 +67,26 @@ func callerAdmissionKey(claims *APIKeyClaims, dashboard *DashboardCredential) st
 // refused. The transport reports a request once, after its last pair, and
 // only if no pair was admitted, so a refusal that another pair passes holds
 // nothing back. Other rejections cost no database call and hold nothing back.
-func (s *Service) RecordRefusal(claims *APIKeyClaims, dashboard *DashboardCredential, code string) {
+func (s *Service) RecordRefusal(claims *APIKeyClaims, token *TokenCredential, code string) {
 	if s == nil || !refusalCodes[code] {
 		return
 	}
-	if dashboard == nil && claims != nil {
+	key := callerAdmissionKey(claims, token)
+	// An API key or a workload's token names one key, so that key's refusals repeat. A dashboard
+	// session can select other keys, so its hold-back stays generic.
+	if key != "" && (token == nil || token.WorkloadIdentityID != "") {
 		for _, refusal := range []*RequestError{ErrInvalidAPIKey, ErrAPIKeyOldSecret} {
 			if code == refusal.Code {
-				s.refusals.record(claims.admissionKey, refusal, refusedAPIKeyDuration, time.Now())
+				s.refusals.record(key, refusal, refusedAPIKeyDuration, time.Now())
 				return
 			}
 		}
-		// A dashboard session can select other keys, so its hold-back stays generic.
 		if refusal := keyRefusals[code]; refusal != nil {
-			s.refusals.record(claims.admissionKey, refusal, refusalHoldBack, time.Now())
+			s.refusals.record(key, refusal, refusalHoldBack, time.Now())
 			return
 		}
 	}
-	s.refusals.record(callerAdmissionKey(claims, dashboard), nil, refusalHoldBack, time.Now())
+	s.refusals.record(key, nil, refusalHoldBack, time.Now())
 }
 
 type refusal struct {

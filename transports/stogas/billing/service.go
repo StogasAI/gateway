@@ -59,7 +59,8 @@ const authorizeHoldArguments = `
   $21::numeric,
   $22::text,
   $23::uuid,
-  $24::uuid[]
+  $24::uuid[],
+  $25::uuid
 `
 
 const authorizeHoldColumns = "result, hold_id, user_id, key_id, grant_id, organization_id, authorized_billed_cost_usd, created_at, expires_at, upstream_byok, upstream_byok_binding, config_current, wait_ms, requests_per_second, limit_name, limit_rule"
@@ -425,17 +426,17 @@ func (s *Service) ParseAPIKey(rawAPIKey string) (*APIKeyClaims, error) {
 	return claims, s.admitOrganization(claims.admissionKey, claims.OrganizationID, now)
 }
 
-func (s *Service) ParseDashboardCredential(raw string) (*DashboardCredential, error) {
+func (s *Service) ParseTokenCredential(raw string) (*TokenCredential, error) {
 	if s == nil || s.inferenceTokenPublicKey == nil {
 		return nil, ErrInvalidAPIKey
 	}
-	credential, err := parseDashboardCredential(raw, s.inferenceTokenPublicKey, time.Now())
+	credential, err := parseTokenCredential(raw, s.inferenceTokenPublicKey, time.Now())
 	if err != nil {
 		return nil, ErrInvalidAPIKey
 	}
-	cacheKey := dashboardAdmissionKey(credential)
+	cacheKey := tokenAdmissionKey(credential)
 	now := time.Now()
-	if snapshot, ok := s.keyConfigs.get(dashboardConfigCacheKey(credential), now); ok {
+	if snapshot, ok := s.keyConfigs.get(tokenConfigCacheKey(credential), now); ok {
 		credential.Claims = snapshot.Claims
 	}
 	if err := s.refusals.get(cacheKey, now); err != nil {
@@ -461,7 +462,7 @@ type UsageReservation struct {
 // the previous hold as it was.
 type HoldRequest struct {
 	RawAPIKey                string
-	Dashboard                *DashboardCredential
+	Token                    *TokenCredential
 	RequestID                string
 	ProviderKey              string
 	ProductKey               string
@@ -486,7 +487,7 @@ type HoldRequest struct {
 func (s *Service) Authorize(ctx context.Context, request HoldRequest) (*Authorization, error) {
 	var claims *APIKeyClaims
 	apiKeyHash := ""
-	if request.Dashboard == nil {
+	if request.Token == nil {
 		var err error
 		claims, apiKeyHash, _, err = s.parseVerifiedAPIKey(request.RawAPIKey)
 		if err != nil {
@@ -516,7 +517,7 @@ func PairRefused(err error) bool {
 }
 
 func (s *Service) authorizeResolvedRequest(ctx context.Context, apiKeyHash string, claims *APIKeyClaims, request HoldRequest) (*Authorization, error) {
-	dashboard, requestID, providerKey, productKey := request.Dashboard, request.RequestID, request.ProviderKey, request.ProductKey
+	token, requestID, providerKey, productKey := request.Token, request.RequestID, request.ProviderKey, request.ProductKey
 	snapshot, prepared, encryptionKeys, usage := request.Snapshot, request.Prepared, request.EncryptionKeys, request.Usage
 	previous := request.Previous
 	// A request keeps one settlement place through every pair it moves to.
@@ -605,7 +606,7 @@ func (s *Service) authorizeResolvedRequest(ctx context.Context, apiKeyHash strin
 			InputTextBytes:           usage.InputTextBytes,
 			NodeID:                   nullableString(s.nodeID),
 		},
-		admissionKey: callerAdmissionKey(claims, dashboard),
+		admissionKey: callerAdmissionKey(claims, token),
 		waitUntil:    authorizeBefore.Add(-authorizeStatementReserve),
 		done:         make(chan authorizationOutcome, 1),
 	}
@@ -613,11 +614,10 @@ func (s *Service) authorizeResolvedRequest(ctx context.Context, apiKeyHash strin
 	if upstreamTargetJSON != "" {
 		arguments.UpstreamTarget = json.RawMessage(upstreamTargetJSON)
 	}
-	// SQL finds the key by the ID that the API key's MAC or the dashboard credential names.
-	if dashboard != nil {
-		arguments.KeyID = &dashboard.KeyID
-		arguments.DashboardActorUserID = &dashboard.ActorUserID
-		arguments.DashboardSessionID = &dashboard.SessionID
+	// SQL finds the key by the ID that the API key's MAC or the token credential names.
+	if token != nil {
+		arguments.KeyID = &token.KeyID
+		arguments.DashboardActorUserID, arguments.DashboardSessionID, arguments.WorkloadIdentityID = token.authority()
 	} else if claims != nil {
 		arguments.KeyID = &claims.KeyID
 	}
@@ -661,7 +661,7 @@ func (s *Service) authorizeResolvedRequest(ctx context.Context, apiKeyHash strin
 
 	if resultErr := authorizationResultError(row.Result, row.WaitMS, RefusedLimit{derefString(row.LimitName), derefString(row.LimitRule)}); resultErr != nil {
 		if !row.ConfigCurrent && derefString(row.KeyID) == snapshot.Claims.KeyID {
-			s.confirmKeyConfig(apiKeyHash, dashboard, snapshot, false, started)
+			s.confirmKeyConfig(apiKeyHash, token, snapshot, false, started)
 		}
 		return nil, resultErr
 	}
@@ -672,8 +672,9 @@ func (s *Service) authorizeResolvedRequest(ctx context.Context, apiKeyHash strin
 		organizationID := derefString(row.OrganizationID)
 		userID := derefString(row.UserID)
 		grantID := row.GrantID
-		if dashboard != nil {
-			if keyID != dashboard.KeyID || userID != dashboard.ActorUserID {
+		if token != nil {
+			// A dashboard's hold names its member, and a workload's the key's responsible user.
+			if keyID != token.KeyID || token.WorkloadIdentityID == "" && userID != token.ActorUserID {
 				return nil, ErrInvalidAPIKey
 			}
 		} else {
@@ -704,7 +705,7 @@ func (s *Service) authorizeResolvedRequest(ctx context.Context, apiKeyHash strin
 		if upstreamByok == "" {
 			return authorization, ErrByok
 		}
-		s.confirmKeyConfig(apiKeyHash, dashboard, snapshot, row.ConfigCurrent, started)
+		s.confirmKeyConfig(apiKeyHash, token, snapshot, row.ConfigCurrent, started)
 		if selection.Mode == "stored" {
 			credential := selection.Credential
 			if credential == nil || credential.ID != upstreamByok || credential.OrganizationID != organizationID ||
@@ -771,11 +772,15 @@ func authorizationResultError(result string, waitMS *int64, limit RefusedLimit) 
 	}
 }
 
-func dashboardAdmissionKey(credential *DashboardCredential) string {
+func tokenAdmissionKey(credential *TokenCredential) string {
 	if credential == nil {
 		return ""
 	}
-	// KeyID is an unsigned database selector and cannot scope local admission.
+	if credential.WorkloadIdentityID != "" {
+		return "workload:" + credential.WorkloadIdentityID
+	}
+	// A dashboard credential's KeyID is an unsigned database selector and cannot scope local
+	// admission.
 	return "dashboard:" + credential.ActorUserID + ":" + credential.SessionID
 }
 

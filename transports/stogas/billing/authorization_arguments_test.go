@@ -54,19 +54,21 @@ const (
 	recordedHoldID        = "00000000-0000-7000-8000-00000000000e"
 	recordedPolicyID      = "recorded-policy"
 	recordedNodeID        = "recorded-node-000000000000000000000000000000000000000000000000000000000000000f"
+	recordedWorkloadID    = "00000000-0000-7000-8000-000000000010"
 )
 
 var recordedIdentifiers = map[string]string{
-	"keyId":           recordedKeyID,
-	"hashedKey":       recordedHashedKey,
-	"byokId":          recordedByokID,
-	"encryptionKeyId": recordedEncryptionKey,
-	"actorUserId":     recordedActorUserID,
-	"sessionId":       recordedSessionID,
-	"requestId":       recordedRequestID,
-	"holdId":          recordedHoldID,
-	"policyId":        recordedPolicyID,
-	"nodeId":          recordedNodeID,
+	"keyId":              recordedKeyID,
+	"hashedKey":          recordedHashedKey,
+	"byokId":             recordedByokID,
+	"encryptionKeyId":    recordedEncryptionKey,
+	"actorUserId":        recordedActorUserID,
+	"sessionId":          recordedSessionID,
+	"requestId":          recordedRequestID,
+	"holdId":             recordedHoldID,
+	"policyId":           recordedPolicyID,
+	"nodeId":             recordedNodeID,
+	"workloadIdentityId": recordedWorkloadID,
 }
 
 func recordedAuthorizations(t *testing.T) map[string]*authorizationArguments {
@@ -135,6 +137,9 @@ func recordedAuthorizations(t *testing.T) map[string]*authorizationArguments {
 	dashboard := base("managed", "")
 	actor, session := recordedActorUserID, recordedSessionID
 	dashboard.HashedKey, dashboard.DashboardActorUserID, dashboard.DashboardSessionID = nil, &actor, &session
+	workload := base("managed", "")
+	workloadIdentityID := recordedWorkloadID
+	workload.HashedKey, workload.WorkloadIdentityID = nil, &workloadIdentityID
 	return map[string]*authorizationArguments{
 		"managed":           base("managed", ""),
 		"stored":            stored,
@@ -144,6 +149,7 @@ func recordedAuthorizations(t *testing.T) map[string]*authorizationArguments {
 		"azure encrypted":   azureEncrypted,
 		"matched rule":      withRule,
 		"dashboard session": dashboard,
+		"workload identity": workload,
 	}
 }
 

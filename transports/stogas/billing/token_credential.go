@@ -22,6 +22,9 @@ const (
 	inferenceTokenScope       = "inference"
 	inferenceTokenMaxLifetime = 15 * time.Minute
 	inferenceTokenClockSkew   = 30 * time.Second
+	workloadCredentialPrefix  = "stogas_workload_v1."
+	workloadTokenAudience     = "stogas-workload"
+	workloadTokenMaxLifetime  = time.Hour
 	// Composite ML-DSA-65 and Ed25519 (draft-ietf-jose-pq-composite-sigs): both
 	// components sign one representative of the JWS input and both must verify.
 	inferenceTokenAlgorithm = "ML-DSA-65-Ed25519"
@@ -34,15 +37,44 @@ type inferenceTokenKey struct {
 	ed25519 ed25519.PublicKey
 }
 
-type DashboardCredential struct {
-	ActorUserID string
-	KeyID       string
-	SessionID   string
-	Claims      *APIKeyClaims
+// TokenCredential names a key through a token that Control signed instead of the key's secret.
+// A dashboard session's token acts for its member, who must still be allowed to use the key,
+// and a workload's token for one of the key's workload identities, which the key must still
+// trust. The database checks either on every request.
+type TokenCredential struct {
+	KeyID              string
+	ActorUserID        string
+	SessionID          string
+	WorkloadIdentityID string
+	Claims             *APIKeyClaims
+}
+
+// authority is what the database checks for the credential: a dashboard session's member and
+// session, or a workload's identity. A nil credential has none.
+func (c *TokenCredential) authority() (actorUserID, sessionID, workloadIdentityID *string) {
+	switch {
+	case c == nil:
+	case c.WorkloadIdentityID != "":
+		workloadIdentityID = &c.WorkloadIdentityID
+	default:
+		actorUserID, sessionID = &c.ActorUserID, &c.SessionID
+	}
+	return
 }
 
 func IsDashboardCredential(raw string) bool {
 	return strings.HasPrefix(raw, dashboardCredentialPrefix)
+}
+
+func IsWorkloadCredential(raw string) bool {
+	return strings.HasPrefix(raw, workloadCredentialPrefix)
+}
+
+func parseTokenCredential(raw string, publicKey *inferenceTokenKey, now time.Time) (*TokenCredential, error) {
+	if IsWorkloadCredential(raw) {
+		return parseWorkloadCredential(raw, publicKey, now)
+	}
+	return parseDashboardCredential(raw, publicKey, now)
 }
 
 type dashboardTokenHeader struct {
@@ -100,7 +132,7 @@ func parseDashboardCredential(
 	raw string,
 	publicKey *inferenceTokenKey,
 	now time.Time,
-) (*DashboardCredential, error) {
+) (*TokenCredential, error) {
 	if !strings.HasPrefix(raw, dashboardCredentialPrefix) {
 		return nil, ErrInvalidAPIKey
 	}
@@ -116,11 +148,57 @@ func parseDashboardCredential(
 	if err != nil {
 		return nil, ErrInvalidAPIKey
 	}
-	return &DashboardCredential{
+	return &TokenCredential{
 		ActorUserID: claims.Subject,
 		KeyID:       keyID.String(),
 		SessionID:   claims.SessionID,
 	}, nil
+}
+
+type workloadTokenClaims struct {
+	Audience  string `json:"aud"`
+	ExpiresAt int64  `json:"exp"`
+	IssuedAt  int64  `json:"iat"`
+	Identity  string `json:"identity"`
+	Issuer    string `json:"iss"`
+	JWTID     string `json:"jti"`
+	Scope     string `json:"scope"`
+	Subject   string `json:"sub"`
+}
+
+// parseWorkloadCredential reads the token that Control issued a workload for one service key,
+// after it matched the workload's platform token with one of the key's workload identities.
+func parseWorkloadCredential(raw string, publicKey *inferenceTokenKey, now time.Time) (*TokenCredential, error) {
+	if !strings.HasPrefix(raw, workloadCredentialPrefix) {
+		return nil, ErrInvalidAPIKey
+	}
+	payload, err := verifySignedToken(strings.TrimPrefix(raw, workloadCredentialPrefix), publicKey)
+	if err != nil {
+		return nil, err
+	}
+	var claims workloadTokenClaims
+	if err := decodeStrictJSON(payload, &claims); err != nil {
+		return nil, ErrInvalidAPIKey
+	}
+	now = now.UTC()
+	issuedAt := time.Unix(claims.IssuedAt, 0).UTC()
+	expiresAt := time.Unix(claims.ExpiresAt, 0).UTC()
+	keyID, keyErr := uuid.Parse(claims.Subject)
+	identityID, identityErr := uuid.Parse(claims.Identity)
+	jwtID, jwtIDErr := uuid.Parse(claims.JWTID)
+	if claims.Issuer != inferenceTokenIssuer ||
+		claims.Audience != workloadTokenAudience ||
+		claims.Scope != inferenceTokenScope ||
+		keyErr != nil || keyID.Version() != 7 ||
+		identityErr != nil || identityID.Version() != 7 ||
+		jwtIDErr != nil || jwtID == uuid.Nil ||
+		claims.ExpiresAt <= claims.IssuedAt ||
+		expiresAt.Sub(issuedAt) > workloadTokenMaxLifetime ||
+		!now.Before(expiresAt) ||
+		issuedAt.After(now.Add(inferenceTokenClockSkew)) {
+		return nil, ErrInvalidAPIKey
+	}
+	return &TokenCredential{KeyID: keyID.String(), WorkloadIdentityID: identityID.String()}, nil
 }
 
 // verifySignedToken checks a JWT that Control signed with its composite key and returns its

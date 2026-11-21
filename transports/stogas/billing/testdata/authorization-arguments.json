@@ -9,7 +9,8 @@
 		"nodeId": "recorded-node-000000000000000000000000000000000000000000000000000000000000000f",
 		"policyId": "recorded-policy",
 		"requestId": "00000000-0000-7000-8000-00000000000d",
-		"sessionId": "recorded-session"
+		"sessionId": "recorded-session",
+		"workloadIdentityId": "00000000-0000-7000-8000-000000000010"
 	},
 	"authorizations": {
 		"azure encrypted": {
@@ -51,7 +52,8 @@
 			],
 			"active_rules": [],
 			"input_text_bytes": 100,
-			"node_id": "recorded-node-000000000000000000000000000000000000000000000000000000000000000f"
+			"node_id": "recorded-node-000000000000000000000000000000000000000000000000000000000000000f",
+			"workload_identity_id": null
 		},
 		"azure in places": {
 			"hashed_key": "recorded-hashed-key",
@@ -96,7 +98,8 @@
 			],
 			"active_rules": [],
 			"input_text_bytes": 100,
-			"node_id": "recorded-node-000000000000000000000000000000000000000000000000000000000000000f"
+			"node_id": "recorded-node-000000000000000000000000000000000000000000000000000000000000000f",
+			"workload_identity_id": null
 		},
 		"azure stored": {
 			"hashed_key": "recorded-hashed-key",
@@ -137,7 +140,8 @@
 			],
 			"active_rules": [],
 			"input_text_bytes": 100,
-			"node_id": "recorded-node-000000000000000000000000000000000000000000000000000000000000000f"
+			"node_id": "recorded-node-000000000000000000000000000000000000000000000000000000000000000f",
+			"workload_identity_id": null
 		},
 		"dashboard session": {
 			"hashed_key": null,
@@ -170,7 +174,8 @@
 			],
 			"active_rules": [],
 			"input_text_bytes": 100,
-			"node_id": "recorded-node-000000000000000000000000000000000000000000000000000000000000000f"
+			"node_id": "recorded-node-000000000000000000000000000000000000000000000000000000000000000f",
+			"workload_identity_id": null
 		},
 		"encrypted": {
 			"hashed_key": "recorded-hashed-key",
@@ -203,7 +208,8 @@
 			],
 			"active_rules": [],
 			"input_text_bytes": 100,
-			"node_id": "recorded-node-000000000000000000000000000000000000000000000000000000000000000f"
+			"node_id": "recorded-node-000000000000000000000000000000000000000000000000000000000000000f",
+			"workload_identity_id": null
 		},
 		"managed": {
 			"hashed_key": "recorded-hashed-key",
@@ -236,7 +242,8 @@
 			],
 			"active_rules": [],
 			"input_text_bytes": 100,
-			"node_id": "recorded-node-000000000000000000000000000000000000000000000000000000000000000f"
+			"node_id": "recorded-node-000000000000000000000000000000000000000000000000000000000000000f",
+			"workload_identity_id": null
 		},
 		"matched rule": {
 			"hashed_key": "recorded-hashed-key",
@@ -275,7 +282,8 @@
 				}
 			],
 			"input_text_bytes": 100,
-			"node_id": "recorded-node-000000000000000000000000000000000000000000000000000000000000000f"
+			"node_id": "recorded-node-000000000000000000000000000000000000000000000000000000000000000f",
+			"workload_identity_id": null
 		},
 		"stored": {
 			"hashed_key": "recorded-hashed-key",
@@ -308,7 +316,42 @@
 			],
 			"active_rules": [],
 			"input_text_bytes": 100,
-			"node_id": "recorded-node-000000000000000000000000000000000000000000000000000000000000000f"
+			"node_id": "recorded-node-000000000000000000000000000000000000000000000000000000000000000f",
+			"workload_identity_id": null
+		},
+		"workload identity": {
+			"hashed_key": null,
+			"key_id": "00000000-0000-7000-8000-00000000000a",
+			"dashboard_actor_user_id": null,
+			"dashboard_session_id": null,
+			"request_id": "00000000-0000-7000-8000-00000000000d",
+			"hold_id": "00000000-0000-7000-8000-00000000000e",
+			"provider_key": "chutes",
+			"product_key": "gpt-4o-mini",
+			"estimated_upstream_cost_usd": "0.01",
+			"expires_at": "2026-01-02T03:19:05.678901Z",
+			"hold_params_hash": "1612d2b7c7bb669ed7144b77f54be9c159de5ed82a084dba6159fa1651032089",
+			"upstream_target": null,
+			"encryption_key_id": null,
+			"authorize_before": "2026-01-02T03:04:07.178901Z",
+			"reserved_tokens": 1000,
+			"active_until": "2026-01-02T03:00:05.678901Z",
+			"credentials_generation": 1,
+			"cached_byok": {
+				"mode": "managed",
+				"byokId": null
+			},
+			"policy_versions": [
+				{
+					"scope": "key",
+					"id": "recorded-policy",
+					"revision": 1
+				}
+			],
+			"active_rules": [],
+			"input_text_bytes": 100,
+			"node_id": "recorded-node-000000000000000000000000000000000000000000000000000000000000000f",
+			"workload_identity_id": "00000000-0000-7000-8000-000000000010"
 		}
 	},
 	"holds": {
@@ -457,6 +500,9 @@
 			"binding": null
 		},
 		"stored": {
+			"binding": null
+		},
+		"workload identity": {
 			"binding": null
 		}
 	}

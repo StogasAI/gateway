@@ -30,7 +30,7 @@ func TestPolicySimulationTakesToolTypesAlone(t *testing.T) {
 			testRequestBody(ctx, test.body)
 			ctx.memory, _ = server.memory.acquire(cap(ctx.body))
 			t.Cleanup(ctx.memory.release)
-			ctx.credential = &apiCredential{Dashboard: &billing.DashboardCredential{}}
+			ctx.credential = &apiCredential{Token: &billing.TokenCredential{}}
 			server.simulatePolicy(ctx)
 			// Without a runtime, a valid simulation stops when it needs the key's configuration.
 			if rejected := testResponse(ctx).Code == http.StatusBadRequest; rejected == test.valid {

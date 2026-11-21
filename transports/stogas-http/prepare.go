@@ -60,7 +60,7 @@ func (s *Server) startRun(ctx *requestContext, startedAt time.Time, preparation 
 	keyConfig, err := s.keyConfigForCredential(credential)
 	if keyConfig != nil {
 		ctx.policyVersions = keyConfig.Logged
-		if credential.Dashboard != nil && keyConfig.Claims != nil {
+		if credential.Token != nil && keyConfig.Claims != nil {
 			ctx.claims = keyConfig.Claims
 		}
 	}
@@ -249,8 +249,8 @@ func (s *Server) keyConfigForCredential(credential apiCredential) (*billing.KeyC
 	if s == nil || s.runtime == nil || s.runtime.Billing() == nil {
 		return nil, billing.ErrGatewayUnavailable
 	}
-	if credential.Dashboard != nil {
-		return s.runtime.Billing().ConfigForDashboard(context.Background(), credential.Dashboard, credential.EncryptionKeys)
+	if credential.Token != nil {
+		return s.runtime.Billing().ConfigForToken(context.Background(), credential.Token, credential.EncryptionKeys)
 	}
 	return s.runtime.Billing().ConfigForAPIKey(context.Background(), credential.Raw, credential.Claims, credential.EncryptionKeys)
 }

@@ -169,19 +169,19 @@ func TestDashboardAdmissionUsesSignedPrincipalInsteadOfKeyPrefix(t *testing.T) {
 	if first.KeyID == second.KeyID {
 		t.Fatal("test credentials unexpectedly used the same key ID")
 	}
-	firstAdmissionKey := dashboardAdmissionKey(first)
-	secondAdmissionKey := dashboardAdmissionKey(second)
+	firstAdmissionKey := tokenAdmissionKey(first)
+	secondAdmissionKey := tokenAdmissionKey(second)
 	if firstAdmissionKey != secondAdmissionKey {
 		t.Fatalf("rotated key prefix changed admission identity: %q != %q", firstAdmissionKey, secondAdmissionKey)
 	}
 	otherSession := *first
 	otherSession.SessionID = mustUUIDV7(t)
-	if dashboardAdmissionKey(&otherSession) == firstAdmissionKey {
+	if tokenAdmissionKey(&otherSession) == firstAdmissionKey {
 		t.Fatal("different signed sessions shared an admission identity")
 	}
 	otherActor := *first
 	otherActor.ActorUserID = mustUUIDV7(t)
-	if dashboardAdmissionKey(&otherActor) == firstAdmissionKey {
+	if tokenAdmissionKey(&otherActor) == firstAdmissionKey {
 		t.Fatal("different signed actors shared an admission identity")
 	}
 
@@ -201,6 +201,71 @@ func TestDashboardAdmissionUsesSignedPrincipalInsteadOfKeyPrefix(t *testing.T) {
 		t.Fatal("rotated key prefix bypassed the refusal")
 	}
 
+}
+
+// A workload's token names its key and identity in its signed claims, and lasts at most an hour.
+func TestParseWorkloadCredential(t *testing.T) {
+	privateKey := newInferenceTokenTestKey(t)
+	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
+	keyID, identityID := mustUUIDV7(t), mustUUIDV7(t)
+	claims := func(change func(*workloadTokenClaims)) string {
+		value := workloadTokenClaims{
+			Audience:  workloadTokenAudience,
+			ExpiresAt: now.Add(time.Hour).Unix(),
+			IssuedAt:  now.Unix(),
+			Identity:  identityID,
+			Issuer:    inferenceTokenIssuer,
+			JWTID:     mustUUIDV7(t),
+			Scope:     inferenceTokenScope,
+			Subject:   keyID,
+		}
+		if change != nil {
+			change(&value)
+		}
+		return workloadCredentialPrefix + signDashboardToken(t, privateKey, value)
+	}
+
+	credential, err := parseTokenCredential(claims(nil), privateKey.public, now)
+	if err != nil {
+		t.Fatalf("valid workload credential was rejected: %v", err)
+	}
+	if credential.KeyID != keyID || credential.WorkloadIdentityID != identityID ||
+		credential.ActorUserID != "" || credential.SessionID != "" {
+		t.Fatalf("unexpected credential: %#v", credential)
+	}
+	if !IsWorkloadCredential(claims(nil)) || IsDashboardCredential(claims(nil)) {
+		t.Fatal("the prefix does not name a workload credential")
+	}
+
+	refused := map[string]string{
+		"expired":            claims(func(c *workloadTokenClaims) { c.ExpiresAt = now.Unix() }),
+		"longer than a hour": claims(func(c *workloadTokenClaims) { c.ExpiresAt = now.Add(time.Hour + time.Second).Unix() }),
+		"issued later":       claims(func(c *workloadTokenClaims) { c.IssuedAt = now.Add(time.Minute).Unix() }),
+		"dashboard audience": claims(func(c *workloadTokenClaims) { c.Audience = inferenceTokenAudience }),
+		"another scope":      claims(func(c *workloadTokenClaims) { c.Scope = "byok-check" }),
+		"identity not v7":    claims(func(c *workloadTokenClaims) { c.Identity = uuid.NewString() }),
+		"key not v7":         claims(func(c *workloadTokenClaims) { c.Subject = uuid.NewString() }),
+		"another signer":     workloadCredentialPrefix + signDashboardToken(t, newInferenceTokenTestKey(t), workloadTokenClaims{Audience: workloadTokenAudience, ExpiresAt: now.Add(time.Hour).Unix(), IssuedAt: now.Unix(), Identity: identityID, Issuer: inferenceTokenIssuer, JWTID: mustUUIDV7(t), Scope: inferenceTokenScope, Subject: keyID}),
+		// A dashboard token's claims carry a session, which a workload's never do.
+		"dashboard claims": workloadCredentialPrefix + signDashboardToken(t, privateKey, dashboardTokenClaims{Audience: workloadTokenAudience, ExpiresAt: now.Add(time.Hour).Unix(), IssuedAt: now.Unix(), Issuer: inferenceTokenIssuer, JWTID: mustUUIDV7(t), Scope: inferenceTokenScope, SessionID: mustUUIDV7(t), Subject: keyID}),
+		// The dashboard prefix takes a key ID and a session token, never a workload's token.
+		"dashboard prefix": dashboardCredentialPrefix + keyID + "." + strings.TrimPrefix(claims(nil), workloadCredentialPrefix),
+	}
+	for name, raw := range refused {
+		if _, err := parseTokenCredential(raw, privateKey.public, now); err == nil {
+			t.Errorf("%s: credential was accepted", name)
+		}
+	}
+
+	// Each identity has its own admission and cached configuration, apart from dashboard sessions.
+	other := *credential
+	other.WorkloadIdentityID = mustUUIDV7(t)
+	dashboard := &TokenCredential{KeyID: keyID, ActorUserID: identityID, SessionID: identityID}
+	for _, key := range []func(*TokenCredential) string{tokenAdmissionKey, tokenConfigCacheKey} {
+		if key(credential) == key(&other) || key(credential) == key(dashboard) {
+			t.Fatal("two credentials share an admission or cache key")
+		}
+	}
 }
 
 type inferenceTokenTestKey struct {

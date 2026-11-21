@@ -147,7 +147,7 @@ func (s *Server) simulatePolicy(ctx *requestContext) {
 	if !ok {
 		return
 	}
-	if credential.Dashboard == nil {
+	if credential.Token == nil || credential.Token.WorkloadIdentityID != "" {
 		s.writeError(ctx, http.StatusForbidden, map[string]any{"error": map[string]any{"code": "permission_denied", "message": "Routing simulations need a dashboard session", "type": "permission_denied"}})
 		return
 	}
@@ -215,7 +215,7 @@ func (s *Server) simulatePolicy(ctx *requestContext) {
 		s.writeBillingError(ctx, billing.ErrGatewayUnavailable)
 		return
 	}
-	config, applied, err := s.runtime.Billing().SimulationConfig(ctx.request.Context(), credential.Dashboard, input.Policy)
+	config, applied, err := s.runtime.Billing().SimulationConfig(ctx.request.Context(), credential.Token, input.Policy)
 	if errors.Is(err, billing.ErrInvalidAPIKey) || errors.Is(err, billing.ErrDashboardKeyDenied) ||
 		errors.Is(err, billing.ErrGatewayUnavailable) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		s.writeBillingError(ctx, err)

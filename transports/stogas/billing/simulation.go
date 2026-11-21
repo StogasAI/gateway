@@ -13,7 +13,7 @@ import (
 // replaces the key's policy with the same scope and ID; the result reports
 // whether the key has one. The cache does not keep the snapshot, and nothing
 // opens its encrypted content.
-func (s *Service) SimulationConfig(ctx context.Context, credential *DashboardCredential, draft *PolicyValidationSource) (*KeyConfigSnapshot, bool, error) {
+func (s *Service) SimulationConfig(ctx context.Context, credential *TokenCredential, draft *PolicyValidationSource) (*KeyConfigSnapshot, bool, error) {
 	if s == nil || s.db == nil || s.keyConfigQuery == "" || credential == nil {
 		return nil, false, ErrGatewayUnavailable
 	}
@@ -21,7 +21,7 @@ func (s *Service) SimulationConfig(ctx context.Context, credential *DashboardCre
 	defer cancel()
 	row := keyConfigRow{}
 	if err := s.queryForTool(ctx, s.keyConfigQuery,
-		[]any{nil, credential.KeyID, credential.ActorUserID, credential.SessionID, nil, "view"},
+		[]any{nil, credential.KeyID, credential.ActorUserID, credential.SessionID, nil, "view", nil},
 		&row.Result, &row.KeyID, &row.Sources, &row.Claims, &row.CredentialsGeneration, &row.Credentials, &row.CredentialSources, &row.EncryptionKeys,
 	); err != nil {
 		return nil, false, err

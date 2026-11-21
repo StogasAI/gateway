@@ -58,6 +58,7 @@ type authorizationArguments struct {
 	ActiveRules              []matchedRule   `json:"active_rules"`
 	InputTextBytes           int64           `json:"input_text_bytes"`
 	NodeID                   *string         `json:"node_id"`
+	WorkloadIdentityID       *string         `json:"workload_identity_id"`
 }
 
 // cachedByok names the credential that the gateway's cached configuration chose,
@@ -80,7 +81,7 @@ func (a *authorizationArguments) values(previousHoldID *string, finished []uuid.
 		a.ProviderKey, a.ProductKey, a.EstimatedUpstreamCostUSD, a.ExpiresAt, a.HoldParamsHash,
 		nullableString(string(a.UpstreamTarget)), a.EncryptionKeyID, a.AuthorizeBefore, a.ReservedTokens,
 		a.ActiveUntil, a.CredentialsGeneration, string(a.CachedByok), a.PolicyVersions, a.ActiveRules,
-		a.InputTextBytes, a.NodeID, previousHoldID, finished,
+		a.InputTextBytes, a.NodeID, previousHoldID, finished, a.WorkloadIdentityID,
 	}
 }
 
