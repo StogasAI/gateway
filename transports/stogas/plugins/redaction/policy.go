@@ -36,6 +36,7 @@ const (
 	PatternBankIdentifiers      Pattern = "bank_identifiers"
 	PatternNationalIdentifiers  Pattern = "national_identifiers"
 	PatternHealthIdentifiers    Pattern = "health_identifiers"
+	PatternHiddenCharacters     Pattern = "hidden_characters"
 )
 
 // Part is a part of an exchange that holds text: one of the five parts of a
@@ -246,7 +247,7 @@ var (
 		EntityGermanyHealthInsurance,
 		EntityGermanySocialSecurity,
 	)
-	allBuiltInEntityMask = maskRange(EntityEmail, EntityDatabaseCredential)
+	allBuiltInEntityMask = maskRange(EntityEmail, lastBuiltInEntity)
 )
 
 var supportedPatterns = [...]Pattern{
@@ -259,6 +260,7 @@ var supportedPatterns = [...]Pattern{
 	PatternBankIdentifiers,
 	PatternNationalIdentifiers,
 	PatternHealthIdentifiers,
+	PatternHiddenCharacters,
 }
 
 // CompilePolicy validates and compiles configuration once. It does not retain
@@ -283,11 +285,15 @@ func CompilePolicy(options Options) (*Policy, error) {
 		return nil, err
 	}
 	minimumBytes := maxInt()
-	if enabled.without(EntityIPAddress) != 0 {
+	if enabled.without(EntityIPAddress).without(EntityHiddenCharacters) != 0 {
 		minimumBytes = defaultMinimumTextBytes
 	}
-	if enabled.has(EntityIPAddress) && minimumBytes > 2 {
-		minimumBytes = 2
+	// The shortest hidden text is one tag character or two soft hyphens.
+	if enabled.has(EntityHiddenCharacters) {
+		minimumBytes = min(minimumBytes, 4)
+	}
+	if enabled.has(EntityIPAddress) {
+		minimumBytes = min(minimumBytes, 2)
 	}
 	if len(custom) > 0 || literals != nil {
 		minimumBytes = 1
@@ -356,6 +362,8 @@ func entitiesForPattern(pattern Pattern) (entityMask, bool) {
 	case PatternHealthIdentifiers:
 		return maskOf(EntityUKNHS, EntityAustraliaMedicare, EntityUSNPI,
 			EntityUSMedicareID, EntityGermanyHealthInsurance), true
+	case PatternHiddenCharacters:
+		return maskOf(EntityHiddenCharacters), true
 	default:
 		return 0, false
 	}
@@ -491,7 +499,7 @@ func maskRange(first, last Entity) entityMask {
 }
 
 func builtInEntity(entity Entity) bool {
-	return entity >= EntityEmail && entity <= EntityDatabaseCredential && entity <= 64
+	return entity >= EntityEmail && entity <= lastBuiltInEntity && entity <= 64
 }
 
 func maxInt() int {

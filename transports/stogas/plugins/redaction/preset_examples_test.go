@@ -19,6 +19,7 @@ func TestEachPresetAloneRedactsItsExample(t *testing.T) {
 		{PatternBankIdentifiers, "IBAN GB82 WEST 1234 5698 7654 32", "IBAN <IBAN>", "IBAN GB81 WEST 1234 5698 7654 32"},
 		{PatternNationalIdentifiers, "National Insurance AB 12 34 56 C", "National Insurance <UK_NATIONAL_INSURANCE_NUMBER>", "National Insurance QQ 12 34 56 C"},
 		{PatternHealthIdentifiers, "NPI 1234567893", "NPI <US_NPI>", "NPI 1234567894"},
+		{PatternHiddenCharacters, "Summarize this.\U000E0049\U000E0067\U000E006E\U000E006F\U000E0072\U000E0065", "Summarize this.<HIDDEN_CHARACTERS>", "Summarize\u200bthis."},
 	} {
 		t.Run(string(example.preset), func(t *testing.T) {
 			t.Parallel()

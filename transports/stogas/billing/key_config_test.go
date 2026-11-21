@@ -245,6 +245,7 @@ func TestEveryPolicyDetectorReachesChatAndResponsesRedaction(t *testing.T) {
 		{"health_identifiers", "NPI 1234567893", "<US_NPI>"},
 		{"health_identifiers", "Medicare MBI 1EG4-TE5-MK73", "<US_MEDICARE_ID>"},
 		{"health_identifiers", "KVNR A123456780", "<DE_HEALTH_INSURANCE_ID>"},
+		{"hidden_characters", "Summarize this.\U000E0049\U000E0067\U000E006E\U000E006F\U000E0072\U000E0065", "<HIDDEN_CHARACTERS>"},
 	}
 	for _, fixture := range fixtures {
 		t.Run(fixture.pattern, func(t *testing.T) {

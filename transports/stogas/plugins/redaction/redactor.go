@@ -70,7 +70,10 @@ const (
 	EntityJSONWebToken
 	EntityCredential
 	EntityDatabaseCredential
+	EntityHiddenCharacters
 	entityCustom
+	// lastBuiltInEntity is the last entity that a built-in detector finds.
+	lastBuiltInEntity = entityCustom - 1
 )
 
 type match struct {
@@ -189,7 +192,8 @@ func (r *Redactor) InputTextBytes() int {
 }
 
 // CountHidden has the walk also count the hidden characters of the text that
-// InputTextBytes measures (classification.Hidden).
+// InputTextBytes measures, as the request holds it before redaction
+// (classification.Hidden), so that a redaction of them does not hide them.
 func (r *Redactor) CountHidden() {
 	r.countHidden = true
 }
@@ -211,10 +215,11 @@ func (t inputText) minus(other inputText) inputText {
 	return inputText{bytes: t.bytes - other.bytes, hidden: t.hidden - other.hidden}
 }
 
-func (r *Redactor) measure(text []byte) {
+// measure measures a text that redaction changed from original.
+func (r *Redactor) measure(original, text []byte) {
 	r.input.bytes += len(text)
 	if r.countHidden {
-		r.input.hidden += classification.CountHidden(text)
+		r.input.hidden += classification.CountHidden(original)
 	}
 }
 
@@ -442,6 +447,13 @@ func (r *Redactor) scanBuiltinText(policy *Policy, text []byte) ([]match, error)
 			return nil, err
 		}
 	}
+	if policy.entities.has(EntityHiddenCharacters) {
+		for _, span := range classification.HiddenSpans(text) {
+			if matches, err = appendMatch(matches, span.Start, span.End, EntityHiddenCharacters, 1); err != nil {
+				return nil, err
+			}
+		}
+	}
 	return matches, nil
 }
 
@@ -586,6 +598,8 @@ func placeholder(entity Entity) string {
 		return "<JSON_WEB_TOKEN>"
 	case EntityDatabaseCredential:
 		return "<DATABASE_URL>"
+	case EntityHiddenCharacters:
+		return "<HIDDEN_CHARACTERS>"
 	case EntityCredential:
 		return "<CREDENTIAL>"
 	case entityCustom:

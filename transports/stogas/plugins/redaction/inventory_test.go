@@ -51,12 +51,13 @@ func TestEveryEntityHasAStableTypedPlaceholder(t *testing.T) {
 		EntityJSONWebToken:           "<JSON_WEB_TOKEN>",
 		EntityCredential:             "<CREDENTIAL>",
 		EntityDatabaseCredential:     "<DATABASE_URL>",
+		EntityHiddenCharacters:       "<HIDDEN_CHARACTERS>",
 	}
-	if len(expected) != int(EntityDatabaseCredential) {
-		t.Fatalf("entity inventory has %d entries, enum has %d", len(expected), EntityDatabaseCredential)
+	if len(expected) != int(lastBuiltInEntity) {
+		t.Fatalf("entity inventory has %d entries, enum has %d", len(expected), lastBuiltInEntity)
 	}
 	seen := make(map[string]Entity, len(expected))
-	for entity := EntityEmail; entity <= EntityDatabaseCredential; entity++ {
+	for entity := EntityEmail; entity <= lastBuiltInEntity; entity++ {
 		want, ok := expected[entity]
 		if !ok {
 			t.Fatalf("entity %d is absent from the inventory", entity)
@@ -88,6 +89,7 @@ func TestScannerMasksCoverEveryBuiltInEntityOnce(t *testing.T) {
 		secretEntityMask,
 		structuredNumberEntityMask,
 		structuredIdentifierEntityMask,
+		maskOf(EntityHiddenCharacters),
 	}
 	var covered entityMask
 	for index, group := range groups {
@@ -99,8 +101,8 @@ func TestScannerMasksCoverEveryBuiltInEntityOnce(t *testing.T) {
 	if covered != allBuiltInEntityMask {
 		t.Fatalf("scanner coverage = %#x, want %#x", covered, allBuiltInEntityMask)
 	}
-	if EntityDatabaseCredential > 64 {
-		t.Fatalf("entity mask cannot represent entity %d", EntityDatabaseCredential)
+	if lastBuiltInEntity > 64 {
+		t.Fatalf("entity mask cannot represent entity %d", lastBuiltInEntity)
 	}
 }
 

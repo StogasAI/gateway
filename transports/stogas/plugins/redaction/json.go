@@ -548,7 +548,7 @@ func (r *Redactor) redactJSONString(source []byte, start, end int, escaped bool,
 	if err != nil {
 		return err
 	}
-	r.measure(redacted)
+	r.measure(text, redacted)
 	if r.asciiOnly {
 		return nil
 	}

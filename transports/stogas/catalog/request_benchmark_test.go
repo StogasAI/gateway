@@ -73,6 +73,7 @@ func BenchmarkRequestThreeMillionContext(b *testing.B) {
 					"email_address", "phone_number", "social_security_number",
 					"credit_card_number", "ip_address", "api_keys_and_secrets",
 					"bank_identifiers", "national_identifiers", "health_identifiers",
+					"hidden_characters",
 				},
 				"customPattern": fmt.Sprintf("CONFIDENTIAL_%d_[0-9]{8}", i%3),
 				"literals":      groups,

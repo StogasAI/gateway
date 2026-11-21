@@ -203,7 +203,7 @@ func (r *Redactor) scanCustomPatterns(text []byte, matches []match, expression *
 
 func customPatternTouchesPlaceholder(expression *regexp.Regexp) bool {
 	corpus := make([]byte, 0, 4_096)
-	for entity := EntityEmail; entity <= EntityDatabaseCredential; entity++ {
+	for entity := EntityEmail; entity <= lastBuiltInEntity; entity++ {
 		value := placeholder(entity)
 		if expression.MatchString(value) {
 			return true

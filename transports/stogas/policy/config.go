@@ -56,6 +56,7 @@ var (
 		"bank_identifiers",
 		"national_identifiers",
 		"health_identifiers",
+		"hidden_characters",
 	)
 	nodeIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._:-]{0,127}$`)
 	// The contract's timeZoneSchema: only UTC and Area/Location names mean the same zone everywhere

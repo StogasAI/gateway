@@ -6,18 +6,21 @@ import (
 )
 
 // Hidden counts the characters in text that a reader cannot see and a model still reads, the
-// carriers of ASCII smuggling, emoji smuggling and zero-width encodings:
+// carriers of ASCII smuggling, emoji smuggling, zero-width encodings and Trojan Source:
 //
 //   - every Unicode tag character outside the three tag sequences of the subdivision flags
 //     (England, Scotland and Wales), which Unicode recommends and nothing else uses;
+//   - every bidirectional override (U+202D and U+202E), which shows the characters after it
+//     against their own direction, so that a reader sees them in another order than a model
+//     reads them;
 //   - every character of a run of two or more other default-ignorable characters, such as
-//     zero-width characters, variation selectors and bidirectional controls.
+//     zero-width characters, variation selectors and the other bidirectional controls.
 //
-// Text in any language uses default-ignorable characters one at a time: a zero-width joiner
-// inside a word or an emoji sequence, a variation selector after its base character, a
-// direction mark. The one pair that text uses is an emoji presentation selector before a
-// zero-width joiner, as in the rainbow flag, so a joiner after a selector that stands alone
-// starts a new run.
+// Text in any language uses the other default-ignorable characters one at a time: a zero-width
+// joiner inside a word or an emoji sequence, a variation selector after its base character, a
+// direction mark, or an isolate around a placeholder, as localization libraries write it. The
+// one pair that text uses is an emoji presentation selector before a zero-width joiner, as in the
+// rainbow flag, so a joiner after a selector that stands alone starts a new run.
 //
 // Write takes text in order, in pieces that end on a character boundary, and keeps a few bytes
 // of state, so it reads a stream of any length in constant memory. The zero value has read
@@ -26,11 +29,22 @@ type Hidden struct {
 	count int
 	run   int
 	prev  rune
+	// counted reports that the run's first character counts on its own, as an override does.
+	counted bool
 	// flag is one more than the tag letters that follow a waving black flag, or 0 when the last
 	// character does not continue a flag sequence.
 	flag    int
 	letters [flagLetters]rune
+	// runStart is where the run starts, and flagStart and flagEnd hold a flag's tag letters, as
+	// offsets in the text of HiddenSpans.
+	runStart, flagStart, flagEnd int
+	// spans are the characters that HiddenSpans found, when keep is set.
+	spans []Span
+	keep  bool
 }
+
+// Span is the bytes from Start to End of a text.
+type Span struct{ Start, End int }
 
 const (
 	blackFlag   = 0x1F3F4
@@ -39,6 +53,9 @@ const (
 	flagLetters = 5
 	selector16  = 0xFE0F
 	zwj         = 0x200D
+	// leftOverride and rightOverride are LEFT-TO-RIGHT OVERRIDE and RIGHT-TO-LEFT OVERRIDE.
+	leftOverride  = 0x202D
+	rightOverride = 0x202E
 )
 
 // rgiFlags are the letters of the subdivision flags that Unicode recommends for interchange
@@ -50,6 +67,15 @@ func CountHidden[T string | []byte](text T) int {
 	var h Hidden
 	write(&h, text)
 	return h.Count()
+}
+
+// HiddenSpans returns where the characters that CountHidden counts are in one complete text, in
+// order and with the characters that follow each other in one span.
+func HiddenSpans[T string | []byte](text T) []Span {
+	h := Hidden{keep: true}
+	write(&h, text)
+	h.Break()
+	return h.spans
 }
 
 // hiddenLeads are the bytes that mayHide takes first, which pass most text without a call.
@@ -104,7 +130,7 @@ func write[T string | []byte](h *Hidden, text T) {
 		case hiddenLeads[b] && i+1 < len(text) && mayHide(b, text[i+1]):
 			// A conversion of at most four bytes that the call keeps copies nothing.
 			r, size := utf8.DecodeRuneInString(string(text[i:min(i+utf8.UTFMax, len(text))]))
-			h.read(r)
+			h.read(r, i, i+size)
 			i += size
 		default:
 			// The continuation bytes of a character start none, so they go with it. An invalid
@@ -141,13 +167,29 @@ func (h *Hidden) visible() {
 
 // endFlag counts the tag letters of a flag sequence that ends without the cancel tag.
 func (h *Hidden) endFlag() {
-	h.count += max(h.flag-1, 0)
+	if h.flag > 1 {
+		h.count += h.flag - 1
+		h.mark(h.flagStart, h.flagEnd)
+	}
 	h.flag = 0
 }
 
-func (h *Hidden) read(r rune) {
+// mark keeps the characters from start to end that were just counted, for HiddenSpans.
+func (h *Hidden) mark(start, end int) {
+	if !h.keep {
+		return
+	}
+	if last := len(h.spans) - 1; last >= 0 && h.spans[last].End == start {
+		h.spans[last].End = end
+		return
+	}
+	h.spans = append(h.spans, Span{Start: start, End: end})
+}
+
+// read reads the character r, from start to end in the text.
+func (h *Hidden) read(r rune, start, end int) {
 	if r >= tagBase && r <= cancelTag {
-		h.readTag(r)
+		h.readTag(r, start, end)
 		h.run, h.prev = 0, r
 		return
 	}
@@ -160,38 +202,56 @@ func (h *Hidden) read(r rune) {
 		h.run = 0
 	case r == zwj && h.prev == selector16 && h.run == 1:
 		// The selector stood alone, so the joiner starts a run of its own.
+		h.runStart = start
 	default:
 		h.run++
-		if h.run == 2 {
-			h.count += 2
-		} else if h.run > 2 {
+		switch {
+		case h.run == 1 && (r == leftOverride || r == rightOverride):
 			h.count++
+			h.counted = true
+			h.mark(start, end)
+		case h.run == 1:
+			h.counted = false
+		case h.run == 2 && !h.counted:
+			h.count += 2
+			h.mark(h.runStart, end)
+		default:
+			h.count++
+			h.mark(start, end)
+		}
+		if h.run == 1 {
+			h.runStart = start
 		}
 	}
 	h.prev = r
 }
 
-func (h *Hidden) readTag(r rune) {
+func (h *Hidden) readTag(r rune, start, end int) {
 	if h.flag == 0 {
 		h.count++
+		h.mark(start, end)
 		return
 	}
 	letters := h.flag - 1
 	switch letter := r - tagBase; {
 	case r == cancelTag && letters == flagLetters && h.rgiPrefix(letters):
 		h.flag = 0
-		return
 	case letters < flagLetters && letter >= 'a' && letter <= 'z':
+		if letters == 0 {
+			h.flagStart = start
+		}
 		h.letters[letters] = letter
 		h.flag++
-		if h.rgiPrefix(letters + 1) {
-			return
+		h.flagEnd = end
+		if !h.rgiPrefix(letters + 1) {
+			h.endFlag()
 		}
 	default:
-		// The tag itself, then the letters before it.
+		// The letters before it, then the tag itself.
+		h.endFlag()
 		h.count++
+		h.mark(start, end)
 	}
-	h.endFlag()
 }
 
 // rgiPrefix reports whether the first n letters read after the flag begin a recommended flag.
