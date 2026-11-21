@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -37,10 +38,10 @@ type requestFacts struct {
 	// clientTools are the names of the tools that the model may call and the client runs: function
 	// and custom tools, and shell and apply_patch under those names.
 	clientTools []string
-	// mcpServers name the remote MCP servers that the request lists: a URL's host, connector: and
-	// a connector ID, or tunnel: and a tunnel ID, all lowercase. mcpTools lists server/name for each
-	// tool that the request allows on one of them, or server/* when it doesn't name the server's
-	// tools. mcpUnattended lists the servers that can run a call without the client's approval.
+	// mcpServers name the remote MCP servers that the request lists: a URL's host and path
+	// (mcpServerName), connector: and a connector ID, or tunnel: and a tunnel ID. mcpTools lists
+	// server#name for each tool that the request allows on one of them, or server#* when it doesn't
+	// name the server's tools; no server's name holds a #. mcpUnattended lists the servers that can run a call without the client's approval.
 	mcpServers, mcpTools, mcpUnattended []string
 	// systemMessages reports whether the request sends a system or developer message, or
 	// instructions. Only policies that read it scan the messages.
@@ -183,46 +184,131 @@ func ResponsesLoadedTools(input json.RawMessage) []map[string]json.RawMessage {
 func (f *requestFacts) addMCPServer(tool map[string]json.RawMessage) {
 	names := mcpAllowedToolNames(tool["allowed_tools"])
 	unattended := MCPRunsWithoutApproval(tool["require_approval"])
-	for _, server := range mcpServerNames(tool) {
+	for _, server := range MCPServerNames(tool) {
 		f.mcpServers = append(f.mcpServers, server)
 		if unattended {
 			f.mcpUnattended = append(f.mcpUnattended, server)
 		}
 		if len(names) == 0 {
-			f.mcpTools = append(f.mcpTools, server+"/*")
+			f.mcpTools = append(f.mcpTools, server+"#*")
 		}
 		for _, name := range names {
-			f.mcpTools = append(f.mcpTools, server+"/"+name)
+			f.mcpTools = append(f.mcpTools, server+"#"+name)
 		}
 	}
 }
 
-// mcpServerNames names the server of an MCP tool by each of server_url, connector_id and
+// MCPServerNames names the server of an MCP tool by each of server_url, connector_id and
 // tunnel_id that it sets, so a list of allowed servers checks whichever one the provider uses.
-// A URL reads as its host, with a Unicode host in its ASCII form, and an ID carries its field's
-// prefix, which no host can hold, so a URL never reads as a connector. A URL without a host, or a
-// tool that names no server, reads as an empty name, which no allowed server matches.
-func mcpServerNames(tool map[string]json.RawMessage) []string {
+// An ID carries its field's prefix, which no URL's name can hold, since a URL's name holds a
+// slash and an ID's none, so a URL never reads as a connector. A tool that names no server, or
+// names one in a form that has no name, reads as an empty name, which no rule can hold; the
+// gateway refuses the request that sends it.
+func MCPServerNames(tool map[string]json.RawMessage) []string {
 	var names []string
 	if address := rawStringValue(tool["server_url"]); address != "" {
-		host := ""
-		if parsed, err := url.Parse(address); err == nil {
-			host = strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".")
-			if ascii, err := idna.Lookup.ToASCII(host); err == nil {
-				host = ascii
-			}
-		}
-		names = append(names, host)
+		names = append(names, mcpServerName(address))
 	}
 	for _, field := range [][2]string{{"connector_id", "connector:"}, {"tunnel_id", "tunnel:"}} {
 		if id := rawStringValue(tool[field[0]]); id != "" {
-			names = append(names, field[1]+strings.ToLower(id))
+			names = append(names, mcpServerID(field[1], id))
 		}
 	}
 	if len(names) == 0 {
 		return []string{""}
 	}
 	return names
+}
+
+// mcpServerID names a connector or a tunnel by its ID in lowercase, after its field's prefix. An
+// ID with a character that no provider's ID holds has no name, so that a name never holds the #
+// that ends a server in a tool's entry.
+func mcpServerID(prefix, id string) string {
+	for _, character := range []byte(id) {
+		if !(character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' ||
+			character == '.' || character == '_' || character == '-') {
+			return ""
+		}
+	}
+	return prefix + strings.ToLower(id)
+}
+
+// mcpServerName names the server that a URL reaches, as policies read it: the host in lowercase
+// ASCII, a port other than the scheme's own, and the path, such as mcp.example.com/mcp. One host
+// can serve many servers, each at its own path or port, so the host alone would let a rule that
+// allows one of them allow them all. The query is left out, because it often holds a token.
+//
+// URL readers disagree about backslashes, control characters, escaped host characters, dot
+// segments, escaped slashes and empty path segments. A URL that another reader could send to a
+// different server has no name, so no rule mistakes it for another, and the request that sends
+// it is refused. A path keeps its letter case and its escapes, except those of characters that
+// need none.
+func mcpServerName(address string) string {
+	parsed, err := url.Parse(address)
+	if err != nil {
+		return ""
+	}
+	host := strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".")
+	if ascii, err := idna.Lookup.ToASCII(host); err == nil {
+		host = ascii
+	}
+	path, ok := mcpServerPath(parsed.EscapedPath())
+	if host == "" || !ok {
+		return ""
+	}
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	if port := parsed.Port(); port != "" && !(parsed.Scheme == "https" && port == "443") && !(parsed.Scheme == "http" && port == "80") {
+		host += ":" + port
+	}
+	return host + path
+}
+
+// mcpServerPath returns a URL's path as every reader reads it, or false when readers could
+// disagree. An empty path is the root.
+func mcpServerPath(escaped string) (string, bool) {
+	if escaped == "" {
+		return "/", true
+	}
+	if escaped[0] != '/' {
+		return "", false
+	}
+	var path strings.Builder
+	for index := 0; index < len(escaped); index++ {
+		character := escaped[index]
+		switch {
+		case character <= ' ' || character >= 0x7f || character == '\\':
+			return "", false
+		case character != '%':
+			path.WriteByte(character)
+		default:
+			if index+2 >= len(escaped) {
+				return "", false
+			}
+			value, err := strconv.ParseUint(escaped[index+1:index+3], 16, 8)
+			if err != nil {
+				return "", false
+			}
+			switch decoded := byte(value); {
+			case decoded == '/' || decoded == '\\':
+				return "", false
+			case decoded >= 'a' && decoded <= 'z', decoded >= 'A' && decoded <= 'Z', decoded >= '0' && decoded <= '9',
+				decoded == '-', decoded == '.', decoded == '_', decoded == '~':
+				path.WriteByte(decoded)
+			default:
+				path.WriteString(strings.ToUpper(escaped[index : index+3]))
+			}
+			index += 2
+		}
+	}
+	segments := strings.Split(path.String()[1:], "/")
+	for index, segment := range segments {
+		if segment == "." || segment == ".." || segment == "" && index < len(segments)-1 {
+			return "", false
+		}
+	}
+	return path.String(), true
 }
 
 // MCPRunsWithoutApproval reports whether an MCP tool's require_approval lets some call run

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -56,6 +57,12 @@ func validateResponsesMCPTool(tool map[string]json.RawMessage, path string) (mcp
 	label, ok := rawStringValue(tool["server_label"])
 	if !ok || !validMCPServerLabel(label) {
 		return mcpServer{}, invalidRequest(path + ".server_label must name the server in 1 to 256 bytes without spaces at either end")
+	}
+	// A policy names a server by what the tool sets. A server that it cannot name would pass
+	// every rule that denies servers by name.
+	if slices.Contains(catalog.MCPServerNames(tool), "") {
+		return mcpServer{}, invalidRequest(path + " must name its server by connector_id, tunnel_id, or a server_url with a plain host and path: " +
+			"no backslash, dot segment, empty segment or encoded slash")
 	}
 	if err := validateMCPToolFilter(tool["allowed_tools"], path+".allowed_tools"); err != nil {
 		return mcpServer{}, err

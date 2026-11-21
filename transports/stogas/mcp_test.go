@@ -69,6 +69,11 @@ func TestResponsesPolicyRefusesUnsupportedRemoteMCP(t *testing.T) {
 	for _, item := range []struct{ name, body, want string }{
 		{"missing label", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"mcp","server_url":"https://mcp.example.com"}]}`, "server_label must name the server"},
 		{"padded label", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":" wiki","server_url":"https://mcp.example.com"}]}`, "server_label must name the server"},
+		// A server that no policy can name would pass every rule that denies servers by name.
+		{"no server", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"wiki"}]}`, "tools[0] must name its server"},
+		{"a path another reader resolves", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"wiki","server_url":"https://mcp.example.com/allowed/../denied"}]}`, "tools[0] must name its server"},
+		{"an unnamed URL beside a connector", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"wiki","connector_id":"connector_gmail","server_url":"https://mcp.example.com\\@evil.example/"}]}`, "tools[0] must name its server"},
+		{"a connector ID that is no ID", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"wiki","connector_id":"connector_gmail#*"}]}`, "tools[0] must name its server"},
 		{"duplicate label", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[` + mcpServerTool + `,` + mcpServerTool + `]}`, "duplicates another MCP server"},
 		{"unknown key", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"wiki","server_url":"https://mcp.example.com","future":true}]}`, "tools[0].future is not supported"},
 		{"header values", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"wiki","server_url":"https://mcp.example.com","headers":{"X":1}}]}`, "Invalid JSON body"},

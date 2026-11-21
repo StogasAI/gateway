@@ -3,6 +3,7 @@ package catalog
 import (
 	"encoding/json"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/maximhq/bifrost/transports/stogas/policy"
@@ -18,9 +19,9 @@ func TestRequestFactsListToolsServersAndSystemMessages(t *testing.T) {
 		`{"type":"mcp","server_label":"both","server_url":"https://allowed.example/mcp","tunnel_id":"TUN_2","allowed_tools":["read"]}]`
 	const chatTools = `[{"type":"function","function":{"name":"lookup","parameters":{}}},{"type":"function","function":{"name":"lookup"}}]`
 	// An ID carries its field's prefix, so a URL whose host spells a connector's ID stays a host.
-	servers := []string{"", "allowed.example", "connector:connector_googledrive", "mcp.example.com", "tunnel:tun_1", "tunnel:tun_2", "xn--bcher-kva.example"}
-	serverTools := []string{"/*", "allowed.example/read", "connector:connector_googledrive/*", "mcp.example.com/fetch", "mcp.example.com/search",
-		"tunnel:tun_1/*", "tunnel:tun_2/read", "xn--bcher-kva.example/find"}
+	servers := []string{"", "allowed.example/mcp", "connector:connector_googledrive", "mcp.example.com:8443/sse", "tunnel:tun_1", "tunnel:tun_2", "xn--bcher-kva.example/mcp"}
+	serverTools := []string{"#*", "allowed.example/mcp#read", "connector:connector_googledrive#*", "mcp.example.com:8443/sse#fetch", "mcp.example.com:8443/sse#search",
+		"tunnel:tun_1#*", "tunnel:tun_2#read", "xn--bcher-kva.example/mcp#find"}
 	for _, test := range []struct {
 		name                               string
 		route                              Route
@@ -34,7 +35,7 @@ func TestRequestFactsListToolsServersAndSystemMessages(t *testing.T) {
 		{name: "no callable tool", route: RouteResponses, body: `{"tools":` + responsesTools + `,"tool_choice":"none"}`, servers: servers, tools: serverTools},
 		{name: "a URL that spells a connector", route: RouteResponses,
 			body:    `{"tools":[{"type":"mcp","server_label":"a","server_url":"https://connector_gmail/mcp"},{"type":"mcp","server_label":"b","server_url":"https://[connector:gmail]/mcp"}]}`,
-			servers: []string{"", "connector_gmail"}, tools: []string{"/*", "connector_gmail/*"}},
+			servers: []string{"", "connector_gmail/mcp"}, tools: []string{"#*", "connector_gmail/mcp#*"}},
 		{name: "namespace tools by their own names", route: RouteResponses,
 			body: `{"tools":[{"type":"function","name":"lookup"},{"type":"namespace","name":"functions","description":"","tools":[{"type":"function","name":"exec"}]},` +
 				`{"type":"namespace","name":"crm","description":"CRM tools.","tools":[{"type":"function","name":"find"},{"type":"custom","name":"note"}]}]}`,
@@ -62,7 +63,7 @@ func TestRequestFactsListToolsServersAndSystemMessages(t *testing.T) {
 			body: `{"tools":[{"type":"function","name":"lookup"},{"type":"mcp","server_label":"a","server_url":"https://a.example/mcp"},` +
 				`{"type":"mcp","server_label":"b","server_url":"https://b.example/mcp"}],` +
 				`"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"mcp","server_label":"a"}]}}`,
-			servers: []string{"a.example", "b.example"}, tools: []string{"a.example/*", "b.example/*"}},
+			servers: []string{"a.example/mcp", "b.example/mcp"}, tools: []string{"a.example/mcp#*", "b.example/mcp#*"}},
 		// A server counts when require_approval frees any of its calls, whatever tool_choice says.
 		{name: "servers that run calls without approval", route: RouteResponses,
 			body: `{"tool_choice":"none","tools":[{"type":"mcp","server_label":"a","server_url":"https://a.example/mcp","require_approval":"never"},` +
@@ -70,9 +71,9 @@ func TestRequestFactsListToolsServersAndSystemMessages(t *testing.T) {
 				`{"type":"mcp","server_label":"c","server_url":"https://c.example/mcp","require_approval":{"always":{"tool_names":["delete"]}}},` +
 				`{"type":"mcp","server_label":"d","server_url":"https://d.example/mcp","require_approval":"always"},` +
 				`{"type":"mcp","server_label":"e","server_url":"https://e.example/mcp"}]}`,
-			servers:    []string{"a.example", "c.example", "connector:connector_gmail", "d.example", "e.example"},
-			tools:      []string{"a.example/*", "c.example/*", "connector:connector_gmail/*", "d.example/*", "e.example/*"},
-			unattended: []string{"a.example", "connector:connector_gmail"}},
+			servers:    []string{"a.example/mcp", "c.example/mcp", "connector:connector_gmail", "d.example/mcp", "e.example/mcp"},
+			tools:      []string{"a.example/mcp#*", "c.example/mcp#*", "connector:connector_gmail#*", "d.example/mcp#*", "e.example/mcp#*"},
+			unattended: []string{"a.example/mcp", "connector:connector_gmail"}},
 		{name: "instructions", route: RouteResponses, body: `{"instructions":"Answer briefly.","input":"hi"}`, system: true},
 		{name: "empty instructions", route: RouteResponses, body: `{"instructions":"","input":"hi"}`},
 		{name: "a developer message", route: RouteResponses, body: `{"input":[{"role":"developer","content":"Be brief."},{"role":"user","content":"hi"}]}`,
@@ -172,9 +173,14 @@ func TestPoliciesReadRequestToolsAndMessages(t *testing.T) {
 // Policies that compare these fields with a string that they can never hold fail at save.
 func TestRequestToolFieldsRefuseImpossibleValues(t *testing.T) {
 	for _, filter := range []string{
-		`'MCP.example.com' in request.mcpServers`,
-		`'https://mcp.example.com' in request.mcpServers`,
-		`'mcp.example.com' in request.mcpTools`,
+		`'MCP.example.com/mcp' in request.mcpServers`,
+		`'https://mcp.example.com/mcp' in request.mcpServers`,
+		// A host alone names no server: one host can serve many.
+		`'mcp.example.com' in request.mcpServers`,
+		`'mcp.example.com/mcp?key=1' in request.mcpServers`,
+		`'connector:gmail/x' in request.mcpServers`,
+		`'mcp.example.com/mcp' in request.mcpTools`,
+		`'mcp.example.com/search' in request.mcpTools`,
 		`request.mcpTools.exists(tool, tool == 'search')`,
 	} {
 		document, _ := json.Marshal(map[string]any{"routing": map[string]any{"filter": filter}})
@@ -183,8 +189,17 @@ func TestRequestToolFieldsRefuseImpossibleValues(t *testing.T) {
 		}
 	}
 	for _, filter := range []string{
-		`request.mcpServers.all(server, server == 'mcp.example.com' || server.endsWith('.example.com'))`,
-		`!request.mcpTools.exists(tool, tool.endsWith('/*') || tool == 'mcp.example.com/delete_repo')`,
+		`request.mcpServers.all(server, server == 'mcp.example.com/mcp' || server.startsWith('internal.example.com/') || server == 'connector:connector_gmail')`,
+		`request.mcpServers.all(server, server in ['mcp.example.com/', '[2001:db8::1]:8443/mcp', 'mcp.example.com:8443/a/b%20c'])`,
+		`!request.mcpTools.exists(tool, tool.endsWith('#*') || tool == 'mcp.example.com/mcp#delete_repo')`,
+		// The filters that Docs show.
+		`request.clientTools.all(tool, tool.startsWith('crm_'))`,
+		`!request.clientTools.exists(tool, tool.matches('^(run|exec)_.*$'))`,
+		`request.mcpServers.all(server, server.startsWith('mcp.example.com/'))`,
+		`request.mcpTools.all(tool, tool.startsWith('mcp.example.com/mcp#get_'))`,
+		`!request.mcpTools.exists(tool, tool.endsWith('#*') || tool.endsWith('#delete_repo'))`,
+		`!request.mcpTools.exists(tool, tool in ['mcp.example.com/mcp#*', 'mcp.example.com/mcp#delete_repo'])`,
+		`request.mcpServersWithoutApproval.all(server, server == 'mcp.example.com/mcp')`,
 		`request.clientTools.all(name, name.matches('^(get|list)_'))`,
 		`request.systemMessages`,
 	} {
@@ -195,16 +210,17 @@ func TestRequestToolFieldsRefuseImpossibleValues(t *testing.T) {
 	}
 }
 
-// A server URL names the host that the provider connects to, or no server. URL readers disagree
-// about backslashes, control characters and escaped host characters, so a URL that another
-// reader could send to a different host names none, and a list of allowed servers refuses it.
-func TestMCPServerNamesNeverNameAHostThatAnotherReaderWouldNotReach(t *testing.T) {
+// A server URL names the host and path that the provider connects to, or no server. URL readers
+// disagree about backslashes, control characters, escaped host characters, dot segments, escaped
+// slashes and empty segments, so a URL that another reader could send to a different server names
+// none, and a list of allowed servers refuses it.
+func TestMCPServerNamesNeverNameAServerThatAnotherReaderWouldNotReach(t *testing.T) {
 	t.Parallel()
 	for address, want := range map[string]string{
-		`https://allowed.example@evil.example/mcp`: "evil.example",
-		`https://evil.example/@allowed.example`:    "evil.example",
-		`https://evil.example#@allowed.example/`:   "evil.example",
-		`https://evil.example?@allowed.example/`:   "evil.example",
+		`https://allowed.example@evil.example/mcp`: "evil.example/mcp",
+		`https://evil.example/@allowed.example`:    "evil.example/@allowed.example",
+		`https://evil.example#@allowed.example/`:   "evil.example/",
+		`https://evil.example?@allowed.example/`:   "evil.example/",
 		`https://evil.example\@allowed.example/`:   "",
 		`https://allowed.example\@evil.example/`:   "",
 		`https:\\evil.example\@allowed.example/`:   "",
@@ -216,18 +232,53 @@ func TestMCPServerNamesNeverNameAHostThatAnotherReaderWouldNotReach(t *testing.T
 		"https://allowed.example\n.evil.example/":  "",
 		`https://allowed.example /mcp`:             "",
 		`allowed.example/mcp`:                      "",
-		"https://ａllowed.example/mcp":              "allowed.example",
-		"https://allowed。example/mcp":              "allowed.example",
-		`https://ALLOWED.example.:443/mcp`:         "allowed.example",
-		`https://[::ffff:192.0.2.1]:8443/mcp`:      "::ffff:192.0.2.1",
+		"https://ａllowed.example/mcp":              "allowed.example/mcp",
+		"https://allowed。example/mcp":              "allowed.example/mcp",
+		`https://ALLOWED.example.:443/mcp`:         "allowed.example/mcp",
+		`http://allowed.example:80`:                "allowed.example/",
+		`http://allowed.example:443/mcp`:           "allowed.example:443/mcp",
+		`https://[::ffff:192.0.2.1]:8443/mcp`:      "[::ffff:192.0.2.1]:8443/mcp",
+		// One host serves many servers, each at its path or port.
+		`https://shared.example/@acme/wiki/mcp?api_key=secret#x`: "shared.example/@acme/wiki/mcp",
+		`https://shared.example:9000/mcp`:                        "shared.example:9000/mcp",
+		`https://shared.example/Team/MCP/`:                       "shared.example/Team/MCP/",
+		// An escape of a character that needs none reads as the character.
+		`https://shared.example/%61cme/a%20b%2fc`: "",
+		`https://shared.example/%61cme/a%20b%3fc`: "shared.example/acme/a%20b%3Fc",
+		// A path that a reader could resolve to another server's.
+		`https://shared.example/acme/../evil/mcp`:     "",
+		`https://shared.example/acme/%2e%2e/evil/mcp`: "",
+		`https://shared.example/acme/./mcp`:           "",
+		`https://shared.example/acme/..`:              "",
+		`https://shared.example//evil/mcp`:            "",
+		`https://shared.example/acme//mcp`:            "",
+		`https://shared.example/acme\..\evil`:         "",
+		`https://shared.example/acme%5c..%5cevil`:     "",
+		`https://shared.example/acme%2F..%2Fevil`:     "",
+		"https://shared.example/acme\tmcp":            "",
+		`https://shared.example/acme%`:                "",
+		`https://shared.example/acme%zz`:              "",
 	} {
 		encoded, err := json.Marshal(address)
 		if err != nil {
 			t.Fatal(err)
 		}
-		names := mcpServerNames(map[string]json.RawMessage{"server_url": encoded})
+		names := MCPServerNames(map[string]json.RawMessage{"server_url": encoded})
 		if len(names) != 1 || names[0] != want {
 			t.Errorf("%q names %q, want %q", address, names, want)
+		}
+		// Every name is one that a policy can hold, and none holds the # that ends a server.
+		if want != "" {
+			document, _ := json.Marshal(map[string]any{"routing": map[string]any{"filter": "'" + want + "' in request.mcpServers"}})
+			if _, err := policy.CompileSource(document); err != nil || strings.Contains(want, "#") {
+				t.Errorf("a policy cannot name %q: %v", want, err)
+			}
+		}
+	}
+	for id, want := range map[string]string{"Connector_GoogleDrive": "connector:connector_googledrive", "a#b": "", "a/b": "", "a b": ""} {
+		encoded, _ := json.Marshal(id)
+		if names := MCPServerNames(map[string]json.RawMessage{"connector_id": encoded}); len(names) != 1 || names[0] != want {
+			t.Errorf("connector %q names %q, want %q", id, names, want)
 		}
 	}
 }

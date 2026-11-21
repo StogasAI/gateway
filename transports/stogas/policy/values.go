@@ -98,9 +98,11 @@ var (
 	// A remote MCP server reads as its URL's lowercase host, or as connector: or tunnel: and the
 	// lowercase ID, and each of its tools as the server, a slash and the tool's name, or * for every
 	// tool.
-	mcpServer = patternDomain(`^[a-z0-9:][a-z0-9._:-]*$`, "a lowercase host, such as 'mcp.example.com', or an ID, such as 'connector:connector_gmail'")
-	mcpTool   = patternDomain(`^[a-z0-9:][a-z0-9._:-]*/.+$`,
-		"a server and one of its tools, such as 'mcp.example.com/search', or 'mcp.example.com/*' for every tool")
+	// A server name never holds a #, so the # of a tool's entry always ends the server.
+	mcpServer = patternDomain(`^`+mcpServerPattern+`$`,
+		"a server's host and path, such as 'mcp.example.com/mcp', or an ID, such as 'connector:connector_gmail'")
+	mcpTool = patternDomain(`^`+mcpServerPattern+`#.+$`,
+		"a server and one of its tools, such as 'mcp.example.com/mcp#search', or 'mcp.example.com/mcp#*' for every tool")
 	// A company that receives requests: one that the catalog lists, or unknown for one that the
 	// provider does not name.
 	company = fieldDomain{func(value string) bool {
@@ -113,6 +115,11 @@ var (
 	modalities = oneOf("text", "image", "audio", "video")
 	efforts    = oneOf(ReasoningEfforts...)
 )
+
+// mcpServerPattern matches the names that the gateway gives a remote MCP server
+// (catalog.MCPServerNames): a connector or tunnel ID after its prefix, or a host, a port that is
+// not the scheme's own, and a path.
+const mcpServerPattern = `(?:(?:connector|tunnel):[a-z0-9._-]+|(?:\[[0-9a-f:.]+\]|[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?)(?::[0-9]{1,5})?/[!-"$->@-\[\]-~]*)`
 
 var fieldDomains = map[string]fieldDomain{
 	"author.id":                                  catalogID,
