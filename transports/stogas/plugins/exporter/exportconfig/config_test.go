@@ -305,7 +305,9 @@ func TestFormatNamesAKnownShape(t *testing.T) {
 	for raw, valid := range map[string]bool{
 		`{"url":"https://receiver.example/"}`:                                     true,
 		`{"url":"https://receiver.example/v1/traces","format":"otlp-genai-1.41"}`: true,
+		`{"url":"https://receiver.example/v1/traces","format":"otlp-genai-0.1"}`:  true,
 		`{"url":"https://receiver.example/","format":"otlp"}`:                     false,
+		`{"url":"https://receiver.example/","format":"otlp-genai-0.1.0"}`:         false,
 		`{"url":"https://receiver.example/","format":"json"}`:                     false,
 		`{"url":"https://receiver.example/","format":"OTLP-GenAI-1.41"}`:          false,
 	} {
@@ -314,10 +316,12 @@ func TestFormatNamesAKnownShape(t *testing.T) {
 			t.Errorf("%s: valid = %v, want %v", raw, d.Validate() == nil, valid)
 		}
 	}
-	// One URL that takes two formats is two receivers, and each gets its record.
-	record, trace := Destination{URL: "https://receiver.example/"}, Destination{URL: "https://receiver.example/", Format: FormatOTLP}
-	combined, err := Combine(&Config{Destinations: []Destination{record}}, &Config{Destinations: []Destination{trace, trace}})
-	if err != nil || len(combined.Destinations) != 2 || record.Identity() == trace.Identity() {
+	// One URL that takes three formats is three receivers, and each gets its record.
+	record := Destination{URL: "https://receiver.example/"}
+	trace := Destination{URL: "https://receiver.example/", Format: FormatOTLPGenAI141}
+	latest := Destination{URL: "https://receiver.example/", Format: FormatOTLPGenAI01}
+	combined, err := Combine(&Config{Destinations: []Destination{record, latest}}, &Config{Destinations: []Destination{trace, trace}})
+	if err != nil || len(combined.Destinations) != 3 || record.Identity() == trace.Identity() || trace.Identity() == latest.Identity() {
 		t.Fatalf("combined = %+v, %v", combined, err)
 	}
 }

@@ -9,12 +9,13 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/rawjson"
 )
 
-// The captured bodies become the conventions' messages: JSON text on a span,
-// each part named by its type. The writers below copy the bodies' own JSON
-// values into that text and never decode them, so a body of any shape takes
-// little memory beside the trace. A part or item that the conventions have no
-// type for stays as the caller or the provider wrote it, which their schemas
-// allow for any object with a type.
+// The captured bodies become the conventions' messages, each part named by its
+// type: JSON text on a span under the 1.41 conventions, and a structured value
+// decoded from that text under 0.1. The writers below copy the bodies' own
+// JSON values into the text and never decode them, so a body of any shape
+// takes little memory beside the trace. A part or item that the conventions
+// have no type for stays as the caller or the provider wrote it, which their
+// schemas allow for any object with a type.
 
 type fields = map[string]json.RawMessage
 
@@ -66,11 +67,20 @@ func (p *protobuf) next() {
 	}
 }
 
-// jsonList is an attribute whose value is the text of a JSON list.
-type jsonList struct{ start, pair, item, text int }
+// jsonList is an attribute whose value is a JSON list, as text or, when the
+// list is written apart in the text buffer, as a structured value.
+type jsonList struct {
+	key                     string
+	start, pair, item, text int
+}
 
 func (p *protobuf) beginList(key string) jsonList {
-	list := jsonList{start: len(p.data)}
+	list := jsonList{key: key, start: len(p.data)}
+	if p.text != nil {
+		p.data, p.text = p.text[:0], p.data
+		p.put("[")
+		return list
+	}
 	list.pair = p.open(9)
 	p.string(1, key)
 	list.item = p.open(2)
@@ -79,9 +89,18 @@ func (p *protobuf) beginList(key string) jsonList {
 	return list
 }
 
-// endList closes the attribute, and removes it when the list is empty.
+// endList closes the attribute, and leaves none when the list is empty.
 func (p *protobuf) endList(list jsonList) {
-	if p.data[len(p.data)-1] == '[' {
+	empty := p.data[len(p.data)-1] == '['
+	if list.pair == 0 {
+		text := append(p.data, ']')
+		p.data, p.text = p.text, text
+		if !empty {
+			p.structuredAttribute(9, list.key, text)
+		}
+		return
+	}
+	if empty {
 		p.data = p.data[:list.start]
 		return
 	}
@@ -91,8 +110,13 @@ func (p *protobuf) endList(list jsonList) {
 	p.close(list.pair)
 }
 
+// contentAttributes writes the messages. Under the 1.41 conventions, each
+// output message names its finish reason, which 0.1 left to the span's.
 func (p *protobuf) contentAttributes(responses bool, reason string, bodies *traceBodies) {
-	finish, _ := json.Marshal(reason)
+	var finish []byte
+	if p.conventions == conventions141 {
+		finish, _ = json.Marshal(reason)
+	}
 	if request := members(bodies.request); request != nil {
 		if instructions := inner(request["instructions"]); len(instructions) > 0 {
 			list := p.beginList("gen_ai.system_instructions")
@@ -140,9 +164,10 @@ func (p *protobuf) contentAttributes(responses bool, reason string, bodies *trac
 	p.endList(list)
 }
 
-// choiceFinish is a choice's own finish reason as JSON, or else the record's.
+// choiceFinish is a choice's own finish reason as JSON, or else the record's,
+// and nil when messages name none.
 func choiceFinish(raw, finish []byte) []byte {
-	if reason := word(raw); reason != "" {
+	if reason := word(raw); reason != "" && finish != nil {
 		finish, _ = json.Marshal(finishReason(reason))
 	}
 	return finish
@@ -206,7 +231,9 @@ func (p *protobuf) toolResponse(id, response []byte) {
 
 // attachment names an attachment by where its data is: a URL, inline data,
 // which the capture replaced by its media type, size and SHA-256, or a
-// provider file ID. It reports false for a part that names none.
+// provider file ID. The conventions require a modality: the part's own, such
+// as document for a file, unless inline data names another. It reports false
+// for a part that names none.
 func (p *protobuf) attachment(data, fileID []byte, modality string) bool {
 	description := members(data)
 	switch {
@@ -234,10 +261,7 @@ func (p *protobuf) attachment(data, fileID []byte, modality string) bool {
 	default:
 		return false
 	}
-	if modality != "" {
-		p.put(`,"modality":"` + modality + `"`)
-	}
-	p.put("}")
+	p.put(`,"modality":"` + modality + `"}`)
 	return true
 }
 
@@ -262,7 +286,7 @@ func (p *protobuf) contentParts(content []byte) {
 			written = p.attachment(members(part["input_audio"])["data"], nil, "audio")
 		case "file":
 			file := members(part["file"])
-			written = p.attachment(file["file_data"], file["file_id"], "")
+			written = p.attachment(file["file_data"], file["file_id"], "document")
 		case "input_image":
 			written = p.attachment(part["image_url"], part["file_id"], "image")
 		case "input_file":
@@ -270,7 +294,10 @@ func (p *protobuf) contentParts(content []byte) {
 			if data == nil {
 				data = part["file_url"]
 			}
-			written = p.attachment(data, part["file_id"], "")
+			written = p.attachment(data, part["file_id"], "document")
+		case "refusal":
+			p.textPart("refusal", inner(part["refusal"]))
+			written = true
 		}
 		if !written && kind != "" {
 			p.next()
@@ -400,12 +427,18 @@ func sortedIndexes[V any](values map[string]V) []string {
 
 // responsesMessages writes Responses items as messages. The items of one model
 // turn, such as its reasoning, its text and its tool calls, are separate items
-// in a row, and they become the parts of one assistant message.
+// in a row, and they become the parts of one assistant message. A call that
+// the client runs, such as a function or a shell command, has a call ID, which
+// its output item answers in a tool message. A call without one, such as a web
+// search, ran at the provider.
 func (p *protobuf) responsesMessages(items []json.RawMessage, finish []byte) {
 	assistant := false
 	for _, raw := range items {
 		item := members(raw)
 		kind := word(item["type"])
+		client := len(inner(item["call_id"])) > 0 && word(item["execution"]) != "server"
+		// An approval answers the model as a client tool's output does.
+		answer := client && strings.HasSuffix(kind, "_output") || kind == "mcp_approval_response"
 		role := []byte(`"assistant"`)
 		switch {
 		case kind == "message" || kind == "" && inner(item["role"]) != nil:
@@ -414,9 +447,7 @@ func (p *protobuf) responsesMessages(items []json.RawMessage, finish []byte) {
 			}
 		case kind == "":
 			continue
-		// An item that answers a call, such as a computer screenshot, is the
-		// caller's.
-		case strings.HasSuffix(kind, "_output"):
+		case answer:
 			role = []byte(`"tool"`)
 		}
 		if word(role) != "assistant" || !assistant {
@@ -426,16 +457,10 @@ func (p *protobuf) responsesMessages(items []json.RawMessage, finish []byte) {
 			p.beginMessage(role, nil, finish)
 			assistant = word(role) == "assistant"
 		}
-		switch kind {
-		case "message":
+		switch {
+		case kind == "message":
 			p.contentParts(item["content"])
-		case "function_call":
-			p.toolCall(item["call_id"], item["name"], item["arguments"], true)
-		case "custom_tool_call":
-			p.toolCall(item["call_id"], item["name"], item["input"], false)
-		case "function_call_output", "custom_tool_call_output":
-			p.toolResponse(item["call_id"], item["output"])
-		case "reasoning":
+		case kind == "reasoning":
 			p.next()
 			p.put(`{"type":"reasoning","content":"`)
 			empty := len(p.data)
@@ -450,6 +475,31 @@ func (p *protobuf) responsesMessages(items []json.RawMessage, finish []byte) {
 				}
 			}
 			p.put(`"}`)
+		case client && strings.HasSuffix(kind, "_call"):
+			// A function's arguments are JSON text. OpenAI's other client tools
+			// take text or an object under their own key, and name the tool by
+			// the item's type.
+			name := item["name"]
+			if len(inner(name)) == 0 {
+				name = quote(strings.TrimSuffix(kind, "_call"))
+			}
+			arguments, parse := item["arguments"], true
+			for _, key := range [...]string{"input", "action", "operation"} {
+				if arguments == nil {
+					arguments, parse = item[key], false
+				}
+			}
+			p.toolCall(item["call_id"], name, arguments, parse)
+		case client && strings.HasSuffix(kind, "_output"):
+			response := item["output"]
+			if response == nil {
+				response = p.without(item, "type", "id", "call_id", "execution")
+			}
+			p.toolResponse(item["call_id"], response)
+		case strings.HasSuffix(kind, "_call"):
+			p.serverToolPart("server_tool_call", strings.TrimSuffix(kind, "_call"), item)
+		case strings.HasSuffix(kind, "_output"):
+			p.serverToolPart("server_tool_call_response", strings.TrimSuffix(kind, "_output"), item)
 		default:
 			p.next()
 			p.value(raw)
@@ -461,6 +511,58 @@ func (p *protobuf) responsesMessages(items []json.RawMessage, finish []byte) {
 	if assistant {
 		p.put("]}")
 	}
+}
+
+// serverToolPart writes an item of a tool that the provider ran, such as a
+// web_search_call, as the conventions' server tool call or response: the
+// item's own fields under the tool's type, such as web_search. A call's ID
+// names it, and the output of OpenAI's own tool search has no ID of its call.
+func (p *protobuf) serverToolPart(part, tool string, item fields) {
+	p.next()
+	p.put(`{"type":"` + part + `"`)
+	if id := item["id"]; part == "server_tool_call" && len(inner(id)) > 0 {
+		p.put(`,"id":`)
+		p.value(id)
+	}
+	if part == "server_tool_call" {
+		name := item["name"]
+		if len(inner(name)) == 0 {
+			name = quote(tool)
+		}
+		p.put(`,"name":`)
+		p.value(name)
+	}
+	details := fields{}
+	for key, value := range item {
+		if key != "id" {
+			details[key] = value
+		}
+	}
+	details["type"] = quote(tool)
+	p.put(`,"` + part + `":`)
+	p.object(details)
+	p.put("}")
+}
+
+func quote(text string) []byte {
+	quoted, _ := json.Marshal(text)
+	return quoted
+}
+
+// without is an object of the item's fields other than the keys.
+func (p *protobuf) without(item fields, keys ...string) []byte {
+	rest := fields{}
+	for key, value := range item {
+		if !slices.Contains(keys, key) {
+			rest[key] = value
+		}
+	}
+	saved := p.data
+	p.data = nil
+	p.object(rest)
+	object := p.data
+	p.data = saved
+	return object
 }
 
 // responsesStreamItems reads the output of a Responses stream from the event
@@ -507,21 +609,26 @@ func (p *protobuf) toolDefinition(tool fields) {
 	if len(inner(definition["name"])) == 0 {
 		definition["name"] = kind
 	}
-	keys := make([]string, 0, len(definition))
-	for key := range definition {
+	p.next()
+	p.object(definition)
+}
+
+// object writes the fields as a JSON object in the order of their keys, so a
+// trace repeats its bytes.
+func (p *protobuf) object(values fields) {
+	keys := make([]string, 0, len(values))
+	for key := range values {
 		keys = append(keys, key)
 	}
 	slices.Sort(keys)
-	p.next()
 	p.put("{")
 	for i, key := range keys {
 		if i > 0 {
 			p.put(",")
 		}
-		name, _ := json.Marshal(key)
-		p.data = append(p.data, name...)
+		p.data = append(p.data, quote(key)...)
 		p.put(":")
-		p.value(definition[key])
+		p.value(values[key])
 	}
 	p.put("}")
 }

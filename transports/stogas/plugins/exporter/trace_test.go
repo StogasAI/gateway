@@ -63,6 +63,9 @@ func wireFields(t *testing.T, data []byte) []wireField {
 func wireValue(t *testing.T, data []byte) any {
 	t.Helper()
 	fields := wireFields(t, data)
+	if len(fields) == 0 {
+		return nil
+	}
 	if len(fields) != 1 {
 		t.Fatalf("AnyValue has %d fields", len(fields))
 	}
@@ -81,6 +84,8 @@ func wireValue(t *testing.T, data []byte) any {
 			list = append(list, wireValue(t, element.data))
 		}
 		return list
+	case 6:
+		return wireAttributes(t, wireFields(t, field.data), 1)
 	}
 	t.Fatal("unexpected AnyValue field")
 	return nil
@@ -214,13 +219,13 @@ func traceEvent() *billing.RequestEvent {
 	}
 }
 
-func encodeTrace(t *testing.T, event any, metadata string, trace Trace, bodies *traceBodies) wireTrace {
+func encodeTrace(t *testing.T, v conventions, event any, metadata string, trace Trace, bodies *traceBodies) wireTrace {
 	t.Helper()
 	encoded, err := json.Marshal(event)
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := traceExport(encoded, []byte(metadata), trace, bodies)
+	data, err := traceExport(encoded, []byte(metadata), trace, bodies, v)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +234,7 @@ func encodeTrace(t *testing.T, event any, metadata string, trace Trace, bodies *
 
 func TestTraceExportDescribesTheRequestAndItsAttempts(t *testing.T) {
 	metadata := `{"request_id":"req_trace","catalog":{"version":22,"chain_hash":"abc","selection_ids":["a","b"]},"policy_versions_sha512":"feed","usage":{"billed_cost_usd":"9"},"node_id":"node-1","receipt":{"schema":"stogas.receipt.v1","signature":"sig"}}`
-	trace := encodeTrace(t, traceEvent(), metadata, Trace{Model: "gpt-5.6-sol", TraceID: testTraceID, ParentSpanID: testParentID}, nil)
+	trace := encodeTrace(t, conventions141, traceEvent(), metadata, Trace{Model: "gpt-5.6-sol", TraceID: testTraceID, ParentSpanID: testParentID}, nil)
 	if trace.resourceSpansCount != 1 || trace.scope != "stogas.gateway.export" || !reflect.DeepEqual(trace.schemaURLs, []string{"https://opentelemetry.io/schemas/1.41.0", "https://opentelemetry.io/schemas/1.41.0"}) {
 		t.Fatalf("unexpected envelope: %+v", trace)
 	}
@@ -285,6 +290,58 @@ func TestTraceExportDescribesTheRequestAndItsAttempts(t *testing.T) {
 	}
 }
 
+// Each version of the conventions names its own schemas and attributes.
+func TestTraceExportFollowsTheConventionsItNames(t *testing.T) {
+	event := traceEvent()
+	event.RequestSettings.ReasoningEffort = "high"
+	for _, tc := range []struct {
+		v                 conventions
+		schemas           []string
+		present, absent   string
+		reasoningRecorded bool
+	}{
+		{conventions141, []string{"https://opentelemetry.io/schemas/1.41.0", "https://opentelemetry.io/schemas/1.41.0"},
+			"gen_ai.usage.cache_creation.input_tokens", "gen_ai.usage.cache_write.input_tokens", false},
+		{conventions01, []string{"https://opentelemetry.io/schemas/semconv-genai-dev/0.1.0-dev", "https://opentelemetry.io/schemas/1.45.0"},
+			"gen_ai.usage.cache_write.input_tokens", "gen_ai.usage.cache_creation.input_tokens", true},
+	} {
+		trace := encodeTrace(t, tc.v, event, `{}`, Trace{Model: "gpt-5.6-sol"}, nil)
+		root := trace.spans[0]
+		if !reflect.DeepEqual(trace.schemaURLs, tc.schemas) || root.attributes[tc.present] != int64(8) || root.attributes[tc.absent] != nil {
+			t.Errorf("%v: schemas %v, attributes %v", tc.v, trace.schemaURLs, root.attributes)
+		}
+		if level, recorded := root.attributes["gen_ai.request.reasoning.level"]; recorded != tc.reasoningRecorded || recorded && level != "high" {
+			t.Errorf("%v: reasoning level %v", tc.v, level)
+		}
+	}
+	// A cache or reasoning count of zero is left out, and a total stays.
+	event.Usage.Meters["cached_input_tokens"] = billing.EventMeter{Quantity: "0"}
+	event.Usage.Meters["total_output_tokens"] = billing.EventMeter{Quantity: "0"}
+	attributes := encodeTrace(t, conventions01, event, `{}`, Trace{}, nil).spans[0].attributes
+	if _, ok := attributes["gen_ai.usage.cache_read.input_tokens"]; ok || attributes["gen_ai.usage.output_tokens"] != int64(0) {
+		t.Errorf("zero counts: %v", attributes)
+	}
+}
+
+// A structured value keeps each JSON value's type and text.
+func TestStructuredValuesKeepEveryJSONType(t *testing.T) {
+	var p protobuf
+	p.structuredAttribute(9, "list", []byte(`[{"s":"line\nnext \u00e9 \ud83d\ude00 \"q\" <b>","i":-42,"big":18446744073709551616,`+
+		`"f":0.5,"huge":1e400,"t":true,"no":false,"n":null,"o":{},"a":[],"nested":[[1,"x"]]}]`))
+	want := []any{map[string]any{
+		"s": "line\nnext é 😀 \"q\" <b>", "i": int64(-42), "big": 1.8446744073709552e19, "f": 0.5, "huge": math.Inf(1),
+		"t": true, "no": false, "n": nil, "o": map[string]any{}, "a": []any{}, "nested": []any{[]any{int64(1), "x"}},
+	}}
+	if got := wireAttributes(t, wireFields(t, p.data), 9)["list"]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("list = %#v", got)
+	}
+	// Text that does not decode leaves no attribute.
+	p = protobuf{}
+	if p.structuredAttribute(9, "list", []byte(`[{"a":`)); len(p.data) != 0 {
+		t.Fatalf("a broken list wrote %x", p.data)
+	}
+}
+
 func TestTraceExportTimesEachStreamedToolCall(t *testing.T) {
 	event := traceEvent()
 	event.Performance.ToolCalls = []billing.ToolCall{
@@ -293,7 +350,7 @@ func TestTraceExportTimesEachStreamedToolCall(t *testing.T) {
 		// A whole response times no call.
 		{Type: "function_call", CallIDHash: "fedcba9876543210"},
 	}
-	trace := encodeTrace(t, event, "{}", Trace{Model: "gpt-5.6-sol"}, nil)
+	trace := encodeTrace(t, conventions141, event, "{}", Trace{Model: "gpt-5.6-sol"}, nil)
 	if len(trace.spans) != 5 {
 		t.Fatalf("got %d spans", len(trace.spans))
 	}
@@ -319,21 +376,21 @@ func TestTraceExportTimesEachStreamedToolCall(t *testing.T) {
 func TestTraceExportNamesItsOwnTraceWithoutACallers(t *testing.T) {
 	event := traceEvent()
 	event.TraceID = ""
-	first := encodeTrace(t, event, `{}`, Trace{Model: "gpt-5.6-sol"}, nil)
-	again := encodeTrace(t, event, `{}`, Trace{Model: "gpt-5.6-sol"}, nil)
+	first := encodeTrace(t, conventions141, event, `{}`, Trace{Model: "gpt-5.6-sol"}, nil)
+	again := encodeTrace(t, conventions141, event, `{}`, Trace{Model: "gpt-5.6-sol"}, nil)
 	root := first.spans[0]
 	// A retried delivery repeats the IDs, so a receiver keeps one trace.
 	if len(root.traceID) != 32 || root.traceID == testTraceID || root.parentID != "" || !reflect.DeepEqual(first.spans, again.spans) {
 		t.Fatalf("unexpected spans: %+v", first.spans)
 	}
 	event.RequestID = "req_other"
-	if other := encodeTrace(t, event, `{}`, Trace{}, nil).spans[0]; other.traceID == root.traceID || other.spanID == root.spanID || other.name != "chat" {
+	if other := encodeTrace(t, conventions141, event, `{}`, Trace{}, nil).spans[0]; other.traceID == root.traceID || other.spanID == root.spanID || other.name != "chat" {
 		t.Fatalf("another request shares IDs: %+v", other)
 	}
 	// The record of repeated rejections keeps one request's trace, which is not
 	// the trace of every request it counts.
 	event.TraceID = testTraceID
-	if other := encodeTrace(t, event, `{}`, Trace{TraceID: strings.Repeat("ab", 16), ParentSpanID: testParentID}, nil).spans[0]; other.traceID != testTraceID || other.parentID != "" {
+	if other := encodeTrace(t, conventions141, event, `{}`, Trace{TraceID: strings.Repeat("ab", 16), ParentSpanID: testParentID}, nil).spans[0]; other.traceID != testTraceID || other.parentID != "" {
 		t.Fatalf("a span joined another trace's parent: %+v", other)
 	}
 }
@@ -343,75 +400,104 @@ func TestTraceExportMarksFailuresAndRejections(t *testing.T) {
 	rejected.ProviderAttempts, rejected.Performance, rejected.Usage.Meters = nil, billing.RequestPerformance{}, billing.EventMeters{}
 	rejected.GatewayError = &billing.EventError{Code: "rate_limit_exceeded", Status: 429}
 	rejected.RequestCount, rejected.LastRequestAt = 4, "2026-11-20T10:00:30.250Z"
-	trace := encodeTrace(t, rejected, `{}`, Trace{Model: "gpt-5.6-sol"}, nil)
+	trace := encodeTrace(t, conventions141, rejected, `{}`, Trace{Model: "gpt-5.6-sol"}, nil)
 	root := trace.spans[0]
 	if len(trace.spans) != 1 || root.statusCode != 2 || root.attributes["error.type"] != "rate_limit_exceeded" || root.attributes["stogas.gateway_error.status"] != int64(429) ||
 		root.attributes["stogas.request_count"] != int64(4) || root.end.Sub(root.start) != 30*time.Second {
 		t.Fatalf("unexpected rejection: %+v", root)
 	}
-	if _, named := root.attributes["gen_ai.provider.name"]; named {
-		t.Fatal("a request that no provider received names one")
+	for _, absent := range []string{"gen_ai.provider.name", "gen_ai.response.finish_reasons"} {
+		if _, named := root.attributes[absent]; named {
+			t.Fatalf("a request that no provider received names %s", absent)
+		}
 	}
 
 	failed := traceEvent()
 	failed.ProviderAttempts = failed.ProviderAttempts[:1]
 	failed.ProviderAttempts[0].Provider = "google-cloud"
-	if root := encodeTrace(t, failed, `{}`, Trace{}, nil).spans[0]; root.statusCode != 2 || root.attributes["error.type"] != "rate_limited" || root.attributes["gen_ai.provider.name"] != "gcp.vertex_ai" {
+	if root := encodeTrace(t, conventions141, failed, `{}`, Trace{}, nil).spans[0]; root.statusCode != 2 || root.attributes["error.type"] != "rate_limited" || root.attributes["gen_ai.provider.name"] != "gcp.vertex_ai" {
 		t.Fatalf("unexpected failure: %+v", root)
 	}
 
 	// A content filter and a caller that stopped end a request without an error.
 	filtered := traceEvent()
 	filtered.ProviderAttempts = []billing.ProviderAttempt{{Provider: "aws", Status: "content_filter", FinishReason: "content_filter"}}
-	if root := encodeTrace(t, filtered, `{}`, Trace{}, nil).spans[0]; root.statusCode != 0 || root.attributes["error.type"] != nil ||
+	if root := encodeTrace(t, conventions141, filtered, `{}`, Trace{}, nil).spans[0]; root.statusCode != 0 || root.attributes["error.type"] != nil ||
 		!reflect.DeepEqual(root.attributes["gen_ai.response.finish_reasons"], []any{"content_filter"}) || root.attributes["gen_ai.provider.name"] != "aws.bedrock" {
 		t.Fatalf("unexpected filtered reply: %+v", root)
 	}
 	stopped := traceEvent()
 	stopped.ClientStopMS = pointer(uint32(300))
 	stopped.ProviderAttempts = []billing.ProviderAttempt{{Provider: "openai", Status: "cancelled"}}
-	if spans := encodeTrace(t, stopped, `{}`, Trace{}, nil).spans; spans[0].statusCode != 0 || spans[1].statusCode != 0 {
+	if spans := encodeTrace(t, conventions141, stopped, `{}`, Trace{}, nil).spans; spans[0].statusCode != 0 || spans[1].statusCode != 0 ||
+		!reflect.DeepEqual(spans[0].attributes["gen_ai.response.finish_reasons"], []any{"interrupted"}) {
 		t.Fatalf("unexpected stopped request: %+v", spans)
 	}
 }
 
 // The Responses interface names a reason only for a reply that ended early.
 func TestTraceExportNamesWhyAReplyEnded(t *testing.T) {
-	for _, tc := range []struct {
-		reason, status string
-		calls          []billing.ToolCall
-		want           any
-	}{
-		{reason: "", status: "success", want: []any{"stop"}},
-		{reason: "", status: "success", calls: []billing.ToolCall{{Type: "web_search_call"}}, want: []any{"stop"}},
-		{reason: "", status: "success", calls: []billing.ToolCall{{Type: "web_search_call"}, {Type: "function_call", CallIDHash: "ab"}}, want: []any{"tool_call"}},
-		{reason: "max_output_tokens", status: "success", want: []any{"length"}},
-		{reason: "tool_use", status: "success", want: []any{"tool_call"}},
-		{reason: "content_filter", status: "content_filter", want: []any{"content_filter"}},
-		{reason: "", status: "unknown", want: nil},
-		{reason: "", status: "timeout", want: nil},
-	} {
-		event := traceEvent()
-		event.Interface, _ = billing.RequestShape(string(schemas.ResponsesRequest))
-		event.ProviderAttempts = []billing.ProviderAttempt{{Provider: "openai", Status: tc.status, FinishReason: tc.reason}}
-		event.Performance.ToolCalls = tc.calls
-		trace := encodeTrace(t, event, `{}`, Trace{}, &traceBodies{response: []byte(`{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Hi"}]}]}`)})
-		if got := trace.spans[0].attributes["gen_ai.response.finish_reasons"]; !reflect.DeepEqual(got, tc.want) {
-			t.Errorf("%q after %s: finish reasons = %v, want %v", tc.reason, tc.status, got, tc.want)
+	for _, v := range []conventions{conventions141, conventions01} {
+		for _, tc := range []struct {
+			reason, status string
+			stopped        bool
+			calls          []billing.ToolCall
+			want           any
+		}{
+			{reason: "", status: "success", want: []any{"stop"}},
+			{reason: "", status: "success", calls: []billing.ToolCall{{Type: "web_search_call"}}, want: []any{"stop"}},
+			{reason: "", status: "success", calls: []billing.ToolCall{{Type: "web_search_call"}, {Type: "function_call", CallIDHash: "ab"}}, want: []any{"tool_call"}},
+			{reason: "max_output_tokens", status: "success", want: []any{"length"}},
+			{reason: "tool_use", status: "success", want: []any{"tool_call"}},
+			{reason: "content_filter", status: "content_filter", want: []any{"content_filter"}},
+			// A reply that ended without a reason ended in error, or was
+			// interrupted when the client stopped it.
+			{reason: "", status: "unknown", want: []any{"error"}},
+			{reason: "", status: "timeout", want: []any{"error"}},
+			{reason: "", status: "cancelled", stopped: true, want: []any{"interrupted"}},
+			{reason: "length", status: "cancelled", stopped: true, want: []any{"length"}},
+		} {
+			event := traceEvent()
+			event.Interface, _ = billing.RequestShape(string(schemas.ResponsesRequest))
+			event.ProviderAttempts = []billing.ProviderAttempt{{Provider: "openai", Status: tc.status, FinishReason: tc.reason}}
+			event.Performance.ToolCalls = tc.calls
+			if tc.stopped {
+				event.ClientStopMS = pointer(uint32(300))
+			}
+			trace := encodeTrace(t, v, event, `{}`, Trace{}, &traceBodies{response: []byte(`{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Hi"}]}]}`)})
+			if got := trace.spans[0].attributes["gen_ai.response.finish_reasons"]; !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("%q after %s: finish reasons = %v, want %v", tc.reason, tc.status, got, tc.want)
+			}
+			want := tc.want.([]any)[0].(string)
+			expectMessages(t, trace, "gen_ai.output.messages", `[{"role":"assistant","finish_reason":"`+want+`","parts":[{"type":"text","content":"Hi"}]}]`)
 		}
-		want := ""
-		if tc.want != nil {
-			want = tc.want.([]any)[0].(string)
-		}
-		expectMessages(t, trace, "gen_ai.output.messages", `[{"role":"assistant","finish_reason":"`+want+`","parts":[{"type":"text","content":"Hi"}]}]`)
 	}
 }
 
+// structured reports whether a trace follows the 0.1 conventions, whose
+// messages are structured values.
+func structured(trace wireTrace) bool {
+	return strings.Contains(trace.schemaURLs[0], "semconv-genai")
+}
+
+// messages reads a list of messages as JSON values: text under the 1.41
+// conventions, and a structured value under 0.1.
 func messages(t *testing.T, trace wireTrace, key string) any {
 	t.Helper()
-	encoded, ok := trace.spans[0].attributes[key].(string)
+	value, ok := trace.spans[0].attributes[key]
 	if !ok {
 		return nil
+	}
+	encoded, text := value.(string)
+	if text == structured(trace) {
+		t.Fatalf("%s has the wrong form: %T", key, value)
+	}
+	if !text {
+		raw, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded = string(raw)
 	}
 	var decoded any
 	if err := json.Unmarshal([]byte(encoded), &decoded); err != nil {
@@ -431,180 +517,212 @@ func jsonValue(t *testing.T, encoded string) any {
 
 func expectMessages(t *testing.T, trace wireTrace, key, want string) {
 	t.Helper()
-	if got := messages(t, trace, key); !reflect.DeepEqual(got, jsonValue(t, want)) {
+	expected := jsonValue(t, want)
+	// The 0.1 conventions name a reply's finish reason on the span alone.
+	if list, _ := expected.([]any); structured(trace) {
+		for _, message := range list {
+			if message, ok := message.(map[string]any); ok {
+				delete(message, "finish_reason")
+			}
+		}
+	}
+	if got := messages(t, trace, key); !reflect.DeepEqual(got, expected) {
 		encoded, _ := json.Marshal(got)
 		t.Errorf("%s = %s\nwant %s", key, encoded, want)
 	}
 }
 
 func TestTraceExportConvertsChatCompletionsContent(t *testing.T) {
-	request := `{"model":"gpt-5.6-sol","messages":[
-		{"role":"system","content":"Answer briefly. <b>&</b>"},
-		{"role":"user","name":"ada","content":[
-			{"type":"text","text":"What is in these?"},
-			{"type":"image_url","image_url":{"url":"https://example.com/cat.png","detail":"low"}},
-			{"type":"image_url","image_url":{"url":{"media_type":"image/png","size":3,"sha256":"ab"}}},
-			{"type":"input_audio","input_audio":{"data":{"media_type":"audio/wav","size":9,"sha256":"cd"},"format":"wav"}},
-			{"type":"file","file":{"file_id":"file-1"}},
-			{"type":"file","file":{"file_data":{"media_type":"application/pdf","size":5,"sha256":"ef"},"filename":"a.pdf"}},
-			{"type":"future_part","value":1}]},
-		{"role":"assistant","content":null,"reasoning":"Look at each.","tool_calls":[
-			{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{\"id\":18446744073709551616}"}},
-			{"id":"call_2","type":"function","function":{"name":"broken","arguments":"{\"id\":"}}]},
-		{"role":"tool","tool_call_id":"call_1","content":"found"},
-		{"role":"tool","tool_call_id":"call_2","content":[{"type":"text","text":"none"}]}],
-		"tools":[{"type":"function","function":{"name":"lookup","description":"Looks up","parameters":{"type":"object"},"strict":true}}]}`
-	wantInput := `[
-		{"role":"system","parts":[{"type":"text","content":"Answer briefly. <b>&</b>"}]},
-		{"role":"user","name":"ada","parts":[
-			{"type":"text","content":"What is in these?"},
-			{"type":"uri","modality":"image","uri":"https://example.com/cat.png"},
-			{"type":"blob","modality":"image","mime_type":"image/png","size":3,"sha256":"ab"},
-			{"type":"blob","modality":"audio","mime_type":"audio/wav","size":9,"sha256":"cd"},
-			{"type":"file","file_id":"file-1"},
-			{"type":"blob","mime_type":"application/pdf","size":5,"sha256":"ef"},
-			{"type":"future_part","value":1}]},
-		{"role":"assistant","parts":[
-			{"type":"reasoning","content":"Look at each."},
-			{"type":"tool_call","id":"call_1","name":"lookup","arguments":{"id":18446744073709551616}},
-			{"type":"tool_call","id":"call_2","name":"broken","arguments":"{\"id\":"}]},
-		{"role":"tool","parts":[{"type":"tool_call_response","id":"call_1","response":"found"}]},
-		{"role":"tool","parts":[{"type":"tool_call_response","id":"call_2","response":[{"type":"text","text":"none"}]}]}]`
-	wantTools := `[{"type":"function","name":"lookup","description":"Looks up","parameters":{"type":"object"},"strict":true}]`
+	for _, v := range []conventions{conventions141, conventions01} {
+		request := `{"model":"gpt-5.6-sol","messages":[
+			{"role":"system","content":"Answer briefly. <b>&</b>"},
+			{"role":"user","name":"ada","content":[
+				{"type":"text","text":"What is in these?"},
+				{"type":"image_url","image_url":{"url":"https://example.com/cat.png","detail":"low"}},
+				{"type":"image_url","image_url":{"url":{"media_type":"image/png","size":3,"sha256":"ab"}}},
+				{"type":"input_audio","input_audio":{"data":{"media_type":"audio/wav","size":9,"sha256":"cd"},"format":"wav"}},
+				{"type":"file","file":{"file_id":"file-1"}},
+				{"type":"file","file":{"file_data":{"media_type":"application/pdf","size":5,"sha256":"ef"},"filename":"a.pdf"}},
+				{"type":"future_part","value":1}]},
+			{"role":"assistant","content":null,"reasoning":"Look at each.","tool_calls":[
+				{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{\"id\":18446744073709551616}"}},
+				{"id":"call_2","type":"function","function":{"name":"broken","arguments":"{\"id\":"}}]},
+			{"role":"tool","tool_call_id":"call_1","content":"found"},
+			{"role":"tool","tool_call_id":"call_2","content":[{"type":"text","text":"none"}]}],
+			"tools":[{"type":"function","function":{"name":"lookup","description":"Looks up","parameters":{"type":"object"},"strict":true}}]}`
+		wantInput := `[
+			{"role":"system","parts":[{"type":"text","content":"Answer briefly. <b>&</b>"}]},
+			{"role":"user","name":"ada","parts":[
+				{"type":"text","content":"What is in these?"},
+				{"type":"uri","modality":"image","uri":"https://example.com/cat.png"},
+				{"type":"blob","modality":"image","mime_type":"image/png","size":3,"sha256":"ab"},
+				{"type":"blob","modality":"audio","mime_type":"audio/wav","size":9,"sha256":"cd"},
+				{"type":"file","modality":"document","file_id":"file-1"},
+				{"type":"blob","modality":"document","mime_type":"application/pdf","size":5,"sha256":"ef"},
+				{"type":"future_part","value":1}]},
+			{"role":"assistant","parts":[
+				{"type":"reasoning","content":"Look at each."},
+				{"type":"tool_call","id":"call_1","name":"lookup","arguments":{"id":18446744073709551616}},
+				{"type":"tool_call","id":"call_2","name":"broken","arguments":"{\"id\":"}]},
+			{"role":"tool","parts":[{"type":"tool_call_response","id":"call_1","response":"found"}]},
+			{"role":"tool","parts":[{"type":"tool_call_response","id":"call_2","response":[{"type":"text","text":"none"}]}]}]`
+		wantTools := `[{"type":"function","name":"lookup","description":"Looks up","parameters":{"type":"object"},"strict":true}]`
 
-	response := `{"id":"chatcmpl-1","choices":[
-		{"index":0,"finish_reason":"tool_calls","message":{"role":"assistant","content":"Checking.","reasoning":"Think.","reasoning_content":"Think.","refusal":null,
-			"tool_calls":[{"id":"call_3","type":"function","function":{"name":"lookup","arguments":"{}"}}]}},
-		{"index":1,"finish_reason":"length","message":{"role":"assistant","content":"Cut","refusal":"No."}}]}`
-	wantOutput := `[
-		{"role":"assistant","finish_reason":"tool_call","parts":[
-			{"type":"reasoning","content":"Think."},{"type":"text","content":"Checking."},{"type":"tool_call","id":"call_3","name":"lookup","arguments":{}}]},
-		{"role":"assistant","finish_reason":"length","parts":[{"type":"text","content":"Cut"},{"type":"refusal","content":"No."}]}]`
-	buffered := encodeTrace(t, traceEvent(), `{}`, Trace{}, &traceBodies{request: []byte(request), response: []byte(response)})
-	expectMessages(t, buffered, "gen_ai.input.messages", wantInput)
-	expectMessages(t, buffered, "gen_ai.tool.definitions", wantTools)
-	expectMessages(t, buffered, "gen_ai.output.messages", wantOutput)
-	if _, ok := buffered.spans[0].attributes["gen_ai.system_instructions"]; ok {
-		t.Error("a chat history's system message is repeated as instructions")
-	}
-	// Content keeps its characters: no HTML escapes.
-	if encoded := buffered.spans[0].attributes["gen_ai.input.messages"].(string); !strings.Contains(encoded, "<b>&</b>") {
-		t.Errorf("content was escaped: %s", encoded)
-	}
+		response := `{"id":"chatcmpl-1","choices":[
+			{"index":0,"finish_reason":"tool_calls","message":{"role":"assistant","content":"Checking.","reasoning":"Think.","reasoning_content":"Think.","refusal":null,
+				"tool_calls":[{"id":"call_3","type":"function","function":{"name":"lookup","arguments":"{}"}}]}},
+			{"index":1,"finish_reason":"length","message":{"role":"assistant","content":"Cut","refusal":"No."}}]}`
+		wantOutput := `[
+			{"role":"assistant","finish_reason":"tool_call","parts":[
+				{"type":"reasoning","content":"Think."},{"type":"text","content":"Checking."},{"type":"tool_call","id":"call_3","name":"lookup","arguments":{}}]},
+			{"role":"assistant","finish_reason":"length","parts":[{"type":"text","content":"Cut"},{"type":"refusal","content":"No."}]}]`
+		buffered := encodeTrace(t, v, traceEvent(), `{}`, Trace{}, &traceBodies{request: []byte(request), response: []byte(response)})
+		expectMessages(t, buffered, "gen_ai.input.messages", wantInput)
+		expectMessages(t, buffered, "gen_ai.tool.definitions", wantTools)
+		expectMessages(t, buffered, "gen_ai.output.messages", wantOutput)
+		if _, ok := buffered.spans[0].attributes["gen_ai.system_instructions"]; ok {
+			t.Error("a chat history's system message is repeated as instructions")
+		}
+		// Content keeps its characters: no HTML escapes.
+		if encoded, text := buffered.spans[0].attributes["gen_ai.input.messages"].(string); text && !strings.Contains(encoded, "<b>&</b>") {
+			t.Errorf("content was escaped: %s", encoded)
+		}
 
-	events := [][]byte{
-		[]byte(`{"id":"chatcmpl-1","choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning":"Thi","reasoning_content":"Thi"}}]}`),
-		[]byte(`{"id":"chatcmpl-1","choices":[{"index":0,"delta":{"reasoning":"nk.","reasoning_content":"nk."}},{"index":1,"delta":{"content":"Cut"}}]}`),
-		[]byte(`{"id":"chatcmpl-1","choices":[{"index":0,"delta":{"content":"Check"}}]}`),
-		[]byte(`{"id":"chatcmpl-1","choices":[{"index":0,"delta":{"content":"ing.","tool_calls":[{"index":0,"id":"call_3","type":"function","function":{"name":"lookup","arguments":""}}]}}]}`),
-		[]byte(`{"id":"chatcmpl-1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{"}}]}},{"index":1,"delta":{"refusal":"No."},"finish_reason":"length"}]}`),
-		[]byte(`{"id":"chatcmpl-1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"}"}}]},"finish_reason":"tool_calls"}]}`),
-		[]byte(`{"id":"chatcmpl-1","choices":[],"usage":{"prompt_tokens":1}}`),
-	}
-	streamed := encodeTrace(t, traceEvent(), `{}`, Trace{}, &traceBodies{request: []byte(request), events: events})
-	expectMessages(t, streamed, "gen_ai.output.messages", wantOutput)
+		events := [][]byte{
+			[]byte(`{"id":"chatcmpl-1","choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning":"Thi","reasoning_content":"Thi"}}]}`),
+			[]byte(`{"id":"chatcmpl-1","choices":[{"index":0,"delta":{"reasoning":"nk.","reasoning_content":"nk."}},{"index":1,"delta":{"content":"Cut"}}]}`),
+			[]byte(`{"id":"chatcmpl-1","choices":[{"index":0,"delta":{"content":"Check"}}]}`),
+			[]byte(`{"id":"chatcmpl-1","choices":[{"index":0,"delta":{"content":"ing.","tool_calls":[{"index":0,"id":"call_3","type":"function","function":{"name":"lookup","arguments":""}}]}}]}`),
+			[]byte(`{"id":"chatcmpl-1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{"}}]}},{"index":1,"delta":{"refusal":"No."},"finish_reason":"length"}]}`),
+			[]byte(`{"id":"chatcmpl-1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"}"}}]},"finish_reason":"tool_calls"}]}`),
+			[]byte(`{"id":"chatcmpl-1","choices":[],"usage":{"prompt_tokens":1}}`),
+		}
+		streamed := encodeTrace(t, v, traceEvent(), `{}`, Trace{}, &traceBodies{request: []byte(request), events: events})
+		expectMessages(t, streamed, "gen_ai.output.messages", wantOutput)
 
-	// A stream that ended early has no finish reason of its own, and takes the record's.
-	cut := encodeTrace(t, traceEvent(), `{}`, Trace{}, &traceBodies{events: [][]byte{
-		[]byte(`{"choices":[{"index":0,"delta":{"content":"Par"}}]}`), []byte(`{"error":{"message":"The provider stopped","code":"provider_error"}}`)}})
-	expectMessages(t, cut, "gen_ai.output.messages", `[{"role":"assistant","finish_reason":"tool_call","parts":[{"type":"text","content":"Par"}]}]`)
+		// A stream that ended early has no finish reason of its own, and takes the record's.
+		cut := encodeTrace(t, v, traceEvent(), `{}`, Trace{}, &traceBodies{events: [][]byte{
+			[]byte(`{"choices":[{"index":0,"delta":{"content":"Par"}}]}`), []byte(`{"error":{"message":"The provider stopped","code":"provider_error"}}`)}})
+		expectMessages(t, cut, "gen_ai.output.messages", `[{"role":"assistant","finish_reason":"tool_call","parts":[{"type":"text","content":"Par"}]}]`)
 
-	// A failure reply holds no message.
-	for _, bodies := range []*traceBodies{{response: []byte(`{"error":{"message":"No"}}`)}, {events: [][]byte{[]byte(`{"error":{"message":"No"}}`)}}, {}} {
-		if failed := encodeTrace(t, traceEvent(), `{}`, Trace{}, bodies); messages(t, failed, "gen_ai.output.messages") != nil || messages(t, failed, "gen_ai.input.messages") != nil {
-			t.Error("a failure reply or a missing request made messages")
+		// A failure reply holds no message.
+		for _, bodies := range []*traceBodies{{response: []byte(`{"error":{"message":"No"}}`)}, {events: [][]byte{[]byte(`{"error":{"message":"No"}}`)}}, {}} {
+			if failed := encodeTrace(t, v, traceEvent(), `{}`, Trace{}, bodies); messages(t, failed, "gen_ai.output.messages") != nil || messages(t, failed, "gen_ai.input.messages") != nil {
+				t.Error("a failure reply or a missing request made messages")
+			}
 		}
 	}
 }
 
 func TestTraceExportConvertsResponsesContent(t *testing.T) {
-	event := traceEvent()
-	event.Interface, _ = billing.RequestShape(string(schemas.ResponsesRequest))
-	event.ProviderAttempts[1].FinishReason = "stop"
-	request := `{"model":"gpt-5.6-sol","instructions":"Answer briefly.","input":[
-		{"role":"user","content":"Hi"},
-		{"type":"message","role":"user","content":[
-			{"type":"input_text","text":"What is this?"},
-			{"type":"input_image","image_url":"https://example.com/cat.png"},
-			{"type":"input_image","file_id":"file-1"},
-			{"type":"input_file","file_data":{"media_type":"application/pdf","size":5,"sha256":"ef"},"filename":"a.pdf"},
-			{"type":"input_file","file_url":"https://example.com/a.pdf"}]},
-		{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"First."},{"type":"summary_text","text":"Second."}],"encrypted_content":"opaque"},
-		{"type":"message","role":"assistant","content":[{"type":"output_text","text":"A cat."}]},
-		{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{\"q\":\"cat\"}"},
-		{"type":"web_search_call","id":"ws_1","status":"completed"},
-		{"type":"function_call_output","call_id":"call_1","output":"found"},
-		{"type":"custom_tool_call","call_id":"call_2","name":"shell","input":"ls"},
-		{"type":"custom_tool_call_output","call_id":"call_2","output":"a.txt"},
-		{"type":"computer_call_output","call_id":"call_3","output":{"type":"computer_screenshot"}}],
-		"tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}},{"type":"web_search","search_context_size":"low"}]}`
-	wantInput := `[
-		{"role":"user","parts":[{"type":"text","content":"Hi"}]},
-		{"role":"user","parts":[
-			{"type":"text","content":"What is this?"},
-			{"type":"uri","modality":"image","uri":"https://example.com/cat.png"},
-			{"type":"file","modality":"image","file_id":"file-1"},
-			{"type":"blob","mime_type":"application/pdf","size":5,"sha256":"ef"},
-			{"type":"uri","uri":"https://example.com/a.pdf"}]},
-		{"role":"assistant","parts":[
-			{"type":"reasoning","content":"First.\n\nSecond."},
-			{"type":"text","content":"A cat."},
-			{"type":"tool_call","id":"call_1","name":"lookup","arguments":{"q":"cat"}},
-			{"type":"web_search_call","id":"ws_1","status":"completed"}]},
-		{"role":"tool","parts":[{"type":"tool_call_response","id":"call_1","response":"found"}]},
-		{"role":"assistant","parts":[{"type":"tool_call","id":"call_2","name":"shell","arguments":"ls"}]},
-		{"role":"tool","parts":[{"type":"tool_call_response","id":"call_2","response":"a.txt"}]},
-		{"role":"tool","parts":[{"type":"computer_call_output","call_id":"call_3","output":{"type":"computer_screenshot"}}]}]`
-	output := `[
-		{"type":"reasoning","id":"rs_2","summary":[],"content":[{"type":"reasoning_text","text":"Think."}]},
-		{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Done.","annotations":[]},{"type":"refusal","refusal":"No more."}]},
-		{"type":"function_call","call_id":"call_4","name":"lookup","arguments":"{}"}]`
-	wantOutput := `[{"role":"assistant","finish_reason":"stop","parts":[
-		{"type":"reasoning","content":"Think."},{"type":"text","content":"Done."},{"type":"refusal","refusal":"No more."},
-		{"type":"tool_call","id":"call_4","name":"lookup","arguments":{}}]}]`
-	buffered := encodeTrace(t, event, `{}`, Trace{}, &traceBodies{request: []byte(request), response: []byte(`{"id":"resp_1","status":"completed","output":` + output + `}`)})
-	expectMessages(t, buffered, "gen_ai.system_instructions", `[{"type":"text","content":"Answer briefly."}]`)
-	expectMessages(t, buffered, "gen_ai.input.messages", wantInput)
-	expectMessages(t, buffered, "gen_ai.tool.definitions", `[{"type":"function","name":"lookup","parameters":{"type":"object"}},{"type":"web_search","name":"web_search","search_context_size":"low"}]`)
-	expectMessages(t, buffered, "gen_ai.output.messages", wantOutput)
+	for _, v := range []conventions{conventions141, conventions01} {
+		event := traceEvent()
+		event.Interface, _ = billing.RequestShape(string(schemas.ResponsesRequest))
+		event.ProviderAttempts[1].FinishReason = "stop"
+		request := `{"model":"gpt-5.6-sol","instructions":"Answer briefly.","input":[
+			{"role":"user","content":"Hi"},
+			{"type":"message","role":"user","content":[
+				{"type":"input_text","text":"What is this?"},
+				{"type":"input_image","image_url":"https://example.com/cat.png"},
+				{"type":"input_image","file_id":"file-1"},
+				{"type":"input_file","file_data":{"media_type":"application/pdf","size":5,"sha256":"ef"},"filename":"a.pdf"},
+				{"type":"input_file","file_url":"https://example.com/a.pdf"}]},
+			{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"First."},{"type":"summary_text","text":"Second."}],"encrypted_content":"opaque"},
+			{"type":"message","role":"assistant","content":[{"type":"output_text","text":"A cat."}]},
+			{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{\"q\":\"cat\"}"},
+			{"type":"web_search_call","id":"ws_1","status":"completed"},
+			{"type":"function_call_output","call_id":"call_1","output":"found"},
+			{"type":"custom_tool_call","call_id":"call_2","name":"shell","input":"ls"},
+			{"type":"custom_tool_call_output","call_id":"call_2","output":"a.txt"},
+			{"type":"computer_call_output","call_id":"call_3","output":{"type":"computer_screenshot"}},
+			{"type":"shell_call","id":"sh_1","call_id":"call_5","action":{"commands":["ls"]},"status":"completed"},
+			{"type":"shell_call_output","call_id":"call_5","output":[{"stdout":"a.txt","stderr":""}]},
+			{"type":"apply_patch_call","call_id":"call_6","operation":{"type":"update_file","path":"a.txt","diff":"@@"}},
+			{"type":"apply_patch_call_output","call_id":"call_6","status":"failed"},
+			{"type":"tool_search_call","id":"ts_1","execution":"server","call_id":null,"arguments":{"query":"weather"}},
+			{"type":"tool_search_output","id":"tso_1","execution":"server","call_id":null,"tools":[]},
+			{"type":"mcp_call","id":"mcp_1","server_label":"docs","name":"search","arguments":"{}","output":"found"},
+			{"type":"mcp_approval_response","approval_request_id":"mcpr_1","approve":true}],
+			"tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}},{"type":"web_search","search_context_size":"low"}]}`
+		wantInput := `[
+			{"role":"user","parts":[{"type":"text","content":"Hi"}]},
+			{"role":"user","parts":[
+				{"type":"text","content":"What is this?"},
+				{"type":"uri","modality":"image","uri":"https://example.com/cat.png"},
+				{"type":"file","modality":"image","file_id":"file-1"},
+				{"type":"blob","modality":"document","mime_type":"application/pdf","size":5,"sha256":"ef"},
+				{"type":"uri","modality":"document","uri":"https://example.com/a.pdf"}]},
+			{"role":"assistant","parts":[
+				{"type":"reasoning","content":"First.\n\nSecond."},
+				{"type":"text","content":"A cat."},
+				{"type":"tool_call","id":"call_1","name":"lookup","arguments":{"q":"cat"}},
+				{"type":"server_tool_call","id":"ws_1","name":"web_search","server_tool_call":{"type":"web_search","status":"completed"}}]},
+			{"role":"tool","parts":[{"type":"tool_call_response","id":"call_1","response":"found"}]},
+			{"role":"assistant","parts":[{"type":"tool_call","id":"call_2","name":"shell","arguments":"ls"}]},
+			{"role":"tool","parts":[{"type":"tool_call_response","id":"call_2","response":"a.txt"}]},
+			{"role":"tool","parts":[{"type":"tool_call_response","id":"call_3","response":{"type":"computer_screenshot"}}]},
+			{"role":"assistant","parts":[{"type":"tool_call","id":"call_5","name":"shell","arguments":{"commands":["ls"]}}]},
+			{"role":"tool","parts":[{"type":"tool_call_response","id":"call_5","response":[{"stdout":"a.txt","stderr":""}]}]},
+			{"role":"assistant","parts":[{"type":"tool_call","id":"call_6","name":"apply_patch","arguments":{"type":"update_file","path":"a.txt","diff":"@@"}}]},
+			{"role":"tool","parts":[{"type":"tool_call_response","id":"call_6","response":{"status":"failed"}}]},
+			{"role":"assistant","parts":[
+				{"type":"server_tool_call","id":"ts_1","name":"tool_search","server_tool_call":{"type":"tool_search","execution":"server","call_id":null,"arguments":{"query":"weather"}}},
+				{"type":"server_tool_call_response","server_tool_call_response":{"type":"tool_search","execution":"server","call_id":null,"tools":[]}},
+				{"type":"server_tool_call","id":"mcp_1","name":"search","server_tool_call":{"type":"mcp","server_label":"docs","name":"search","arguments":"{}","output":"found"}}]},
+			{"role":"tool","parts":[{"type":"mcp_approval_response","approval_request_id":"mcpr_1","approve":true}]}]`
+		output := `[
+			{"type":"reasoning","id":"rs_2","summary":[],"content":[{"type":"reasoning_text","text":"Think."}]},
+			{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Done.","annotations":[]},{"type":"refusal","refusal":"No more."}]},
+			{"type":"function_call","call_id":"call_4","name":"lookup","arguments":"{}"}]`
+		wantOutput := `[{"role":"assistant","finish_reason":"stop","parts":[
+			{"type":"reasoning","content":"Think."},{"type":"text","content":"Done."},{"type":"refusal","content":"No more."},
+			{"type":"tool_call","id":"call_4","name":"lookup","arguments":{}}]}]`
+		buffered := encodeTrace(t, v, event, `{}`, Trace{}, &traceBodies{request: []byte(request), response: []byte(`{"id":"resp_1","status":"completed","output":` + output + `}`)})
+		expectMessages(t, buffered, "gen_ai.system_instructions", `[{"type":"text","content":"Answer briefly."}]`)
+		expectMessages(t, buffered, "gen_ai.input.messages", wantInput)
+		expectMessages(t, buffered, "gen_ai.tool.definitions", `[{"type":"function","name":"lookup","parameters":{"type":"object"}},{"type":"web_search","name":"web_search","search_context_size":"low"}]`)
+		expectMessages(t, buffered, "gen_ai.output.messages", wantOutput)
 
-	text := encodeTrace(t, event, `{}`, Trace{}, &traceBodies{request: []byte(`{"input":"Hi"}`)})
-	expectMessages(t, text, "gen_ai.input.messages", `[{"role":"user","parts":[{"type":"text","content":"Hi"}]}]`)
+		text := encodeTrace(t, v, event, `{}`, Trace{}, &traceBodies{request: []byte(`{"input":"Hi"}`)})
+		expectMessages(t, text, "gen_ai.input.messages", `[{"role":"user","parts":[{"type":"text","content":"Hi"}]}]`)
 
-	// The event that ends a stream holds the whole response.
-	items := []string{
-		`{"type":"reasoning","id":"rs_2","summary":[],"content":[{"type":"reasoning_text","text":"Think."}]}`,
-		`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Done.","annotations":[]},{"type":"refusal","refusal":"No more."}]}`,
-		`{"type":"function_call","call_id":"call_4","name":"lookup","arguments":"{}"}`,
+		// The event that ends a stream holds the whole response.
+		items := []string{
+			`{"type":"reasoning","id":"rs_2","summary":[],"content":[{"type":"reasoning_text","text":"Think."}]}`,
+			`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Done.","annotations":[]},{"type":"refusal","refusal":"No more."}]}`,
+			`{"type":"function_call","call_id":"call_4","name":"lookup","arguments":"{}"}`,
+		}
+		events := [][]byte{[]byte(`{"type":"response.created","response":{"output":[]}}`), []byte(`{"type":"response.output_text.delta","delta":"Do"}`)}
+		for _, item := range items {
+			events = append(events, []byte(`{"type":"response.output_item.done","item":`+item+`}`))
+		}
+		ended := append(events[:len(events):len(events)], []byte(`{"type":"response.completed","response":{"status":"completed","output":`+output+`}}`))
+		expectMessages(t, encodeTrace(t, v, event, `{}`, Trace{}, &traceBodies{events: ended}), "gen_ai.output.messages", wantOutput)
+		// A stream that stopped before that event keeps the items that had finished.
+		expectMessages(t, encodeTrace(t, v, event, `{}`, Trace{}, &traceBodies{events: events}), "gen_ai.output.messages", wantOutput)
 	}
-	events := [][]byte{[]byte(`{"type":"response.created","response":{"output":[]}}`), []byte(`{"type":"response.output_text.delta","delta":"Do"}`)}
-	for _, item := range items {
-		events = append(events, []byte(`{"type":"response.output_item.done","item":`+item+`}`))
-	}
-	ended := append(events[:len(events):len(events)], []byte(`{"type":"response.completed","response":{"status":"completed","output":`+output+`}}`))
-	expectMessages(t, encodeTrace(t, event, `{}`, Trace{}, &traceBodies{events: ended}), "gen_ai.output.messages", wantOutput)
-	// A stream that stopped before that event keeps the items that had finished.
-	expectMessages(t, encodeTrace(t, event, `{}`, Trace{}, &traceBodies{events: events}), "gen_ai.output.messages", wantOutput)
 }
 
 // A long value needs a length of several bytes, which the encoder writes after
 // the value.
 func TestTraceExportEncodesLongAndNestedValues(t *testing.T) {
-	event := traceEvent()
-	long := strings.Repeat("é", 100_000)
-	event.Metadata = map[string]string{"long": long, "short": "x"}
-	request := `{"messages":[{"role":"user","content":"` + long + `"}]}`
-	trace := encodeTrace(t, event, `{}`, Trace{}, &traceBodies{request: []byte(request)})
-	root := trace.spans[0]
-	if root.attributes["stogas.metadata.long"] != long || root.attributes["stogas.metadata.short"] != "x" || len(trace.spans) != 3 {
-		t.Fatal("a long attribute changed the spans")
+	for _, v := range []conventions{conventions141, conventions01} {
+		event := traceEvent()
+		long := strings.Repeat("é", 100_000)
+		event.Metadata = map[string]string{"long": long, "short": "x"}
+		request := `{"messages":[{"role":"user","content":"` + long + `"}]}`
+		trace := encodeTrace(t, v, event, `{}`, Trace{}, &traceBodies{request: []byte(request)})
+		root := trace.spans[0]
+		if root.attributes["stogas.metadata.long"] != long || root.attributes["stogas.metadata.short"] != "x" || len(trace.spans) != 3 {
+			t.Fatal("a long attribute changed the spans")
+		}
+		expectMessages(t, trace, "gen_ai.input.messages", `[{"role":"user","parts":[{"type":"text","content":"`+long+`"}]}]`)
 	}
-	expectMessages(t, trace, "gen_ai.input.messages", `[{"role":"user","parts":[{"type":"text","content":"`+long+`"}]}]`)
 }
 
 func TestTraceExportRefusesARecordWithoutItsRequest(t *testing.T) {
 	for _, event := range []string{`{}`, `[]`, `{"request_id":"id"}`, `{"request_id":"id","created_at":"yesterday"}`, `null`} {
-		if _, err := traceExport([]byte(event), nil, Trace{}, nil); err == nil {
+		if _, err := traceExport([]byte(event), nil, Trace{}, nil, conventions01); err == nil {
 			t.Errorf("%s made a trace", event)
 		}
 	}
@@ -631,24 +749,32 @@ func TestDestinationsGetTheirOwnFormat(t *testing.T) {
 	none := exportconfig.Content{}
 	config := &exportconfig.Config{Destinations: []exportconfig.Destination{
 		{URL: receiver.URL + "/json"},
-		{URL: receiver.URL + "/v1/traces", Format: exportconfig.FormatOTLP},
-		{URL: receiver.URL + "/metadata/v1/traces", Format: exportconfig.FormatOTLP, Content: &none},
+		{URL: receiver.URL + "/v1/traces", Format: exportconfig.FormatOTLPGenAI141},
+		{URL: receiver.URL + "/metadata/v1/traces", Format: exportconfig.FormatOTLPGenAI141, Content: &none},
+		{URL: receiver.URL + "/latest/v1/traces", Format: exportconfig.FormatOTLPGenAI01},
 	}}
 	c := e.Start(config, "req_trace", Trace{Model: "gpt-5.6-sol", TraceID: testTraceID, ParentSpanID: testParentID})
 	c.Input(map[string]json.RawMessage{"messages": json.RawMessage(`[{"role":"user","content":"Hi"}]`)}, false)
 	c.Response([]byte(`{"choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"Hello"}}]}`))
 	c.Finish("req_trace", "success", traceEvent(), testMetadata())
-	await(t, func() bool { return e.Diagnostics().Delivered == 3 })
+	await(t, func() bool { return e.Diagnostics().Delivered == 4 })
 	if e.Diagnostics().ReservedBytes != 0 {
 		t.Fatal("delivered records keep memory")
 	}
 	if posted := got["/json"]; posted.contentType != "application/json" || !json.Valid(posted.body) || !strings.Contains(string(posted.body), `"request":{"messages"`) {
 		t.Fatalf("unexpected JSON delivery: %s %s", posted.contentType, posted.body)
 	}
-	full, bare := got["/v1/traces"], got["/metadata/v1/traces"]
-	if full.contentType != "application/x-protobuf" || bare.contentType != "application/x-protobuf" || full.key != "req_trace" {
-		t.Fatalf("unexpected trace deliveries: %q %q %q", full.contentType, bare.contentType, full.key)
+	full, bare, latest := got["/v1/traces"], got["/metadata/v1/traces"], got["/latest/v1/traces"]
+	if full.contentType != "application/x-protobuf" || bare.contentType != "application/x-protobuf" || latest.contentType != "application/x-protobuf" || full.key != "req_trace" {
+		t.Fatalf("unexpected trace deliveries: %q %q %q %q", full.contentType, bare.contentType, latest.contentType, full.key)
 	}
+	// The latest conventions get the same messages as structured values.
+	structuredContent := decodeTrace(t, latest.body)
+	if !structured(structuredContent) {
+		t.Fatalf("the 0.1 destination got %v", structuredContent.schemaURLs)
+	}
+	expectMessages(t, structuredContent, "gen_ai.input.messages", `[{"role":"user","parts":[{"type":"text","content":"Hi"}]}]`)
+	expectMessages(t, structuredContent, "gen_ai.output.messages", `[{"role":"assistant","parts":[{"type":"text","content":"Hello"}]}]`)
 	withContent, withoutContent := decodeTrace(t, full.body), decodeTrace(t, bare.body)
 	if root := withContent.spans[0]; root.traceID != testTraceID || root.parentID != testParentID || root.name != "chat gpt-5.6-sol" {
 		t.Fatalf("unexpected span: %+v", root)
@@ -665,7 +791,7 @@ func TestDestinationsGetTheirOwnFormat(t *testing.T) {
 	rejected := traceEvent()
 	rejected.RequestID, rejected.ProviderAttempts, rejected.GatewayError = "req_rejected", nil, &billing.EventError{Code: "insufficient_balance", Status: 402}
 	c.Hold().Finish("req_rejected", "rejected", rejected, testMetadata())
-	await(t, func() bool { return e.Diagnostics().Delivered == 4 })
+	await(t, func() bool { return e.Diagnostics().Delivered == 5 })
 	mu.Lock()
 	defer mu.Unlock()
 	if root := decodeTrace(t, got["/v1/traces"].body).spans[0]; root.parentID != testParentID || root.name != "chat gpt-5.6-sol" || root.attributes["error.type"] != "insufficient_balance" {
@@ -680,11 +806,13 @@ func TestTraceExportDropsWithoutMemory(t *testing.T) {
 	defer receiver.Close()
 	e := New(context.Background(), testOptions(true, 64<<10))
 	defer e.Close()
-	config := &exportconfig.Config{Destinations: []exportconfig.Destination{{URL: receiver.URL}, {URL: receiver.URL, Format: exportconfig.FormatOTLP}}}
+	config := &exportconfig.Config{Destinations: []exportconfig.Destination{
+		{URL: receiver.URL}, {URL: receiver.URL, Format: exportconfig.FormatOTLPGenAI141}, {URL: receiver.URL, Format: exportconfig.FormatOTLPGenAI01},
+	}}
 	c := e.Start(config, "id", Trace{})
 	c.Response([]byte(`{"choices":[{"message":{"role":"assistant","content":"` + strings.Repeat("x", 16<<10) + `"}}]}`))
 	c.Finish("id", "success", traceEvent(), testMetadata())
-	if d := e.Diagnostics(); d.MemoryDropped != 2 || d.ReservedBytes != 0 || d.PendingDeliveries != 0 || c.held() {
+	if d := e.Diagnostics(); d.MemoryDropped != 3 || d.ReservedBytes != 0 || d.PendingDeliveries != 0 || c.held() {
 		t.Fatalf("unexpected diagnostics: %+v", d)
 	}
 }

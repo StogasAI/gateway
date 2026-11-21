@@ -160,7 +160,7 @@ func (c deliveryClient) send(ctx context.Context, d destination, r *record) atte
 		req.Header.Set(key, value)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if d.Format == exportconfig.FormatOTLP {
+	if form >= formTrace141 {
 		req.Header.Set("Content-Type", "application/x-protobuf")
 	}
 	req.Header.Set("Idempotency-Key", r.requestID)

@@ -81,26 +81,39 @@ type destination struct {
 }
 
 // form is the shape of a record that a destination takes: its format, with or
-// without bodies.
+// without bodies. Each trace form follows a version of the GenAI conventions.
 type form int
 
 const (
 	formJSON form = iota
 	formJSONContent
-	formTrace
-	formTraceContent
+	formTrace141
+	formTrace141Content
+	formTrace01
+	formTrace01Content
 	forms
 )
 
 func (d destination) form() form {
 	f := formJSON
-	if d.Format == exportconfig.FormatOTLP {
-		f = formTrace
+	switch d.Format {
+	case exportconfig.FormatOTLPGenAI141:
+		f = formTrace141
+	case exportconfig.FormatOTLPGenAI01:
+		f = formTrace01
 	}
 	if d.content {
 		f++
 	}
 	return f
+}
+
+// trace reports the conventions of a trace form, and whether it holds bodies.
+func (f form) trace() (conventions, bool) {
+	if f >= formTrace01 {
+		return conventions01, f == formTrace01Content
+	}
+	return conventions141, f == formTrace141Content
 }
 
 // Trace is what a trace export needs and the request record does not hold:
@@ -446,13 +459,13 @@ func (c *Capture) finish(requestID string, event any, finalMetadata any) {
 	r.payloads[formJSON].parts, r.payloads[formJSONContent].parts = metadataParts, parts
 	for _, d := range c.destinations {
 		f := d.form()
-		if f != formTrace && f != formTraceContent || r.payloads[f].parts != nil {
+		if f < formTrace141 || r.payloads[f].parts != nil {
 			continue
 		}
-		trace, ok := c.traceForm(encoded, f == formTraceContent)
+		trace, ok := c.traceForm(encoded, f)
 		if !ok {
 			clear(encoded)
-			for _, built := range r.payloads[formTrace:] {
+			for _, built := range r.payloads[formTrace141:] {
 				for _, part := range built.parts {
 					clear(part)
 				}

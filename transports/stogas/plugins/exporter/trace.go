@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"math"
 	"slices"
@@ -13,18 +14,35 @@ import (
 	"time"
 )
 
-// The trace format follows the OpenTelemetry GenAI semantic conventions 1.41,
-// the last release that holds them: later ones moved them to a repository
-// that has released nothing, and its attributes already differ.
 const (
-	traceSchemaURL = "https://opentelemetry.io/schemas/1.41.0"
-	traceService   = "stogas-gateway"
-	traceScope     = "stogas.gateway.export"
+	traceService = "stogas-gateway"
+	traceScope   = "stogas.gateway.export"
 
 	spanKindInternal = 1
 	spanKindClient   = 3
 	statusCodeError  = 2
 )
+
+// conventions is the version of the OpenTelemetry GenAI semantic conventions
+// that a trace follows: 1.41, the last release of semantic conventions that
+// held them, or 0.1, the first release of their own repository. 0.1 renamed
+// the cache write tokens, added the reasoning level, and made messages
+// structured values without finish reasons.
+type conventions int
+
+const (
+	conventions141 conventions = iota
+	conventions01
+)
+
+// schemaURLs are the schemas of a trace's resource and of its spans. The 0.1
+// conventions build on semantic conventions 1.45, which name the resource.
+func (v conventions) schemaURLs() (resource, spans string) {
+	if v == conventions01 {
+		return "https://opentelemetry.io/schemas/1.45.0", "https://opentelemetry.io/schemas/semconv-genai-dev/0.1.0-dev"
+	}
+	return "https://opentelemetry.io/schemas/1.41.0", "https://opentelemetry.io/schemas/1.41.0"
+}
 
 var errTraceRecord = errors.New("export record has no trace form")
 
@@ -43,7 +61,7 @@ type traceBodies struct {
 // each tool call inside it. The IDs come from the request ID, so a retried
 // delivery repeats them, and the trace is the caller's when the request named
 // one.
-func traceExport(event, metadata []byte, trace Trace, bodies *traceBodies) ([]byte, error) {
+func traceExport(event, metadata []byte, trace Trace, bodies *traceBodies, v conventions) ([]byte, error) {
 	record, err := decodeObject(event)
 	if err != nil {
 		return nil, err
@@ -75,7 +93,11 @@ func traceExport(event, metadata []byte, trace Trace, bodies *traceBodies) ([]by
 		served, _ = attempts[len(attempts)-1].(map[string]any)
 	}
 
-	p := protobuf{data: make([]byte, 0, traceSize(len(event)+len(metadata), bodies))}
+	p := protobuf{data: make([]byte, 0, traceSize(len(event)+len(metadata), bodies)), conventions: v}
+	if bodies != nil && v == conventions01 {
+		p.text = make([]byte, 0, bodies.textSize())
+	}
+	resourceSchema, spanSchema := v.schemaURLs()
 	resourceSpans := p.open(1)
 	resource := p.open(1)
 	p.attribute(1, "service.name", traceService)
@@ -166,9 +188,9 @@ func traceExport(event, metadata []byte, trace Trace, bodies *traceBodies) ([]by
 		p.flatten(9, "stogas.tool_call", call)
 		p.close(span)
 	}
-	p.string(3, traceSchemaURL)
+	p.string(3, spanSchema)
 	p.close(scopeSpans)
-	p.string(3, traceSchemaURL)
+	p.string(3, resourceSchema)
 	p.close(resourceSpans)
 	return p.data, nil
 }
@@ -185,17 +207,33 @@ func traceSize(record int, bodies *traceBodies) int {
 	return size
 }
 
+// textSize is the room for the JSON text of one list of messages, which
+// structured messages are decoded from: about the size of the body that the
+// list comes from, or of a stream's joined events.
+func (b *traceBodies) textSize() int {
+	joined := 0
+	for _, event := range b.events {
+		joined += len(event)
+	}
+	return max(len(b.request), len(b.response), joined) + 4<<10
+}
+
 // traceForm builds the record's trace form within admitted memory: the trace
-// itself, and while a stream's deltas are joined, their text, which is no
-// longer than the events. It ends the capture, as every refused admission
-// does, when memory or the record fails.
-func (c *Capture) traceForm(event []byte, content bool) ([]byte, bool) {
+// itself, while a stream's deltas are joined, their text, which is no longer
+// than the events, and for structured messages, the text of each list. It
+// ends the capture, as every refused admission does, when memory or the
+// record fails.
+func (c *Capture) traceForm(event []byte, f form) ([]byte, bool) {
+	v, content := f.trace()
 	var bodies *traceBodies
 	joined := 0
 	if content {
 		bodies = &traceBodies{request: c.request, response: c.response, events: c.events}
 		for _, event := range c.events {
 			joined += len(event)
+		}
+		if v == conventions01 {
+			joined += bodies.textSize()
 		}
 	}
 	size := traceSize(len(event)+len(c.metadata), bodies)
@@ -209,7 +247,7 @@ func (c *Capture) traceForm(event []byte, content bool) ([]byte, bool) {
 	if !c.grow(size) {
 		return nil, false
 	}
-	trace, err := traceExport(event, c.metadata, c.trace, bodies)
+	trace, err := traceExport(event, c.metadata, c.trace, bodies, v)
 	if err != nil {
 		c.engine.failed.Add(uint64(len(c.destinations)))
 		c.Discard()
@@ -245,6 +283,10 @@ func (p *protobuf) genAIAttributes(record, served map[string]any, model, failure
 	} {
 		p.attribute(9, "gen_ai.request."+setting[0], settings[setting[1]])
 	}
+	// The settings hold the effort as the gateway sent it to the provider.
+	if p.conventions == conventions01 {
+		p.attribute(9, "gen_ai.request.reasoning.level", settings["reasoning_effort"])
+	}
 	if stream, _ := record["stream"].(bool); stream {
 		p.attribute(9, "gen_ai.request.stream", true)
 	}
@@ -261,13 +303,20 @@ func (p *protobuf) genAIAttributes(record, served map[string]any, model, failure
 	}
 	usage, _ := record["usage"].(map[string]any)
 	meters, _ := usage["meters"].(map[string]any)
+	cacheWrite := "cache_creation.input_tokens"
+	if p.conventions == conventions01 {
+		cacheWrite = "cache_write.input_tokens"
+	}
+	// The conventions ask for the cache and reasoning counts among the totals
+	// only when they are not zero.
 	for _, meter := range [...][2]string{
-		{"cache_creation.input_tokens", "total_cache_write_tokens"}, {"cache_read.input_tokens", "cached_input_tokens"},
+		{cacheWrite, "total_cache_write_tokens"}, {"cache_read.input_tokens", "cached_input_tokens"},
 		{"input_tokens", "total_input_tokens"}, {"output_tokens", "total_output_tokens"},
 		{"reasoning.output_tokens", "reasoning_tokens"},
 	} {
 		counted, _ := meters[meter[1]].(map[string]any)
-		if quantity, err := strconv.ParseInt(text(counted["quantity"]), 10, 64); err == nil {
+		quantity, err := strconv.ParseInt(text(counted["quantity"]), 10, 64)
+		if err == nil && (quantity != 0 || meter[0] == "input_tokens" || meter[0] == "output_tokens") {
 			p.attribute(9, "gen_ai.usage."+meter[0], json.Number(strconv.FormatInt(quantity, 10)))
 		}
 	}
@@ -316,12 +365,26 @@ func finishReason(reason string) string {
 	return reason
 }
 
-// requestFinish is why the reply ended. The Responses interface names no
-// reason for a reply that ended on its own, which ended for its client tool
-// calls when it has some, as a Chat Completions reply says of itself.
+// requestFinish is why the reply ended, empty for a request that no provider
+// received. A reply that ended without a reason was interrupted when the
+// client stopped it, and otherwise ended in error, as the conventions name
+// them. The Responses interface names no reason for a reply that ended on its
+// own, which ended for its client tool calls when it has some, as a Chat
+// Completions reply says of itself.
 func requestFinish(record, served map[string]any) string {
-	if reason := finishReason(text(served["finish_reason"])); reason != "" || text(served["status"]) != "success" {
+	if served == nil {
+		return ""
+	}
+	if reason := finishReason(text(served["finish_reason"])); reason != "" {
 		return reason
+	}
+	switch status := text(served["status"]); {
+	case record["client_stop_ms"] != nil:
+		return "interrupted"
+	case status == "content_filter":
+		return "content_filter"
+	case status != "success":
+		return "error"
 	}
 	performance, _ := record["performance"].(map[string]any)
 	calls, _ := performance["tool_calls"].([]any)
@@ -404,8 +467,13 @@ func sortedKeys(object map[string]any) []string {
 }
 
 // protobuf appends the wire form of the OTLP messages, whose field numbers
-// opentelemetry-proto's trace/v1, common/v1 and resource/v1 give.
-type protobuf struct{ data []byte }
+// opentelemetry-proto's trace/v1, common/v1 and resource/v1 give. Under the
+// 0.1 conventions, text holds the JSON text of a list of messages, which is
+// then written as a structured value.
+type protobuf struct {
+	data, text  []byte
+	conventions conventions
+}
 
 func (p *protobuf) tag(field, wire int) {
 	p.data = binary.AppendUvarint(p.data, uint64(field)<<3|uint64(wire))
@@ -494,6 +562,106 @@ func (p *protobuf) anyValue(field int, value any) {
 		p.close(list)
 	}
 	p.close(item)
+}
+
+// structuredAttribute writes JSON text as an attribute with a structured value,
+// and nothing when the text does not decode, which only a bug could cause.
+func (p *protobuf) structuredAttribute(field int, key string, text []byte) {
+	start := len(p.data)
+	pair := p.open(field)
+	p.string(1, key)
+	if err := p.jsonValue(2, jsontext.NewDecoder(bytes.NewBuffer(text))); err != nil {
+		p.data = p.data[:start]
+		return
+	}
+	p.close(pair)
+}
+
+// jsonValue writes the decoder's next JSON value as an AnyValue: an object as
+// a list of key-value pairs, a number as an integer when it is one that fits,
+// and null as a value that holds nothing. Strings are unescaped straight into
+// the trace.
+func (p *protobuf) jsonValue(field int, decoder *jsontext.Decoder) error {
+	item := p.open(field)
+	switch kind := decoder.PeekKind(); kind {
+	case '[', '{':
+		if _, err := decoder.ReadToken(); err != nil {
+			return err
+		}
+		end, values := jsontext.Kind(']'), 5
+		if kind == '{' {
+			end, values = '}', 6
+		}
+		container := p.open(values)
+		for decoder.PeekKind() != end {
+			if kind == '[' {
+				if err := p.jsonValue(1, decoder); err != nil {
+					return err
+				}
+				continue
+			}
+			name, err := decoder.ReadValue()
+			if err != nil {
+				return err
+			}
+			pair := p.open(1)
+			if err := p.unquote(1, name); err != nil {
+				return err
+			}
+			if err := p.jsonValue(2, decoder); err != nil {
+				return err
+			}
+			p.close(pair)
+		}
+		p.close(container)
+		if _, err := decoder.ReadToken(); err != nil {
+			return err
+		}
+	case '"':
+		value, err := decoder.ReadValue()
+		if err != nil {
+			return err
+		}
+		if err := p.unquote(1, value); err != nil {
+			return err
+		}
+	case '0':
+		value, err := decoder.ReadValue()
+		if err != nil {
+			return err
+		}
+		if integer, err := strconv.ParseInt(string(value), 10, 64); err == nil {
+			p.varint(3, uint64(integer))
+		} else {
+			// A number beyond a double's range reads as infinity.
+			number, _ := strconv.ParseFloat(string(value), 64)
+			p.fixed64(4, math.Float64bits(number))
+		}
+	case 't', 'f', 'n':
+		if _, err := decoder.ReadToken(); err != nil {
+			return err
+		}
+		switch kind {
+		case 't':
+			p.varint(2, 1)
+		case 'f':
+			p.varint(2, 0)
+		}
+	default:
+		_, err := decoder.ReadToken()
+		return errors.Join(errTraceRecord, err)
+	}
+	p.close(item)
+	return nil
+}
+
+// unquote writes a JSON string's text as a string field.
+func (p *protobuf) unquote(field int, quoted []byte) error {
+	start := p.open(field)
+	var err error
+	p.data, err = jsontext.AppendUnquote(p.data, quoted)
+	p.close(start)
+	return err
 }
 
 // flatten writes a JSON value as attributes: an object as one attribute for

@@ -24,11 +24,18 @@ const (
 	MaxHeaderBytes  = 8 << 10
 )
 
-// FormatOTLP posts each record as one OTLP/HTTP trace export in binary Protobuf, whose spans
-// carry the attributes of the OpenTelemetry GenAI semantic conventions 1.41. Those conventions
-// are in development and rename attributes between versions, so the value names the version: a
-// later version takes a new value, and this one keeps its attributes.
-const FormatOTLP = "otlp-genai-1.41"
+// An OTLP format posts each record as one OTLP/HTTP trace export in binary Protobuf, whose spans
+// carry the attributes of a version of the OpenTelemetry GenAI semantic conventions. Those
+// conventions are in development and rename attributes between versions, so each value names its
+// version: a later version takes a new value, and an earlier one keeps its attributes, because
+// receivers read the version that they know.
+const (
+	// FormatOTLPGenAI141 follows semantic conventions 1.41, the last release that held the GenAI
+	// conventions before they moved to a repository of their own.
+	FormatOTLPGenAI141 = "otlp-genai-1.41"
+	// FormatOTLPGenAI01 follows release 0.1 of the GenAI semantic conventions repository.
+	FormatOTLPGenAI01 = "otlp-genai-0.1"
+)
 
 var ErrConfig = errors.New("invalid export configuration")
 
@@ -265,7 +272,7 @@ func (d *Destination) Validate() error {
 	if headerBytes > MaxHeaderBytes || len(d.Headers) > 32 {
 		return ErrConfig
 	}
-	if d.Format != "" && d.Format != FormatOTLP {
+	if d.Format != "" && d.Format != FormatOTLPGenAI141 && d.Format != FormatOTLPGenAI01 {
 		return ErrConfig
 	}
 	if d.Content != nil {
