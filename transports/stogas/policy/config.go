@@ -989,8 +989,8 @@ func init() {
 	// Long prompt prices vary by deployment; blendedPrice reads them for a
 	// stated prompt size.
 	for _, meter := range []string{
-		"cache_write_1h_input_tokens", "cache_write_5m_input_tokens", "cache_write_input_tokens",
-		"cached_input_tokens", "input_tokens", "output_tokens", "reasoning_tokens",
+		"cache_write_12h_input_tokens", "cache_write_1h_input_tokens", "cache_write_5m_input_tokens",
+		"cache_write_input_tokens", "cached_input_tokens", "input_tokens", "output_tokens", "reasoning_tokens",
 	} {
 		exactFieldTypes["deployment.pricing."+meter+".per_mill_tokens"] = "decimal"
 	}

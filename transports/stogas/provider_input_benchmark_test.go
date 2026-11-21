@@ -43,8 +43,8 @@ func BenchmarkOpenAIInputScan(b *testing.B) {
 		}{
 			{"cache_breakpoints", func() error {
 				found, err := validatePromptCacheBreakpoints(raw)
-				if found != 0 {
-					b.Fatalf("found unexpected cache breakpoints: %d", found)
+				if found.total != 0 {
+					b.Fatalf("found unexpected cache breakpoints: %d", found.total)
 				}
 				return err
 			}},

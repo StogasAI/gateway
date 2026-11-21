@@ -109,13 +109,14 @@ const (
 )
 
 var tokenPricingMeters = map[string]bool{
-	billing.MeterInputTokens:             true,
-	billing.MeterCachedInputTokens:       true,
-	billing.MeterCacheWriteInputTokens:   true,
-	billing.MeterCacheWrite5mInputTokens: true,
-	billing.MeterCacheWrite1hInputTokens: true,
-	billing.MeterOutputTokens:            true,
-	billing.MeterReasoningTokens:         true,
+	billing.MeterInputTokens:              true,
+	billing.MeterCachedInputTokens:        true,
+	billing.MeterCacheWriteInputTokens:    true,
+	billing.MeterCacheWrite5mInputTokens:  true,
+	billing.MeterCacheWrite1hInputTokens:  true,
+	billing.MeterCacheWrite12hInputTokens: true,
+	billing.MeterOutputTokens:             true,
+	billing.MeterReasoningTokens:          true,
 }
 
 var callPricingMeters = map[string]bool{
@@ -1423,10 +1424,11 @@ func validateDeploymentPricing(owner, providerID, modelID string, route compiled
 			return fmt.Errorf("%s uses unsupported pricing meter %s", owner, meterKey)
 		}
 	}
-	// Only the Anthropic wire reports cache writes by duration; billing an
-	// unpriced write as ordinary input would undercharge it.
+	// Claude reports every cache write by its lifetime, and billing an unpriced write as ordinary
+	// input would undercharge it. OpenAI's format reports its 12-hour writes apart from the default
+	// ones, which a deployment that prices the longer lifetime prices too.
 	if UsesClaudeWire(schemas.ModelProvider(providerID), modelID) {
-		if len(pricing[billing.MeterCacheWriteInputTokens]) > 0 {
+		if len(pricing[billing.MeterCacheWriteInputTokens]) > 0 || len(pricing[billing.MeterCacheWrite12hInputTokens]) > 0 {
 			return fmt.Errorf("%s uses OpenAI cache-write pricing", owner)
 		}
 		for _, required := range []string{
@@ -1440,6 +1442,8 @@ func validateDeploymentPricing(owner, providerID, modelID string, route compiled
 	} else if len(pricing[billing.MeterCacheWrite5mInputTokens]) > 0 ||
 		len(pricing[billing.MeterCacheWrite1hInputTokens]) > 0 {
 		return fmt.Errorf("%s uses Anthropic cache-write meters", owner)
+	} else if len(pricing[billing.MeterCacheWrite12hInputTokens]) > 0 && len(pricing[billing.MeterCacheWriteInputTokens]) == 0 {
+		return fmt.Errorf("%s prices 12-hour cache writes without default ones", owner)
 	}
 	return nil
 }

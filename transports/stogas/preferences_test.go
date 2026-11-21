@@ -64,6 +64,20 @@ func TestDeploymentsServeRequestsWithoutThePreferencesTheyLack(t *testing.T) {
 			`{"model":"provider:openai gpt-5.6-luna","messages":[{"role":"user","content":[{"type":"text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit"}}]}],` +
 				`"prompt_cache_options":{"mode":"explicit"}}`,
 			[]string{"prompt_cache_options", "prompt_cache_breakpoint"}, nil},
+		// OpenAI takes the 12-hour lifetime only on Responses, and only a deployment that prices it
+		// writes it. Every other deployment writes for the default 30 minutes.
+		{"a 12-hour cache on Responses", responses,
+			`{"model":"provider:openai gpt-5.6-luna","input":[{"role":"user","content":[{"type":"input_text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit","ttl":"12h"}}]}],` +
+				`"prompt_cache_options":{"mode":"explicit","ttl":"12h"}}`,
+			[]string{`"prompt_cache_options":{"mode":"explicit","ttl":"12h"}`, `"prompt_cache_breakpoint":{"mode":"explicit","ttl":"12h"}`}, nil},
+		{"a 12-hour cache on Chat Completions", chat,
+			`{"model":"provider:openai gpt-5.6-luna","messages":[{"role":"user","content":[{"type":"text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit","ttl":"12h"}}]}],` +
+				`"prompt_cache_options":{"mode":"explicit","ttl":"12h"}}`,
+			[]string{`"prompt_cache_options":{"mode":"explicit"}`, `"prompt_cache_breakpoint":{"mode":"explicit"}`}, []string{"12h"}},
+		{"a 12-hour cache that the catalog does not price", responses,
+			`{"model":"provider:openai gpt-5.6-sol","input":[{"role":"user","content":[{"type":"input_text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit","ttl":"12h"}}]}],` +
+				`"prompt_cache_options":{"ttl":"12h"}}`,
+			[]string{`"prompt_cache_breakpoint":{"mode":"explicit"}`}, []string{"12h", "prompt_cache_options"}},
 		{"Chutes", chat,
 			chutesBody(`"top_k":5,"repetition_penalty":1.1,"prediction":{"type":"content","content":"x"},"verbosity":"low",` +
 				`"task_budget":{"type":"tokens","total":20000},"cache_control":{"type":"ephemeral"},"prompt_cache_retention":"24h","stop_sequences":["END"]`),
@@ -111,7 +125,7 @@ func TestEveryDeploymentChecksTheFormOfAPreference(t *testing.T) {
 		{"a cache mark for an OpenAI model", "/v1/chat/completions", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"cache_control":{"type":"ephemeral","ttl":"2h"}}`, "cache_control.ttl must be 5m or 1h"},
 		{"a cache mark in a message for Chutes", "/v1/chat/completions", `{"model":"chutes-glm-5.2","messages":[{"role":"user","content":[{"type":"text","text":"hi","cache_control":{"type":"forever"}}]}]}`, "cache_control.type must be ephemeral"},
 		{"a predicted output for Claude", "/v1/chat/completions", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"prediction":{"type":"audio","content":"x"}}`, "prediction.type must be content"},
-		{"cache options for Claude", "/v1/responses", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","prompt_cache_options":{"ttl":"12h"}}`, "prompt_cache_options.ttl must be 30m"},
+		{"cache options for Claude", "/v1/responses", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","prompt_cache_options":{"ttl":"1h"}}`, "prompt_cache_options.ttl must be 30m or 12h"},
 		{"top_k for an OpenAI model", "/v1/responses", `{"model":"provider:openai gpt-5.5","input":"hi","top_k":"many"}`, "top_k must be an integer"},
 		{"both names of stop sequences", "/v1/chat/completions", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"stop":["A"],"stop_sequences":["B"]}`, "stop conflicts with stop_sequences"},
 		{"a reasoning budget above the output limit", "/v1/chat/completions", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":1000,"reasoning":{"max_tokens":2000}}`, "reasoning.max_tokens must be less than the output token limit"},

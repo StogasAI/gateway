@@ -10,6 +10,7 @@ import (
 	"github.com/bytedance/sonic"
 	openaiprovider "github.com/maximhq/bifrost/core/providers/openai"
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/transports/stogas/billing"
 )
 
 // A request field is a requirement or a preference. A requirement is something that its provider
@@ -105,6 +106,45 @@ func (r *ResolvedRequest) marksPromptCache() bool {
 	return !UsesClaudeWire(r.Provider, r.Deployment.ModelID) && r.Deployment.Capabilities.ExplicitPromptCaching
 }
 
+// PromptCacheTTL12h is the longer lifetime of OpenAI's explicit cache writes, which cost twice the
+// default 30 minutes'.
+const PromptCacheTTL12h = "12h"
+
+// WritesLongPromptCache reports whether the deployment gets OpenAI's 12-hour prompt cache lifetime.
+// Responses takes it and Chat Completions refuses it, on OpenAI and Azure alike (captures
+// openai/prompt-cache-lifetimes and azure/prompt-cache-lifetimes), and only a deployment whose
+// catalog record prices the writes may make them. Another deployment writes for the default 30
+// minutes, which costs less.
+func (r *ResolvedRequest) WritesLongPromptCache() bool {
+	return r.marksPromptCache() && r.WireRoute() == RouteResponses &&
+		len(r.Deployment.Pricing[billing.MeterCacheWrite12hInputTokens]) > 0
+}
+
+// keepCarriedPromptCacheTTL leaves out the request's 12-hour prompt cache lifetime where the
+// deployment does not write it.
+func (r *ResolvedRequest) keepCarriedPromptCacheTTL(raw map[string]json.RawMessage) {
+	if r.WritesLongPromptCache() {
+		return
+	}
+	without := func(options *schemas.PromptCacheOptions) *schemas.PromptCacheOptions {
+		if options == nil || options.TTL == nil || *options.TTL != PromptCacheTTL12h {
+			return options
+		}
+		if options.Mode == nil {
+			return nil
+		}
+		return &schemas.PromptCacheOptions{Mode: options.Mode}
+	}
+	var options struct {
+		TTL string `json:"ttl"`
+	}
+	if sonic.Unmarshal(raw["prompt_cache_options"], &options) == nil && options.TTL == PromptCacheTTL12h {
+		dropRawMember(raw, "prompt_cache_options", "ttl")
+	}
+	r.clearParameters(func(p *schemas.ChatParameters) { p.PromptCacheOptions = without(p.PromptCacheOptions) },
+		func(p *schemas.ResponsesParameters) { p.PromptCacheOptions = without(p.PromptCacheOptions) })
+}
+
 // openAIRefusesSampling reports whether the request's GPT model refuses temperature and top_p.
 // OpenAI and Azure take them from a GPT model only while reasoning is off
 // (testdata/provider/openai/reasoning-sampling.json), and the catalog's sampling facts say only
@@ -173,6 +213,7 @@ func (r *ResolvedRequest) KeepCarriedPreferences() {
 	if r.responses != nil {
 		r.keepCarriedResponsesMembers(raw)
 	}
+	r.keepCarriedPromptCacheTTL(raw)
 	r.keepCarriedContent()
 }
 
@@ -304,7 +345,7 @@ func (r *ResolvedRequest) carriedChatMessage(message openaiprovider.OpenAIMessag
 		message.Name, changed = nil, true
 	}
 	if content := message.Content; content != nil {
-		if blocks, differs := carriedChatBreakpoints(content.ContentBlocks, r.marksPromptCache()); differs {
+		if blocks, differs := r.carriedChatBreakpoints(content.ContentBlocks); differs {
 			message.Content, changed = &schemas.ChatMessageContent{ContentStr: content.ContentStr, ContentBlocks: blocks}, true
 		}
 	}
@@ -371,36 +412,43 @@ func chatMessageWithoutText(content *schemas.ChatMessageContent) bool {
 	})
 }
 
-// carriedChatBreakpoints returns content blocks with OpenAI's prompt cache breakpoints as a Chat
-// Completions deployment gets them, and whether they differ: none where the deployment marks no
-// cache, and otherwise each without its ttl, which Bedrock refuses there (capture
-// aws/chat-completions-prompt-caching). The gateway takes no ttl but 30m, the lifetime of a
-// breakpoint without one, so every breakpoint keeps its lifetime.
-func carriedChatBreakpoints(blocks []schemas.ChatContentBlock, marks bool) ([]schemas.ChatContentBlock, bool) {
+// carriedChatBreakpoints returns content blocks with OpenAI's prompt cache breakpoints as the
+// deployment gets them, and whether they differ.
+func (r *ResolvedRequest) carriedChatBreakpoints(blocks []schemas.ChatContentBlock) ([]schemas.ChatContentBlock, bool) {
 	if !slices.ContainsFunc(blocks, func(block schemas.ChatContentBlock) bool {
-		return breakpointDiffers(block.PromptCacheBreakpoint, marks)
+		return r.breakpointDiffers(block.PromptCacheBreakpoint)
 	}) {
 		return blocks, false
 	}
 	blocks = slices.Clone(blocks)
 	for index := range blocks {
-		blocks[index].PromptCacheBreakpoint = carriedBreakpoint(blocks[index].PromptCacheBreakpoint, marks)
+		blocks[index].PromptCacheBreakpoint = r.carriedBreakpoint(blocks[index].PromptCacheBreakpoint)
 	}
 	return blocks, true
 }
 
-// breakpointDiffers reports whether a breakpoint changes on its way to a Chat Completions
-// deployment that marks the cache or not.
-func breakpointDiffers(breakpoint *schemas.PromptCacheBreakpoint, marks bool) bool {
-	return breakpoint != nil && (!marks || breakpoint.TTL != nil)
+// breakpointDiffers reports whether a prompt cache breakpoint changes on its way to the deployment:
+// one that marks no cache gets none, and one that marks gets no ttl that it does not take. Chat
+// Completions takes no ttl in a breakpoint, which OpenAI, Azure and Bedrock refuse (captures
+// openai/prompt-cache-lifetimes and aws/chat-completions-prompt-caching), and Responses takes 12
+// hours only where the deployment writes them. A breakpoint without its ttl lasts as long as the
+// request's lifetime, which keepCarriedPromptCacheTTL leaves at 12 hours only where it is taken.
+func (r *ResolvedRequest) breakpointDiffers(breakpoint *schemas.PromptCacheBreakpoint) bool {
+	if breakpoint == nil {
+		return false
+	}
+	if !r.marksPromptCache() {
+		return true
+	}
+	return breakpoint.TTL != nil && (r.WireRoute() == RouteChat || *breakpoint.TTL == PromptCacheTTL12h && !r.WritesLongPromptCache())
 }
 
-// carriedBreakpoint returns a breakpoint as a Chat Completions deployment gets it.
-func carriedBreakpoint(breakpoint *schemas.PromptCacheBreakpoint, marks bool) *schemas.PromptCacheBreakpoint {
-	if !breakpointDiffers(breakpoint, marks) {
+// carriedBreakpoint returns a prompt cache breakpoint as the deployment gets it.
+func (r *ResolvedRequest) carriedBreakpoint(breakpoint *schemas.PromptCacheBreakpoint) *schemas.PromptCacheBreakpoint {
+	if !r.breakpointDiffers(breakpoint) {
 		return breakpoint
 	}
-	if !marks {
+	if !r.marksPromptCache() {
 		return nil
 	}
 	return &schemas.PromptCacheBreakpoint{Mode: breakpoint.Mode}
@@ -439,19 +487,12 @@ func (r *ResolvedRequest) carriedResponsesItem(item schemas.ResponsesMessage, cl
 }
 
 // carriedResponsesBlocks returns content blocks as the deployment gets them and whether they
-// differ: without OpenAI's prompt cache breakpoints where the deployment marks no cache, and where
-// refusals become text (refusalAsText) without the log probabilities of an earlier reply and with
-// an earlier refusal as the text that the assistant wrote.
+// differ: with OpenAI's prompt cache breakpoints as the deployment takes them (carriedBreakpoint),
+// and where refusals become text (refusalAsText) without the log probabilities of an earlier reply
+// and with an earlier refusal as the text that the assistant wrote.
 func (r *ResolvedRequest) carriedResponsesBlocks(blocks []schemas.ResponsesMessageContentBlock, asText bool) ([]schemas.ResponsesMessageContentBlock, bool) {
-	marks := r.marksPromptCache()
-	// Responses takes a breakpoint's ttl, and a deployment that serves Responses through Chat
-	// Completions gets each breakpoint as Chat Completions takes it.
-	chat := r.WireRoute() == RouteChat
-	breakpointChanges := func(breakpoint *schemas.PromptCacheBreakpoint) bool {
-		return breakpoint != nil && !marks || chat && breakpointDiffers(breakpoint, marks)
-	}
 	differs := func(block schemas.ResponsesMessageContentBlock) bool {
-		return breakpointChanges(block.PromptCacheBreakpoint) || asText && (block.Type == schemas.ResponsesOutputMessageContentTypeRefusal ||
+		return r.breakpointDiffers(block.PromptCacheBreakpoint) || asText && (block.Type == schemas.ResponsesOutputMessageContentTypeRefusal ||
 			block.ResponsesOutputMessageContentText != nil && len(block.ResponsesOutputMessageContentText.LogProbs) > 0)
 	}
 	if !slices.ContainsFunc(blocks, differs) {
@@ -460,9 +501,7 @@ func (r *ResolvedRequest) carriedResponsesBlocks(blocks []schemas.ResponsesMessa
 	blocks = slices.Clone(blocks)
 	for index := range blocks {
 		block := &blocks[index]
-		if breakpointChanges(block.PromptCacheBreakpoint) {
-			block.PromptCacheBreakpoint = carriedBreakpoint(block.PromptCacheBreakpoint, marks)
-		}
+		block.PromptCacheBreakpoint = r.carriedBreakpoint(block.PromptCacheBreakpoint)
 		if !asText {
 			continue
 		}

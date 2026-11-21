@@ -94,7 +94,7 @@ func validateOpenAIWirePolicy(state *State) error {
 
 // validateOpenAIPromptCaching checks the form of OpenAI's prompt cache settings. A longer
 // retention costs nothing more, and the lifetimes of an explicit cache write are the ones that the
-// catalog prices.
+// catalog prices: a new one could cost more to write.
 func validateOpenAIPromptCaching(route catalog.Route, raw map[string]json.RawMessage) error {
 	if retentionRaw := raw["prompt_cache_retention"]; rawJSONValueSet(retentionRaw) {
 		retention, ok := rawStringValue(retentionRaw)
@@ -132,8 +132,8 @@ func validateOpenAIPromptCaching(route catalog.Route, raw map[string]json.RawMes
 		if !ok {
 			return invalidRequest("prompt_cache_options.ttl must be a string")
 		}
-		if ttl != "30m" {
-			return invalidRequest("prompt_cache_options.ttl must be 30m")
+		if !validPromptCacheTTL(ttl) {
+			return invalidRequest("prompt_cache_options.ttl must be 30m or 12h")
 		}
 	}
 	return nil
@@ -146,12 +146,25 @@ func rawPromptContent(route catalog.Route, raw map[string]json.RawMessage) json.
 	return raw["input"]
 }
 
+// promptCacheTTL12h is the longer lifetime of OpenAI's explicit cache writes. Its writes cost twice
+// the default 30 minutes', and only a deployment that prices them gets it.
+const promptCacheTTL12h = catalog.PromptCacheTTL12h
+
+func validPromptCacheTTL(ttl string) bool {
+	return ttl == "30m" || ttl == promptCacheTTL12h
+}
+
+// promptCacheBreakpoints counts a prompt's cache breakpoints: all of them, those that last 12 hours,
+// and those without a lifetime of their own, which take the request's.
+type promptCacheBreakpoints struct {
+	total, twelveHours, inherited int
+}
+
 // The provider decides which prompt blocks accept a breakpoint and how many it
-// honors. The gateway checks only the mode and lifetime, because a new mode could
-// change the cache-write price, and a 12-hour write costs twice the 30-minute one,
-// as prompt_cache_options.ttl does.
-func validatePromptCacheBreakpoints(raw json.RawMessage) (int, error) {
-	count := 0
+// honors. The gateway checks only the mode and lifetime, because a new mode or
+// lifetime could change the cache-write price.
+func validatePromptCacheBreakpoints(raw json.RawMessage) (promptCacheBreakpoints, error) {
+	var count promptCacheBreakpoints
 	err := openAIWalkRawJSON(raw, "prompt_cache_breakpoint", func(object map[string]json.RawMessage) error {
 		breakpointRaw, exists := object["prompt_cache_breakpoint"]
 		if !exists {
@@ -168,12 +181,19 @@ func validatePromptCacheBreakpoints(raw json.RawMessage) (int, error) {
 		if mode != "explicit" {
 			return invalidRequest("prompt_cache_breakpoint.mode must be explicit")
 		}
-		if ttlRaw, exists := breakpoint["ttl"]; exists {
-			if ttl, ok := rawStringValue(ttlRaw); !ok || ttl != "30m" {
-				return invalidRequest("prompt_cache_breakpoint.ttl must be 30m")
+		ttlRaw, exists := breakpoint["ttl"]
+		if exists {
+			ttl, ok := rawStringValue(ttlRaw)
+			if !ok || !validPromptCacheTTL(ttl) {
+				return invalidRequest("prompt_cache_breakpoint.ttl must be 30m or 12h")
 			}
+			if ttl == promptCacheTTL12h {
+				count.twelveHours++
+			}
+		} else {
+			count.inherited++
 		}
-		count++
+		count.total++
 		return nil
 	})
 	return count, err

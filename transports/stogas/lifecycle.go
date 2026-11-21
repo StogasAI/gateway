@@ -580,13 +580,14 @@ func metersForState(state *State) gatewaybilling.EventMeters {
 				addCount(billing.MeterTotalTokens, total)
 			}
 		}
-		writes := saturatingTokenTotal(observed.CacheWrite, observed.CacheWrite5m, observed.CacheWrite1h)
+		writes := saturatingTokenTotal(observed.CacheWrite, observed.CacheWrite5m, observed.CacheWrite1h, observed.CacheWrite12h)
 		parts := map[string]int{
-			billing.MeterCachedInputTokens:       observed.Cached,
-			billing.MeterCacheWriteInputTokens:   observed.CacheWrite,
-			billing.MeterCacheWrite5mInputTokens: observed.CacheWrite5m,
-			billing.MeterCacheWrite1hInputTokens: observed.CacheWrite1h,
-			billing.MeterTotalCacheWriteTokens:   writes,
+			billing.MeterCachedInputTokens:        observed.Cached,
+			billing.MeterCacheWriteInputTokens:    observed.CacheWrite,
+			billing.MeterCacheWrite5mInputTokens:  observed.CacheWrite5m,
+			billing.MeterCacheWrite1hInputTokens:  observed.CacheWrite1h,
+			billing.MeterCacheWrite12hInputTokens: observed.CacheWrite12h,
+			billing.MeterTotalCacheWriteTokens:    writes,
 		}
 		for key, quantity := range parts {
 			if quantity > 0 {

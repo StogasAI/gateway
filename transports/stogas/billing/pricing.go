@@ -33,13 +33,16 @@ const (
 	MeterCheckedStructuredOutputs = "checked_structured_outputs"
 	MeterInvalidStructuredOutputs = "invalid_structured_outputs"
 
-	MeterInputTokens             = "input_tokens"
-	MeterCachedInputTokens       = "cached_input_tokens"
-	MeterCacheWriteInputTokens   = "cache_write_input_tokens"
-	MeterCacheWrite5mInputTokens = "cache_write_5m_input_tokens"
-	MeterCacheWrite1hInputTokens = "cache_write_1h_input_tokens"
-	MeterOutputTokens            = "output_tokens"
-	MeterReasoningTokens         = "reasoning_tokens"
+	MeterInputTokens       = "input_tokens"
+	MeterCachedInputTokens = "cached_input_tokens"
+	// A cache write at the deployment's default lifetime, which is 30 minutes in OpenAI's format.
+	// Claude reports its writes by lifetime, and OpenAI's longer lifetime has its own price.
+	MeterCacheWriteInputTokens    = "cache_write_input_tokens"
+	MeterCacheWrite5mInputTokens  = "cache_write_5m_input_tokens"
+	MeterCacheWrite1hInputTokens  = "cache_write_1h_input_tokens"
+	MeterCacheWrite12hInputTokens = "cache_write_12h_input_tokens"
+	MeterOutputTokens             = "output_tokens"
+	MeterReasoningTokens          = "reasoning_tokens"
 
 	RatePerMillionTokens = "per_mill_tokens"
 	RatePerThousandCalls = "per_1k_calls"

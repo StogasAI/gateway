@@ -25,6 +25,7 @@ type Signals interface {
 	CacheWriteInputTokens() int
 	CacheWrite5mInputTokens() int
 	CacheWrite1hInputTokens() int
+	CacheWrite12hInputTokens() int
 }
 
 type SearchUsageSignals interface {
@@ -39,9 +40,11 @@ type StandardSignals struct {
 	CacheWrite   int
 	CacheWrite5m int
 	CacheWrite1h int
-	WebSearch    int
-	inputKnown   bool
-	outputKnown  bool
+	// OpenAI's 12-hour writes. Its 30-minute writes take the default CacheWrite.
+	CacheWrite12h int
+	WebSearch     int
+	inputKnown    bool
+	outputKnown   bool
 	// reasoningKnown is true once the provider reports how many completion tokens were
 	// reasoning, 0 included. Providers that fold reasoning into completion tokens leave it false.
 	reasoningKnown bool
@@ -60,7 +63,8 @@ func hasMeasuredUsage(signals Signals) bool {
 		signals.CachedInputTokens() > 0 ||
 		signals.CacheWriteInputTokens() > 0 ||
 		signals.CacheWrite5mInputTokens() > 0 ||
-		signals.CacheWrite1hInputTokens() > 0
+		signals.CacheWrite1hInputTokens() > 0 ||
+		signals.CacheWrite12hInputTokens() > 0
 }
 
 func HasMeasuredUsage(state *State) bool {
@@ -123,7 +127,8 @@ func isInputTokenMeter(meterKey string) bool {
 		billing.MeterCachedInputTokens,
 		billing.MeterCacheWriteInputTokens,
 		billing.MeterCacheWrite5mInputTokens,
-		billing.MeterCacheWrite1hInputTokens:
+		billing.MeterCacheWrite1hInputTokens,
+		billing.MeterCacheWrite12hInputTokens:
 		return true
 	default:
 		return false
@@ -306,6 +311,13 @@ func (s *StandardSignals) CacheWrite1hInputTokens() int {
 	return s.CacheWrite1h
 }
 
+func (s *StandardSignals) CacheWrite12hInputTokens() int {
+	if s == nil {
+		return 0
+	}
+	return s.CacheWrite12h
+}
+
 func (s *StandardSignals) WebSearchCalls() int {
 	if s == nil {
 		return 0
@@ -323,30 +335,24 @@ func signalsFromUsage(usage *schemas.BifrostLLMUsage) *StandardSignals {
 	cacheWrite := 0
 	cacheWrite5m := 0
 	cacheWrite1h := 0
-	if usage.PromptTokensDetails != nil {
-		cached = nonnegativeTokenCount(usage.PromptTokensDetails.CachedReadTokens)
-		if usage.PromptTokensDetails.CachedWriteTokenDetails != nil {
-			cacheWrite5m = nonnegativeTokenCount(usage.PromptTokensDetails.CachedWriteTokenDetails.CachedWriteTokens5m)
-			cacheWrite1h = nonnegativeTokenCount(usage.PromptTokensDetails.CachedWriteTokenDetails.CachedWriteTokens1h)
-			splitTotal := saturatingTokenTotal(cacheWrite5m, cacheWrite1h)
-			reportedWrite := nonnegativeTokenCount(usage.PromptTokensDetails.CachedWriteTokens)
-			if reportedWrite > 0 && splitTotal > 0 && reportedWrite != splitTotal {
-				if splitTotal < reportedWrite {
-					// Keep the usable TTL split and leave only the unexplained
-					// remainder unspecified.
-					cacheWrite = reportedWrite - splitTotal
-				} else {
-					// The details exceed the usable aggregate, so their TTL
-					// classification cannot be trusted.
-					cacheWrite = reportedWrite
-					cacheWrite5m = 0
-					cacheWrite1h = 0
-				}
-			} else if splitTotal == 0 {
-				cacheWrite = reportedWrite
+	cacheWrite12h := 0
+	if details := usage.PromptTokensDetails; details != nil {
+		cached = nonnegativeTokenCount(details.CachedReadTokens)
+		cacheWrite = nonnegativeTokenCount(details.CachedWriteTokens)
+		if lifetimes := details.CachedWriteTokenDetails; lifetimes != nil {
+			cacheWrite5m = nonnegativeTokenCount(lifetimes.CachedWriteTokens5m)
+			cacheWrite1h = nonnegativeTokenCount(lifetimes.CachedWriteTokens1h)
+			cacheWrite12h = nonnegativeTokenCount(lifetimes.CachedWriteTokens12h)
+			priced := saturatingTokenTotal(cacheWrite5m, cacheWrite1h, cacheWrite12h)
+			split := saturatingTokenTotal(priced, lifetimes.CachedWriteTokens30m)
+			if cacheWrite > 0 && split > cacheWrite {
+				// The details exceed the usable aggregate, so their lifetimes cannot be trusted.
+				cacheWrite5m, cacheWrite1h, cacheWrite12h = 0, 0, 0
+			} else {
+				// The default write takes OpenAI's 30-minute writes and what the details leave
+				// unexplained.
+				cacheWrite = max(cacheWrite, split) - priced
 			}
-		} else {
-			cacheWrite = nonnegativeTokenCount(usage.PromptTokensDetails.CachedWriteTokens)
 		}
 	}
 	webSearch := 0
@@ -359,7 +365,7 @@ func signalsFromUsage(usage *schemas.BifrostLLMUsage) *StandardSignals {
 			webSearch = *usage.CompletionTokensDetails.NumSearchQueries
 		}
 	}
-	next := &StandardSignals{Prompt: promptTokens, Completion: completionTokens, Reasoning: reasoningTokens, Cached: cached, CacheWrite: cacheWrite, CacheWrite5m: cacheWrite5m, CacheWrite1h: cacheWrite1h, WebSearch: webSearch}
+	next := &StandardSignals{Prompt: promptTokens, Completion: completionTokens, Reasoning: reasoningTokens, Cached: cached, CacheWrite: cacheWrite, CacheWrite5m: cacheWrite5m, CacheWrite1h: cacheWrite1h, CacheWrite12h: cacheWrite12h, WebSearch: webSearch}
 	next.inputKnown, next.outputKnown = promptTokens > 0, completionTokens > 0
 	next.reasoningKnown = reasoningTokens > 0 ||
 		usage.CompletionTokensDetails != nil && usage.CompletionTokensDetails.ReasoningTokensReported
@@ -377,10 +383,12 @@ func cacheWriteTokenTotal(details *schemas.ChatPromptTokensDetails) int {
 		return 0
 	}
 	splitTotal := 0
-	if details.CachedWriteTokenDetails != nil {
+	if lifetimes := details.CachedWriteTokenDetails; lifetimes != nil {
 		splitTotal = saturatingTokenTotal(
-			details.CachedWriteTokenDetails.CachedWriteTokens5m,
-			details.CachedWriteTokenDetails.CachedWriteTokens1h,
+			lifetimes.CachedWriteTokens5m,
+			lifetimes.CachedWriteTokens1h,
+			lifetimes.CachedWriteTokens30m,
+			lifetimes.CachedWriteTokens12h,
 		)
 	}
 	reported := nonnegativeTokenCount(details.CachedWriteTokens)
@@ -452,6 +460,7 @@ func normalizeUsagePartitions(signals *StandardSignals) {
 		signals.CacheWrite,
 		signals.CacheWrite5m,
 		signals.CacheWrite1h,
+		signals.CacheWrite12h,
 	)
 	if !cachePartitionOK || cachePartition > signals.Prompt {
 		// The aggregate input count remains usable, but an inconsistent cache
@@ -460,6 +469,7 @@ func normalizeUsagePartitions(signals *StandardSignals) {
 		signals.CacheWrite = 0
 		signals.CacheWrite5m = 0
 		signals.CacheWrite1h = 0
+		signals.CacheWrite12h = 0
 	}
 	if signals.Reasoning > signals.Completion {
 		// Keep the usable completion aggregate and ignore an impossible detail
@@ -478,6 +488,7 @@ func cachePartitionTotal(signals *StandardSignals) int {
 		signals.CacheWrite,
 		signals.CacheWrite5m,
 		signals.CacheWrite1h,
+		signals.CacheWrite12h,
 	)
 }
 
@@ -485,7 +496,7 @@ func cachePartitionSpecificity(signals *StandardSignals) int {
 	if signals == nil {
 		return 0
 	}
-	return saturatingTokenTotal(signals.CacheWrite5m, signals.CacheWrite1h)
+	return saturatingTokenTotal(signals.CacheWrite5m, signals.CacheWrite1h, signals.CacheWrite12h)
 }
 
 func mergeCachePartition(current, next *StandardSignals) {
@@ -503,6 +514,7 @@ func mergeCachePartition(current, next *StandardSignals) {
 	current.CacheWrite = next.CacheWrite
 	current.CacheWrite5m = next.CacheWrite5m
 	current.CacheWrite1h = next.CacheWrite1h
+	current.CacheWrite12h = next.CacheWrite12h
 }
 
 func addTokenCounts(values ...int) (int, bool) {

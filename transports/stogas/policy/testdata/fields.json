@@ -48,6 +48,7 @@
 	"deployment.maxOutputTokens": "integer",
 	"deployment.modelId": "string",
 	"deployment.outputModalities": "string_list",
+	"deployment.pricing.cache_write_12h_input_tokens.per_mill_tokens": "decimal",
 	"deployment.pricing.cache_write_1h_input_tokens.per_mill_tokens": "decimal",
 	"deployment.pricing.cache_write_5m_input_tokens.per_mill_tokens": "decimal",
 	"deployment.pricing.cache_write_input_tokens.per_mill_tokens": "decimal",

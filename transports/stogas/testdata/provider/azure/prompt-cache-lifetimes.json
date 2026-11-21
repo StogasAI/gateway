@@ -1,0 +1,958 @@
+{
+	"shows": "Azure's GPT-5.6 Luna takes OpenAI's 12-hour prompt cache lifetime on the Responses API as OpenAI does, and its Chat Completions refuses the ttl 12h and any ttl in a breakpoint.",
+	"recorded": "2026-11-21",
+	"exchanges": [
+		{
+			"name": "responses ttl 12h",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/responses",
+				"body": {
+					"model": "gpt-5.6-luna",
+					"store": false,
+					"max_output_tokens": 16,
+					"input": [
+						{
+							"role": "developer",
+							"content": [
+								{
+									"type": "input_text",
+									"text": "Run 421ae2ac-d11f-49db-9ed2-1c31cfd26e58. Inherited: item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57",
+									"prompt_cache_breakpoint": {
+										"mode": "explicit"
+									}
+								}
+							]
+						},
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"prompt_cache_options": {
+						"mode": "explicit",
+						"ttl": "12h"
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_058142306996a608016b00e6e81bd081978a640c0557d9b4fd",
+					"object": "response",
+					"created_at": 1795221224,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"completed_at": 1795221225,
+					"content_filters": [
+						{
+							"blocked": false,
+							"source_type": "prompt",
+							"content_filter_raw": [],
+							"content_filter_results": {
+								"hate": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"sexual": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"violence": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"self_harm": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"jailbreak": {
+									"detected": false,
+									"filtered": false
+								}
+							},
+							"content_filter_offsets": {
+								"start_offset": 0,
+								"end_offset": 785,
+								"check_offset": 0
+							}
+						},
+						{
+							"blocked": false,
+							"source_type": "completion",
+							"content_filter_raw": [],
+							"content_filter_results": {
+								"protected_material_text": {
+									"detected": false,
+									"filtered": false
+								},
+								"protected_material_code": {
+									"detected": false,
+									"filtered": false
+								},
+								"hate": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"sexual": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"violence": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"self_harm": {
+									"filtered": false,
+									"severity": "safe"
+								}
+							},
+							"content_filter_offsets": {
+								"start_offset": 0,
+								"end_offset": 2,
+								"check_offset": 0
+							}
+						}
+					],
+					"error": null,
+					"frequency_penalty": 0,
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 16,
+					"max_tool_calls": null,
+					"model": "gpt-5.6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "msg_058142306996a608016b00e6e9270c8197ab32e7917dde9e1e",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "OK"
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_options": {
+						"mode": "explicit",
+						"ttl": "12h"
+					},
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "medium",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 1322,
+						"input_tokens_details": {
+							"cache_write_tokens": 1312,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 1312,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 5,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 1327
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "responses ttl 12h again",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/responses",
+				"body": {
+					"model": "gpt-5.6-luna",
+					"store": false,
+					"max_output_tokens": 16,
+					"input": [
+						{
+							"role": "developer",
+							"content": [
+								{
+									"type": "input_text",
+									"text": "Run 421ae2ac-d11f-49db-9ed2-1c31cfd26e58. Inherited: item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57",
+									"prompt_cache_breakpoint": {
+										"mode": "explicit"
+									}
+								}
+							]
+						},
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"prompt_cache_options": {
+						"mode": "explicit",
+						"ttl": "12h"
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_0d7c34070b4baa75016b00e6e990d881968d69e047ccbe1273",
+					"object": "response",
+					"created_at": 1795221225,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"completed_at": 1795221226,
+					"content_filters": [
+						{
+							"blocked": false,
+							"source_type": "prompt",
+							"content_filter_raw": [],
+							"content_filter_results": {
+								"hate": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"sexual": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"violence": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"self_harm": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"jailbreak": {
+									"detected": false,
+									"filtered": false
+								}
+							},
+							"content_filter_offsets": {
+								"start_offset": 0,
+								"end_offset": 785,
+								"check_offset": 0
+							}
+						},
+						{
+							"blocked": false,
+							"source_type": "completion",
+							"content_filter_raw": [],
+							"content_filter_results": {
+								"protected_material_text": {
+									"detected": false,
+									"filtered": false
+								},
+								"protected_material_code": {
+									"detected": false,
+									"filtered": false
+								},
+								"hate": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"sexual": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"violence": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"self_harm": {
+									"filtered": false,
+									"severity": "safe"
+								}
+							},
+							"content_filter_offsets": {
+								"start_offset": 0,
+								"end_offset": 3,
+								"check_offset": 0
+							}
+						}
+					],
+					"error": null,
+					"frequency_penalty": 0,
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 16,
+					"max_tool_calls": null,
+					"model": "gpt-5.6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "msg_0d7c34070b4baa75016b00e6e9e8d48196aee71ad78904b7e7",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "OK."
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_options": {
+						"mode": "explicit",
+						"ttl": "12h"
+					},
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "medium",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 1322,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 1312
+						},
+						"output_tokens": 6,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 1328
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "responses breakpoint ttl 12h",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/responses",
+				"body": {
+					"model": "gpt-5.6-luna",
+					"store": false,
+					"max_output_tokens": 16,
+					"input": [
+						{
+							"role": "developer",
+							"content": [
+								{
+									"type": "input_text",
+									"text": "Run fed3e050-c259-4234-a7eb-3bbd04040451. Own: item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57",
+									"prompt_cache_breakpoint": {
+										"mode": "explicit",
+										"ttl": "12h"
+									}
+								}
+							]
+						},
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_0a5a09cefb41de7c016b00e6ea18c88190a33be841cdea308e",
+					"object": "response",
+					"created_at": 1795221226,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"completed_at": 1795221227,
+					"content_filters": [
+						{
+							"blocked": false,
+							"source_type": "prompt",
+							"content_filter_raw": [],
+							"content_filter_results": {
+								"hate": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"sexual": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"violence": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"self_harm": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"jailbreak": {
+									"detected": false,
+									"filtered": false
+								}
+							},
+							"content_filter_offsets": {
+								"start_offset": 0,
+								"end_offset": 785,
+								"check_offset": 0
+							}
+						},
+						{
+							"blocked": false,
+							"source_type": "completion",
+							"content_filter_raw": [],
+							"content_filter_results": {
+								"protected_material_text": {
+									"detected": false,
+									"filtered": false
+								},
+								"protected_material_code": {
+									"detected": false,
+									"filtered": false
+								},
+								"hate": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"sexual": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"violence": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"self_harm": {
+									"filtered": false,
+									"severity": "safe"
+								}
+							},
+							"content_filter_offsets": {
+								"start_offset": 0,
+								"end_offset": 2,
+								"check_offset": 0
+							}
+						}
+					],
+					"error": null,
+					"frequency_penalty": 0,
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 16,
+					"max_tool_calls": null,
+					"model": "gpt-5.6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "msg_0a5a09cefb41de7c016b00e6eab3dc8190b02f7aa35b100a6f",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "OK"
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_options": {
+						"mode": "implicit",
+						"ttl": "30m"
+					},
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "medium",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 1316,
+						"input_tokens_details": {
+							"cache_write_tokens": 1313,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 1306,
+								"ttl_30m_tokens": 7
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 5,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 1321
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "responses breakpoint ttl 30m under ttl 12h",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/responses",
+				"body": {
+					"model": "gpt-5.6-luna",
+					"store": false,
+					"max_output_tokens": 16,
+					"input": [
+						{
+							"role": "developer",
+							"content": [
+								{
+									"type": "input_text",
+									"text": "Run 06f497cb-ddc3-4db8-b5e7-3cf492f8d3f3. Shorter: item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57",
+									"prompt_cache_breakpoint": {
+										"mode": "explicit",
+										"ttl": "30m"
+									}
+								}
+							]
+						},
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"prompt_cache_options": {
+						"mode": "explicit",
+						"ttl": "12h"
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_06277a47112f4dd5016b00e6eb30c081948090e1600a6e874d",
+					"object": "response",
+					"created_at": 1795221227,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"completed_at": 1795221227,
+					"content_filters": [
+						{
+							"blocked": false,
+							"source_type": "prompt",
+							"content_filter_raw": [],
+							"content_filter_results": {
+								"hate": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"sexual": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"violence": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"self_harm": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"jailbreak": {
+									"detected": false,
+									"filtered": false
+								}
+							},
+							"content_filter_offsets": {
+								"start_offset": 0,
+								"end_offset": 785,
+								"check_offset": 0
+							}
+						},
+						{
+							"blocked": false,
+							"source_type": "completion",
+							"content_filter_raw": [],
+							"content_filter_results": {
+								"protected_material_text": {
+									"detected": false,
+									"filtered": false
+								},
+								"protected_material_code": {
+									"detected": false,
+									"filtered": false
+								},
+								"hate": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"sexual": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"violence": {
+									"filtered": false,
+									"severity": "safe"
+								},
+								"self_harm": {
+									"filtered": false,
+									"severity": "safe"
+								}
+							},
+							"content_filter_offsets": {
+								"start_offset": 0,
+								"end_offset": 2,
+								"check_offset": 0
+							}
+						}
+					],
+					"error": null,
+					"frequency_penalty": 0,
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 16,
+					"max_tool_calls": null,
+					"model": "gpt-5.6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "msg_06277a47112f4dd5016b00e6eb9c3081948895bcc1281e85ba",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "OK"
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_options": {
+						"mode": "explicit",
+						"ttl": "12h"
+					},
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "medium",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 1324,
+						"input_tokens_details": {
+							"cache_write_tokens": 1314,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 1314
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 5,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 1329
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "chat ttl 12h",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "gpt-5.6-luna",
+					"max_completion_tokens": 16,
+					"messages": [
+						{
+							"role": "system",
+							"content": [
+								{
+									"type": "text",
+									"text": "Run 7725abb7-9aeb-4f44-8061-2ccc90190834. chat ttl 12h: item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57",
+									"prompt_cache_breakpoint": {
+										"mode": "explicit"
+									}
+								}
+							]
+						},
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"prompt_cache_options": {
+						"mode": "explicit",
+						"ttl": "12h"
+					}
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Invalid value: '12h'. Supported values are: '30m'.",
+						"type": "invalid_request_error",
+						"param": "prompt_cache_options.ttl",
+						"code": "invalid_value"
+					}
+				}
+			}
+		},
+		{
+			"name": "chat breakpoint ttl 12h",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "gpt-5.6-luna",
+					"max_completion_tokens": 16,
+					"messages": [
+						{
+							"role": "system",
+							"content": [
+								{
+									"type": "text",
+									"text": "Run 34ae2042-bce4-409d-8330-94ab7b6fa730. chat breakpoint ttl 12h: item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57",
+									"prompt_cache_breakpoint": {
+										"mode": "explicit",
+										"ttl": "12h"
+									}
+								}
+							]
+						},
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Unknown parameter: 'messages[0].content[0].prompt_cache_breakpoint.ttl'.",
+						"type": "invalid_request_error",
+						"param": "messages[0].content[0].prompt_cache_breakpoint.ttl",
+						"code": "unknown_parameter"
+					}
+				}
+			}
+		},
+		{
+			"name": "chat breakpoint ttl 30m",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "gpt-5.6-luna",
+					"max_completion_tokens": 16,
+					"messages": [
+						{
+							"role": "system",
+							"content": [
+								{
+									"type": "text",
+									"text": "Run 6e05ecee-741a-4203-9bbe-765c6a775275. chat breakpoint ttl 30m: item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57",
+									"prompt_cache_breakpoint": {
+										"mode": "explicit",
+										"ttl": "30m"
+									}
+								}
+							]
+						},
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Unknown parameter: 'messages[0].content[0].prompt_cache_breakpoint.ttl'.",
+						"type": "invalid_request_error",
+						"param": "messages[0].content[0].prompt_cache_breakpoint.ttl",
+						"code": "unknown_parameter"
+					}
+				}
+			}
+		}
+	]
+}

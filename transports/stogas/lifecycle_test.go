@@ -481,6 +481,7 @@ func TestCalculateUpstreamCostKeepsUnpricedCacheDetailsAsOrdinaryInput(t *testin
 		{name: "generic cache write", signals: &StandardSignals{Prompt: 100, CacheWrite: 100}},
 		{name: "five-minute cache write", signals: &StandardSignals{Prompt: 100, CacheWrite5m: 100}},
 		{name: "one-hour cache write", signals: &StandardSignals{Prompt: 100, CacheWrite1h: 100}},
+		{name: "12-hour cache write", signals: &StandardSignals{Prompt: 100, CacheWrite12h: 100}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -504,6 +505,7 @@ func TestCalculateUpstreamCostKeepsUnpricedCacheDetailsAsOrdinaryInput(t *testin
 				billing.MeterCacheWriteInputTokens,
 				billing.MeterCacheWrite5mInputTokens,
 				billing.MeterCacheWrite1hInputTokens,
+				billing.MeterCacheWrite12hInputTokens,
 			} {
 				if meter := findMeterEstimate(state.FinalMeters, meterKey); meter != nil {
 					t.Fatalf("unpriced cache detail produced %s meter %#v", meterKey, meter)
@@ -1510,6 +1512,9 @@ func TestEveryActiveCatalogDeploymentHoldCoversEveryTokenCategory(t *testing.T) 
 				if provider == schemas.Anthropic {
 					requestBody["cache_control"] = map[string]any{"type": "ephemeral", "ttl": "1h"}
 				}
+				if interfaceName == "responses" && (provider == schemas.OpenAI || provider == schemas.Azure) {
+					requestBody["prompt_cache_options"] = map[string]any{"ttl": "12h"}
+				}
 				body, err := json.Marshal(requestBody)
 				if err != nil {
 					t.Fatal(err)
@@ -1617,6 +1622,21 @@ func TestEveryActiveCatalogDeploymentHoldCoversEveryTokenCategory(t *testing.T) 
 						},
 					)
 				}
+				if resolution.WritesLongPromptCache() {
+					scenarios = append(scenarios, struct {
+						name    string
+						meter   string
+						signals *StandardSignals
+					}{
+						name:  "cache-write-12h",
+						meter: billing.MeterCacheWrite12hInputTokens,
+						signals: &StandardSignals{
+							Prompt:        inputTokens,
+							CacheWrite12h: inputTokens,
+							Completion:    outputTokens,
+						},
+					})
+				}
 				for _, scenario := range scenarios {
 					t.Run(deploymentID+"/"+interfaceName+"/"+scenario.name, func(t *testing.T) {
 						state.Signals = scenario.signals
@@ -1661,6 +1681,7 @@ func TestEveryActiveCatalogDeploymentPricesEveryTokenMeterExactly(t *testing.T) 
 		billing.MeterCacheWriteInputTokens,
 		billing.MeterCacheWrite5mInputTokens,
 		billing.MeterCacheWrite1hInputTokens,
+		billing.MeterCacheWrite12hInputTokens,
 		billing.MeterOutputTokens,
 		billing.MeterReasoningTokens,
 	}
@@ -1725,6 +1746,10 @@ func TestEveryActiveCatalogDeploymentPricesEveryTokenMeterExactly(t *testing.T) 
 						quantity = mode.promptContext
 						signals.Prompt = quantity
 						signals.CacheWrite1h = quantity
+					case billing.MeterCacheWrite12hInputTokens:
+						quantity = mode.promptContext
+						signals.Prompt = quantity
+						signals.CacheWrite12h = quantity
 					case billing.MeterOutputTokens:
 						signals.Prompt = mode.promptContext
 						signals.Completion = quantity
@@ -3063,6 +3088,7 @@ func TestCacheEconomicsDoNotAffectSettlementWhenComparableInputRateIsMissing(t *
 		billing.MeterCacheWriteInputTokens,
 		billing.MeterCacheWrite5mInputTokens,
 		billing.MeterCacheWrite1hInputTokens,
+		billing.MeterCacheWrite12hInputTokens,
 	} {
 		t.Run(meterKey, func(t *testing.T) {
 			state := &State{
@@ -3082,6 +3108,8 @@ func TestCacheEconomicsDoNotAffectSettlementWhenComparableInputRateIsMissing(t *
 				state.Signals.(*StandardSignals).CacheWrite5m = 100
 			case billing.MeterCacheWrite1hInputTokens:
 				state.Signals.(*StandardSignals).CacheWrite1h = 100
+			case billing.MeterCacheWrite12hInputTokens:
+				state.Signals.(*StandardSignals).CacheWrite12h = 100
 			}
 			cost, err := calculateBaseUpstreamCost(state, nil)
 			if err != nil || cost != "200" || len(state.FinalMeters) != 1 {
@@ -3200,6 +3228,7 @@ func TestEveryActiveCatalogDeploymentCacheEconomics(t *testing.T) {
 		billing.MeterCacheWriteInputTokens,
 		billing.MeterCacheWrite5mInputTokens,
 		billing.MeterCacheWrite1hInputTokens,
+		billing.MeterCacheWrite12hInputTokens,
 	}
 	providerMeters := map[string]map[string]bool{}
 	deploymentIDs := make([]string, 0, len(deployments))
@@ -3252,6 +3281,8 @@ func TestEveryActiveCatalogDeploymentCacheEconomics(t *testing.T) {
 							signals.CacheWrite5m = mode.prompt
 						case billing.MeterCacheWrite1hInputTokens:
 							signals.CacheWrite1h = mode.prompt
+						case billing.MeterCacheWrite12hInputTokens:
+							signals.CacheWrite12h = mode.prompt
 						}
 						state := &State{
 							Pair: Pair{
@@ -3318,18 +3349,19 @@ func TestEveryActiveCatalogDeploymentCacheEconomics(t *testing.T) {
 		billing.MeterCacheWrite1hInputTokens,
 	}
 	// AWS and Azure also serve models of other authors, which write their caches for a single
-	// period.
+	// period, and GPT models write theirs for 30 minutes or 12 hours.
 	wantProviderMeters := map[string][]string{
 		"anthropic":    claudeCacheMeters,
 		"aws":          append([]string{billing.MeterCacheWriteInputTokens}, claudeCacheMeters...),
 		"google-cloud": claudeCacheMeters,
-		"azure":        append([]string{billing.MeterCacheWriteInputTokens}, claudeCacheMeters...),
+		"azure":        append([]string{billing.MeterCacheWriteInputTokens, billing.MeterCacheWrite12hInputTokens}, claudeCacheMeters...),
 		"chutes": {
 			billing.MeterCachedInputTokens,
 		},
 		"openai": {
 			billing.MeterCachedInputTokens,
 			billing.MeterCacheWriteInputTokens,
+			billing.MeterCacheWrite12hInputTokens,
 		},
 	}
 	if len(providerMeters) != len(wantProviderMeters) {
@@ -4057,6 +4089,64 @@ func TestAnthropicHoldCoversDefaultFiveMinuteCacheWrite(t *testing.T) {
 	}
 	if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD) < 0 {
 		t.Fatalf("hold must cover default 5m cache write: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD, state.Hold.Meters, state.FinalMeters)
+	}
+}
+
+// An OpenAI request's hold prices the cache writes that it can make: a 12-hour write only where the
+// request asks for one and the deployment writes it, and no write in the explicit mode without a
+// breakpoint.
+func TestOpenAIHoldPricesTheCacheWritesThatTheRequestCanMake(t *testing.T) {
+	const luna, sol = `{"model":"provider:openai gpt-5.6-luna",`, `{"model":"provider:openai gpt-5.6-sol",`
+	marked := func(ttl string) string {
+		return `"input":[{"role":"user","content":[{"type":"input_text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit"` + ttl + `}}]}]`
+	}
+	for _, test := range []struct{ name, path, body, want string }{
+		{"the default lifetime", "/v1/responses", luna + `"input":"hi"}`, billing.MeterCacheWriteInputTokens},
+		{"12 hours", "/v1/responses", luna + `"input":"hi","prompt_cache_options":{"ttl":"12h"}}`, billing.MeterCacheWrite12hInputTokens},
+		{"a 12-hour breakpoint", "/v1/responses", luna + marked(`,"ttl":"12h"`) + `,"prompt_cache_options":{"mode":"explicit"}}`, billing.MeterCacheWrite12hInputTokens},
+		{"a breakpoint under 12 hours", "/v1/responses", luna + marked(``) + `,"prompt_cache_options":{"mode":"explicit","ttl":"12h"}}`, billing.MeterCacheWrite12hInputTokens},
+		{"a 30-minute breakpoint under 12 hours", "/v1/responses", luna + marked(`,"ttl":"30m"`) + `,"prompt_cache_options":{"mode":"explicit","ttl":"12h"}}`, billing.MeterCacheWriteInputTokens},
+		{"the explicit mode without a breakpoint", "/v1/responses", luna + `"input":"hi","prompt_cache_options":{"mode":"explicit","ttl":"12h"}}`, ""},
+		{"12 hours on Chat Completions", "/v1/chat/completions", luna + `"messages":[{"role":"user","content":"hi"}],"prompt_cache_options":{"ttl":"12h"}}`, billing.MeterCacheWriteInputTokens},
+		{"12 hours that the catalog does not price", "/v1/responses", sol + `"input":"hi","prompt_cache_options":{"ttl":"12h"}}`, billing.MeterCacheWriteInputTokens},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: test.path, Body: []byte(test.body)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
+			if err := state.Adapter.ValidateRequest(state); err != nil {
+				t.Fatal(err)
+			}
+			if err := state.Adapter.SanitizeRequest(state); err != nil {
+				t.Fatal(err)
+			}
+			if err := state.Adapter.EstimateHold(state); err != nil {
+				t.Fatal(err)
+			}
+			for _, meter := range []string{billing.MeterCacheWriteInputTokens, billing.MeterCacheWrite12hInputTokens} {
+				if held := findMeterEstimate(state.Hold.Meters, meter) != nil; held != (meter == test.want) {
+					t.Fatalf("hold holds %s: %t, want the hold to price %q: %#v", meter, held, test.want, state.Hold.Meters)
+				}
+			}
+			if test.want == "" {
+				return
+			}
+			signals := &StandardSignals{Prompt: resolution.InputTokenLimit(), Completion: resolution.OutputTokenLimit()}
+			if test.want == billing.MeterCacheWrite12hInputTokens {
+				signals.CacheWrite12h = signals.Prompt
+			} else {
+				signals.CacheWrite = signals.Prompt
+			}
+			state.Signals = signals
+			if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
+				t.Fatal(err)
+			}
+			if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD) < 0 {
+				t.Fatalf("hold %s does not cover %s", state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD)
+			}
+		})
 	}
 }
 

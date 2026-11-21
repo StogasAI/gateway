@@ -152,7 +152,7 @@ func TestChatBridgeRefusesWhatResponsesLackOrTheFormatRefuses(t *testing.T) {
 		{"stop sequences", `"stop":["END"]`, "stop: Responses deployments do not support stop sequences"},
 		{"logit bias", `"logit_bias":{"50256":-100}`, "logit_bias: Responses deployments do not support logit biases"},
 		{"reasoning display", `"reasoning":{"display":"brief"}`, "reasoning.display"},
-		{"prompt cache breakpoint member", `"messages":[{"role":"user","content":[{"type":"text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit","ttl":"1h"}}]}]`, "prompt_cache_breakpoint.ttl must be 30m"},
+		{"prompt cache breakpoint member", `"messages":[{"role":"user","content":[{"type":"text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit","ttl":"1h"}}]}]`, "prompt_cache_breakpoint.ttl must be 30m or 12h"},
 		{"prompt cache option", `"prompt_cache_options":{"mode":"implicit","scope":"org"}`, "prompt_cache_options supports only mode and ttl"},
 	} {
 		t.Run(test.name, func(t *testing.T) {

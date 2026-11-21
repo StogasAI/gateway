@@ -1,0 +1,695 @@
+{
+	"shows": "On OpenAI's Responses API, GPT-6 Luna writes a prompt for 12 hours under prompt_cache_options ttl 12h or a breakpoint's own ttl 12h, reports each lifetime's writes apart, keeps a breakpoint's own ttl 30m under the request's 12h, and in the default implicit mode also writes the end of the prompt for 30 minutes, while Chat Completions refuses the ttl 12h and any ttl in a breakpoint.",
+	"recorded": "2026-11-21",
+	"exchanges": [
+		{
+			"name": "responses ttl 12h",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"max_output_tokens": 16,
+					"input": [
+						{
+							"role": "developer",
+							"content": [
+								{
+									"type": "input_text",
+									"text": "Run 80cc5836-06e6-4f2f-8dab-9e22b0364175. Inherited: item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57",
+									"prompt_cache_breakpoint": {
+										"mode": "explicit"
+									}
+								}
+							]
+						},
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"prompt_cache_options": {
+						"mode": "explicit",
+						"ttl": "12h"
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795221220,
+					"created_at": 1795221219,
+					"error": null,
+					"frequency_penalty": 0,
+					"id": "resp_0da351a960299dbf016b00e6e35cbc87d298fde1506a9e2c7b",
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 16,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "gAAAAABrAObkVMBaVIb00GeanOP2InVUUqaB-EkjHCFqVbXQZZ1WaNC-tsFkwWfx4h0Ujwe71WWV39HF_PRYO_eY2_6xKp_TnMoRT_fnQ0r6H2MwDCZ8fsUonbBmfCI6L6Faw6YoLiJ26ScIVaCSG7oZzCE8nI_71RN3p4cfFYLKnREgw16pUa7-SCyuZCDOhfKZrgrwbT-tQ3zHdZTAbo_qIeF_m66ustWxAlT0YHVWgboqPjrzpU0j7RppLuhae7Te0RXNqZFAAFi8eIBwH4UhLhuauxUEs0irVCh-AXq4YUphgd_-t9cZA01lNzcP9ia-LnXZl6_KYNPxPTjH8FrsSgVu6WFbWfx5JDaAU4NmHqdzzyUJC-Crmq3iEZ-dmRR3g762RN17DT8nDmSRm0d5_p657zpj3B9Lz6bNmUEfdgxouNn4eh0lkgpU3hkdEpMgwH-RUvCfTJW4YIG9yktP1se9yl-DZ8yTd65P5_BZXW5zXW8D7k-9Idy2HItjMIrMSPJ0MTzwqJGWE5ACkQyA-Lt6X9gayHAqQ-if_jKONiHVpb1WFx8YyEAwo0StqUzFwhJFwyxdeWD0AOk93IY7T3G1rfURgsND1RflAs7xz73EIHfNaeGj0PfQWsP3_8CV53sVoDW_F_obh_A_NWz1vyFPNj6Lzk9x6MNem3ILCnh4qlUqg9ISWjkPhGxCPKnh86qFMCKx5tpCjC82yamN40kUcPAKzahBgAqvi-1cM0RBDGmC2NOUcFgFUjopNr42umBMaR-rzhJ3czv-Dvj2yzx8yy8DllhUeMDxGRftTEDIBn1kNqUryVhrx0tXcOWBX-3C_lW6tzR0zYsls-HtD_8C6yW4X3BXPrWP6vR6wsD_--G40D2bpRWMWcrw3t82J35-gQqVMbFb1m-6kSaiFbWcrC_M3lLr1UoSxEYljuHbKHKbt2ntemMd9y2NlKcMVGSo1WqYZeUbDI3v24-Pjx_PAs7uwsEWqKcvQRWsGXvMbc3uKJBWMSh-VIcce5OQC07Jm9kYscNu37ekCNtt51r-q_mTPwa-9B-kX-EP_bf93ItLoZj8VqlRejd4y2L1XFwQkm7uxmIT5JuxbYaHu_U1zfD68znykGK5fkZuoBTIC5dP5kPjDeFN2rb8DihD6-W5GxTItskI-lRzQw4KVfM194oPryTjyN_pCyUDNYCTRvTPCbbu5eUIPJOmr5-wIwviFPcY-P7A0mfcxmzKbYBvJuo2Det2qANjwb06XuaVBF5ZNBOwIsCATgi_ruwuikBNJhem4ZLF4VzlE8Au6zCLBhSTsF9c3UwTYAMvtFxKxlxnSA_IPpLRvG_3U6EsKnRehhB80ZPgG3GGmYEQHxxx9RPF7bD1fEVghtiS3V7amIrvt189xO0AcT_vasK3W4oWfPZJtJpdY80NIGcevRNDrS6FR_feNlNtjSOUJfA1lOj6hclnhImVLMwuleDH_-9wHjUMMrANxDk8_jkYWgrGlJ6_HhjzWio2IWWmGM5aF-HIE1tThwDRkRB-2s3fX7Hb7Q2oHXAfAhghk_OxMHzS5Udal_AiOlSqoRNMJjBnvfs3OfIhHPgR5p3ygo2kvjo_mEzX9_IAQBRe6YQ9Q6NbJP08jnj0D0bt0WuyU-og4sdoXx_X7Wvki8-z2y1uJ5bAjxQMqpkXvS_kEezN-YXCxDrP53bGrEUU4iStn8fvV3t_IbY=",
+							"id": "rs_0da351a960299dbf016b00e6e4199087d2b92719b38ff6f33d",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "OK",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_0da351a960299dbf016b00e6e4251487d291a0959913e5329f",
+							"phase": "final_answer",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_options": {
+						"mode": "explicit",
+						"ttl": "12h"
+					},
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "medium",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"status": "completed",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 1323,
+						"input_tokens_details": {
+							"cache_write_tokens": 1313,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 1313,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 16,
+						"output_tokens_details": {
+							"reasoning_tokens": 9
+						},
+						"total_tokens": 1339
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "responses ttl 12h again",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"max_output_tokens": 16,
+					"input": [
+						{
+							"role": "developer",
+							"content": [
+								{
+									"type": "input_text",
+									"text": "Run 80cc5836-06e6-4f2f-8dab-9e22b0364175. Inherited: item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57",
+									"prompt_cache_breakpoint": {
+										"mode": "explicit"
+									}
+								}
+							]
+						},
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"prompt_cache_options": {
+						"mode": "explicit",
+						"ttl": "12h"
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": null,
+					"created_at": 1795221220,
+					"error": null,
+					"frequency_penalty": 0,
+					"id": "resp_01a3760c2589f732016b00e6e457e487d2a1804a68a64a9064",
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": {
+						"reason": "max_output_tokens"
+					},
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 16,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "gAAAAABrAObkwcy-x2RAKNJn2r5J6ZRrseXQOj1EPCPsRcHxNiR_dtSoSCfJr4-OVcAcRQBoMWUZFg8kdFt_9_YDpm-rZfOAM3uN7kwuzeNExduapw-i5SVmKR2IdqOCqYLsaunzexTjFk32t3eK2FB6e5jq_GM8UEQzaJc0q8ap4PXP5wRWj96sosvfMGdOid-740BFmpalhFvcrDIoZX-wnEC02C8xmh2qu1R23SB-AewMwZoPnR_SeKGiGiRNDYPMjaRpQdcpiERP9J9Yn8dQ2ajnSsMz9fg699wSqeCwHoUsgPXO1UgEkiwErGhXXbvDcNxqDQSApHmKz906llQj7cnr_-QTlfI-rZEpvPS6K15Tq5z_moNP3k2Pjg4R1E-haks46I-RT3HZpJTla_PvTypDqY1N1k6EUSENsEHcETxjXHMkR7VLBNsgWnbx_l6UVA8YVakT-XwgzGttWBiVe4QtP0zMwnFIqSYzwSXsbdDRd8ChPutFVKt0Pbs8JvFAVUTCcGqZj9VxUaH8WzrKxTr3eNJZIZSegj2eAHKZxpoAqc7vBKMMErHfUQGkq5Iulzhqwt9r2etaWzhnCWaF-eX-iPREsQdrqT0gvQMy1lA42eAn-XcJpAoTbj5F6zsP7uExBKBrqnPrLh4gXAvAuLAJpE2uvaA9h-CTSUEduXJ3c0Fljs8bHanFfna-pNeBfixwoK3_84es4dmx3pkqBFlCpbuClVWs5emrAPGQsPYIvCuh3nzuopqGY2xNvud7pQEsufm0ytkcun4iVM0uiqaRCzrRYJe_rK7MxKHsy_dHcoQuE5XCqfCF8nuBvh2IfQqIB8hedW-25wBjt3e2mEWyG8B2jDHAvXmVxa1pFFHKXl4ZpWa4OladvoG8hGjKWB4nJ__b1UaiVp8cMQARnJkxbnbdrTVuasmnUYcoWj_xtcplM29CrBkME87vYqtEw9spQiHt3yrjzCNaGpQCwVe-YtrBqahAeFB52Gx22faVXyxMMEK6vIEHcoR_cn9oQSRLiS_vIPdI6-4YOSuGfRBf5C4ZJw-TuXkkRcjGFGFNgX5EBKJmHq8W3itefqJWPVyLGGzQZHUOM4UHZmVznTmyLTf-nH68SGhumqTpgC0iJ-MAS3dNNp9U-Y9Sua971jWI4ePqsa5HgJCVu8RZaA7ADVeGCnlezMs2FRPUFMpEe5OH5igUBoHM4yYqrC240w4YmsElvTtl7eI95UmJ-WHZJbQpWeru5LbOW5k3OxShV7YrmR5vWcbOM0lq-bYxLZbuaft5a4jPEWdHJgC2yWZvNAHzSiqglXeTwHAOukD-Zz9oKK_GOT7GGPiBr2aYbvyXX-ERI-vQIFbJv0oRO71i4v4bbWx2hGyXi5FEpsJSYgnF0YA-Y-BNKis-QRzvhtRUH3rovJSPOnn1vWe_6vbOJ_hggFZ4e2fRvGH1watYiiuHbDFOx12IXWqimhYgpLnfkz-w3wZsXYL10X6nr_AvZg4kyw==",
+							"id": "rs_01a3760c2589f732016b00e6e4da7c87d2bce6313567790a06",
+							"summary": [],
+							"type": "reasoning"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_options": {
+						"mode": "explicit",
+						"ttl": "12h"
+					},
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "medium",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"status": "incomplete",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 1323,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 1313
+						},
+						"output_tokens": 16,
+						"output_tokens_details": {
+							"reasoning_tokens": 16
+						},
+						"total_tokens": 1339
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "responses breakpoint ttl 12h",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"max_output_tokens": 16,
+					"input": [
+						{
+							"role": "developer",
+							"content": [
+								{
+									"type": "input_text",
+									"text": "Run c79b1fcd-4f46-48e2-9d4c-81639d303b69. Own: item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57",
+									"prompt_cache_breakpoint": {
+										"mode": "explicit",
+										"ttl": "12h"
+									}
+								}
+							]
+						},
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": null,
+					"created_at": 1795221221,
+					"error": null,
+					"frequency_penalty": 0,
+					"id": "resp_083e03b579a202e4016b00e6e506bc87d2a7407780c2fb30d4",
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": {
+						"reason": "max_output_tokens"
+					},
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 16,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "gAAAAABrAObloH1ncvcUrl8uqQSCdujFue2UQoGlJYef65bCYc0iq45QrfX3hYH5uWR7CBQFQVipcbj4od0YTVqBSokFUApr-KhuqWWcAm-F503QwlqbHw1SFZwl66nVtGd5guGXwrcoiA9ov8LDjvqjnU05J8rgKFsqHjpeVeOig9Qbx0uJeOCV3ucprlfB_rEeU-0wU9OSWTRqOcGCayaI3SxCxNf9ghbubBqgeY5FmuNlJzPH3glP5ikvJrXvJAZnVpMF2vPQ8VN83Gdzr_y3VnXcbRZfqHfw57T_QF5tNlTAQ35GRRJbyYuRMnoGXMevO0z3W22reXYH-hg4Eby7cd0_rJhmeXvSu3IXbwtfsUYJjKF6IjbznU49OmcfQjwTJqgKux2rq4ymk7PVdPlCUwB2bdYdObjBQid6h5p-7ggSqaBoTzyIUcIXoxi0JEkC26GIa-8MDujZsnz9L5TUX3G6hiXNMBp7dRBtrFJT9NH_UyPWDlnuN_sbyuBWtnHT3dOxBWp8QPvsN5T-CEeD60X5Dldnj8q6Sj_L34TVVGVchzbu7hcvQSxVddU2fG7ZzSO0kYQAKviMWQGg7h5WqkV7j6F8rW4O83HTGfFuOy3bJhfoTqzTf5sauyzwvnxpWnXtapD7MnmqcEk-nhpgslhDksTweLcfxe33tWGxw5q3QkqU9UsP0izreTwNdQNBfNUP3pG_Byw_-lcEVI2UnyGCk-BQJsFtu9ZVl0W2gMPpQruI20dL8oH37e-c7MyFr2Gu0C0EspMQKUofJHGsi4s-CY1BS-Z5_ckqxtRfgflYwrHWVhDl_kyRonj9aurL2yelzJF2p6cL2oroVyHd3YHxwSlaQv2uv0z45aaAqAYbuE7DEFHdN3vWVLEcBRjiGfX5Rjrw_L8wxGJrylVeP8Gt8mP6GL1jPpCrS-MzE_NVaz8yRExxczFqEzl637fq39oAoN1jODvKze8D8E9Rf5qxNohmU_U62DBhZ9V-eGnfxeICLOHuOyatbnCOMM1qbTW569Bdi2qrI0km8wEqV9mEUrPy8P6sazXQ8iQQ1sljjMOud7x5FOIZyypuu0PTaFEHhsMm75mrSB5Vb8Vrx_2ng664hayeXYOUGlj67bjc74FkXlmFYe3hYbx8CnngOx-Mld-9_Pmgty5buCpR4iM5SSAzUMBWTKBlQ0LI_h1Bg7l5NUFptcxycrujNiKsgsuFPDYGZqMtpqsHtn3E7Pr3h44rbdBLoSGou7O58SGLtbSm3kQhPyJfolv0L0SfIOBUA2g2NcChXMv6LL8dJpHni7D3EFFEW-LDlxL-JH_k0L_ofe0vclOI8K0Voj3oPvOVSpu2UkiWtkZTajXLZ5-f6gYQX6tbg0A_BEZkEScPTx3T4_mS_8QU4K5PMX3Ph2ADQl9fPbrwHXN3avE3Fl3G8Bn4W0GYXPTIGB3B1KxylGiFlVw8BMGSstDOoipG-Zhip_wiIwpT2BY7TnXvjo0wtVtVkw==",
+							"id": "rs_083e03b579a202e4016b00e6e5e54487d2b655f3279dc014ce",
+							"summary": [],
+							"type": "reasoning"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_options": {
+						"mode": "implicit",
+						"ttl": "30m"
+					},
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "medium",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"status": "incomplete",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 1323,
+						"input_tokens_details": {
+							"cache_write_tokens": 1320,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 1313,
+								"ttl_30m_tokens": 7
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 16,
+						"output_tokens_details": {
+							"reasoning_tokens": 16
+						},
+						"total_tokens": 1339
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "responses breakpoint ttl 30m under ttl 12h",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"max_output_tokens": 16,
+					"input": [
+						{
+							"role": "developer",
+							"content": [
+								{
+									"type": "input_text",
+									"text": "Run 7174b399-2a59-4377-abd9-93eba10450bb. Shorter: item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57",
+									"prompt_cache_breakpoint": {
+										"mode": "explicit",
+										"ttl": "30m"
+									}
+								}
+							]
+						},
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"prompt_cache_options": {
+						"mode": "explicit",
+						"ttl": "12h"
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": null,
+					"created_at": 1795221222,
+					"error": null,
+					"frequency_penalty": 0,
+					"id": "resp_0040a4b725909afd016b00e6e617bc87d2af04a0b4b7df7dbd",
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": {
+						"reason": "max_output_tokens"
+					},
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 16,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "gAAAAABrAObmbgClCvAL5aTaNQ3nwm-Gn3WkTEbv76i6JgaM2zNmIpkJb2FFEu9QgdSkPLmmbSIrfiQjo7TvFd5iMNoO1GCfikmnWXklrGkrgHvsprQn_oYYDF9UidYKsgRPQCZ4DzERgWIs2VNUmPk3JfNWkcKF8YZp6P3Cf1_UJ3fqW6QOfk4847I9kuk-turbsj7Eu-5NXcNxx_kC_C03VY9SqRvSpQQeo3lqY5NHhI766Yt8Hz-bHNRWVkQlY4X2egVLLhjMQIodY_XDuTNCgnMgh6kmp2CIo8V-ogwIH6ki0ryX_-UNIMrCXb3dCAqAOW6Wr7Bc4r68DXUoTmgrUq07K-jexgInFotygR7bvpkHJ_AEuihupg2WoEROK94dSA7Yg4hjsPRcVomFk_iN5v8x_aj5BTrfkIy_iPP7GRmV3uIeTlxZ6H8IqETfIvZ7JjloUk45zxp6WMry01YCkqyPxyeV1NVJuibNSahHlP0zfwiFsqu8yMYrk4iRI7dUS81UzY6NWNWMO5ebHZD7a078XqvGw0-_49462UD_yq7y2N0g3v80OR4ocfT9S_KUFsqj1YPiVThN4_AiDU6HXrRKpy7u0ElpTYCg58Lh824Pn5yfjaeSL8Y_xs4DuVjzfsaaqrQwlAjKKccZhDWo1pEZ4lyyHqTFYDgN5cD4wEiK2ABGmWNRqMBER-SPndZxxsWoTlZu00FHvs05y9mbquv-tr_OHNcmdSgBS4SSwaNrMpWQa-JYXXQxvt7DDu3Ya4ckHIXEGsYTbgR89CddU76SJ0pha12cjfofGus7_3zhuZOPxpDj0ZH2agekxXerIsQpgzs0l9zutw2Zsmt7c_301VpenItG_SPNFXwfoDE9qoVIK-RnzOXzvykajA37oMq6J0Lt6Z35Ro0mRQ2hgRMzPa3TSpCCNZZN0ITsC7i0iVFDs9GPHxa-qsfksh1fWisnSV4zjQ3kCZvV0jaUxPAfx2_VpUOehJn49g3huBQUh8CQ7HLaS165U4ASJ1_9bcVXBl-W9AgFt-hth9LckYrN_DtN2VMrI-p8y-ih7N6rSazP8k1Ceqj9B9Lj39NUSdms05eiLMngp8nbSKG36sim54TNxPnL96shD7IqiAr31hF5KlqsCn4J5yiBR0JnFEZII2PPpmqPKpfOpnA9l9H6q74X_zATD7Biu2hLS2okxnzOx2c9_AZIHPAbCbxNKp610hs1l4wE3I_bAX5v6x18A3STQEyvKbMXUeNo7f3h_LaR4l5p6Qc2ptZ8xV9tgFjsauzAvazDnMMkMAUIthA8lclaY128MMFB0U8FB9Tt7c4S2AmgtAVdFRSaWJpi9a8YOmzZZfPPAQceLkIxSdInL6YMxZ0gIsVbxvNvIGflzxKWqM2zbmoBFeWwqHPJ_8Guli6KpvjDYJ_MeP4laHQ0tnQyLnKq-mt-f4zZLM2XqCW_t9ZT5Zt3zNrDnIgzRqyOlf1pmMgdAsPzmwfmgAnS8vASrjDWqvtAOX1iYQbO3BfaUI8=",
+							"id": "rs_0040a4b725909afd016b00e6e6a2c087d2a2def0f6de414be1",
+							"summary": [],
+							"type": "reasoning"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_options": {
+						"mode": "explicit",
+						"ttl": "12h"
+					},
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "medium",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"status": "incomplete",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 1319,
+						"input_tokens_details": {
+							"cache_write_tokens": 1309,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 1309
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 16,
+						"output_tokens_details": {
+							"reasoning_tokens": 16
+						},
+						"total_tokens": 1335
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "chat ttl 12h",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/chat/completions",
+				"body": {
+					"model": "gpt-6-luna",
+					"max_completion_tokens": 16,
+					"messages": [
+						{
+							"role": "system",
+							"content": [
+								{
+									"type": "text",
+									"text": "Run ffb18a36-9c44-4a17-bd8f-8db2ee7ab16e. chat ttl 12h: item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57",
+									"prompt_cache_breakpoint": {
+										"mode": "explicit"
+									}
+								}
+							]
+						},
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"prompt_cache_options": {
+						"mode": "explicit",
+						"ttl": "12h"
+					}
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Invalid value: '12h'. Supported values are: '30m'.",
+						"type": "invalid_request_error",
+						"param": "prompt_cache_options.ttl",
+						"code": "invalid_value"
+					}
+				}
+			}
+		},
+		{
+			"name": "chat breakpoint ttl 12h",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/chat/completions",
+				"body": {
+					"model": "gpt-6-luna",
+					"max_completion_tokens": 16,
+					"messages": [
+						{
+							"role": "system",
+							"content": [
+								{
+									"type": "text",
+									"text": "Run 673529a1-8f99-4e2c-8bba-76d88e9512f4. chat breakpoint ttl 12h: item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57",
+									"prompt_cache_breakpoint": {
+										"mode": "explicit",
+										"ttl": "12h"
+									}
+								}
+							]
+						},
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Unknown parameter: 'messages[0].content[0].prompt_cache_breakpoint.ttl'.",
+						"type": "invalid_request_error",
+						"param": "messages[0].content[0].prompt_cache_breakpoint.ttl",
+						"code": "unknown_parameter"
+					}
+				}
+			}
+		},
+		{
+			"name": "chat breakpoint ttl 30m",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/chat/completions",
+				"body": {
+					"model": "gpt-6-luna",
+					"max_completion_tokens": 16,
+					"messages": [
+						{
+							"role": "system",
+							"content": [
+								{
+									"type": "text",
+									"text": "Run e591f1b6-2ccd-477a-8a8d-1a8c3671abac. chat breakpoint ttl 30m: item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57 item58 item59 item60 item61 item62 item63 item64 item65 item66 item67 item68 item69 item70 item71 item72 item73 item74 item75 item76 item77 item78 item79 item80 item81 item82 item83 item84 item85 item86 item87 item88 item89 item90 item91 item92 item93 item94 item95 item96 item0 item1 item2 item3 item4 item5 item6 item7 item8 item9 item10 item11 item12 item13 item14 item15 item16 item17 item18 item19 item20 item21 item22 item23 item24 item25 item26 item27 item28 item29 item30 item31 item32 item33 item34 item35 item36 item37 item38 item39 item40 item41 item42 item43 item44 item45 item46 item47 item48 item49 item50 item51 item52 item53 item54 item55 item56 item57",
+									"prompt_cache_breakpoint": {
+										"mode": "explicit",
+										"ttl": "30m"
+									}
+								}
+							]
+						},
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Unknown parameter: 'messages[0].content[0].prompt_cache_breakpoint.ttl'.",
+						"type": "invalid_request_error",
+						"param": "messages[0].content[0].prompt_cache_breakpoint.ttl",
+						"code": "unknown_parameter"
+					}
+				}
+			}
+		}
+	]
+}

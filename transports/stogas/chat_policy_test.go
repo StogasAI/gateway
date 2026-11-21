@@ -3450,7 +3450,7 @@ func TestOpenAIPromptCachingRejectsUnrepresentableShapes(t *testing.T) {
 			name: "unsupported option ttl",
 			path: "/v1/chat/completions",
 			body: `{"model":"provider:openai gpt-5.6-luna","messages":[{"role":"user","content":"hi"}],"prompt_cache_options":{"ttl":"2h"}}`,
-			want: "ttl must be 30m",
+			want: "prompt_cache_options.ttl must be 30m or 12h",
 		},
 		{
 			name: "unknown retention",
@@ -3471,10 +3471,10 @@ func TestOpenAIPromptCachingRejectsUnrepresentableShapes(t *testing.T) {
 			want: "breakpoint.mode must be explicit",
 		},
 		{
-			name: "twelve-hour breakpoint",
+			name: "one-hour breakpoint",
 			path: "/v1/responses",
-			body: `{"model":"provider:openai gpt-5.6-luna","input":[{"role":"user","content":[{"type":"input_text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit","ttl":"12h"}}]}]}`,
-			want: "prompt_cache_breakpoint.ttl must be 30m",
+			body: `{"model":"provider:openai gpt-5.6-luna","input":[{"role":"user","content":[{"type":"input_text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit","ttl":"1h"}}]}]}`,
+			want: "prompt_cache_breakpoint.ttl must be 30m or 12h",
 		},
 		{
 			name:          "breakpoint non-string mode",
@@ -3484,10 +3484,10 @@ func TestOpenAIPromptCachingRejectsUnrepresentableShapes(t *testing.T) {
 		},
 		// Every deployment checks the form, also one that takes no such setting.
 		{
-			name: "twelve-hour breakpoint for Claude",
+			name: "one-hour breakpoint for Claude",
 			path: "/v1/chat/completions",
-			body: `{"model":"anthropic-claude-sonnet-5","messages":[{"role":"user","content":[{"type":"text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit","ttl":"12h"}}]}]}`,
-			want: "prompt_cache_breakpoint.ttl must be 30m",
+			body: `{"model":"anthropic-claude-sonnet-5","messages":[{"role":"user","content":[{"type":"text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit","ttl":"1h"}}]}]}`,
+			want: "prompt_cache_breakpoint.ttl must be 30m or 12h",
 		},
 		{
 			name: "unknown retention for Claude",

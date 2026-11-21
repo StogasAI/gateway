@@ -1,6 +1,7 @@
 package stogas
 
 import (
+	"encoding/json"
 	"errors"
 	"strconv"
 	"testing"
@@ -473,6 +474,65 @@ func TestOpenAIExplicitCacheWriteUsageIsOnePromptPartition(t *testing.T) {
 	}
 }
 
+// OpenAI and Azure report each lifetime's cache writes apart. The 12-hour writes settle at their
+// own price and the 30-minute writes at the default write's (captures
+// openai/prompt-cache-lifetimes and azure/prompt-cache-lifetimes).
+func TestRecordedCacheLifetimesSettleAtTheirPrices(t *testing.T) {
+	for capture, model := range map[string]string{
+		"openai/prompt-cache-lifetimes": "provider:openai gpt-5.6-luna",
+		"azure/prompt-cache-lifetimes":  "azure-gpt-5.6-luna",
+	} {
+		exchanges := providerCapture(t, capture)
+		for _, name := range []string{"responses ttl 12h", "responses ttl 12h again", "responses breakpoint ttl 12h", "responses breakpoint ttl 30m under ttl 12h"} {
+			t.Run(capture+"/"+name, func(t *testing.T) {
+				recorded := exchange(t, exchanges, name)
+				var reply struct {
+					Usage struct {
+						InputTokens int `json:"input_tokens"`
+						Details     struct {
+							Read      int `json:"cached_tokens"`
+							Lifetimes struct {
+								ThirtyMinutes int `json:"ttl_30m_tokens"`
+								TwelveHours   int `json:"ttl_12h_tokens"`
+							} `json:"cache_write_tokens_details"`
+						} `json:"input_tokens_details"`
+					} `json:"usage"`
+				}
+				if err := json.Unmarshal(recorded.Response.Body, &reply); err != nil {
+					t.Fatal(err)
+				}
+				usage := reply.Usage
+				resolution, err := catalog.ResolveRequest(catalog.RequestInput{
+					Method: "POST",
+					Path:   "/v1/responses",
+					Body:   []byte(`{"model":"` + model + `","input":"hi","prompt_cache_options":{"ttl":"12h"}}`),
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
+				setSignalsFromUsage(state, recorded.responsesReply(t).Usage.ToBifrostLLMUsage())
+				signals, _ := state.Signals.(*StandardSignals)
+				if signals == nil || signals.Prompt != usage.InputTokens || signals.Cached != usage.Details.Read ||
+					signals.CacheWrite != usage.Details.Lifetimes.ThirtyMinutes || signals.CacheWrite12h != usage.Details.Lifetimes.TwelveHours {
+					t.Fatalf("signals = %#v, want the reply's %+v", signals, usage)
+				}
+				if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
+					t.Fatal(err)
+				}
+				for meter, want := range map[string]int{
+					billing.MeterCacheWriteInputTokens:    usage.Details.Lifetimes.ThirtyMinutes,
+					billing.MeterCacheWrite12hInputTokens: usage.Details.Lifetimes.TwelveHours,
+				} {
+					if got := meterQuantity(findMeterEstimate(state.FinalMeters, meter)); got != strconv.Itoa(want) && (want != 0 || got != "") {
+						t.Errorf("%s = %q, want %d", meter, got, want)
+					}
+				}
+			})
+		}
+	}
+}
+
 func TestAnthropicWireCacheWriteTTLReconciliation(t *testing.T) {
 	pricing := catalog.Pricing{
 		billing.MeterInputTokens:             {billing.RatePerMillionTokens: "1000000"},
@@ -723,39 +783,45 @@ func TestCacheUsageNormalizationExhaustsSupportedProviderStateSpace(t *testing.T
 					for _, write := range values {
 						for _, write5m := range values {
 							for _, write1h := range values {
-								details := &schemas.ChatPromptTokensDetails{
-									CachedReadTokens:  read,
-									CachedWriteTokens: write,
-								}
-								if withTTLDetails {
-									details.CachedWriteTokenDetails = &schemas.ChatCachedWriteTokenDetails{
-										CachedWriteTokens5m: write5m,
-										CachedWriteTokens1h: write1h,
-									}
-								}
-								state := &State{
-									Pair: Pair{
-										Resolution: &catalog.ResolvedRequest{
-											Provider:   provider.provider,
-											Deployment: catalog.Deployment{ModelID: provider.modelID},
-										},
-									},
-								}
-								setSignalsFromUsage(state, &schemas.BifrostLLMUsage{
-									PromptTokens:        prompt,
-									PromptTokensDetails: details,
-								})
+								for _, write30m := range values {
+									for _, write12h := range values {
+										details := &schemas.ChatPromptTokensDetails{
+											CachedReadTokens:  read,
+											CachedWriteTokens: write,
+										}
+										if withTTLDetails {
+											details.CachedWriteTokenDetails = &schemas.ChatCachedWriteTokenDetails{
+												CachedWriteTokens5m:  write5m,
+												CachedWriteTokens1h:  write1h,
+												CachedWriteTokens30m: write30m,
+												CachedWriteTokens12h: write12h,
+											}
+										}
+										state := &State{
+											Pair: Pair{
+												Resolution: &catalog.ResolvedRequest{
+													Provider:   provider.provider,
+													Deployment: catalog.Deployment{ModelID: provider.modelID},
+												},
+											},
+										}
+										setSignalsFromUsage(state, &schemas.BifrostLLMUsage{
+											PromptTokens:        prompt,
+											PromptTokensDetails: details,
+										})
 
-								want := referenceCacheSignals(prompt, read, write, write5m, write1h, withTTLDetails, provider.unspecifiedIsFive)
-								got, _ := state.Signals.(*StandardSignals)
-								if want == nil {
-									if got != nil {
-										t.Fatalf("provider=%s model=%q prompt=%d read=%d write=%d 5m=%d 1h=%d details=%t: got %#v, want nil", provider.provider, provider.modelID, prompt, read, write, write5m, write1h, withTTLDetails, got)
+										want := referenceCacheSignals(prompt, read, write, write5m, write1h, write30m, write12h, withTTLDetails, provider.unspecifiedIsFive)
+										got, _ := state.Signals.(*StandardSignals)
+										if want == nil {
+											if got != nil {
+												t.Fatalf("provider=%s model=%q prompt=%d read=%d write=%d 5m=%d 1h=%d 30m=%d 12h=%d details=%t: got %#v, want nil", provider.provider, provider.modelID, prompt, read, write, write5m, write1h, write30m, write12h, withTTLDetails, got)
+											}
+										} else if got == nil || got.Prompt != want.Prompt || !sameCachePartition(*got, *want) {
+											t.Fatalf("provider=%s model=%q prompt=%d read=%d write=%d 5m=%d 1h=%d 30m=%d 12h=%d details=%t: got %#v, want %#v", provider.provider, provider.modelID, prompt, read, write, write5m, write1h, write30m, write12h, withTTLDetails, got, want)
+										}
+										cases++
 									}
-								} else if got == nil || got.Prompt != want.Prompt || got.Cached != want.Cached || got.CacheWrite != want.CacheWrite || got.CacheWrite5m != want.CacheWrite5m || got.CacheWrite1h != want.CacheWrite1h {
-									t.Fatalf("provider=%s model=%q prompt=%d read=%d write=%d 5m=%d 1h=%d details=%t: got %#v, want %#v", provider.provider, provider.modelID, prompt, read, write, write5m, write1h, withTTLDetails, got, want)
 								}
-								cases++
 							}
 						}
 					}
@@ -763,7 +829,7 @@ func TestCacheUsageNormalizationExhaustsSupportedProviderStateSpace(t *testing.T
 			}
 		}
 	}
-	if cases != len(providers)*2*len(prompts)*len(values)*len(values)*len(values)*len(values) {
+	if cases != len(providers)*2*len(prompts)*len(values)*len(values)*len(values)*len(values)*len(values)*len(values) {
 		t.Fatalf("executed %d cache cases", cases)
 	}
 }
@@ -774,13 +840,16 @@ func TestCachePartitionMergeExhaustsAllSmallCumulativeSequences(t *testing.T) {
 		for generic := 0; generic <= 3; generic++ {
 			for write5m := 0; write5m <= 3; write5m++ {
 				for write1h := 0; write1h <= 3; write1h++ {
-					if read+generic+write5m+write1h <= 3 {
-						partitions = append(partitions, StandardSignals{
-							Cached:       read,
-							CacheWrite:   generic,
-							CacheWrite5m: write5m,
-							CacheWrite1h: write1h,
-						})
+					for write12h := 0; write12h <= 3; write12h++ {
+						if read+generic+write5m+write1h+write12h <= 3 {
+							partitions = append(partitions, StandardSignals{
+								Cached:        read,
+								CacheWrite:    generic,
+								CacheWrite5m:  write5m,
+								CacheWrite1h:  write1h,
+								CacheWrite12h: write12h,
+							})
+						}
 					}
 				}
 			}
@@ -812,23 +881,24 @@ func TestCachePartitionMergeExhaustsAllSmallCumulativeSequences(t *testing.T) {
 
 func FuzzProviderUsageNormalization(f *testing.F) {
 	seeds := []struct {
-		prompt, completion, total, reasoning int
-		read, write, write5m, write1h        int
-		provider                             uint8
-		withTTL, withHold                    bool
-		hold                                 int
+		prompt, completion, total, reasoning              int
+		read, write, write5m, write1h, write30m, write12h int
+		provider                                          uint8
+		withTTL, withHold                                 bool
+		hold                                              int
 	}{
 		{prompt: 100, completion: 10, total: 110, read: 20, write: 30, write5m: 10, write1h: 5, provider: 1, withTTL: true},
+		{prompt: 1400, completion: 10, total: 1410, write: 1320, write30m: 7, write12h: 1313, provider: 0, withTTL: true},
 		{prompt: 3, read: 4, write: 1, provider: 0, withTTL: true},
-		{prompt: -1, completion: -1, total: -1, reasoning: -1, read: -1, write: -1, write5m: -1, write1h: -1, provider: 3, withTTL: true},
-		{prompt: int(^uint(0) >> 1), read: int(^uint(0) >> 1), write: 1, provider: 4, withTTL: true},
+		{prompt: -1, completion: -1, total: -1, reasoning: -1, read: -1, write: -1, write5m: -1, write1h: -1, write30m: -1, write12h: -1, provider: 3, withTTL: true},
+		{prompt: int(^uint(0) >> 1), read: int(^uint(0) >> 1), write: 1, write12h: int(^uint(0) >> 1), provider: 4, withTTL: true},
 		{prompt: 100, completion: 20, reasoning: 30, provider: 2, withHold: true, hold: 10},
 	}
 	for _, seed := range seeds {
-		f.Add(seed.prompt, seed.completion, seed.total, seed.reasoning, seed.read, seed.write, seed.write5m, seed.write1h, seed.provider, seed.withTTL, seed.withHold, seed.hold)
+		f.Add(seed.prompt, seed.completion, seed.total, seed.reasoning, seed.read, seed.write, seed.write5m, seed.write1h, seed.write30m, seed.write12h, seed.provider, seed.withTTL, seed.withHold, seed.hold)
 	}
 
-	f.Fuzz(func(t *testing.T, prompt int, completion int, total int, reasoning int, read int, write int, write5m int, write1h int, providerIndex uint8, withTTL bool, withHold bool, hold int) {
+	f.Fuzz(func(t *testing.T, prompt int, completion int, total int, reasoning int, read int, write int, write5m int, write1h int, write30m int, write12h int, providerIndex uint8, withTTL bool, withHold bool, hold int) {
 		providers := []struct {
 			provider schemas.ModelProvider
 			modelID  string
@@ -865,8 +935,10 @@ func FuzzProviderUsageNormalization(f *testing.F) {
 		}
 		if withTTL {
 			details.CachedWriteTokenDetails = &schemas.ChatCachedWriteTokenDetails{
-				CachedWriteTokens5m: write5m,
-				CachedWriteTokens1h: write1h,
+				CachedWriteTokens5m:  write5m,
+				CachedWriteTokens1h:  write1h,
+				CachedWriteTokens30m: write30m,
+				CachedWriteTokens12h: write12h,
 			}
 		}
 		usage := &schemas.BifrostLLMUsage{
@@ -884,10 +956,10 @@ func FuzzProviderUsageNormalization(f *testing.F) {
 		if got == nil {
 			return
 		}
-		if got.Prompt < 0 || got.Completion < 0 || got.Reasoning < 0 || got.Cached < 0 || got.CacheWrite < 0 || got.CacheWrite5m < 0 || got.CacheWrite1h < 0 {
+		if got.Prompt < 0 || got.Completion < 0 || got.Reasoning < 0 || got.Cached < 0 || got.CacheWrite < 0 || got.CacheWrite5m < 0 || got.CacheWrite1h < 0 || got.CacheWrite12h < 0 {
 			t.Fatalf("negative normalized usage: %#v", got)
 		}
-		cacheTotal, ok := addTokenCounts(got.Cached, got.CacheWrite, got.CacheWrite5m, got.CacheWrite1h)
+		cacheTotal, ok := addTokenCounts(got.Cached, got.CacheWrite, got.CacheWrite5m, got.CacheWrite1h, got.CacheWrite12h)
 		if !ok || cacheTotal > got.Prompt {
 			t.Fatalf("cache partition exceeds prompt: %#v", got)
 		}
@@ -1331,58 +1403,53 @@ func TestAllZeroUsageProducesNoChargeableSignals(t *testing.T) {
 	}
 }
 
-func referenceCacheSignals(prompt int, read int, write int, write5m int, write1h int, withTTLDetails bool, unspecifiedIsFive bool) *StandardSignals {
+// referenceCacheSignals states the cache rules case by case. OpenAI's 30-minute writes are the
+// default write, and the other lifetimes are priced apart.
+func referenceCacheSignals(prompt, read, write, write5m, write1h, write30m, write12h int, withTTLDetails bool, unspecifiedIsFive bool) *StandardSignals {
 	read = testNonnegative(read)
 	write = testNonnegative(write)
 	if withTTLDetails {
 		write5m = testNonnegative(write5m)
 		write1h = testNonnegative(write1h)
+		write30m = testNonnegative(write30m)
+		write12h = testNonnegative(write12h)
 	} else {
-		write5m = 0
-		write1h = 0
+		write5m, write1h, write30m, write12h = 0, 0, 0, 0
 	}
 	reportedWrite := write
-	splitTotal := write5m + write1h
-	fallbackWrite := reportedWrite
-	if splitTotal > fallbackWrite {
-		fallbackWrite = splitTotal
-	}
+	splitTotal := write5m + write1h + write30m + write12h
 	wantPrompt := testNonnegative(prompt)
 	if wantPrompt == 0 {
-		wantPrompt = read + fallbackWrite
+		wantPrompt = read + max(reportedWrite, splitTotal)
 	}
 
-	genericWrite := 0
-	if withTTLDetails {
-		switch {
-		case reportedWrite > 0 && splitTotal > 0 && reportedWrite != splitTotal && splitTotal < reportedWrite:
-			genericWrite = reportedWrite - splitTotal
-		case reportedWrite > 0 && splitTotal > reportedWrite:
-			genericWrite = reportedWrite
-			write5m = 0
-			write1h = 0
-		case splitTotal == 0:
-			genericWrite = reportedWrite
-		}
-	} else {
+	var genericWrite int
+	switch {
+	case reportedWrite > 0 && splitTotal > reportedWrite:
+		// The details exceed the aggregate, so no lifetime is trusted.
 		genericWrite = reportedWrite
+		write5m, write1h, write12h = 0, 0, 0
+	case reportedWrite > splitTotal:
+		// The default write takes the 30-minute writes and the aggregate's unexplained rest.
+		genericWrite = reportedWrite - write5m - write1h - write12h
+	default:
+		// The details explain the aggregate, or there is none.
+		genericWrite = write30m
 	}
-	if read+genericWrite+write5m+write1h > wantPrompt {
-		read = 0
-		genericWrite = 0
-		write5m = 0
-		write1h = 0
+	if read+genericWrite+write5m+write1h+write12h > wantPrompt {
+		read, genericWrite, write5m, write1h, write12h = 0, 0, 0, 0, 0
 	}
 	if unspecifiedIsFive {
 		write5m += genericWrite
 		genericWrite = 0
 	}
 	want := &StandardSignals{
-		Prompt:       wantPrompt,
-		Cached:       read,
-		CacheWrite:   genericWrite,
-		CacheWrite5m: write5m,
-		CacheWrite1h: write1h,
+		Prompt:        wantPrompt,
+		Cached:        read,
+		CacheWrite:    genericWrite,
+		CacheWrite5m:  write5m,
+		CacheWrite1h:  write1h,
+		CacheWrite12h: write12h,
 	}
 	if want.Prompt == 0 && cachePartitionTotal(want) == 0 {
 		return nil
@@ -1392,11 +1459,11 @@ func referenceCacheSignals(prompt int, read int, write int, write5m int, write1h
 
 func referenceCachePartitionWinner(partitions ...StandardSignals) StandardSignals {
 	winner := partitions[0]
-	winnerTotal := winner.Cached + winner.CacheWrite + winner.CacheWrite5m + winner.CacheWrite1h
-	winnerSpecificity := winner.CacheWrite5m + winner.CacheWrite1h
+	winnerTotal := winner.Cached + winner.CacheWrite + winner.CacheWrite5m + winner.CacheWrite1h + winner.CacheWrite12h
+	winnerSpecificity := winner.CacheWrite5m + winner.CacheWrite1h + winner.CacheWrite12h
 	for _, candidate := range partitions[1:] {
-		candidateTotal := candidate.Cached + candidate.CacheWrite + candidate.CacheWrite5m + candidate.CacheWrite1h
-		candidateSpecificity := candidate.CacheWrite5m + candidate.CacheWrite1h
+		candidateTotal := candidate.Cached + candidate.CacheWrite + candidate.CacheWrite5m + candidate.CacheWrite1h + candidate.CacheWrite12h
+		candidateSpecificity := candidate.CacheWrite5m + candidate.CacheWrite1h + candidate.CacheWrite12h
 		if candidateTotal > winnerTotal || (candidateTotal == winnerTotal && candidateSpecificity >= winnerSpecificity) {
 			winner = candidate
 			winnerTotal = candidateTotal
@@ -1410,7 +1477,8 @@ func sameCachePartition(left StandardSignals, right StandardSignals) bool {
 	return left.Cached == right.Cached &&
 		left.CacheWrite == right.CacheWrite &&
 		left.CacheWrite5m == right.CacheWrite5m &&
-		left.CacheWrite1h == right.CacheWrite1h
+		left.CacheWrite1h == right.CacheWrite1h &&
+		left.CacheWrite12h == right.CacheWrite12h
 }
 
 func testNonnegative(value int) int {

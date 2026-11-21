@@ -29,12 +29,7 @@ func baseHoldEstimate(state *State) (HoldEstimate, error) {
 	meters := []catalog.MeterEstimate{}
 	pricing := holdPricingForState(state)
 	if inputTokenLimit > 0 {
-		meters = appendInputTokenHoldCost(
-			meters,
-			pricing,
-			inputTokenLimit,
-			openAICacheWriteHoldMeter(state),
-		)
+		meters = appendInputTokenHoldCost(meters, pricing, inputTokenLimit, openAICacheWriteHoldMeters(state)...)
 	}
 	meters = appendOutputTokenHoldCost(meters, pricing, outputTokenLimit)
 	meters, estimatedUpstreamCostUSD, err := canonicalizeHoldMeters(meters, pricing)
@@ -65,6 +60,7 @@ func calculateBaseUpstreamCost(state *State, extraMeters []catalog.MeterEstimate
 	cacheWriteTokens := 0
 	cacheWrite5mTokens := 0
 	cacheWrite1hTokens := 0
+	cacheWrite12hTokens := 0
 	if state.Signals != nil {
 		promptTokens = state.Signals.PromptTokens()
 		completionTokens = state.Signals.CompletionTokens()
@@ -73,6 +69,7 @@ func calculateBaseUpstreamCost(state *State, extraMeters []catalog.MeterEstimate
 		cacheWriteTokens = state.Signals.CacheWriteInputTokens()
 		cacheWrite5mTokens = state.Signals.CacheWrite5mInputTokens()
 		cacheWrite1hTokens = state.Signals.CacheWrite1hInputTokens()
+		cacheWrite12hTokens = state.Signals.CacheWrite12hInputTokens()
 	}
 	rateMode := billing.TokenRateForPrompt(promptTokens)
 	pricing := catalog.Pricing{}
@@ -90,6 +87,7 @@ func calculateBaseUpstreamCost(state *State, extraMeters []catalog.MeterEstimate
 		{meterKey: billing.MeterCacheWriteInputTokens, quantity: &cacheWriteTokens},
 		{meterKey: billing.MeterCacheWrite5mInputTokens, quantity: &cacheWrite5mTokens},
 		{meterKey: billing.MeterCacheWrite1hInputTokens, quantity: &cacheWrite1hTokens},
+		{meterKey: billing.MeterCacheWrite12hInputTokens, quantity: &cacheWrite12hTokens},
 	}
 	for _, cache := range cacheQuantities {
 		_, _, ok := billing.PricingRate(pricing, cache.meterKey, rateMode)
@@ -110,6 +108,7 @@ func calculateBaseUpstreamCost(state *State, extraMeters []catalog.MeterEstimate
 		cacheWriteTokens,
 		cacheWrite5mTokens,
 		cacheWrite1hTokens,
+		cacheWrite12hTokens,
 	)
 	if ok && partitionedInputTokens <= promptTokens {
 		inputTokens = promptTokens - partitionedInputTokens
@@ -122,6 +121,7 @@ func calculateBaseUpstreamCost(state *State, extraMeters []catalog.MeterEstimate
 		cacheWriteTokens = 0
 		cacheWrite5mTokens = 0
 		cacheWrite1hTokens = 0
+		cacheWrite12hTokens = 0
 	}
 	meters := []catalog.MeterEstimate{}
 	if state.Resolution != nil {
@@ -130,6 +130,7 @@ func calculateBaseUpstreamCost(state *State, extraMeters []catalog.MeterEstimate
 		meters = billing.AppendTokenMeterCost(meters, pricing, billing.MeterCacheWriteInputTokens, cacheWriteTokens, false, rateMode)
 		meters = billing.AppendTokenMeterCost(meters, pricing, billing.MeterCacheWrite5mInputTokens, cacheWrite5mTokens, false, rateMode)
 		meters = billing.AppendTokenMeterCost(meters, pricing, billing.MeterCacheWrite1hInputTokens, cacheWrite1hTokens, false, rateMode)
+		meters = billing.AppendTokenMeterCost(meters, pricing, billing.MeterCacheWrite12hInputTokens, cacheWrite12hTokens, false, rateMode)
 		meters = billing.AppendTokenMeterCost(meters, pricing, billing.MeterOutputTokens, outputTokens, false, rateMode)
 		meters = billing.AppendTokenMeterCost(meters, pricing, billing.MeterReasoningTokens, reasoningTokens, false, rateMode)
 	}
@@ -178,7 +179,8 @@ func cacheWriteOverheadUSD(state *State) (*string, error) {
 			switch meterKey {
 			case billing.MeterCacheWriteInputTokens,
 				billing.MeterCacheWrite5mInputTokens,
-				billing.MeterCacheWrite1hInputTokens:
+				billing.MeterCacheWrite1hInputTokens,
+				billing.MeterCacheWrite12hInputTokens:
 				return true
 			default:
 				return false
@@ -263,9 +265,9 @@ func appendInputTokenHoldCost(
 	meters []catalog.MeterEstimate,
 	pricing catalog.Pricing,
 	quantity int,
-	alternativeMeterKey string,
+	alternatives ...string,
 ) []catalog.MeterEstimate {
-	meterKey := highestInputHoldMeter(pricing, alternativeMeterKey)
+	meterKey := highestInputHoldMeter(pricing, alternatives...)
 	return billing.AppendTokenMeterCost(meters, pricing, meterKey, quantity, true, billing.TokenRateHighest)
 }
 
@@ -281,30 +283,36 @@ func highestInputHoldMeter(pricing catalog.Pricing, alternatives ...string) stri
 	return meterKey
 }
 
-// openAICacheWriteHoldMeter is the meter of the cache writes that a request in OpenAI's format can
-// make, which the hold prices when the deployment does: a breakpoint writes, and the implicit mode
-// writes without one on OpenAI.
-func openAICacheWriteHoldMeter(state *State) string {
+// openAICacheWriteHoldMeters are the meters of the cache writes that a request in OpenAI's format
+// can make, which the hold prices where the deployment does: a breakpoint writes, and the implicit
+// mode writes without one. A write lasts 12 hours where a breakpoint or the request asks for it and
+// the deployment writes that lifetime.
+func openAICacheWriteHoldMeters(state *State) []string {
 	if state == nil ||
 		state.Resolution == nil ||
 		catalog.UsesClaudeWire(state.Resolution.Provider, state.Resolution.Deployment.ModelID) {
-		return ""
+		return nil
 	}
 	raw := state.Resolution.RawBody()
 	breakpoints, err := validatePromptCacheBreakpoints(rawPromptContent(state.Resolution.Route, raw))
 	if err != nil {
-		return billing.MeterCacheWriteInputTokens
+		return []string{billing.MeterCacheWriteInputTokens, billing.MeterCacheWrite12hInputTokens}
 	}
-	mode := "implicit"
+	mode, ttl := "implicit", ""
 	if options, ok := rawObject(raw["prompt_cache_options"]); ok {
 		if configured := rawString(options["mode"]); configured != "" {
 			mode = configured
 		}
+		ttl = rawString(options["ttl"])
 	}
-	if mode == "explicit" && breakpoints == 0 {
-		return ""
+	if mode == "explicit" && breakpoints.total == 0 {
+		return nil
 	}
-	return billing.MeterCacheWriteInputTokens
+	if state.Resolution.WritesLongPromptCache() &&
+		(breakpoints.twelveHours > 0 || ttl == promptCacheTTL12h && (mode == "implicit" || breakpoints.inherited > 0)) {
+		return []string{billing.MeterCacheWriteInputTokens, billing.MeterCacheWrite12hInputTokens}
+	}
+	return []string{billing.MeterCacheWriteInputTokens}
 }
 
 func effectivePricingForState(state *State) catalog.Pricing {

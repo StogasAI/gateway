@@ -1738,6 +1738,16 @@ func TestSnapshotValidationRejectsUnbillablePricingAndReasoning(t *testing.T) {
 			want: "missing required pricing meter",
 		},
 		{
+			// A 30-minute write would otherwise be billed as ordinary input.
+			name: "12-hour cache writes without default ones",
+			apply: func(deployment, _ map[string]any) {
+				pricing := deployment["pricing"].(map[string]any)
+				delete(pricing, billing.MeterCacheWriteInputTokens)
+				pricing[billing.MeterCacheWrite12hInputTokens] = map[string]any{billing.RatePerMillionTokens: "1"}
+			},
+			want: "prices 12-hour cache writes without default ones",
+		},
+		{
 			name:  "unknown effort",
 			apply: func(_, route map[string]any) { route["reasoningEfforts"] = []any{"low", "future"} },
 			want:  "unsupported reasoning effort",
