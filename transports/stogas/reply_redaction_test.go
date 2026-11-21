@@ -296,3 +296,32 @@ func TestReplyRedactionRecordsAStreamedChatReplyWithoutHoldingIt(t *testing.T) {
 		t.Fatalf("metrics = %+v", metrics)
 	}
 }
+
+// The text of a reply that the request asked for as JSON is a JSON document, so a value with a
+// quote goes back as the inside of a JSON string. Reasoning and a reply in plain text are no
+// documents.
+func TestReplyRedactionRestoresIntoAStreamedJSONReply(t *testing.T) {
+	t.Parallel()
+	quoted := redaction.Options{CustomPatterns: []redaction.CustomPattern{{Expression: `"draft"`}}, Action: redaction.ActionRestore}
+	for _, test := range []struct {
+		json bool
+		want string
+	}{{true, `{"note":"\"draft\""}`}, {false, `{"note":""draft""}`}} {
+		reply := replyRedactionOf(t, `Call it "draft" for now`, quoted)
+		if test.json {
+			reply.jsonOutput = true
+			reply.redactor.JSONOutput()
+		}
+		chunks := []*schemas.BifrostStreamChunk{
+			chatDelta(0, schemas.ChatStreamResponseChoiceDelta{Content: schemas.Ptr(`{"note":"<CUSTOM_`)}),
+			chatDelta(0, schemas.ChatStreamResponseChoiceDelta{Content: schemas.Ptr(`PII_1>"}`)}),
+		}
+		if err := reply.Stream(chunks, true); err != nil {
+			t.Fatal(err)
+		}
+		got := *chunks[0].BifrostChatResponse.Choices[0].Delta.Content + *chunks[1].BifrostChatResponse.Choices[0].Delta.Content
+		if got != test.want || json.Valid([]byte(got)) != test.json {
+			t.Errorf("JSON output %t: reply = %s, want %s", test.json, got, test.want)
+		}
+	}
+}
