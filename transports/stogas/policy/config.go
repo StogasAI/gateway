@@ -496,10 +496,10 @@ var redactionRequestParts = map[string]redaction.Part{
 }
 
 // RedactionActions names what a redaction does with a match. "replace" writes a placeholder,
-// "restore" writes a numbered placeholder and puts the value back in the response, and "refuse"
-// fails the request.
+// "restore" writes a numbered placeholder and puts the value back in the response, "refuse"
+// fails the request, and "record" counts the match and leaves the text as it is.
 var RedactionActions = map[string]redaction.Action{
-	"replace": redaction.ActionReplace, "restore": redaction.ActionRestore, "refuse": redaction.ActionRefuse,
+	"replace": redaction.ActionReplace, "restore": redaction.ActionRestore, "refuse": redaction.ActionRefuse, "record": redaction.ActionRecord,
 }
 
 // redactionParts reads the parts that a redaction names. It refuses a part that is unknown or
@@ -545,13 +545,14 @@ func (r *Redaction) scope() (redaction.Parts, redaction.Action, error) {
 	return parts, action, nil
 }
 
-// ReadsRequest reports whether the redaction has a detector that reads a part of the request.
-func (r *Redaction) ReadsRequest() bool {
+// ChangesRequest reports whether the redaction has a detector that replaces, restores or refuses
+// matches in a part of the request. One that only records them changes nothing.
+func (r *Redaction) ChangesRequest() bool {
 	if r == nil || len(r.Presets) == 0 && len(r.CustomPatterns) == 0 && len(r.Literals) == 0 {
 		return false
 	}
-	parts, _, err := r.scope()
-	return err == nil && parts&redaction.RequestParts != 0
+	parts, action, err := r.scope()
+	return err == nil && parts&redaction.RequestParts != 0 && action != redaction.ActionRecord
 }
 
 // pluginUnits are the plugins that combine on their own: a required plugin

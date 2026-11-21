@@ -391,9 +391,10 @@ func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, repla
 			}
 		}
 		settingStart, settingInput := position, r.input
-		// A function call's arguments are a JSON document in a string.
+		// A function call's arguments are a JSON document in a string, and so is the text of a
+		// reply to a request that asked for JSON output.
 		argumentsJSON := r.argumentsJSON
-		if key == jsonKeyArguments {
+		if key == jsonKeyArguments || r.reply && r.jsonOutput && key == jsonKeyContent {
 			r.argumentsJSON = true
 		}
 		// The provider runs the call of a hosted tool and writes the result into the call's own

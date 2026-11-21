@@ -86,10 +86,12 @@ type match struct {
 }
 
 // Summary counts what one walk replaced. ItemsRestored counts the placeholders of a response
-// that got their values back.
+// that got their values back, and ItemsRecorded the matches of recording redactions that stayed
+// as they were.
 type Summary struct {
 	ItemsRedacted uint32 `json:"items_redacted"`
 	ItemsRestored uint32 `json:"items_restored,omitempty"`
+	ItemsRecorded uint32 `json:"items_recorded,omitempty"`
 	DurationUS    uint32 `json:"duration_us"`
 }
 
@@ -114,6 +116,11 @@ type Redactor struct {
 	// part is the part of the exchange that the walk reads.
 	part  Part
 	items uint32
+	// recorded counts the matches of recording redactions that no other redaction changed.
+	recorded uint32
+	// piece is set while a reply's walk reads a piece of a text that goes on. A match can span
+	// two pieces, so recording waits for the whole text (RecordReplyText).
+	piece bool
 	// restorer numbers the values that restoring redactions replace in a request. values holds
 	// those of the request that a response answers, and restored counts the ones it put back.
 	restorer *Restorer
@@ -123,6 +130,9 @@ type Redactor struct {
 	// where a restored value must stay inside its JSON string.
 	reply         bool
 	argumentsJSON bool
+	// jsonOutput marks a reply whose text is a JSON document, because its request asked for
+	// JSON output.
+	jsonOutput bool
 	// keepPlaceholders is set while a reply's walk reads reasoning, which gets no value back.
 	keepPlaceholders bool
 	// input measures the provider-bound text that the walk passes, after redaction.
@@ -157,10 +167,25 @@ func NewReply(policy *Policy, values *Restorer) *Redactor {
 	return &Redactor{policy: policy, part: PartResponse, reply: true, values: values}
 }
 
-// ReadsResponse reports whether a redaction of the response's own reads it. Such a reply is
-// changed whole, and one that only gets values back is changed as its text arrives.
-func (r *Redactor) ReadsResponse() bool {
-	return r != nil && r.policy.ReadsResponse()
+// JSONOutput marks a reply whose text is a JSON document, because its request asked for JSON
+// output. A value that the reply gets back is then written as the inside of a JSON string, as in
+// a tool call's arguments, so a value that holds a quote or a line break leaves the document valid.
+func (r *Redactor) JSONOutput() {
+	if r != nil {
+		r.jsonOutput = true
+	}
+}
+
+// ChangesResponse reports whether a redaction of the response's own replaces or refuses its
+// matches. Such a reply is changed whole, and one that only gets values back is changed as its
+// text arrives.
+func (r *Redactor) ChangesResponse() bool {
+	return r != nil && r.policy.ChangesResponse()
+}
+
+// RecordsResponse reports whether a redaction records the matches of the response.
+func (r *Redactor) RecordsResponse() bool {
+	return r != nil && r.policy.at(PartResponse, ActionRecord) != nil
 }
 
 // Restorer returns the values that the walk replaced with numbered placeholders, or nil when
@@ -178,7 +203,7 @@ func (r *Redactor) Summary() *Summary {
 	if r == nil || !r.policy.Enabled() && r.values == nil {
 		return nil
 	}
-	return &Summary{ItemsRedacted: r.items, ItemsRestored: r.restored, DurationUS: boundedDurationMicroseconds(r.duration)}
+	return &Summary{ItemsRedacted: r.items, ItemsRestored: r.restored, ItemsRecorded: r.recorded, DurationUS: boundedDurationMicroseconds(r.duration)}
 }
 
 // InputTextBytes counts decoded UTF-8 text after transformation. It uses the
@@ -264,7 +289,11 @@ func (r *Redactor) redactBytes(text []byte) ([]byte, bool, error) {
 		return text, false, nil
 	}
 	refuse, replace, restore := r.policy.at(r.part, ActionRefuse), r.policy.at(r.part, ActionReplace), r.policy.at(r.part, ActionRestore)
-	if refuse == nil && replace == nil && restore == nil {
+	record := r.policy.at(r.part, ActionRecord)
+	if r.piece {
+		record = nil
+	}
+	if refuse == nil && replace == nil && restore == nil && record == nil {
 		return text, false, nil
 	}
 	if refused, err := r.scan(refuse, text); err != nil {
@@ -282,6 +311,13 @@ func (r *Redactor) redactBytes(text []byte) ([]byte, bool, error) {
 			return nil, false, err
 		}
 		matches = mergeRestorable(matches, restorable)
+	}
+	if record != nil {
+		recorded, err := r.scan(record, text)
+		if err != nil {
+			return nil, false, err
+		}
+		r.recorded = saturatingAdd(r.recorded, unchangedMatches(recorded, matches))
 	}
 	if len(matches) == 0 {
 		return text, false, nil
@@ -319,6 +355,28 @@ func (r *Redactor) redactBytes(text []byte) ([]byte, bool, error) {
 	out = append(out, text[position:]...)
 	r.items += uint32(len(matches))
 	return out, true, nil
+}
+
+// unchangedMatches counts the recorded matches that no changed match overlaps. Both lists are
+// in order and hold no overlap of their own.
+func unchangedMatches(recorded, changed []match) uint32 {
+	count, next := uint32(0), 0
+	for _, found := range recorded {
+		for next < len(changed) && changed[next].end <= found.start {
+			next++
+		}
+		if next == len(changed) || changed[next].start >= found.end {
+			count++
+		}
+	}
+	return count
+}
+
+func saturatingAdd(total, more uint32) uint32 {
+	if more > ^uint32(0)-total {
+		return ^uint32(0)
+	}
+	return total + more
 }
 
 // scan returns the matches of one set of detectors in text, merged where they overlap.

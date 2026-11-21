@@ -74,7 +74,7 @@ func TestReplyRedactionChangesAStreamedChatReply(t *testing.T) {
 		}}),
 		chatDelta(0, schemas.ChatStreamResponseChoiceDelta{ReasoningDetails: []schemas.ChatReasoningDetails{{Index: 0, Signature: schemas.Ptr("sig")}}}),
 	}
-	if err := reply.Stream(chunks); err != nil {
+	if err := reply.Stream(chunks, true); err != nil {
 		t.Fatal(err)
 	}
 	delta := func(i int) *schemas.ChatStreamResponseChoiceDelta {
@@ -124,7 +124,7 @@ func TestReplyRedactionChangesAStreamedResponsesReply(t *testing.T) {
 			Item: &schemas.ResponsesMessage{Type: &reasoning, ResponsesReasoning: &schemas.ResponsesReasoning{EncryptedContent: schemas.Ptr("abc")}},
 		}},
 	}
-	err := reply.Stream(chunks)
+	err := reply.Stream(chunks, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func TestReplyRedactionRefusesAStreamedReply(t *testing.T) {
 		chatDelta(0, schemas.ChatStreamResponseChoiceDelta{Content: schemas.Ptr("Call +44 20 ")}),
 		chatDelta(0, schemas.ChatStreamResponseChoiceDelta{Content: schemas.Ptr("7123 4567")}),
 	}
-	err := reply.Stream(chunks)
+	err := reply.Stream(chunks, true)
 	var refused *redaction.RefusedError
 	if !errors.As(err, &refused) {
 		t.Fatalf("err=%v", err)
@@ -217,7 +217,7 @@ func TestReplyRedactionStreamsAReplyThatOnlyRestores(t *testing.T) {
 			t.Errorf("step %d holds=%t, want %t", index, holds, step.holds)
 		}
 		if !holds {
-			if err := reply.Stream(held); err != nil {
+			if err := reply.Stream(held, false); err != nil {
 				t.Fatal(err)
 			}
 			windows, held = append(windows, held), nil
@@ -253,5 +253,46 @@ func TestReplyRedactionStreamsAReplyThatOnlyRestores(t *testing.T) {
 	item := []byte(`{"type":"response.output_item.done","item":{"summary":[{"type":"summary_text","text":"see <EMAIL_ADDRESS_1>"}],"type":"reasoning"}}`)
 	if out, err := reply.Event(&schemas.BifrostResponsesStreamResponse{Type: schemas.ResponsesStreamResponseTypeOutputItemDone}, item); err != nil || string(out) != string(item) {
 		t.Errorf("reasoning item=%s err=%v", out, err)
+	}
+}
+
+// A redaction that records the matches of a response holds no chunk: the client gets each text
+// as it arrives, and a match that spans chunks is counted once when the stream ends.
+func TestReplyRedactionRecordsAStreamedChatReplyWithoutHoldingIt(t *testing.T) {
+	t.Parallel()
+	reply := replyRedactionOf(t, "I am a@corp.io", redaction.Options{Patterns: []redaction.Pattern{redaction.PatternPhoneNumber},
+		Parts: redaction.PartsOf(redaction.PartResponse), Action: redaction.ActionRecord})
+	finish := "stop"
+	ended := chatDelta(0, schemas.ChatStreamResponseChoiceDelta{})
+	ended.BifrostChatResponse.Choices[0].FinishReason = &finish
+	chunks := []*schemas.BifrostStreamChunk{
+		chatDelta(0, schemas.ChatStreamResponseChoiceDelta{Content: schemas.Ptr("Call +44 20 ")}),
+		chatDelta(0, schemas.ChatStreamResponseChoiceDelta{Content: schemas.Ptr("7123 4567 or <EMAIL_ADDRESS_1>")}),
+		chatDelta(1, schemas.ChatStreamResponseChoiceDelta{Content: schemas.Ptr("+44 20 7123 4567")}),
+		chatDelta(0, toolDelta(0, `{"n":"+44 20 7123`)),
+		chatDelta(0, toolDelta(0, ` 4567"}`)),
+		// Signed reasoning stays out of the count, although its signature arrives after its text.
+		chatDelta(0, schemas.ChatStreamResponseChoiceDelta{Reasoning: schemas.Ptr("+44 20 7123 4567")}),
+		chatDelta(0, schemas.ChatStreamResponseChoiceDelta{ReasoningDetails: []schemas.ChatReasoningDetails{{Index: 0, Signature: schemas.Ptr("sig")}}}),
+		ended,
+	}
+	for index, chunk := range chunks {
+		if reply.Holds([]*schemas.BifrostStreamChunk{chunk}) {
+			t.Fatalf("chunk %d is held", index)
+		}
+		if err := reply.Stream([]*schemas.BifrostStreamChunk{chunk}, index == len(chunks)-1); err != nil {
+			t.Fatal(err)
+		}
+		if recorded := reply.state.PluginMetrics.Redaction; index < len(chunks)-1 && recorded != nil && recorded.ResponseItemsRecorded != 0 {
+			t.Fatalf("chunk %d recorded %d matches before the stream ended", index, recorded.ResponseItemsRecorded)
+		}
+	}
+	content := func(index int) string { return *chunks[index].BifrostChatResponse.Choices[0].Delta.Content }
+	if content(0) != "Call +44 20 " || content(1) != "7123 4567 or a@corp.io" {
+		t.Fatalf("content = %q %q", content(0), content(1))
+	}
+	metrics := reply.state.PluginMetrics.Redaction
+	if metrics == nil || metrics.ResponseItemsRecorded != 3 || metrics.ResponseItemsRedacted != 0 || metrics.ItemsRestored != 1 {
+		t.Fatalf("metrics = %+v", metrics)
 	}
 }

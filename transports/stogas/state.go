@@ -235,6 +235,7 @@ func NewPair(resolution *catalog.ResolvedRequest, adapter Adapter) Pair {
 	if summary := resolution.StructuredPIIRedactionSummary(); summary != nil {
 		pair.PluginMetrics.Redaction = &plugins.RedactionMetrics{
 			ItemsRedacted: summary.ItemsRedacted,
+			ItemsRecorded: summary.ItemsRecorded,
 			DurationUS:    summary.DurationUS,
 		}
 	}

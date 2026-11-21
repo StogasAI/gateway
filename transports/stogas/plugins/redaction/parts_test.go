@@ -202,8 +202,8 @@ func TestPartsAndActionsAreChecked(t *testing.T) {
 		}
 	}
 	policy := partsPolicy(t, Options{Patterns: emails, Parts: PartsOf(PartResponse)})
-	if policy.ReadsRequest() || !policy.ReadsResponse() || policy.Restores() {
-		t.Fatalf("response policy: request=%t response=%t restores=%t", policy.ReadsRequest(), policy.ReadsResponse(), policy.Restores())
+	if policy.ChangesRequest() || !policy.ReadsResponse() || policy.Restores() {
+		t.Fatalf("response policy: request=%t response=%t restores=%t", policy.ChangesRequest(), policy.ReadsResponse(), policy.Restores())
 	}
 	fields, redactor, err := redactFields(t, policy, SurfaceChat, `{"messages":[{"role":"user","content":"a@corp.io"}]}`)
 	if err != nil || !strings.Contains(string(fields["messages"]), "a@corp.io") || redactor.InputTextBytes() != len("a@corp.io") {
@@ -297,9 +297,75 @@ func TestReplyRestoresAndRedacts(t *testing.T) {
 		t.Errorf("event=%s err=%v", out, err)
 	}
 
-	text, err := NewReply(policy, request.Restorer()).RedactReplyText(`{"to":"<CUSTOM_PII_1>"} +44 20 7123 4567`, true, true, nil)
+	text, err := NewReply(policy, request.Restorer()).RedactReplyText(`{"to":"<CUSTOM_PII_1>"} +44 20 7123 4567`, true, true, false, nil)
 	if err != nil || text != `{"to":"ID-\"q\""} <PHONE_NUMBER>` {
 		t.Errorf("text=%q err=%v", text, err)
+	}
+}
+
+// A request that asks for JSON output gets a JSON document as its text, so a value that goes
+// back into it must stay inside its JSON string.
+func TestReplyRestoresIntoJSONOutput(t *testing.T) {
+	t.Parallel()
+	policy := partsPolicy(t, Options{CustomPatterns: []CustomPattern{{Expression: `C:\\\S+ "\w+"`}}, Action: ActionRestore})
+	const value = `C:\Users\jane "draft"`
+	body, _ := json.Marshal(map[string]any{"messages": []map[string]string{{"role": "user", "content": "Open " + value}}})
+	_, request, err := redactFields(t, policy, SurfaceChat, string(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const document = `{"path":"<CUSTOM_PII_1>"}`
+	chat, _ := json.Marshal(map[string]any{"choices": []map[string]any{{"index": 0, "message": map[string]string{"role": "assistant", "content": document}}}})
+	responses, _ := json.Marshal(map[string]any{"output": []map[string]any{{"type": "message", "role": "assistant", "content": []map[string]string{{"type": "output_text", "text": document}}}}})
+	event, _ := json.Marshal(map[string]any{"type": "response.output_text.done", "text": document})
+	for name, test := range map[string]struct {
+		source []byte
+		shape  ReplyShape
+		text   func([]byte) string
+	}{
+		"chat": {chat, ReplyChat, func(out []byte) string {
+			var reply struct {
+				Choices []struct{ Message struct{ Content string } }
+			}
+			_ = json.Unmarshal(out, &reply)
+			return reply.Choices[0].Message.Content
+		}},
+		"responses": {responses, ReplyResponses, func(out []byte) string {
+			var reply struct {
+				Output []struct{ Content []struct{ Text string } }
+			}
+			_ = json.Unmarshal(out, &reply)
+			return reply.Output[0].Content[0].Text
+		}},
+		"event": {event, ReplyResponsesTextEvent, func(out []byte) string {
+			var reply struct{ Text string }
+			_ = json.Unmarshal(out, &reply)
+			return reply.Text
+		}},
+	} {
+		for _, jsonOutput := range []bool{true, false} {
+			reply := NewReply(policy, request.Restorer())
+			if jsonOutput {
+				reply.JSONOutput()
+			}
+			out, err := reply.RedactReply(test.source, test.shape, nil)
+			if err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+			text := test.text(out)
+			var parsed struct{ Path string }
+			err = json.Unmarshal([]byte(text), &parsed)
+			if jsonOutput && (err != nil || parsed.Path != value) {
+				t.Errorf("%s: JSON output %s parsed as %q, %v", name, text, parsed.Path, err)
+			}
+			if !jsonOutput && text != `{"path":"`+value+`"}` {
+				t.Errorf("%s: text %s", name, text)
+			}
+		}
+	}
+	reply := NewReply(policy, request.Restorer())
+	if text, err := reply.RedactReplyText(document, true, true, false, nil); err != nil || !json.Valid([]byte(text)) {
+		t.Errorf("streamed text %s, %v", text, err)
 	}
 }
 
@@ -334,7 +400,65 @@ func TestReplyRefusesAndBoundsGrowth(t *testing.T) {
 	if _, err := NewReply(nil, request.Restorer()).RedactReply([]byte(body), ReplyChat, reserve); !errors.Is(err, limit) {
 		t.Fatalf("err=%v", err)
 	}
-	if _, err := NewReply(nil, request.Restorer()).RedactReplyText(strings.Repeat("<CUSTOM_PII_1> ", 3), false, true, reserve); !errors.Is(err, limit) {
+	if _, err := NewReply(nil, request.Restorer()).RedactReplyText(strings.Repeat("<CUSTOM_PII_1> ", 3), false, true, false, reserve); !errors.Is(err, limit) {
 		t.Fatalf("text err=%v", err)
+	}
+}
+
+// A recording redaction counts its matches and leaves the text as it is. A match that another
+// redaction changes is that redaction's, and a refusal still refuses.
+func TestRecordCountsMatchesAndChangesNothing(t *testing.T) {
+	t.Parallel()
+	phones := []Pattern{PatternPhoneNumber}
+	record := partsPolicy(t, Options{Patterns: emails, Action: ActionRecord, Parts: PartsOf(PartUser, PartResponse)})
+	if record.ChangesRequest() || record.ChangesResponse() || !record.ReadsResponse() || record.Restores() {
+		t.Fatalf("a recording redaction changes: request=%t response=%t", record.ChangesRequest(), record.ChangesResponse())
+	}
+	const body = `{"messages":[{"role":"system","content":"s@corp.io"},{"role":"user","content":"a@corp.io, b@corp.io and +44 20 7123 4567"}]}`
+	fields, redactor, err := redactFields(t, record, SurfaceChat, body)
+	if err != nil || !strings.Contains(string(fields["messages"]), "a@corp.io, b@corp.io") || redactor.Restorer() != nil {
+		t.Fatalf("messages=%s err=%v", fields["messages"], err)
+	}
+	if summary := redactor.Summary(); summary.ItemsRecorded != 2 || summary.ItemsRedacted != 0 {
+		t.Fatalf("summary=%+v", summary)
+	}
+
+	// The addresses that the replacing redaction reaches count as replaced, and the rest as recorded.
+	mixed := partsPolicy(t, Options{Patterns: append(phones, emails...), Action: ActionRecord},
+		Options{CustomPatterns: []CustomPattern{{Expression: `a@corp\.io`}}, Parts: PartsOf(PartUser)})
+	fields, redactor, err = redactFields(t, mixed, SurfaceChat, body)
+	if err != nil || !strings.Contains(string(fields["messages"]), `"<CUSTOM_PII>, b@corp.io and +44 20 7123 4567"`) {
+		t.Fatalf("messages=%s err=%v", fields["messages"], err)
+	}
+	if summary := redactor.Summary(); summary.ItemsRecorded != 3 || summary.ItemsRedacted != 1 {
+		t.Fatalf("summary=%+v", summary)
+	}
+
+	var refused *RefusedError
+	refusing := partsPolicy(t, Options{Patterns: emails, Action: ActionRecord}, Options{Patterns: phones, Action: ActionRefuse})
+	if _, _, err := redactFields(t, refusing, SurfaceChat, body); !errors.As(err, &refused) {
+		t.Fatalf("err=%v", err)
+	}
+
+	// A reply is counted where a redaction of the response would change it.
+	reply := NewReply(record, nil)
+	const response = `{"choices":[{"message":{"role":"assistant","content":"Write to a@corp.io","tool_calls":[{"id":"c","type":"function","function":{"name":"mail","arguments":"{\"to\":\"b@corp.io\"}"}}]}}]}`
+	changed, err := reply.RedactReply([]byte(response), ReplyChat, nil)
+	if err != nil || string(changed) != response || reply.Summary().ItemsRecorded != 2 {
+		t.Fatalf("reply=%s summary=%+v err=%v", changed, reply.Summary(), err)
+	}
+
+	// A piece of a text that goes on waits for the whole text.
+	reply = NewReply(record, nil)
+	for _, piece := range []string{"Write to a@cor", "p.io and b@corp.io"} {
+		if text, err := reply.RedactReplyText(piece, false, true, true, nil); err != nil || text != piece {
+			t.Fatalf("piece=%q err=%v", text, err)
+		}
+	}
+	if reply.Summary().ItemsRecorded != 0 {
+		t.Fatalf("pieces recorded %+v", reply.Summary())
+	}
+	if err := reply.RecordReplyText([]byte("Write to a@corp.io and b@corp.io")); err != nil || reply.Summary().ItemsRecorded != 2 {
+		t.Fatalf("summary=%+v err=%v", reply.Summary(), err)
 	}
 }

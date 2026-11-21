@@ -39,11 +39,14 @@ type ExportMetrics struct {
 }
 
 // RedactionMetrics counts the values that redaction replaced in the request and in the
-// response, and the values that it put back in the response. The duration is the request's
-// scan, which runs before the first provider call.
+// response, the values that it put back in the response, and the matches that it recorded and
+// left as they were. The duration is the request's scan, which runs before the first provider
+// call.
 type RedactionMetrics struct {
 	ItemsRedacted         uint32 `json:"items_redacted"`
 	ResponseItemsRedacted uint32 `json:"response_items_redacted,omitempty"`
 	ItemsRestored         uint32 `json:"items_restored,omitempty"`
+	ItemsRecorded         uint32 `json:"items_recorded,omitempty"`
+	ResponseItemsRecorded uint32 `json:"response_items_recorded,omitempty"`
 	DurationUS            uint32 `json:"duration_us"`
 }

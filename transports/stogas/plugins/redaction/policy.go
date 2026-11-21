@@ -88,8 +88,8 @@ func (p Parts) has(part Part) bool {
 }
 
 // Action is what a redaction does with a match. Where redactions with
-// different actions match the same text, refusing wins over replacing, and
-// replacing over restoring.
+// different actions match the same text, refusing wins over replacing,
+// replacing over restoring, and restoring over recording.
 type Action uint8
 
 const (
@@ -100,6 +100,8 @@ const (
 	ActionRestore
 	// ActionRefuse fails the request.
 	ActionRefuse
+	// ActionRecord counts a match and leaves the text as it is.
+	ActionRecord
 	actionCount
 )
 
@@ -171,10 +173,11 @@ func (p *Policy) uniform() bool {
 	return p.parts&RequestParts == 0 || p.parts&RequestParts == RequestParts
 }
 
-// ReadsRequest reports whether the policy reads any part of a request.
-func (p *Policy) ReadsRequest() bool {
+// ChangesRequest reports whether a redaction replaces, restores or refuses matches in any part
+// of a request. A redaction that only records them changes nothing.
+func (p *Policy) ChangesRequest() bool {
 	for action := range actionCount {
-		if p.at(partUnknown, action) != nil {
+		if action != ActionRecord && p.at(partUnknown, action) != nil {
 			return true
 		}
 	}
@@ -189,6 +192,12 @@ func (p *Policy) ReadsResponse() bool {
 		}
 	}
 	return false
+}
+
+// ChangesResponse reports whether a redaction replaces or refuses matches in
+// the response. A redaction that only records them changes nothing.
+func (p *Policy) ChangesResponse() bool {
+	return p.at(PartResponse, ActionReplace) != nil || p.at(PartResponse, ActionRefuse) != nil
 }
 
 // Restores reports whether the policy replaces any request text with

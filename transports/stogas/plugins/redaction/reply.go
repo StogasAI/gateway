@@ -18,6 +18,9 @@ const (
 	ReplyResponsesEvent
 	// ReplyResponsesReasoningEvent is such an event of a reasoning text or summary.
 	ReplyResponsesReasoningEvent
+	// ReplyResponsesTextEvent is such an event of an output text or its part, whose text is not
+	// inside an item's content.
+	ReplyResponsesTextEvent
 )
 
 // RedactReply returns a response with the values of the request's restoring redactions back
@@ -39,15 +42,16 @@ func (r *Redactor) RedactReply(source []byte, shape ReplyShape, reserve func(int
 		context = jsonContextReplyChat
 	case ReplyResponses:
 		context = jsonContextReplyResponses
-	case ReplyResponsesEvent, ReplyResponsesReasoningEvent:
+	case ReplyResponsesEvent, ReplyResponsesReasoningEvent, ReplyResponsesTextEvent:
 	default:
 		return nil, errInvalidJSON
 	}
 	defer r.time(reserve)()
 	baseRestored := r.restored
 	r.keepPlaceholders = shape == ReplyResponsesReasoningEvent
+	r.argumentsJSON = r.jsonOutput && shape == ReplyResponsesTextEvent
 	redacted, _, err := r.redactJSONContext(source, context)
-	r.keepPlaceholders = false
+	r.keepPlaceholders, r.argumentsJSON = false, false
 	if err != nil {
 		r.restored = baseRestored
 		return nil, err
@@ -56,14 +60,17 @@ func (r *Redactor) RedactReply(source []byte, shape ReplyShape, reserve func(int
 }
 
 // RedactReplyText changes one text of a response as RedactReply changes the text of a field. A
-// stream gives it the joined deltas of one text. arguments marks the JSON document of a tool
-// call's arguments, where a restored value is written as the inside of a JSON string. restore
-// is false for reasoning.
-func (r *Redactor) RedactReplyText(text string, arguments, restore bool, reserve func(int) error) (string, error) {
+// stream gives it the joined deltas of one text. arguments marks a JSON document, a tool call's
+// arguments or the text of a reply in JSON, where a restored value is written as the inside of
+// a JSON string. restore is false for reasoning. piece marks a text that goes on, whose matches
+// RecordReplyText records once the text has ended.
+func (r *Redactor) RedactReplyText(text string, arguments, restore, piece bool, reserve func(int) error) (string, error) {
 	if r == nil || text == "" {
 		return text, nil
 	}
 	defer r.time(reserve)()
+	r.piece = piece
+	defer func() { r.piece = false }()
 	source, restored := []byte(text), uint32(0)
 	if restore {
 		source, restored = r.values.restore(source, arguments)
@@ -80,6 +87,30 @@ func (r *Redactor) RedactReplyText(text string, arguments, restore bool, reserve
 		return text, nil
 	}
 	return string(redacted), nil
+}
+
+// RecordReplyText counts the matches of the recording redactions in one whole text of a stream
+// whose pieces RedactReplyText has passed.
+func (r *Redactor) RecordReplyText(text []byte) error {
+	if r == nil || len(text) == 0 {
+		return nil
+	}
+	defer r.time(nil)()
+	recorded, err := r.scan(r.policy.at(PartResponse, ActionRecord), text)
+	if err != nil {
+		return err
+	}
+	r.recorded = saturatingAdd(r.recorded, uint32(min(len(recorded), int(^uint32(0)))))
+	return nil
+}
+
+// ReserveGrowth admits bytes of the reply's text that the gateway keeps beside the reply.
+func (r *Redactor) ReserveGrowth(bytes int, reserve func(int) error) error {
+	if r == nil {
+		return nil
+	}
+	defer r.time(reserve)()
+	return r.reserveGrowth(bytes)
 }
 
 // time counts the duration of one call and gives its text the growth bound.

@@ -324,8 +324,8 @@ func TestRedactionPartsAndActions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !matcher.ReadsRequest() || !matcher.ReadsResponse() || !matcher.Restores() || active.InputCheck() != "plugins.redaction" {
-		t.Fatalf("request=%t response=%t restores=%t check=%q", matcher.ReadsRequest(), matcher.ReadsResponse(), matcher.Restores(), active.InputCheck())
+	if !matcher.ChangesRequest() || !matcher.ReadsResponse() || !matcher.Restores() || active.InputCheck() != "plugins.redaction" {
+		t.Fatalf("request=%t response=%t restores=%t check=%q", matcher.ChangesRequest(), matcher.ReadsResponse(), matcher.Restores(), active.InputCheck())
 	}
 	inspected, err := inspectionPlugins(active.PluginSources)
 	if err != nil {

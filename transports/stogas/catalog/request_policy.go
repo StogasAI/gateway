@@ -709,7 +709,7 @@ func (v *requestVariants) prepareBody(selection routingSelection, value RequestP
 	asciiOnly := value.Config != nil && value.Config.Input != nil && value.Config.Input.ASCIIOnly
 	// check names the setting that reads all input text, as routing named it.
 	check := value.Config.InputCheck()
-	if check == "" && compiled.ReadsRequest() {
+	if check == "" && compiled.ChangesRequest() {
 		check = "plugins.redaction"
 	}
 	options := inputfiles.Options{Reserve: reserveExpansion}
@@ -764,7 +764,7 @@ func (v *requestVariants) prepareBody(selection routingSelection, value RequestP
 	}
 	// Log probabilities repeat the reply token by token, so they would give back what a
 	// redaction of the response replaces.
-	if compiled.ReadsResponse() && requestsLogProbs(fields) {
+	if compiled.ChangesResponse() && requestsLogProbs(fields) {
 		return nil, APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Param: "logprobs", Message: "Log probabilities are unavailable while a policy redacts responses"}
 	}
 	if asciiOnly {

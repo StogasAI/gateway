@@ -676,10 +676,13 @@ func (s *Server) startSSEStream(ctx *requestContext, run *providerRun, started p
 			}
 		}
 
-		// failStream ends the stream with a failure of the gateway's own processing.
+		// failStream ends the stream with a failure of the gateway's own processing. A request
+		// whose client an earlier failure answered, such as its timeout, keeps that failure.
 		failStream := func(failure *schemas.BifrostError) {
 			state.MarkProviderCompleted()
-			retainResponseFailure(state, failure)
+			if state.ProcessingError == nil {
+				retainResponseFailure(state, failure)
+			}
 			sendStreamError(failure)
 		}
 		// deliver sends the events of one provider chunk and reports whether the stream has
@@ -798,13 +801,14 @@ func (s *Server) startSSEStream(ctx *requestContext, run *providerRun, started p
 			return nil
 		}
 		// flushHeld changes the held reply and sends it, and reports whether the stream has
-		// ended. terminal says that the last held chunk ends the provider's stream.
-		flushHeld := func(terminal bool) bool {
+		// ended. terminal says that the last held chunk ends the provider's stream, and ended
+		// that the stream has no more chunks.
+		flushHeld := func(terminal, ended bool) bool {
 			var all []*schemas.BifrostStreamChunk
 			for _, chunk := range held {
 				all = append(all, chunk.client...)
 			}
-			if err := reply.Stream(all); err != nil {
+			if err := reply.Stream(all, ended); err != nil {
 				failStream(replyRedactionFailure(err))
 				return true
 			}
@@ -891,7 +895,7 @@ func (s *Server) startSSEStream(ctx *requestContext, run *providerRun, started p
 			case next, ok := <-stream:
 				if !ok {
 					if !providerStopped {
-						if len(held) == 0 || !flushHeld(false) {
+						if reply == nil || !flushHeld(false, true) {
 							finishSuccess(nil)
 						}
 						return
@@ -961,7 +965,7 @@ func (s *Server) startSSEStream(ctx *requestContext, run *providerRun, started p
 				failStream(failure)
 				return
 			}
-			if (terminal || !reply.Holds(chunks)) && flushHeld(terminal) {
+			if (terminal || !reply.Holds(chunks)) && flushHeld(terminal, terminal) {
 				return
 			}
 		}

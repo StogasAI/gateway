@@ -72,8 +72,9 @@ func (c *Config) MediaTypes() *MediaTypes {
 	return c.Input.MediaTypes
 }
 
-// InputCheck names the setting that reads all input text, input.asciiOnly or a plugins.redaction
-// that reads a part of the request, or returns "" when the policy sets neither. Either refuses an attachment that stays opaque. An
+// InputCheck names the setting that must read all input text, input.asciiOnly or a
+// plugins.redaction that changes or refuses a part of the request, or returns "" when the policy
+// sets neither. Either refuses an attachment that stays opaque. An
 // encrypted redaction that applies counts whatever it holds, since only the request's key opens
 // it, so routing and each pair's preparation give the same answer.
 func (c *Config) InputCheck() string {
@@ -88,7 +89,7 @@ func (c *Config) InputCheck() string {
 		parts = []*Plugins{c.Plugins}
 	}
 	for _, part := range parts {
-		if part != nil && part.Redaction.ReadsRequest() {
+		if part != nil && part.Redaction.ChangesRequest() {
 			return "plugins.redaction"
 		}
 	}
