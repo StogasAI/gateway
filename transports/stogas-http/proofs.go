@@ -121,6 +121,16 @@ func (s *Server) writeInferenceJSON(ctx *requestContext, bifrostCtx *schemas.Bif
 	s.writeResponse(ctx, statusCode, "application/json", data)
 }
 
+// nodeID names this gateway in request records: the attested node whose key
+// signs their receipts and log batches, so a record and its receipt name the
+// same node. A gateway without a proof service has none.
+func (s *Server) nodeID() string {
+	if s.proofs == nil {
+		return ""
+	}
+	return s.proofs.NodeID()
+}
+
 func (s *Server) newStreamProof(requestCtx *requestContext, ctx *schemas.BifrostContext, state *stogas.State) (*proofhttp.Stream, error) {
 	if !wantsMetadata(ctx) {
 		return nil, nil

@@ -102,14 +102,10 @@ func (s *Server) recordAdmissionRejection(ctx *requestContext, status int, code 
 	if startedAt.IsZero() {
 		startedAt = time.Now()
 	}
-	nodeID := ""
-	if s.secure != nil {
-		nodeID = s.secure.NodeID()
-	}
 	traceID, _ := stogas.RequestTrace(ctx.request.Header)
 	s.runtime.Billing().RecordRejection(billing.RejectionInput{
 		PolicyVersions: ctx.policyVersions, Claims: claims, RequestID: requestID, RequestType: requestType, Code: code,
-		StatusCode: status, Limit: limit, CreatedAt: startedAt, NodeID: nodeID, GatewayVersion: stogas.GatewayVersion,
+		StatusCode: status, Limit: limit, CreatedAt: startedAt, NodeID: s.nodeID(), GatewayVersion: stogas.GatewayVersion,
 		Transport: ctx.transport(), EncryptionKeyIDs: ctx.encryptionKeyIDs,
 		TraceID: traceID,
 	}, export)

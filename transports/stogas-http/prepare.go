@@ -206,11 +206,7 @@ func (s *Server) startRun(ctx *requestContext, startedAt time.Time, preparation 
 	}
 	ctx.requestType = string(first.RequestType)
 	run.plan = first
-	nodeID := ""
-	if s.secure != nil {
-		nodeID = s.secure.NodeID()
-	}
-	run.request, run.state, run.cancel, err = newRequestContext(ctx, startedAt, first, credential, nodeID)
+	run.request, run.state, run.cancel, err = newRequestContext(ctx, startedAt, first, credential, s.nodeID())
 	if err != nil {
 		run.finishPreprocessing()
 		run.releasePlan()
