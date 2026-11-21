@@ -419,7 +419,15 @@ func TestTraceExportMarksFailuresAndRejections(t *testing.T) {
 		t.Fatalf("unexpected failure: %+v", root)
 	}
 
-	// A content filter and a caller that stopped end a request without an error.
+	// A provider that refused the request with an error reply ended it in an error.
+	refused := traceEvent()
+	refused.ProviderAttempts = []billing.ProviderAttempt{{Provider: "openai", Status: "content_filter", StatusCode: pointer(400)}}
+	if spans := encodeTrace(t, conventions141, refused, `{}`, Trace{}, nil).spans; spans[0].statusCode != 2 || spans[0].attributes["error.type"] != "content_filter" ||
+		spans[1].statusCode != 2 || spans[1].attributes["error.type"] != "content_filter" {
+		t.Fatalf("unexpected refusal: %+v", spans)
+	}
+
+	// A reply that a content filter stopped and a caller that stopped end a request without an error.
 	filtered := traceEvent()
 	filtered.ProviderAttempts = []billing.ProviderAttempt{{Provider: "aws", Status: "content_filter", FinishReason: "content_filter"}}
 	if root := encodeTrace(t, conventions141, filtered, `{}`, Trace{}, nil).spans[0]; root.statusCode != 0 || root.attributes["error.type"] != nil ||

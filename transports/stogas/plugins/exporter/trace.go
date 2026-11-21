@@ -409,12 +409,19 @@ func requestFailure(record, served map[string]any) string {
 	return attemptFailure(served)
 }
 
-// attemptFailure is the attempt's status when it is an error. A reply that a
-// content filter stopped and a call that the caller ended are not errors.
+// attemptFailure is the attempt's status when the call ended in an error. A
+// call that the caller ended is no error, and nor is a reply that a content
+// filter stopped or that refused, which has a finish reason: a provider that
+// refused the request with an error reply gives none.
 func attemptFailure(attempt map[string]any) string {
 	switch status := text(attempt["status"]); status {
-	case "success", "unknown", "content_filter", "cancelled":
+	case "success", "unknown", "cancelled":
 		return ""
+	case "content_filter":
+		if text(attempt["finish_reason"]) != "" {
+			return ""
+		}
+		return status
 	default:
 		return status
 	}
