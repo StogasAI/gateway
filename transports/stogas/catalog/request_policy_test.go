@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"reflect"
 	"slices"
 	"strings"
@@ -207,6 +208,11 @@ func TestConditionalRulesExcludeOnlyTheirCandidates(t *testing.T) {
 	countries := func(when string) string {
 		return `{"home":{"when":"` + when + `","access":{"countries":{"allow":["US"]}}}}`
 	}
+	// The gateway has not loaded the list of Tor exit relays, so it cannot tell.
+	relays := func(when string) string {
+		return `{"direct":{"when":"` + when + `","access":{"networks":{"deny":["tor"]}}}}`
+	}
+	unlisted := policy.Client{Address: netip.MustParseAddr("203.0.113.5"), Missing: policy.TorExitList}
 	// The request arrives over ordinary HTTPS, which the list does not admit.
 	transports := func(when string) string {
 		return `{"sealed":{"when":"` + when + `","access":{"transports":{"allow":["e2ee"]}}}}`
@@ -216,6 +222,7 @@ func TestConditionalRulesExcludeOnlyTheirCandidates(t *testing.T) {
 	for _, test := range []struct {
 		name, rules, order, want, code, serves string
 		credentials                            bool
+		client                                 policy.Client
 	}{
 		{name: "deny period leaves another provider", rules: denied("provider.id == 'azure'"), order: "azure", want: "openai-gpt-5.6-sol"},
 		{name: "deny period leaves another credential", rules: denied("provider.id == 'openai'"), want: "openai-gpt-5.6-sol", credentials: true},
@@ -224,6 +231,8 @@ func TestConditionalRulesExcludeOnlyTheirCandidates(t *testing.T) {
 		{name: "networks on every candidate", rules: networks("provider.id != 'blocked'"), order: "azure", code: "network_denied"},
 		{name: "countries leave another provider", rules: countries("provider.id == 'azure'"), order: "azure", want: "openai-gpt-5.6-sol"},
 		{name: "countries on every candidate", rules: countries("provider.id != 'blocked'"), order: "azure", code: "country_denied"},
+		{name: "a list that is not loaded leaves another provider", rules: relays("provider.id == 'azure'"), order: "azure", want: "openai-gpt-5.6-sol", client: unlisted},
+		{name: "a list that is not loaded on every candidate", rules: relays("provider.id != 'blocked'"), order: "azure", code: "gateway_unavailable", client: unlisted},
 		{name: "connection modes leave another provider", rules: transports("provider.id == 'azure'"), order: "azure", want: "openai-gpt-5.6-sol"},
 		{name: "connection modes on every candidate", rules: transports("provider.id != 'blocked'"), order: "azure", code: "transport_denied"},
 		{name: "undecided condition leaves another provider", rules: undecided, order: "openai", want: "azure-gpt-5.6-sol"},
@@ -236,8 +245,8 @@ func TestConditionalRulesExcludeOnlyTheirCandidates(t *testing.T) {
 			preferred := map[string]string{"azure": `"azure","openai"`, "openai": `"openai","azure"`}[test.order]
 			input := RequestInput{
 				Body: policyChatBody(`,"provider":{"order":[` + preferred + `]}`), Method: "POST", Path: "/v1/chat/completions",
-				Transport: policy.TransportHTTPS,
-				Policy:    compose(test.rules), AvailableCredentials: map[string][]int{"azure": {0}, "openai": {0}},
+				Transport: policy.TransportHTTPS, Client: test.client,
+				Policy: compose(test.rules), AvailableCredentials: map[string][]int{"azure": {0}, "openai": {0}},
 				DeploymentEligible: func(_ schemas.ModelProvider, _ int, _ Route, deployment Deployment) bool {
 					if test.serves != "" {
 						return deployment.ID == test.serves
