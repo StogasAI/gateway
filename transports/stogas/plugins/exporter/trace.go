@@ -21,8 +21,9 @@ const (
 	traceService   = "stogas-gateway"
 	traceScope     = "stogas.gateway.export"
 
-	spanKindClient  = 3
-	statusCodeError = 2
+	spanKindInternal = 1
+	spanKindClient   = 3
+	statusCodeError  = 2
 )
 
 var errTraceRecord = errors.New("export record has no trace form")
@@ -36,11 +37,12 @@ type traceBodies struct {
 
 // traceExport encodes a request record as one OTLP ExportTraceServiceRequest.
 // The request is one span with the GenAI attributes and every other field of
-// the record under "stogas.", and each provider attempt is a child span. A
-// trace tool then counts one model call for each request, with its tokens,
-// and shows the attempts inside it. The IDs come from the request ID, so a
-// retried delivery repeats them, and the trace is the caller's when the
-// request named one.
+// the record under "stogas.", and each provider attempt and each tool call
+// that a stream timed is a child span. A trace tool then counts one model call
+// for each request, with its tokens, and shows the attempts and the time of
+// each tool call inside it. The IDs come from the request ID, so a retried
+// delivery repeats them, and the trace is the caller's when the request named
+// one.
 func traceExport(event, metadata []byte, trace Trace, bodies *traceBodies) ([]byte, error) {
 	record, err := decodeObject(event)
 	if err != nil {
@@ -135,6 +137,33 @@ func traceExport(event, metadata []byte, trace Trace, bodies *traceBodies) ([]by
 		}
 		p.flatten(9, "stogas.attempt", attempt)
 		p.status(failure)
+		p.close(span)
+	}
+	// A stream times its tool calls: each runs from when the stream added the
+	// call until it marked the call done, or until the response ended first.
+	// The span holds no GenAI attribute, because the conventions' tool span
+	// requires the tool's name, which no record keeps.
+	calls, _ := performance["tool_calls"].([]any)
+	for i, value := range calls {
+		call, _ := value.(map[string]any)
+		if call["start_ms"] == nil {
+			continue
+		}
+		id := sha256.Sum256([]byte(requestID + "/tool_call/" + strconv.Itoa(i)))
+		began := start.Add(milliseconds(call["start_ms"]))
+		done := end
+		if call["latency_ms"] != nil {
+			done = began.Add(milliseconds(call["latency_ms"]))
+		}
+		span := p.open(2)
+		p.bytes(1, traceID)
+		p.bytes(2, id[:8])
+		p.bytes(4, rootID)
+		p.string(5, spanName("tool_call", text(call["type"])))
+		p.varint(6, spanKindInternal)
+		p.fixed64(7, uint64(began.UnixNano()))
+		p.fixed64(8, uint64(max(done.UnixNano(), began.UnixNano())))
+		p.flatten(9, "stogas.tool_call", call)
 		p.close(span)
 	}
 	p.string(3, traceSchemaURL)

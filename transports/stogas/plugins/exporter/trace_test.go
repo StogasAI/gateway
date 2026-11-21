@@ -285,6 +285,37 @@ func TestTraceExportDescribesTheRequestAndItsAttempts(t *testing.T) {
 	}
 }
 
+func TestTraceExportTimesEachStreamedToolCall(t *testing.T) {
+	event := traceEvent()
+	event.Performance.ToolCalls = []billing.ToolCall{
+		{Type: "web_search_call", StartMS: pointer(uint32(300)), LatencyMS: pointer(uint32(450))},
+		{Type: "function_call", StartMS: pointer(uint32(800)), CallIDHash: "0123456789abcdef"},
+		// A whole response times no call.
+		{Type: "function_call", CallIDHash: "fedcba9876543210"},
+	}
+	trace := encodeTrace(t, event, "{}", Trace{Model: "gpt-5.6-sol"}, nil)
+	if len(trace.spans) != 5 {
+		t.Fatalf("got %d spans", len(trace.spans))
+	}
+	root, search, unfinished := trace.spans[0], trace.spans[3], trace.spans[4]
+	start := time.Date(2026, 11, 20, 10, 0, 0, 250e6, time.UTC)
+	if search.traceID != root.traceID || search.parentID != root.spanID || search.name != "tool_call web_search_call" || search.kind != 1 || search.statusCode != 0 ||
+		!search.start.Equal(start.Add(300*time.Millisecond)) || !search.end.Equal(start.Add(750*time.Millisecond)) ||
+		!reflect.DeepEqual(search.attributes, map[string]any{"stogas.tool_call.type": "web_search_call", "stogas.tool_call.start_ms": int64(300), "stogas.tool_call.latency_ms": int64(450)}) {
+		t.Fatalf("unexpected hosted call: %+v", search)
+	}
+	// A call that the response ended before runs to the end of the request.
+	if unfinished.parentID != root.spanID || unfinished.name != "tool_call function_call" || unfinished.spanID == search.spanID ||
+		!unfinished.start.Equal(start.Add(800*time.Millisecond)) || !unfinished.end.Equal(root.end) ||
+		unfinished.attributes["stogas.tool_call.call_id_hash"] != "0123456789abcdef" {
+		t.Fatalf("unexpected unfinished call: %+v", unfinished)
+	}
+	// The request span still lists every call, timed or not.
+	if listed, _ := root.attributes["stogas.performance.tool_calls"].(string); strings.Count(listed, `"type"`) != 3 {
+		t.Fatalf("request span lists %q", listed)
+	}
+}
+
 func TestTraceExportNamesItsOwnTraceWithoutACallers(t *testing.T) {
 	event := traceEvent()
 	event.TraceID = ""
