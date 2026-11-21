@@ -215,9 +215,9 @@ func policyEvaluationError(err error, config *policy.Config, pair *PlannedPair, 
 	for _, selection := range selections {
 		deployments[selection.deployment.ID], models[selection.deployment.ModelID] = true, true
 	}
-	public.Message = fmt.Sprintf("The %s policy exceeded its expression work limit on the %d deployments that this request reaches. Reduce the cost of its conditions, filters and sort expressions.", scope, len(deployments))
+	public.Message = fmt.Sprintf("The %s policy exceeded its expression work limit on the %d deployments that can serve this request. Reduce the cost of its conditions, filters and sort expressions.", scope, len(deployments))
 	if len(models) > 1 {
-		public.Message = fmt.Sprintf("The %s policy exceeded its expression work limit on the %d deployments of the %d models that this request reaches. Request one of the models, or reduce the cost of the policy's conditions, filters and sort expressions.", scope, len(deployments), len(models))
+		public.Message = fmt.Sprintf("The %s policy exceeded its expression work limit on the %d deployments of the %d models that can serve this request. Request one of the models, or reduce the cost of the policy's conditions, filters and sort expressions.", scope, len(deployments), len(models))
 	}
 	return &WorkLimitError{APIError: public, Origin: origin, Pair: pair}
 }

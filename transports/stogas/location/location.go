@@ -24,29 +24,14 @@ const (
 
 var form = regexp.MustCompile(`^([A-Z]{2}(-[A-Z0-9]{1,3})?|[a-z][a-z0-9]*(-[a-z0-9]+)*)$`)
 
+// countryForm is the form of a country's ID, an ISO 3166-1 alpha-2 code.
+var countryForm = regexp.MustCompile(`^[A-Z]{2}$`)
+
 // Form reports whether value has the form of a location: an ISO 3166 code such as 'DE' or
 // 'US-CA', or a lowercase name such as 'eu', 'north-america', 'unknown' or 'none'. Only a
 // catalog says which places there are.
 func Form(value string) bool {
 	return form.MatchString(value)
-}
-
-// countryCodes are the ISO 3166-1 alpha-2 codes, with XK, which IP address data uses for Kosovo.
-var countryCodes = strings.Fields(`
-	AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS
-	BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE
-	EG EH ER ES ET FI FJ FK FM FO FR GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM
-	HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ LA LB LC
-	LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ NA
-	NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW
-	SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO
-	TR TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS XK YE YT ZA ZM ZW`)
-
-// CountryCode reports whether code is one of the countryCodes, whether or not a catalog lists it
-// as a place: a company's headquarters and a client's country can be any country.
-func CountryCode(code string) bool {
-	_, ok := slices.BinarySearch(countryCodes, code)
-	return ok
 }
 
 // Places are a catalog's places.
@@ -162,6 +147,12 @@ func Decode(data []byte) (*Places, error) {
 func (p *Places) Place(value string) bool {
 	_, ok := p.within[value]
 	return ok
+}
+
+// Country reports whether value is one of the places and a country, which a company has its
+// headquarters in.
+func (p *Places) Country(value string) bool {
+	return countryForm.MatchString(value) && p.Place(value)
 }
 
 // Fold gives the place whose ID differs from value only in case, such as 'eu' for 'EU'.

@@ -1840,9 +1840,13 @@ func TestSnapshotValidationChecksTheCompanies(t *testing.T) {
 		{"an author whose headquarters differ from its company's", func(whole, _ map[string]any) {
 			whole["companies"].(map[string]any)["openai"].(map[string]any)["headquarteredCountry"] = "CA"
 		}, `names company "openai", which the catalog does not list with its headquarters`},
-		{"a company headquartered in what is not a country code", func(whole, _ map[string]any) {
+		{"a company headquartered in a place that is no country", func(whole, _ map[string]any) {
 			whole["companies"].(map[string]any)["openai"].(map[string]any)["headquarteredCountry"] = "world"
-		}, "company openai is invalid or headquartered"},
+		}, `company openai is invalid or headquartered in "world", which is not a country of the catalog`},
+		// Every use of a country names one of the catalog's places.
+		{"a company headquartered in a country that the catalog does not list", func(whole, _ map[string]any) {
+			delete(whole["locations"].(map[string]any), "FR")
+		}, `company mistral-ai is invalid or headquartered in "FR", which is not a country of the catalog`},
 		{"a company named unknown", func(whole, _ map[string]any) {
 			whole["companies"].(map[string]any)["unknown"] = map[string]any{"name": "Unknown", "headquarteredCountry": "US"}
 		}, "company unknown is invalid or headquartered"},
@@ -1881,27 +1885,6 @@ func TestSnapshotValidationChecksTheCompanies(t *testing.T) {
 				t.Fatalf("catalog was accepted or failed for another reason: %v", err)
 			}
 		})
-	}
-}
-
-// A headquarters is a fact about a company, so it can be a country where no data can be and that
-// the catalog therefore does not list as a place.
-func TestSnapshotTakesHeadquartersThatAreNoPlace(t *testing.T) {
-	var whole map[string]any
-	if err := json.Unmarshal(testCatalogJSON, &whole); err != nil {
-		t.Fatal(err)
-	}
-	delete(whole["locations"].(map[string]any), "FR")
-	data, err := json.Marshal(whole)
-	if err != nil {
-		t.Fatal(err)
-	}
-	loaded, err := snapshotFromCatalogBytes(data)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := loaded.graph.Authors["mistral-ai"].HeadquarteredCountry; got != "FR" {
-		t.Fatalf("mistral-ai is headquartered in %q", got)
 	}
 }
 

@@ -154,9 +154,11 @@ func TestForm(t *testing.T) {
 			t.Errorf("Form(%q) = %v", value, !want)
 		}
 	}
-	for value, want := range map[string]bool{"US": true, "XK": true, "ZZ": false, "US-CA": false, "us": false, "U": false, "": false} {
-		if CountryCode(value) != want {
-			t.Errorf("CountryCode(%q) = %v", value, !want)
+	// A country is a place of the catalog with a country's ID.
+	places := testPlaces(t)
+	for value, want := range map[string]bool{"US": true, "DE": true, "ZZ": false, "US-CA": false, "eu": false, "world": false, "": false} {
+		if places.Country(value) != want {
+			t.Errorf("Country(%q) = %v", value, !want)
 		}
 	}
 }

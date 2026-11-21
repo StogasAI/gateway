@@ -6,8 +6,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-
-	"github.com/maximhq/bifrost/transports/stogas/location"
 )
 
 func TestRegionsHoldCountriesThatPoliciesTake(t *testing.T) {
@@ -15,11 +13,11 @@ func TestRegionsHoldCountriesThatPoliciesTake(t *testing.T) {
 		t.Fatal("no regions")
 	}
 	for region, countries := range regionCountries {
-		if location.CountryCode(region) || len(countries) == 0 || !slices.IsSorted(countries) || len(slices.Compact(slices.Clone(countries))) != len(countries) {
+		if countryCode(region) || len(countries) == 0 || !slices.IsSorted(countries) || len(slices.Compact(slices.Clone(countries))) != len(countries) {
 			t.Errorf("%s: %q", region, countries)
 		}
 		for _, country := range countries {
-			if !location.CountryCode(country) {
+			if !countryCode(country) {
 				t.Errorf("%s holds %s, which access.countries does not take", region, country)
 			}
 		}
@@ -29,12 +27,21 @@ func TestRegionsHoldCountriesThatPoliciesTake(t *testing.T) {
 func TestCountriesTakeRegions(t *testing.T) {
 	for raw, message := range map[string]string{
 		`{"access":{"countries":{"deny":["EU"]}}}`:                     `has "EU", which is not an ISO 3166-1 alpha-2 country code or a region such as eu`,
-		`{"access":{"countries":{"deny":["world"]}}}`:                  "a region such as eu",
+		`{"access":{"countries":{"deny":["US-CA"]}}}`:                  "a region such as eu",
 		`{"access":{"countries":{"allow":["eu","eu"]}}}`:               "access.countries.allow lists eu twice",
 		`{"access":{"countries":{"allow":["AT","FR"],"deny":["eu"]}}}`: "access.countries.deny holds every country that allow lists",
 	} {
 		if _, err := CompileSource([]byte(raw)); err == nil || !strings.Contains(err.Error(), message) {
 			t.Errorf("%s: %v, want %q", raw, err, message)
+		}
+	}
+	// world holds every country that the catalog lists, so an allow list of it refuses only a
+	// client that no country holds.
+	everywhere := ruleSource(t, `{"access":{"countries":{"allow":["world"]}}}`).Config
+	for country, admitted := range map[string]bool{"AQ": true, "CN": true, "XK": true, "": false} {
+		client := Client{Address: netip.MustParseAddr("203.0.113.5"), Country: country}
+		if got := everywhere.ClientRefusal(client); (got == Admitted) != admitted {
+			t.Errorf("world, %q: %v", country, got)
 		}
 	}
 	// A region may hold another entry of its list.

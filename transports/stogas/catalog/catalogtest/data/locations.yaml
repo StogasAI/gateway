@@ -1,17 +1,20 @@
 # The places that data handling names. A continent, region or union lists every country that it
-# covers by its ISO 3166-1 code, and what holds each place follows from those lists: a country lies
-# in each smallest region that lists it, a region in each smallest region that lists all of its
-# countries and more, and a subdivision such as US-CA in the country of its code. A place that no
-# region holds lies in world.
+# covers by its ISO 3166-1 code, or XK for Kosovo, and what holds each place follows from those
+# lists: a country lies in each smallest region that lists it, a region in each smallest region that
+# lists all of its countries and more, and a subdivision such as US-CA in the country of its code. A
+# place that no region holds lies in world.
 #
-# The catalog lists a place only when a record names it or a place inside it: a data handling
-# location, a headquartered country or a provider's account location. The build names any other
-# place to remove, so the places that policies and the catalog offer are places that data can be in.
-# A region still lists each of its countries, listed or not, so that readers know what it covers.
+# The catalog lists every country, because a company has its headquarters in one, an account's
+# resources lie in one and an access policy names the countries that requests may come from. A
+# country that no continent lists, Antarctica, lies in world. Country names are the English names
+# of Unicode CLDR 48. A subdivision is listed only while a record names it as a data handling
+# location or a provider's account location, and the build names any other to remove.
 #
 # The continents and the regions within them follow the territory containment of Unicode CLDR 48,
-# from UN M.49, except that europe holds every eu member, Cyprus included. No standard defines
-# apac: it is CLDR Asia and Oceania without the Arab states, Israel, Iran, Cyprus and HM, plus IO.
+# from UN M.49, except that europe holds every eu member, Cyprus included. They leave out the codes
+# that ISO 3166-1 does not assign, such as EA for Ceuta and Melilla, but keep XK, which IP address
+# data uses for Kosovo. No standard defines apac: it is CLDR Asia and Oceania without the Arab
+# states, Israel, Iran, Cyprus and HM, plus IO.
 # CLDR data is under the Unicode License v3 (https://www.unicode.org/license.txt):
 # https://github.com/unicode-org/cldr-json/blob/48.0.0/cldr-json/cldr-core/supplemental/territoryContainment.json
 locations:
@@ -193,6 +196,7 @@ locations:
       - SM
       - UA
       - VA
+      - XK
   north-america:
     name: North America
     kind: continent
@@ -418,8 +422,38 @@ locations:
       - TH
       - TL
       - VN
+  AD:
+    name: Andorra
+    kind: country
   AE:
     name: United Arab Emirates
+    kind: country
+  AF:
+    name: Afghanistan
+    kind: country
+  AG:
+    name: Antigua & Barbuda
+    kind: country
+  AI:
+    name: Anguilla
+    kind: country
+  AL:
+    name: Albania
+    kind: country
+  AM:
+    name: Armenia
+    kind: country
+  AO:
+    name: Angola
+    kind: country
+  AQ:
+    name: Antarctica
+    kind: country
+  AR:
+    name: Argentina
+    kind: country
+  AS:
+    name: American Samoa
     kind: country
   AT:
     name: Austria
@@ -427,59 +461,434 @@ locations:
   AU:
     name: Australia
     kind: country
+  AW:
+    name: Aruba
+    kind: country
+  AX:
+    name: Åland Islands
+    kind: country
+  AZ:
+    name: Azerbaijan
+    kind: country
+  BA:
+    name: Bosnia & Herzegovina
+    kind: country
+  BB:
+    name: Barbados
+    kind: country
+  BD:
+    name: Bangladesh
+    kind: country
   BE:
     name: Belgium
+    kind: country
+  BF:
+    name: Burkina Faso
+    kind: country
+  BG:
+    name: Bulgaria
+    kind: country
+  BH:
+    name: Bahrain
+    kind: country
+  BI:
+    name: Burundi
+    kind: country
+  BJ:
+    name: Benin
+    kind: country
+  BL:
+    name: St. Barthélemy
+    kind: country
+  BM:
+    name: Bermuda
+    kind: country
+  BN:
+    name: Brunei
+    kind: country
+  BO:
+    name: Bolivia
+    kind: country
+  BQ:
+    name: Caribbean Netherlands
     kind: country
   BR:
     name: Brazil
     kind: country
+  BS:
+    name: Bahamas
+    kind: country
+  BT:
+    name: Bhutan
+    kind: country
+  BV:
+    name: Bouvet Island
+    kind: country
+  BW:
+    name: Botswana
+    kind: country
+  BY:
+    name: Belarus
+    kind: country
+  BZ:
+    name: Belize
+    kind: country
   CA:
     name: Canada
+    kind: country
+  CC:
+    name: Cocos (Keeling) Islands
+    kind: country
+  CD:
+    name: Congo - Kinshasa
+    kind: country
+  CF:
+    name: Central African Republic
+    kind: country
+  CG:
+    name: Congo - Brazzaville
     kind: country
   CH:
     name: Switzerland
     kind: country
+  CI:
+    name: Côte d’Ivoire
+    kind: country
+  CK:
+    name: Cook Islands
+    kind: country
   CL:
     name: Chile
+    kind: country
+  CM:
+    name: Cameroon
     kind: country
   CN:
     name: China
     kind: country
+  CO:
+    name: Colombia
+    kind: country
+  CR:
+    name: Costa Rica
+    kind: country
+  CU:
+    name: Cuba
+    kind: country
+  CV:
+    name: Cape Verde
+    kind: country
+  CW:
+    name: Curaçao
+    kind: country
+  CX:
+    name: Christmas Island
+    kind: country
+  CY:
+    name: Cyprus
+    kind: country
+  CZ:
+    name: Czechia
+    kind: country
   DE:
     name: Germany
+    kind: country
+  DJ:
+    name: Djibouti
     kind: country
   DK:
     name: Denmark
     kind: country
+  DM:
+    name: Dominica
+    kind: country
+  DO:
+    name: Dominican Republic
+    kind: country
+  DZ:
+    name: Algeria
+    kind: country
+  EC:
+    name: Ecuador
+    kind: country
+  EE:
+    name: Estonia
+    kind: country
+  EG:
+    name: Egypt
+    kind: country
+  EH:
+    name: Western Sahara
+    kind: country
+  ER:
+    name: Eritrea
+    kind: country
   ES:
     name: Spain
+    kind: country
+  ET:
+    name: Ethiopia
     kind: country
   FI:
     name: Finland
     kind: country
+  FJ:
+    name: Fiji
+    kind: country
+  FK:
+    name: Falkland Islands
+    kind: country
+  FM:
+    name: Micronesia
+    kind: country
+  FO:
+    name: Faroe Islands
+    kind: country
   FR:
     name: France
+    kind: country
+  GA:
+    name: Gabon
     kind: country
   GB:
     name: United Kingdom
     kind: country
+  GD:
+    name: Grenada
+    kind: country
+  GE:
+    name: Georgia
+    kind: country
+  GF:
+    name: French Guiana
+    kind: country
+  GG:
+    name: Guernsey
+    kind: country
+  GH:
+    name: Ghana
+    kind: country
+  GI:
+    name: Gibraltar
+    kind: country
+  GL:
+    name: Greenland
+    kind: country
+  GM:
+    name: Gambia
+    kind: country
+  GN:
+    name: Guinea
+    kind: country
+  GP:
+    name: Guadeloupe
+    kind: country
+  GQ:
+    name: Equatorial Guinea
+    kind: country
+  GR:
+    name: Greece
+    kind: country
+  GS:
+    name: South Georgia & South Sandwich Islands
+    kind: country
+  GT:
+    name: Guatemala
+    kind: country
+  GU:
+    name: Guam
+    kind: country
+  GW:
+    name: Guinea-Bissau
+    kind: country
+  GY:
+    name: Guyana
+    kind: country
+  HK:
+    name: Hong Kong SAR China
+    kind: country
+  HM:
+    name: Heard & McDonald Islands
+    kind: country
+  HN:
+    name: Honduras
+    kind: country
+  HR:
+    name: Croatia
+    kind: country
+  HT:
+    name: Haiti
+    kind: country
+  HU:
+    name: Hungary
+    kind: country
   ID:
     name: Indonesia
+    kind: country
+  IE:
+    name: Ireland
     kind: country
   IL:
     name: Israel
     kind: country
+  IM:
+    name: Isle of Man
+    kind: country
   IN:
     name: India
+    kind: country
+  IO:
+    name: British Indian Ocean Territory
+    kind: country
+  IQ:
+    name: Iraq
+    kind: country
+  IR:
+    name: Iran
+    kind: country
+  IS:
+    name: Iceland
     kind: country
   IT:
     name: Italy
     kind: country
+  JE:
+    name: Jersey
+    kind: country
+  JM:
+    name: Jamaica
+    kind: country
+  JO:
+    name: Jordan
+    kind: country
   JP:
     name: Japan
     kind: country
+  KE:
+    name: Kenya
+    kind: country
+  KG:
+    name: Kyrgyzstan
+    kind: country
+  KH:
+    name: Cambodia
+    kind: country
+  KI:
+    name: Kiribati
+    kind: country
+  KM:
+    name: Comoros
+    kind: country
+  KN:
+    name: St. Kitts & Nevis
+    kind: country
+  KP:
+    name: North Korea
+    kind: country
   KR:
     name: South Korea
+    kind: country
+  KW:
+    name: Kuwait
+    kind: country
+  KY:
+    name: Cayman Islands
+    kind: country
+  KZ:
+    name: Kazakhstan
+    kind: country
+  LA:
+    name: Laos
+    kind: country
+  LB:
+    name: Lebanon
+    kind: country
+  LC:
+    name: St. Lucia
+    kind: country
+  LI:
+    name: Liechtenstein
+    kind: country
+  LK:
+    name: Sri Lanka
+    kind: country
+  LR:
+    name: Liberia
+    kind: country
+  LS:
+    name: Lesotho
+    kind: country
+  LT:
+    name: Lithuania
+    kind: country
+  LU:
+    name: Luxembourg
+    kind: country
+  LV:
+    name: Latvia
+    kind: country
+  LY:
+    name: Libya
+    kind: country
+  MA:
+    name: Morocco
+    kind: country
+  MC:
+    name: Monaco
+    kind: country
+  MD:
+    name: Moldova
+    kind: country
+  ME:
+    name: Montenegro
+    kind: country
+  MF:
+    name: St. Martin
+    kind: country
+  MG:
+    name: Madagascar
+    kind: country
+  MH:
+    name: Marshall Islands
+    kind: country
+  MK:
+    name: North Macedonia
+    kind: country
+  ML:
+    name: Mali
+    kind: country
+  MM:
+    name: Myanmar (Burma)
+    kind: country
+  MN:
+    name: Mongolia
+    kind: country
+  MO:
+    name: Macao SAR China
+    kind: country
+  MP:
+    name: Northern Mariana Islands
+    kind: country
+  MQ:
+    name: Martinique
+    kind: country
+  MR:
+    name: Mauritania
+    kind: country
+  MS:
+    name: Montserrat
+    kind: country
+  MT:
+    name: Malta
+    kind: country
+  MU:
+    name: Mauritius
+    kind: country
+  MV:
+    name: Maldives
+    kind: country
+  MW:
+    name: Malawi
     kind: country
   MX:
     name: Mexico
@@ -487,20 +896,119 @@ locations:
   MY:
     name: Malaysia
     kind: country
+  MZ:
+    name: Mozambique
+    kind: country
+  NA:
+    name: Namibia
+    kind: country
+  NC:
+    name: New Caledonia
+    kind: country
+  NE:
+    name: Niger
+    kind: country
+  NF:
+    name: Norfolk Island
+    kind: country
+  NG:
+    name: Nigeria
+    kind: country
+  NI:
+    name: Nicaragua
+    kind: country
+  NL:
+    name: Netherlands
+    kind: country
   NO:
     name: Norway
+    kind: country
+  NP:
+    name: Nepal
+    kind: country
+  NR:
+    name: Nauru
+    kind: country
+  NU:
+    name: Niue
     kind: country
   NZ:
     name: New Zealand
     kind: country
+  OM:
+    name: Oman
+    kind: country
+  PA:
+    name: Panama
+    kind: country
+  PE:
+    name: Peru
+    kind: country
+  PF:
+    name: French Polynesia
+    kind: country
+  PG:
+    name: Papua New Guinea
+    kind: country
+  PH:
+    name: Philippines
+    kind: country
+  PK:
+    name: Pakistan
+    kind: country
   PL:
     name: Poland
+    kind: country
+  PM:
+    name: St. Pierre & Miquelon
+    kind: country
+  PN:
+    name: Pitcairn Islands
+    kind: country
+  PR:
+    name: Puerto Rico
+    kind: country
+  PS:
+    name: Palestinian Territories
+    kind: country
+  PT:
+    name: Portugal
+    kind: country
+  PW:
+    name: Palau
+    kind: country
+  PY:
+    name: Paraguay
     kind: country
   QA:
     name: Qatar
     kind: country
+  RE:
+    name: Réunion
+    kind: country
+  RO:
+    name: Romania
+    kind: country
+  RS:
+    name: Serbia
+    kind: country
+  RU:
+    name: Russia
+    kind: country
+  RW:
+    name: Rwanda
+    kind: country
   SA:
     name: Saudi Arabia
+    kind: country
+  SB:
+    name: Solomon Islands
+    kind: country
+  SC:
+    name: Seychelles
+    kind: country
+  SD:
+    name: Sudan
     kind: country
   SE:
     name: Sweden
@@ -508,12 +1016,159 @@ locations:
   SG:
     name: Singapore
     kind: country
+  SH:
+    name: St. Helena
+    kind: country
+  SI:
+    name: Slovenia
+    kind: country
+  SJ:
+    name: Svalbard & Jan Mayen
+    kind: country
+  SK:
+    name: Slovakia
+    kind: country
+  SL:
+    name: Sierra Leone
+    kind: country
+  SM:
+    name: San Marino
+    kind: country
+  SN:
+    name: Senegal
+    kind: country
+  SO:
+    name: Somalia
+    kind: country
+  SR:
+    name: Suriname
+    kind: country
+  SS:
+    name: South Sudan
+    kind: country
+  ST:
+    name: São Tomé & Príncipe
+    kind: country
+  SV:
+    name: El Salvador
+    kind: country
+  SX:
+    name: Sint Maarten
+    kind: country
+  SY:
+    name: Syria
+    kind: country
+  SZ:
+    name: Eswatini
+    kind: country
+  TC:
+    name: Turks & Caicos Islands
+    kind: country
+  TD:
+    name: Chad
+    kind: country
+  TF:
+    name: French Southern Territories
+    kind: country
+  TG:
+    name: Togo
+    kind: country
+  TH:
+    name: Thailand
+    kind: country
+  TJ:
+    name: Tajikistan
+    kind: country
+  TK:
+    name: Tokelau
+    kind: country
+  TL:
+    name: Timor-Leste
+    kind: country
+  TM:
+    name: Turkmenistan
+    kind: country
+  TN:
+    name: Tunisia
+    kind: country
+  TO:
+    name: Tonga
+    kind: country
+  TR:
+    name: Türkiye
+    kind: country
+  TT:
+    name: Trinidad & Tobago
+    kind: country
+  TV:
+    name: Tuvalu
+    kind: country
   TW:
     name: Taiwan
+    kind: country
+  TZ:
+    name: Tanzania
+    kind: country
+  UA:
+    name: Ukraine
+    kind: country
+  UG:
+    name: Uganda
+    kind: country
+  UM:
+    name: U.S. Outlying Islands
     kind: country
   US:
     name: United States
     kind: country
+  UY:
+    name: Uruguay
+    kind: country
+  UZ:
+    name: Uzbekistan
+    kind: country
+  VA:
+    name: Vatican City
+    kind: country
+  VC:
+    name: St. Vincent & Grenadines
+    kind: country
+  VE:
+    name: Venezuela
+    kind: country
+  VG:
+    name: British Virgin Islands
+    kind: country
+  VI:
+    name: U.S. Virgin Islands
+    kind: country
+  VN:
+    name: Vietnam
+    kind: country
+  VU:
+    name: Vanuatu
+    kind: country
+  WF:
+    name: Wallis & Futuna
+    kind: country
+  WS:
+    name: Samoa
+    kind: country
+  XK:
+    name: Kosovo
+    kind: country
+  YE:
+    name: Yemen
+    kind: country
+  YT:
+    name: Mayotte
+    kind: country
   ZA:
     name: South Africa
+    kind: country
+  ZM:
+    name: Zambia
+    kind: country
+  ZW:
+    name: Zimbabwe
     kind: country

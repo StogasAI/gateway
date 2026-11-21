@@ -686,10 +686,10 @@ func TestWorkLimitRefusalNamesTheDeploymentsThatTheRequestReaches(t *testing.T) 
 		}
 		return PublicError(err).Message
 	}
-	if got, want := refusal(1), "The organization policy exceeded its expression work limit on the 10000 deployments that this request reaches. Reduce the cost of its conditions, filters and sort expressions."; got != want {
+	if got, want := refusal(1), "The organization policy exceeded its expression work limit on the 10000 deployments that can serve this request. Reduce the cost of its conditions, filters and sort expressions."; got != want {
 		t.Fatalf("model refusal = %q", got)
 	}
-	if got, want := refusal(4), "The organization policy exceeded its expression work limit on the 10000 deployments of the 4 models that this request reaches. Request one of the models, or reduce the cost of the policy's conditions, filters and sort expressions."; got != want {
+	if got, want := refusal(4), "The organization policy exceeded its expression work limit on the 10000 deployments of the 4 models that can serve this request. Request one of the models, or reduce the cost of the policy's conditions, filters and sort expressions."; got != want {
 		t.Fatalf("group refusal = %q", got)
 	}
 }

@@ -647,8 +647,8 @@ func snapshotFromCompiled(catalog compiledCatalog) (*snapshot, error) {
 		return nil, err
 	}
 	for id, company := range catalog.Companies {
-		if country := company.HeadquarteredCountry; id == HostingUnknown || !location.CountryCode(country) {
-			return nil, fmt.Errorf("company %s is invalid or headquartered in %q, which is not a country code", id, country)
+		if country := company.HeadquarteredCountry; id == HostingUnknown || !places.Country(country) {
+			return nil, fmt.Errorf("company %s is invalid or headquartered in %q, which is not a country of the catalog", id, country)
 		}
 	}
 	base, err := stateFromGraph(catalog.Graph, places, catalog.Companies)
@@ -1312,8 +1312,8 @@ func validateCompanies(graph compiledGraph, companies map[string]company) error 
 
 // validateLocations checks that a graph names only the catalog's places: each deployment's data
 // handling, and each of its hosted tools', names one of them or unknown, or none for the
-// deployment's storage. A headquarters can be any country, which validateCompanies holds to the
-// company's.
+// deployment's storage. A headquarters is a country of the catalog, which snapshotFromCompiled
+// checks for each company and validateCompanies holds to the company's.
 func validateLocations(graph compiledGraph, places *location.Places) error {
 	for deploymentID, deployment := range graph.Deployments {
 		for routeID, route := range deployment.Routes {
