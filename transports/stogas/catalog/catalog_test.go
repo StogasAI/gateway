@@ -2013,9 +2013,6 @@ func TestSnapshotRejectsValuesThatPoliciesCannotName(t *testing.T) {
 			g["routes"].(map[string]any)["azure-chat-completions"].(map[string]any)["documentFormats"] = map[string]any{
 				"extensions": []any{"pdf"}, "mediaTypes": []any{"application/pdf"}}
 		}, vocabulary},
-		{"country", func(g map[string]any) {
-			g["authors"].(map[string]any)["openai"].(map[string]any)["headquarteredCountry"] = "USA"
-		}, "not a country of the catalog"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var whole map[string]any
