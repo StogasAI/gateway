@@ -178,7 +178,7 @@ func NewRequestEvent(input EventInput) (RequestEvent, error) {
 		Performance: RequestPerformance{
 			TotalMS:         totalTimeMS,
 			RateLimitWaitMS: requestRateLimitWait(input.RateLimitWait, providerAttempts, totalTimeMS),
-			FirstOutputMS:   requestFirstOutput(input, startedAt, providerAttempts),
+			FirstOutputMS:   requestFirstOutput(input, stream, startedAt, providerAttempts),
 			TTFTMS:          ttftMS,
 			ToolCalls:       requestToolCalls(input.ToolCalls, startedAt, totalTimeMS),
 			AnsweredCalls:   requestAnsweredCalls(input.AnsweredCallIDs),
@@ -213,9 +213,10 @@ func encryptionKeyIDs(ids []string) []string {
 }
 
 // requestFirstOutput places the provider's first output on the request clock, within the provider
-// calls.
-func requestFirstOutput(input EventInput, startedAt time.Time, attempts []ProviderAttempt) *uint32 {
-	if input.FirstOutputAt.IsZero() || len(attempts) == 0 || input.FirstOutputAt.Before(input.ProviderAttempts[0].StartedAt) {
+// calls. A response that is not streamed arrives whole, when its last call ends, so only a stream
+// records it.
+func requestFirstOutput(input EventInput, stream bool, startedAt time.Time, attempts []ProviderAttempt) *uint32 {
+	if !stream || input.FirstOutputAt.IsZero() || len(attempts) == 0 || input.FirstOutputAt.Before(input.ProviderAttempts[0].StartedAt) {
 		return nil
 	}
 	last := attempts[len(attempts)-1]

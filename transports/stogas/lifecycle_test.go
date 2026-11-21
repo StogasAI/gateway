@@ -2372,6 +2372,8 @@ func TestChatOutputObservationRequiresUsablePayload(t *testing.T) {
 		{name: "tool name", response: streamResponse(&schemas.ChatStreamResponseChoiceDelta{ToolCalls: []schemas.ChatAssistantMessageToolCall{{Function: schemas.ChatAssistantMessageToolCallFunction{Name: &toolName}}}}), wantOutput: true, wantToken: true},
 		{name: "tool arguments", response: streamResponse(&schemas.ChatStreamResponseChoiceDelta{ToolCalls: []schemas.ChatAssistantMessageToolCall{{Function: schemas.ChatAssistantMessageToolCallFunction{Arguments: arguments}}}}), wantOutput: true, wantToken: true},
 		{name: "citation", response: streamResponse(&schemas.ChatStreamResponseChoiceDelta{Annotations: []schemas.ChatAssistantMessageAnnotation{{URLCitation: schemas.ChatAssistantMessageAnnotationCitation{URL: &annotationURL}}}}), wantOutput: true},
+		{name: "empty image", response: streamResponse(&schemas.ChatStreamResponseChoiceDelta{Images: []schemas.ChatAssistantMessageImage{{Type: "image_url"}}})},
+		{name: "image", response: streamResponse(&schemas.ChatStreamResponseChoiceDelta{Images: []schemas.ChatAssistantMessageImage{{Type: "image_url", ImageURL: schemas.ChatInputImage{URL: "data:image/png;base64,iVBORw0KGgo="}}}}), wantOutput: true, wantToken: true},
 		{
 			name: "complete response choice",
 			response: &schemas.BifrostChatResponse{Choices: []schemas.BifrostResponseChoice{{
@@ -2558,6 +2560,15 @@ func TestResponsesOutputObservationRequiresUsablePayload(t *testing.T) {
 			wantToken:  true,
 		},
 		{
+			name: "partial image",
+			response: &schemas.BifrostResponsesStreamResponse{
+				Type:            schemas.ResponsesStreamResponseTypeImageGenerationCallPartialImage,
+				PartialImageB64: schemas.Ptr("base64-image"),
+			},
+			wantOutput: true,
+			wantToken:  true,
+		},
+		{
 			name: "completed image",
 			response: &schemas.BifrostResponsesStreamResponse{
 				Type: schemas.ResponsesStreamResponseTypeOutputItemDone,
@@ -2566,6 +2577,7 @@ func TestResponsesOutputObservationRequiresUsablePayload(t *testing.T) {
 				}},
 			},
 			wantOutput: true,
+			wantToken:  true,
 		},
 		{
 			name: "search results",

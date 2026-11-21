@@ -552,6 +552,7 @@ func chatResponseHasToken(response *schemas.BifrostChatResponse) bool {
 				nonEmptyString(delta.Refusal) ||
 				nonEmptyString(delta.Reasoning) ||
 				chatAudioHasOutput(delta.Audio) ||
+				chatImagesHaveOutput(delta.Images) ||
 				chatReasoningDetailsHaveToken(delta.ReasoningDetails) ||
 				chatToolCallsHaveToken(delta.ToolCalls) {
 				return true
@@ -576,6 +577,7 @@ func chatResponseHasOutput(response *schemas.BifrostChatResponse) bool {
 				nonEmptyString(delta.Refusal) ||
 				nonEmptyString(delta.Reasoning) ||
 				chatAudioHasOutput(delta.Audio) ||
+				chatImagesHaveOutput(delta.Images) ||
 				chatReasoningDetailsHaveOutput(delta.ReasoningDetails) ||
 				chatToolCallsHaveOutput(delta.ToolCalls) ||
 				chatAnnotationsHaveOutput(delta.Annotations) {
@@ -630,6 +632,7 @@ func chatMessageHasOutput(message *schemas.ChatMessage) bool {
 	return assistant != nil && (nonEmptyString(assistant.Refusal) ||
 		nonEmptyString(assistant.Reasoning) ||
 		chatAudioHasOutput(assistant.Audio) ||
+		chatImagesHaveOutput(assistant.Images) ||
 		chatReasoningDetailsHaveOutput(assistant.ReasoningDetails) ||
 		chatReasoningDetailsHaveSignature(assistant.ReasoningDetails) ||
 		chatToolCallsHaveOutput(assistant.ToolCalls) ||
@@ -655,12 +658,24 @@ func chatMessageHasToken(message *schemas.ChatMessage) bool {
 	return assistant != nil && (nonEmptyString(assistant.Refusal) ||
 		nonEmptyString(assistant.Reasoning) ||
 		chatAudioHasOutput(assistant.Audio) ||
+		chatImagesHaveOutput(assistant.Images) ||
 		chatReasoningDetailsHaveToken(assistant.ReasoningDetails) ||
 		chatToolCallsHaveToken(assistant.ToolCalls))
 }
 
 func chatAudioHasOutput(audio *schemas.ChatAudioMessageAudio) bool {
 	return audio != nil && (audio.Data != "" || audio.Transcript != "")
+}
+
+// A generated image is output that the client shows, as text or audio is, so its first chunk
+// counts toward TTFT.
+func chatImagesHaveOutput(images []schemas.ChatAssistantMessageImage) bool {
+	for _, image := range images {
+		if image.ImageURL.URL != "" || nonEmptyString(image.ImageURL.FileID) {
+			return true
+		}
+	}
+	return false
 }
 
 func chatReasoningDetailsHaveOutput(details []schemas.ChatReasoningDetails) bool {
@@ -803,6 +818,8 @@ func responsesEventHasToken(response *schemas.BifrostResponsesStreamResponse) bo
 		return nonEmptyString(response.Command)
 	case schemas.ResponsesStreamResponseTypeApplyPatchCallOperationDiffDone:
 		return nonEmptyString(response.Diff)
+	case schemas.ResponsesStreamResponseTypeImageGenerationCallPartialImage:
+		return nonEmptyString(response.PartialImageB64)
 	case schemas.ResponsesStreamResponseTypeContentPartAdded,
 		schemas.ResponsesStreamResponseTypeContentPartDone,
 		schemas.ResponsesStreamResponseTypeReasoningSummaryPartAdded,
@@ -940,7 +957,8 @@ func responsesMessageHasToken(message *schemas.ResponsesMessage) bool {
 	if nonEmptyString(tool.Name) || nonEmptyString(tool.Arguments) || responsesToolActionHasToken(tool.Action) {
 		return true
 	}
-	return tool.ResponsesCustomToolCall != nil && tool.ResponsesCustomToolCall.Input != "" ||
+	return tool.ResponsesImageGenerationCall != nil && tool.ResponsesImageGenerationCall.Result != "" ||
+		tool.ResponsesCustomToolCall != nil && tool.ResponsesCustomToolCall.Input != "" ||
 		responsesPatchHasText(tool.ResponsesApplyPatchCall) ||
 		tool.ResponsesFileSearchToolCall != nil && len(tool.ResponsesFileSearchToolCall.Queries) > 0
 }
