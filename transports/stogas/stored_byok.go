@@ -8,10 +8,10 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
 
-// Outcomes of a stored credential's use with its provider. Accepted may carry a problem that leaves
-// the credential usable, such as an Azure application without a data role. Rejected means that the
-// provider or the secret refused the credential, which trying again does not change, and
-// unavailable that the check could not tell.
+// Outcomes of a secret's use with its provider before Control stores it. Accepted may carry a
+// problem that leaves the credential usable, such as an Azure application without a data role.
+// Rejected means that the provider or the secret refused the credential, which trying again does
+// not change, and unavailable that the probe could not tell.
 const (
 	storedByokAccepted    = "accepted"
 	storedByokRejected    = "rejected"
@@ -24,9 +24,9 @@ const (
 // account's resource ID may hold.
 var azureSubscriptionIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
-// StoredByokCheck is how a use of a stored credential ended. Message is nil when nothing is wrong.
-// AccountName is the name of the Azure account that a probe read, which the credential shows.
-type StoredByokCheck struct {
+// StoredByokProbe is how a probe of a secret ended. Message is nil when nothing is wrong.
+// AccountName is the name of the Azure account that the probe read, which the credential shows.
+type StoredByokProbe struct {
 	Outcome     string  `json:"outcome"`
 	Message     *string `json:"message"`
 	AccountName *string `json:"accountName,omitempty"`
@@ -69,64 +69,17 @@ type storedByokOpener interface {
 	OpenStoredByok(*billing.StoredByokGrant, string) (string, error)
 }
 
-type storedByokStore interface {
-	storedByokOpener
-	StoredByokCheckTarget(context.Context, *billing.StoredByokGrant) (*billing.ByokCheckTarget, error)
-	RecordByokCheck(context.Context, *billing.ByokCheckTarget, string, *billing.AzureDiscoveryResult) (*billing.ByokCheckRecord, error)
-}
-
-// CheckStoredByok checks the stored credential that grant names and records the result, as a
-// member's check of a customer-encrypted credential does. An Azure credential's check discovers
-// its account's targets, which the gateway saves, so Control never holds a discovery.
-func (r *Runtime) CheckStoredByok(ctx context.Context, grant *billing.StoredByokGrant) (*StoredByokCheck, error) {
-	if r == nil || r.billing == nil || r.byokChecks == nil {
-		return nil, billing.ErrGatewayUnavailable
-	}
-	return checkStoredByok(ctx, r.billing, r.byokChecks, grant)
-}
-
-func checkStoredByok(ctx context.Context, store storedByokStore, checker *byokChecker, grant *billing.StoredByokGrant) (*StoredByokCheck, error) {
-	if grant == nil || grant.Scope != billing.StoredByokCheck {
-		return nil, billing.ErrStoredByokGrant
-	}
-	target, err := store.StoredByokCheckTarget(ctx, grant)
-	if err != nil {
-		return nil, err
-	}
-	secret, err := store.OpenStoredByok(grant, target.EncryptedSecret)
-	if err != nil {
-		return nil, err
-	}
-	// The check holds the secret to the target that requests hold it to.
-	found, failure, err := checker.run(ctx, grant.OrganizationID, target.Provider, secret, target.Target, target.AzureAccountID, target.StartedAt)
-	if err != nil {
-		return nil, err
-	}
-	failure, err = storedByokFailure(grant.Provider, failure)
-	if err != nil {
-		return nil, err
-	}
-	message, discovery := failure.message, (*billing.AzureDiscoveryResult)(nil)
-	if found != nil {
-		message, discovery = azureDiscoveryOutcome(found, nil)
-	}
-	if _, err := store.RecordByokCheck(ctx, target, message, discovery); err != nil {
-		return nil, err
-	}
-	return &StoredByokCheck{Outcome: storedByokOutcome(failure), Message: optionalMessage(message)}, nil
-}
-
 // ProbeStoredByok checks a secret that Control has not saved, so that Control saves only a secret
 // that its provider accepts, and records nothing. An Azure application signs in and reads the
-// account that it would connect; the check that follows the save discovers the account's targets.
-func (r *Runtime) ProbeStoredByok(ctx context.Context, grant *billing.StoredByokGrant, request StoredByokProbeRequest) (*StoredByokCheck, error) {
+// account that it would connect, and the first check after the save discovers its targets.
+func (r *Runtime) ProbeStoredByok(ctx context.Context, grant *billing.StoredByokGrant, request StoredByokProbeRequest) (*StoredByokProbe, error) {
 	if r == nil || r.billing == nil || r.byokChecks == nil {
 		return nil, billing.ErrGatewayUnavailable
 	}
 	return probeStoredByok(ctx, r.billing, r.byokChecks, grant, request)
 }
 
-func probeStoredByok(ctx context.Context, opener storedByokOpener, checker *byokChecker, grant *billing.StoredByokGrant, request StoredByokProbeRequest) (*StoredByokCheck, error) {
+func probeStoredByok(ctx context.Context, opener storedByokOpener, checker *byokChecker, grant *billing.StoredByokGrant, request StoredByokProbeRequest) (*StoredByokProbe, error) {
 	if grant == nil || grant.Scope != billing.StoredByokProbe {
 		return nil, billing.ErrStoredByokGrant
 	}
@@ -148,7 +101,7 @@ func probeStoredByok(ctx context.Context, opener storedByokOpener, checker *byok
 	if err != nil {
 		return nil, err
 	}
-	return &StoredByokCheck{Outcome: storedByokOutcome(failure), Message: optionalMessage(failure.message), AccountName: optionalMessage(accountName)}, nil
+	return &StoredByokProbe{Outcome: storedByokOutcome(failure), Message: optionalMessage(failure.message), AccountName: optionalMessage(accountName)}, nil
 }
 
 // storedByokFailure is a check's failure as a stored credential shows it.

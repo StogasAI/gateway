@@ -27,15 +27,15 @@ import (
 )
 
 // Gateways check every credential and record the result: a member has a customer-encrypted one
-// checked, which only a gateway can open, and Control has stored ones checked on demand and on its
-// schedule, after a probe of each new secret. A check makes the cheapest read that the provider
+// checked, which only a gateway can open, and gateways claim the checks of stored ones once they are
+// due, after Control's probe of each new secret. A check makes the cheapest read that the provider
 // answers for the credential. A 2xx answer accepts it, a 4xx answer other than 408, 409, 425 and
 // 429 rejects it, and anything else leaves it unverified. An Azure credential's check signs in to
 // Entra anew and discovers the account's targets.
 const (
 	byokCheckTimeout = 8 * time.Second
-	// A run of Control's schedule sends four checks at once, which four slots start together, and
-	// the slots bound the Azure discoveries in flight, whose reads request admission does not count.
+	// The slots bound the checks in flight, and so the Azure discoveries, whose reads request
+	// admission does not count.
 	byokCheckLimit         = 4
 	byokCheckResponseLimit = 64 << 10
 	stsRequestBody         = "Action=GetCallerIdentity&Version=2011-06-15"

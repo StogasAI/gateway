@@ -500,7 +500,7 @@ func TestCheckByokDiscoversAnAzureAccount(t *testing.T) {
 		if signIn != nil {
 			checker.azure = signIn
 		}
-		store := &fakeByokCheckStore{target: target(entry.AccountID, plaintext), targets: &billing.AzureTargetCounts{Selected: 4, Unselected: 1}}
+		store := &fakeByokCheckStore{target: target(entry.AccountID, plaintext), targets: &billing.AzureTargetCounts{Serving: 4, Stopped: 1}}
 		result, err := checkByok(ctx, store, checker, &billing.ByokCheckGrant{}, keys)
 		if err != nil {
 			t.Fatal(err)

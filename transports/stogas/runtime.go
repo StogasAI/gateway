@@ -34,7 +34,9 @@ type Runtime struct {
 	azureChecks  *AzureChecks
 	googleTokens *googleauth.Cache
 	byokChecks   *byokChecker
-	cancel       context.CancelFunc
+	// stopChecks stops this gateway's checks of stored credentials and waits for them to end.
+	stopChecks func()
+	cancel     context.CancelFunc
 }
 
 // NewRuntime starts the providers and billing. nodeID names the boot that owns
@@ -98,6 +100,12 @@ func NewRuntime(ctx context.Context, config Config, nodeID string) (*Runtime, er
 	byokChecks.google = googleTokens
 	byokChecks.azure = azureTokens
 	byokChecks.roles = awsRoles
+	checksCtx, stopChecks := context.WithCancel(runtimeCtx)
+	checksDone := make(chan struct{})
+	go func() {
+		defer close(checksDone)
+		runStoredChecks(checksCtx, billingService, byokChecks)
+	}()
 	return &Runtime{
 		client:       client,
 		billing:      billingService,
@@ -107,7 +115,11 @@ func NewRuntime(ctx context.Context, config Config, nodeID string) (*Runtime, er
 		googleTokens: googleTokens,
 		awsRoles:     awsRoles,
 		byokChecks:   byokChecks,
-		cancel:       cancel,
+		stopChecks: func() {
+			stopChecks()
+			<-checksDone
+		},
+		cancel: cancel,
 	}, nil
 }
 
@@ -191,6 +203,10 @@ func (r *Runtime) BillingDiagnostics() billing.DiagnosticsSnapshot {
 func (r *Runtime) Close() {
 	if r == nil {
 		return
+	}
+	// Checks record through billing, so they end first.
+	if r.stopChecks != nil {
+		r.stopChecks()
 	}
 	if r.client != nil {
 		r.client.Shutdown()

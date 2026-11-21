@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func storedByokTestClaims(t *testing.T, now time.Time) storedByokGrantClaims {
@@ -24,7 +25,7 @@ func storedByokTestClaims(t *testing.T, now time.Time) storedByokGrantClaims {
 		JWTID:        uuid.NewString(),
 		Organization: mustUUIDV7(t),
 		Provider:     "openai",
-		Scope:        StoredByokCheck,
+		Scope:        StoredByokProbe,
 	}
 }
 
@@ -36,7 +37,7 @@ func TestParseStoredByokGrant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if *grant != (StoredByokGrant{OrganizationID: claims.Organization, ByokID: claims.Byok, Provider: "openai", Scope: StoredByokCheck}) {
+	if *grant != (StoredByokGrant{OrganizationID: claims.Organization, ByokID: claims.Byok, Provider: "openai", Scope: StoredByokProbe}) {
 		t.Fatalf("grant = %#v", grant)
 	}
 	// Within the clock skew a grant that Control issued a moment ahead still verifies.
@@ -44,19 +45,16 @@ func TestParseStoredByokGrant(t *testing.T) {
 		t.Fatalf("grant issued within the clock skew: %v", err)
 	}
 	accounts := claims
-	probe := claims
-	probe.Scope = StoredByokProbe
-	if grant, err := parseStoredByokGrant(storedByokGrantPrefix+signDashboardToken(t, key, probe), key.public, now); err != nil || grant.Scope != StoredByokProbe {
-		t.Fatalf("probe grant = %+v, %v", grant, err)
-	}
 	accounts.Provider, accounts.Scope = "azure", StoredByokAzureAccounts
 	if grant, err := parseStoredByokGrant(storedByokGrantPrefix+signDashboardToken(t, key, accounts), key.public, now); err != nil || grant.Scope != StoredByokAzureAccounts {
 		t.Fatalf("Azure account listing grant = %#v, %v", grant, err)
 	}
 
 	for name, change := range map[string]func(*storedByokGrantClaims){
-		"another audience":          func(c *storedByokGrantClaims) { c.Audience = byokCheckGrantAudience },
-		"another scope":             func(c *storedByokGrantClaims) { c.Scope = byokCheckGrantScope },
+		"another audience": func(c *storedByokGrantClaims) { c.Audience = byokCheckGrantAudience },
+		"another scope":    func(c *storedByokGrantClaims) { c.Scope = byokCheckGrantScope },
+		// Gateways check stored credentials themselves, so no grant asks for a check.
+		"a check":                   func(c *storedByokGrantClaims) { c.Scope = "check" },
 		"account listing of OpenAI": func(c *storedByokGrantClaims) { c.Scope = StoredByokAzureAccounts },
 		"unknown provider":          func(c *storedByokGrantClaims) { c.Provider = "mistral" },
 		"uppercase provider":        func(c *storedByokGrantClaims) { c.Provider = "OpenAI" },
@@ -158,7 +156,7 @@ func TestOpenStoredByokOpensOnlyTheGrantsCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := &Service{byok: decryptor}
-	grant := &StoredByokGrant{OrganizationID: mustUUIDV7(t), ByokID: mustUUIDV7(t), Provider: "openai", Scope: StoredByokCheck}
+	grant := &StoredByokGrant{OrganizationID: mustUUIDV7(t), ByokID: mustUUIDV7(t), Provider: "openai", Scope: StoredByokProbe}
 	sealed := sealStoredTestSecret(t, master, grant.ByokID, grant.OrganizationID, grant.Provider, "sk-stored")
 	if secret, err := service.OpenStoredByok(grant, sealed); err != nil || secret != "sk-stored" {
 		t.Fatalf("secret = %q, %v", secret, err)
@@ -192,5 +190,25 @@ func TestOpenStoredByokOpensOnlyTheGrantsCredential(t *testing.T) {
 	}
 	if _, err := service.OpenStoredByok(nil, sealed); !errors.Is(err, ErrGatewayUnavailable) {
 		t.Fatalf("no grant: %v", err)
+	}
+
+	// A gateway's claimed check opens its credential's secret in the same way, and only a claimed one
+	// opens, so a member's customer-encrypted credential never takes this path.
+	claimed := &ByokCheckTarget{
+		Grant:    ByokCheckGrant{OrganizationID: grant.OrganizationID, ByokID: grant.ByokID},
+		Provider: grant.Provider, EncryptedSecret: sealed, claimedUntil: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+	}
+	if secret, err := service.OpenStored(claimed); err != nil || secret != "sk-stored" {
+		t.Fatalf("claimed secret = %q, %v", secret, err)
+	}
+	moved := *claimed
+	moved.Grant.ByokID = mustUUIDV7(t)
+	if _, err := service.OpenStored(&moved); !errors.Is(err, ErrStoredByokSecret) {
+		t.Fatalf("another credential's claim: %v", err)
+	}
+	unclaimed := *claimed
+	unclaimed.claimedUntil = pgtype.Timestamptz{}
+	if _, err := service.OpenStored(&unclaimed); !errors.Is(err, ErrGatewayUnavailable) {
+		t.Fatalf("unclaimed: %v", err)
 	}
 }

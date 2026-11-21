@@ -11,12 +11,10 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 )
 
-// Control uses the credentials that it stores through these paths, so every call to a provider
-// comes from the fleet's addresses. Control sends the grant that it signed for the one use as the
-// API key. A check names its credential in the grant alone, and a probe and a listing carry a
-// secret that no credential holds yet, sealed as Control would store it.
+// Control uses a secret before it stores the secret through these paths, so every call to a
+// provider comes from the fleet's addresses. Control sends the grant that it signed for the one use
+// as the API key, and the secret sealed as it would store it.
 const (
-	storedByokCheckPath     = "/v1/byok/stored/check"
 	storedByokProbePath     = "/v1/byok/stored/probe"
 	storedAzureAccountsPath = "/v1/byok/stored/azure-accounts"
 	// A sealed secret of 8 KiB with 64 subscription IDs fits with room to spare.
@@ -24,28 +22,7 @@ const (
 )
 
 func isStoredByokPath(path string) bool {
-	return path == storedByokCheckPath || path == storedByokProbePath || path == storedAzureAccountsPath
-}
-
-func (s *Server) checkStoredByok(ctx *requestContext) {
-	credential, ok := s.requireInferenceEnvelope(ctx)
-	if !ok {
-		return
-	}
-	var request struct{}
-	if !s.decodeStoredByokRequest(ctx, &request) {
-		return
-	}
-	if s.runtime == nil || credential.Stored == nil {
-		s.writeBillingError(ctx, billing.ErrGatewayUnavailable)
-		return
-	}
-	result, err := s.runtime.CheckStoredByok(ctx.request.Context(), credential.Stored)
-	if err != nil {
-		s.writeBillingError(ctx, err)
-		return
-	}
-	s.writeJSON(ctx, http.StatusOK, result)
+	return path == storedByokProbePath || path == storedAzureAccountsPath
 }
 
 func (s *Server) probeStoredByok(ctx *requestContext) {

@@ -1,21 +1,18 @@
 package billing
 
 import (
-	"context"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 )
 
-// Control asks a gateway to use a stored credential with its provider: to check the credential, to
-// probe a secret before Control saves it, and to list the Azure accounts that an application can
-// read. Every use runs here, so it reaches the provider from the fleet's addresses, which a
-// provider account's IP allowlist can admit. A check reads the credential from the database and
-// records its result, as a member's check of a customer-encrypted credential does. A probe and a
-// listing read a secret that no credential holds yet, which Control sends sealed as it would store
-// it, and record nothing. Control's grant names the organization, credential and provider that the
-// secret is sealed to, and the one use that it allows.
+// Control asks a gateway to use a secret before it stores the secret: to probe the secret with its
+// provider, and to list the Azure accounts that an application can read. Both run here, so they
+// reach the provider from the fleet's addresses, which a provider account's IP allowlist can
+// admit, as the gateways' own checks of stored credentials do. Control sends the secret sealed as
+// it would store it, and nothing is recorded. Control's grant names the organization, credential
+// and provider that the secret is sealed to, and the one use that it allows.
 const (
 	storedByokGrantPrefix   = "stogas_stored_byok_v1."
 	storedByokGrantAudience = "stogas-stored-byok"
@@ -24,18 +21,15 @@ const (
 	// A sealed secret of the largest secret that a credential holds.
 	storedByokMaxEnvelope = 8 << 10
 
-	// The uses that a grant allows: checking the credential, probing a secret, and listing the
-	// accounts that an Azure application can read.
-	StoredByokCheck         = "check"
+	// The uses that a grant allows: probing a secret, and listing the accounts that an Azure
+	// application can read.
 	StoredByokProbe         = "probe"
 	StoredByokAzureAccounts = "azure-accounts"
 )
 
 var (
 	ErrStoredByokGrant   = &RequestError{"invalid_grant", "The grant is invalid or expired.", 401}
-	ErrStoredByokRequest = &RequestError{"invalid_request", "Send the sealed secret with what its provider's check needs, and nothing to check a credential.", 400}
-	// Only a member can have a customer-encrypted credential checked, with the key that sealed it.
-	ErrStoredByokEncrypted = &RequestError{"credential_encrypted", "The customer encrypted this credential, so only its member can check it.", 400}
+	ErrStoredByokRequest = &RequestError{"invalid_request", "Send the sealed secret with what its provider's check needs.", 400}
 	// Control sealed the secret with a key that this gateway does not hold, or for another credential.
 	ErrStoredByokSecret = &RequestError{"secret_unreadable", "The gateway cannot open this credential's secret.", 500}
 	// The secret cannot serve the target that Control stores beside it, which Control derives from
@@ -83,7 +77,7 @@ func parseStoredByokGrant(raw string, publicKey *inferenceTokenKey, now time.Tim
 	byok, byokErr := uuid.Parse(claims.Byok)
 	jwtID, jwtIDErr := uuid.Parse(claims.JWTID)
 	_, knownProvider := credentialProviders[claims.Provider]
-	allowed := claims.Scope == StoredByokCheck || claims.Scope == StoredByokProbe ||
+	allowed := claims.Scope == StoredByokProbe ||
 		claims.Scope == StoredByokAzureAccounts && claims.Provider == "azure"
 	issuedAt := time.Unix(claims.IssuedAt, 0).UTC()
 	expiresAt := time.Unix(claims.ExpiresAt, 0).UTC()
@@ -109,22 +103,6 @@ func (s *Service) ParseStoredByokGrant(raw string) (*StoredByokGrant, error) {
 		return nil, ErrStoredByokGrant
 	}
 	return parseStoredByokGrant(raw, s.inferenceTokenPublicKey, time.Now())
-}
-
-// StoredByokCheckTarget reads the stored credential that Control's grant names. The grant names
-// the provider that Control read, which the credential keeps for life.
-func (s *Service) StoredByokCheckTarget(ctx context.Context, grant *StoredByokGrant) (*ByokCheckTarget, error) {
-	if grant == nil {
-		return nil, ErrStoredByokGrant
-	}
-	target, err := s.ByokCheckTarget(ctx, &ByokCheckGrant{OrganizationID: grant.OrganizationID, ByokID: grant.ByokID})
-	if err != nil {
-		return nil, err
-	}
-	if target.Provider != grant.Provider {
-		return nil, ErrStoredByokGrant
-	}
-	return target, nil
 }
 
 // OpenStoredByok opens the secret that Control sealed for the grant's credential, as requests open

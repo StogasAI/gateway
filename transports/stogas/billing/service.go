@@ -265,6 +265,7 @@ type Service struct {
 	claimAzureDiscoveryQuery   string
 	recordAzureDiscoveryQuery  string
 	byokCheckTargetQuery       string
+	claimByokChecksQuery       string
 	recordByokCheckQuery       string
 	// Each hold records the boot that owns it, so Control can release the
 	// holds of a boot that stopped.
@@ -325,10 +326,11 @@ func NewService(
 		networkListQuery:          db.functionQuery("gateway_network_list", "source, data", "$1::text"),
 		claimAzureCheckQuery:      db.functionQuery("gateway_claim_azure_check", "claimed, verified_at, started_at", "$1::uuid, make_interval(secs => $2::double precision)"),
 		recordAzureCheckQuery:     db.functionQuery("gateway_record_azure_check", "result", "$1::uuid, $2::timestamptz, $3::jsonb"),
-		claimAzureDiscoveryQuery:  db.functionQuery("gateway_claim_azure_discovery", "claimed, started_at", "$1::uuid"),
-		recordAzureDiscoveryQuery: db.functionQuery("gateway_record_azure_discovery", "result", "$1::uuid, $2::timestamptz, $3::text, $4::text, $5::jsonb, $6::jsonb, $7::jsonb"),
+		claimAzureDiscoveryQuery:  db.functionQuery("gateway_claim_azure_discovery", "claimed, started_at, claimed_until", "$1::uuid"),
+		recordAzureDiscoveryQuery: db.functionQuery("gateway_record_azure_discovery", "result", "$1::uuid, $2::timestamptz, $3::timestamptz, $4::text, $5::text, $6::jsonb, $7::jsonb, $8::jsonb"),
 		byokCheckTargetQuery:      db.functionQuery("gateway_byok_check_target", "result, provider, encrypted_secret, encryption_key_id, target, azure_account_id, encryption_keys, checked_at, started_at", "$1::text, $2::text, $3::uuid"),
-		recordByokCheckQuery:      db.functionQuery("gateway_record_byok_check", "result, checked_at, azure_targets", "$1::text, $2::text, $3::uuid, $4::text, $5::timestamptz, $6::text, $7::timestamptz, $8::jsonb, $9::jsonb, $10::jsonb"),
+		claimByokChecksQuery:      db.functionQuery("gateway_claim_byok_checks", "organization_id, byok_id, provider, encrypted_secret, target, azure_account_id, checked_at, started_at, claimed_until", "$1::integer"),
+		recordByokCheckQuery:      db.functionQuery("gateway_record_byok_check", "result, checked_at, azure_targets", "$1::text, $2::text, $3::uuid, $4::text, $5::timestamptz, $6::text, $7::boolean, $8::timestamptz, $9::timestamptz, $10::jsonb, $11::jsonb, $12::jsonb"),
 		inferenceTokenPublicKey:   publicKey,
 		nodeID:                    nodeID,
 		apiKeyPepper:              apiKeyPepper,
@@ -353,6 +355,7 @@ func NewService(
 		service.claimAzureDiscoveryQuery,
 		service.recordAzureDiscoveryQuery,
 		service.byokCheckTargetQuery,
+		service.claimByokChecksQuery,
 		service.recordByokCheckQuery,
 	); err != nil {
 		db.Close()

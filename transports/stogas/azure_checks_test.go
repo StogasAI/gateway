@@ -89,20 +89,20 @@ func (s *fakeAzureCheckStore) refusals() int {
 	return len(s.refused)
 }
 
-func (s *fakeAzureCheckStore) ClaimAzureDiscovery(_ context.Context, byokID string) (bool, time.Time, error) {
+func (s *fakeAzureCheckStore) ClaimAzureDiscovery(_ context.Context, byokID string) (billing.AzureDiscoveryClaim, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if byokID != "byok-1" {
-		return false, time.Time{}, fmt.Errorf("unexpected credential %s", byokID)
+		return billing.AzureDiscoveryClaim{}, fmt.Errorf("unexpected credential %s", byokID)
 	}
 	s.discoverClaims++
-	return s.discoverClaimed, s.discoverStarted, s.discoverErr
+	return billing.AzureDiscoveryClaim{Claimed: s.discoverClaimed, StartedAt: s.discoverStarted}, s.discoverErr
 }
 
-func (s *fakeAzureCheckStore) RecordAzureDiscovery(_ context.Context, byokID string, startedAt time.Time, envelope, failure string, discovery *billing.AzureDiscoveryResult) (bool, error) {
+func (s *fakeAzureCheckStore) RecordAzureDiscovery(_ context.Context, byokID string, claim billing.AzureDiscoveryClaim, envelope, failure string, discovery *billing.AzureDiscoveryResult) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.discoveries = append(s.discoveries, recordedAzureDiscovery{byokID, envelope, failure, startedAt, discovery})
+	s.discoveries = append(s.discoveries, recordedAzureDiscovery{byokID, envelope, failure, claim.StartedAt, discovery})
 	return s.discoveryChanged, s.discoveryErr
 }
 

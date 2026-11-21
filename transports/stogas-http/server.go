@@ -211,8 +211,6 @@ func (s *Server) routes() error {
 			s.simulatePolicy(ctx)
 		case ctx.request.Method == http.MethodPost && ctx.request.URL.Path == byokCheckPath:
 			s.checkByok(ctx)
-		case ctx.request.Method == http.MethodPost && ctx.request.URL.Path == storedByokCheckPath:
-			s.checkStoredByok(ctx)
 		case ctx.request.Method == http.MethodPost && ctx.request.URL.Path == storedByokProbePath:
 			s.probeStoredByok(ctx)
 		case ctx.request.Method == http.MethodPost && ctx.request.URL.Path == storedAzureAccountsPath:

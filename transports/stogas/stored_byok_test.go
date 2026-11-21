@@ -91,7 +91,6 @@ func TestProbeStoredByokChecksTheSealedSecret(t *testing.T) {
 		want    error
 	}{
 		"no grant":                    {nil, StoredByokProbeRequest{Secret: "sealed"}, billing.ErrStoredByokGrant},
-		"a check grant":               {storedTestGrant("openai", billing.StoredByokCheck), StoredByokProbeRequest{Secret: "sealed"}, billing.ErrStoredByokGrant},
 		"an account listing grant":    {storedTestGrant("azure", billing.StoredByokAzureAccounts), StoredByokProbeRequest{Secret: "sealed", AzureAccountID: storedTestAccount}, billing.ErrStoredByokGrant},
 		"no secret":                   {grant, StoredByokProbeRequest{}, billing.ErrStoredByokRequest},
 		"an Azure account for OpenAI": {grant, StoredByokProbeRequest{Secret: "sealed", AzureAccountID: storedTestAccount}, billing.ErrStoredByokRequest},
@@ -218,7 +217,7 @@ func TestProbeStoredByokReadsTheAzureAccount(t *testing.T) {
 	status := http.StatusOK
 	server, _ := byokCheckTestServer(t, &status)
 	grant := storedTestGrant("azure", billing.StoredByokProbe)
-	probe := func(name, plaintext string, signIn *fakeAzureSignIn) (*StoredByokCheck, azureDiscoveryCase, *azureDiscoveryARM) {
+	probe := func(name, plaintext string, signIn *fakeAzureSignIn) (*StoredByokProbe, azureDiscoveryCase, *azureDiscoveryARM) {
 		t.Helper()
 		entry := azureDiscoveryCaseNamed(t, name)
 		arm, client := serveAzureDiscoveryCase(t, entry)
@@ -261,141 +260,6 @@ func TestProbeStoredByokReadsTheAzureAccount(t *testing.T) {
 			(test.name == "named-deployments" && answered != 0) {
 			t.Fatalf("%s: %s after %d Azure reads", test.want, encodeJSON(t, got), answered)
 		}
-	}
-}
-
-// fakeStoredStore is a stored credential as the database shows it for a check, and what the check
-// recorded.
-type fakeStoredStore struct {
-	fakeStoredOpener
-	fakeByokCheckStore
-	grants []*billing.StoredByokGrant
-}
-
-func (s *fakeStoredStore) StoredByokCheckTarget(_ context.Context, grant *billing.StoredByokGrant) (*billing.ByokCheckTarget, error) {
-	s.grants = append(s.grants, grant)
-	return s.target, s.readErr
-}
-
-// A check of a stored credential reads the credential that Control's grant names, checks it as a
-// member's check of a customer-encrypted one does, and records the result, so Control holds only
-// how the check ended.
-func TestCheckStoredByokRecordsTheCheck(t *testing.T) {
-	status := http.StatusOK
-	server, seen := byokCheckTestServer(t, &status)
-	ctx := context.Background()
-	startedAt := time.Date(2026, time.November, 3, 12, 0, 0, 0, time.UTC)
-	grant := storedTestGrant("openai", billing.StoredByokCheck)
-	store := func(provider, plaintext string) *fakeStoredStore {
-		store := &fakeStoredStore{fakeStoredOpener: fakeStoredOpener{secret: plaintext}}
-		store.target = &billing.ByokCheckTarget{Provider: provider, EncryptedSecret: "sealed", StartedAt: startedAt}
-		return store
-	}
-
-	for code, want := range map[int]struct{ outcome, message string }{
-		http.StatusOK:                 {storedByokAccepted, ""},
-		http.StatusUnauthorized:       {storedByokRejected, byokRejected("openai")},
-		http.StatusServiceUnavailable: {storedByokUnavailable, byokUnavailable("openai")},
-	} {
-		status = code
-		openAI := store("openai", "sk-stored")
-		got, err := checkStoredByok(ctx, openAI, newTestByokChecker(server, nil, startedAt), grant)
-		if err != nil || got.Outcome != want.outcome || (got.Message == nil) != (want.message == "") || got.Message != nil && *got.Message != want.message {
-			t.Fatalf("status %d: %s, %v", code, encodeJSON(t, got), err)
-		}
-		if len(openAI.recorded) != 1 || openAI.recorded[0] != want.message || openAI.discoveries[0] != nil || openAI.grants[0] != grant {
-			t.Fatalf("status %d recorded %q", code, openAI.recorded)
-		}
-	}
-	if r := seen()[len(seen())-1]; r.path != "/v1/models" || r.header.Get("Authorization") != "Bearer sk-stored" {
-		t.Fatalf("the provider got %+v", r)
-	}
-
-	// A check that cannot run reaches no provider and records nothing, so Control hears why.
-	status = http.StatusOK
-	before := len(seen())
-	unreadable := store("openai", "sk-stored")
-	unreadable.target.EncryptedSecret = "other"
-	missing := store("openai", "sk-stored")
-	missing.readErr = billing.ErrByokCheckNotFound
-	mismatched := store("aws", awsIAMSecret(t, "us-east-1", ""))
-	mismatched.target.Target = &billing.CloudTarget{Hosting: []string{"amazon"}, Region: "eu-west-1"}
-	for name, test := range map[string]struct {
-		store *fakeStoredStore
-		grant *billing.StoredByokGrant
-		want  error
-	}{
-		"no grant":                        {store("openai", "sk-stored"), nil, billing.ErrStoredByokGrant},
-		"a probe grant":                   {store("openai", "sk-stored"), storedTestGrant("openai", billing.StoredByokProbe), billing.ErrStoredByokGrant},
-		"a credential that is gone":       {missing, grant, billing.ErrByokCheckNotFound},
-		"a secret that no gateway opens":  {unreadable, grant, billing.ErrStoredByokSecret},
-		"a secret that misses its target": {mismatched, storedTestGrant("aws", billing.StoredByokCheck), billing.ErrStoredByokTarget},
-	} {
-		got, err := checkStoredByok(ctx, test.store, newTestByokChecker(server, nil, startedAt), test.grant)
-		if got != nil || !errors.Is(err, test.want) || len(test.store.recorded) != 0 {
-			t.Fatalf("%s: %+v, %v, recorded %q", name, got, err, test.store.recorded)
-		}
-	}
-	if len(seen()) != before {
-		t.Fatal("a check that cannot run reached the provider")
-	}
-	// A secret that is not its provider's credential is the member's to replace, and shows on the
-	// credential.
-	invalid := store("openai", "sk stored")
-	if got, err := checkStoredByok(ctx, invalid, newTestByokChecker(server, nil, startedAt), grant); err != nil || got.Outcome != storedByokRejected ||
-		len(invalid.recorded) != 1 || invalid.recorded[0] != "The secret is not a valid OpenAI API key" {
-		t.Fatalf("an invalid secret: %+v, %v, recorded %q", got, err, invalid.recorded)
-	}
-	// A credential that changed while the check ran keeps the newer result.
-	changed := store("openai", "sk-stored")
-	changed.record = billing.ErrByokCheckChanged
-	if got, err := checkStoredByok(ctx, changed, newTestByokChecker(server, nil, startedAt), grant); got != nil || !errors.Is(err, billing.ErrByokCheckChanged) {
-		t.Fatalf("a changed credential: %+v, %v", got, err)
-	}
-
-	// An Azure credential's check discovers its account's targets from the database's time and
-	// records them. A missing data role keeps the targets and says why requests fail, and a failure
-	// records no discovery, so the credential keeps the targets of the last one.
-	azure := storedTestGrant("azure", billing.StoredByokCheck)
-	for _, test := range []struct {
-		name          string
-		signIn        *fakeAzureSignIn
-		outcome, want string
-		discovered    bool
-	}{
-		{"named-deployments", &fakeAzureSignIn{}, storedByokAccepted, "", true},
-		{"no-data-role", &fakeAzureSignIn{}, storedByokAccepted, azureRoleMissing, true},
-		{"listing-without-value", &fakeAzureSignIn{}, storedByokAccepted, "", true},
-		{"account-denied", &fakeAzureSignIn{}, storedByokRejected, azureAccountDenied, false},
-		{"account-outage", &fakeAzureSignIn{}, storedByokUnavailable, azureDiscoveryUnavailable, false},
-		{"named-deployments", &fakeAzureSignIn{err: azureauth.ErrCredential}, storedByokRejected, azureAppRejected, false},
-	} {
-		entry := azureDiscoveryCaseNamed(t, test.name)
-		_, client := serveAzureDiscoveryCase(t, entry)
-		checker := newTestByokChecker(server, nil, startedAt)
-		checker.arm, checker.azure = client, test.signIn
-		found := store("azure", storedTestApp)
-		found.target.AzureAccountID = entry.AccountID
-		got, err := checkStoredByok(ctx, found, checker, azure)
-		if err != nil || len(found.recorded) != 1 {
-			t.Fatalf("%s: %v, recorded %q", test.name, err, found.recorded)
-		}
-		// An accepted check with a message is one whose problem leaves the credential usable.
-		if got.Outcome != test.outcome || found.recorded[0] != test.want || (got.Message == nil) != (test.want == "") ||
-			(found.discoveries[0] != nil) != test.discovered {
-			t.Fatalf("%s: %s, recorded %q", test.name, encodeJSON(t, got), found.recorded)
-		}
-		if !test.discovered {
-			continue
-		}
-		var bindings []azureDiscoveredBinding
-		if err := json.Unmarshal(found.discoveries[0].Bindings, &bindings); err != nil {
-			t.Fatal(err)
-		}
-		if entry.Outcome.Result.Bindings == nil {
-			entry.Outcome.Result.Bindings = []azureDiscoveredBinding{}
-		}
-		assertSameJSON(t, test.name+" bindings", bindings, entry.Outcome.Result.Bindings)
 	}
 }
 
@@ -606,7 +470,7 @@ func TestListStoredAzureAccountsFailures(t *testing.T) {
 		want    error
 	}{
 		"no grant":                    {nil, StoredAzureAccountsRequest{Secret: "sealed", SubscriptionIDs: []string{first}}, billing.ErrStoredByokGrant},
-		"a check grant":               {storedTestGrant("azure", billing.StoredByokCheck), StoredAzureAccountsRequest{Secret: "sealed", SubscriptionIDs: []string{first}}, billing.ErrStoredByokGrant},
+		"a probe grant":               {storedTestGrant("azure", billing.StoredByokProbe), StoredAzureAccountsRequest{Secret: "sealed", SubscriptionIDs: []string{first}}, billing.ErrStoredByokGrant},
 		"no secret":                   {grant, StoredAzureAccountsRequest{SubscriptionIDs: []string{first}}, billing.ErrStoredByokRequest},
 		"no subscription":             {grant, StoredAzureAccountsRequest{Secret: "sealed", SubscriptionIDs: []string{}}, billing.ErrStoredByokRequest},
 		"65 subscriptions":            {grant, StoredAzureAccountsRequest{Secret: "sealed", SubscriptionIDs: many}, billing.ErrStoredByokRequest},

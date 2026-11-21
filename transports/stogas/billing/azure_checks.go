@@ -133,29 +133,41 @@ func (d *AzureDiscoveryResult) parameters() (bindings, deployments, accountOptio
 		pgtype.Text{String: string(reported), Valid: true}, nil
 }
 
+// AzureDiscoveryClaim is a gateway's claim of the discovery of a customer-encrypted Azure
+// credential's targets. StartedAt is the database time that the discovery starts from.
+type AzureDiscoveryClaim struct {
+	Claimed      bool
+	StartedAt    time.Time
+	claimedUntil time.Time
+}
+
 // ClaimAzureDiscovery claims the discovery of a customer-encrypted Azure credential's targets when
-// it is due and no other gateway holds the credential's claim. It returns the database time that
-// the discovery starts from.
-func (s *Service) ClaimAzureDiscovery(ctx context.Context, byokID string) (bool, time.Time, error) {
+// it is due and no other gateway holds the credential's claim.
+func (s *Service) ClaimAzureDiscovery(ctx context.Context, byokID string) (AzureDiscoveryClaim, error) {
 	if s == nil || s.db == nil {
-		return false, time.Time{}, ErrGatewayUnavailable
+		return AzureDiscoveryClaim{}, ErrGatewayUnavailable
 	}
 	queryCtx, cancel := context.WithTimeout(ctx, azureCheckQueryTimeout)
 	defer cancel()
-	var claimed bool
-	var startedAt time.Time
-	if err := s.db.pool.QueryRow(queryCtx, s.claimAzureDiscoveryQuery, byokID).Scan(&claimed, &startedAt); err != nil {
-		return false, time.Time{}, fmt.Errorf("%w: claim Azure discovery: %v", ErrGatewayUnavailable, err)
+	var claim AzureDiscoveryClaim
+	var claimedUntil pgtype.Timestamptz
+	if err := s.db.pool.QueryRow(queryCtx, s.claimAzureDiscoveryQuery, byokID).Scan(&claim.Claimed, &claim.StartedAt, &claimedUntil); err != nil {
+		return AzureDiscoveryClaim{}, fmt.Errorf("%w: claim Azure discovery: %v", ErrGatewayUnavailable, err)
 	}
-	return claimed, startedAt, nil
+	if claim.Claimed {
+		if !claimedUntil.Valid {
+			return AzureDiscoveryClaim{}, fmt.Errorf("%w: claim Azure discovery: no claim", ErrGatewayUnavailable)
+		}
+		claim.claimedUntil = claimedUntil.Time
+	}
+	return claim, nil
 }
 
-// RecordAzureDiscovery records a discovery that started at startedAt with the application that
-// envelope holds: failure is empty when Azure accepted the application, and discovery is nil when
-// it read no deployments. A credential whose envelope changed meanwhile records nothing, which
-// changed reports.
-func (s *Service) RecordAzureDiscovery(ctx context.Context, byokID string, startedAt time.Time, envelope string, failure string, discovery *AzureDiscoveryResult) (changed bool, err error) {
-	if s == nil || s.db == nil {
+// RecordAzureDiscovery records a claimed discovery with the application that envelope holds:
+// failure is empty when Azure accepted the application, and discovery is nil when it read no
+// deployments. A credential whose envelope changed meanwhile records nothing, which changed reports.
+func (s *Service) RecordAzureDiscovery(ctx context.Context, byokID string, claim AzureDiscoveryClaim, envelope string, failure string, discovery *AzureDiscoveryResult) (changed bool, err error) {
+	if s == nil || s.db == nil || !claim.Claimed {
 		return false, ErrGatewayUnavailable
 	}
 	var message pgtype.Text
@@ -169,7 +181,7 @@ func (s *Service) RecordAzureDiscovery(ctx context.Context, byokID string, start
 	queryCtx, cancel := context.WithTimeout(ctx, azureCheckQueryTimeout)
 	defer cancel()
 	var outcome string
-	if err := s.db.pool.QueryRow(queryCtx, s.recordAzureDiscoveryQuery, byokID, startedAt, envelope, message, bindings, deployments, accountOptions).Scan(&outcome); err != nil {
+	if err := s.db.pool.QueryRow(queryCtx, s.recordAzureDiscoveryQuery, byokID, claim.StartedAt, claim.claimedUntil, envelope, message, bindings, deployments, accountOptions).Scan(&outcome); err != nil {
 		return false, fmt.Errorf("%w: record Azure discovery: %v", ErrGatewayUnavailable, err)
 	}
 	if outcome != "ok" && outcome != "changed" {

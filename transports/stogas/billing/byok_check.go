@@ -36,7 +36,7 @@ var (
 )
 
 // ByokCheckGrant names the member, organization and credential that Control allowed to be checked.
-// ActorUserID is empty for Control's own check of a stored credential, which names no member.
+// ActorUserID is empty for a gateway's own check of a stored credential, which names no member.
 type ByokCheckGrant struct {
 	ActorUserID    string
 	OrganizationID string
@@ -102,11 +102,10 @@ func (s *Service) ParseByokCheckGrant(raw string) (*ByokCheckGrant, error) {
 	return parseByokCheckGrant(raw, s.inferenceTokenPublicKey, time.Now())
 }
 
-// ByokCheckTarget is a credential that a gateway was asked to check, as the database showed it: a
-// customer-encrypted one for a member, or a stored one for Control. The result is recorded only if
-// no other check finished after checkedAt.
-// A discovery of an Azure credential's targets reads the account AzureAccountID from StartedAt,
-// the database's time.
+// ByokCheckTarget is a credential that a gateway checks, as the database showed it: a
+// customer-encrypted one for a member, or a stored one that the gateway claimed. The result is
+// recorded only if no other check finished after checkedAt. A discovery of an Azure credential's
+// targets reads the account AzureAccountID from StartedAt, the database's time.
 type ByokCheckTarget struct {
 	Grant           ByokCheckGrant
 	Provider        string
@@ -118,6 +117,8 @@ type ByokCheckTarget struct {
 	Registered map[string]string
 	StartedAt  time.Time
 	checkedAt  pgtype.Timestamptz
+	// The due time that the gateway's claim set, null for a member's check.
+	claimedUntil pgtype.Timestamptz
 }
 
 // ByokCheckRecord is a recorded check: when it was recorded and, for an Azure credential, its
@@ -127,18 +128,17 @@ type ByokCheckRecord struct {
 	AzureTargets *AzureTargetCounts
 }
 
-// AzureTargetCounts counts an Azure credential's model matches: those with a selected target, the
-// selected ones that cannot serve, and those with a usable target but none selected.
+// AzureTargetCounts counts an Azure credential's models: those that a target serves, and those
+// whose targets that the owner left on all stopped.
 type AzureTargetCounts struct {
-	Selected    int `json:"selected"`
-	Unavailable int `json:"unavailable"`
-	Unselected  int `json:"unselected"`
+	Serving int `json:"serving"`
+	Stopped int `json:"stopped"`
 }
 
-// ByokCheckTarget reads the credential that grant names, after the database finds again that its
-// member manages it. Control's grant names no member, and reads a stored credential.
+// ByokCheckTarget reads the customer-encrypted credential that grant names, after the database finds
+// again that its member manages it.
 func (s *Service) ByokCheckTarget(ctx context.Context, grant *ByokCheckGrant) (*ByokCheckTarget, error) {
-	if s == nil || s.db == nil || grant == nil {
+	if s == nil || s.db == nil || grant == nil || grant.ActorUserID == "" {
 		return nil, ErrGatewayUnavailable
 	}
 	queryCtx, cancel := context.WithTimeout(ctx, byokCheckQueryTimeout)
@@ -148,7 +148,7 @@ func (s *Service) ByokCheckTarget(ctx context.Context, grant *ByokCheckGrant) (*
 	var cloudTarget, keys []byte
 	var startedAt pgtype.Timestamptz
 	checked := &ByokCheckTarget{Grant: *grant}
-	if err := s.db.pool.QueryRow(queryCtx, s.byokCheckTargetQuery, optionalText(grant.ActorUserID), grant.OrganizationID, grant.ByokID).
+	if err := s.db.pool.QueryRow(queryCtx, s.byokCheckTargetQuery, grant.ActorUserID, grant.OrganizationID, grant.ByokID).
 		Scan(&result, &provider, &encryptedSecret, &encryptionKeyID, &cloudTarget, &azureAccountID, &keys, &checked.checkedAt, &startedAt); err != nil {
 		return nil, fmt.Errorf("%w: read credential check: %v", ErrGatewayUnavailable, err)
 	}
@@ -162,13 +162,10 @@ func (s *Service) ByokCheckTarget(ctx context.Context, grant *ByokCheckGrant) (*
 		return nil, ErrByokCheckForbidden
 	case "stored":
 		return nil, ErrByokCheckStored
-	case "encrypted":
-		return nil, ErrStoredByokEncrypted
 	default:
 		return nil, fmt.Errorf("%w: read credential check: %s", ErrGatewayUnavailable, result)
 	}
-	// Only a customer-encrypted credential names the key that sealed it.
-	if !provider.Valid || !encryptedSecret.Valid || encryptionKeyID.Valid != (grant.ActorUserID != "") || !startedAt.Valid ||
+	if !provider.Valid || !encryptedSecret.Valid || !encryptionKeyID.Valid || !startedAt.Valid ||
 		(provider.String == "azure") != azureAccountID.Valid || json.Unmarshal(keys, &checked.Registered) != nil {
 		return nil, fmt.Errorf("%w: read credential check: incomplete credential", ErrGatewayUnavailable)
 	}
@@ -181,6 +178,62 @@ func (s *Service) ByokCheckTarget(ctx context.Context, grant *ByokCheckGrant) (*
 		}
 	}
 	return checked, nil
+}
+
+// ClaimByokChecks claims at most limit stored credentials whose checks are due, for this gateway to
+// check. Each claim lasts two minutes, after which another gateway may claim the credential again.
+func (s *Service) ClaimByokChecks(ctx context.Context, limit int) ([]*ByokCheckTarget, error) {
+	if s == nil || s.db == nil {
+		return nil, ErrGatewayUnavailable
+	}
+	queryCtx, cancel := context.WithTimeout(ctx, byokCheckQueryTimeout)
+	defer cancel()
+	rows, err := s.db.pool.Query(queryCtx, s.claimByokChecksQuery, limit)
+	if err != nil {
+		return nil, fmt.Errorf("%w: claim credential checks: %v", ErrGatewayUnavailable, err)
+	}
+	defer rows.Close()
+	targets := []*ByokCheckTarget{}
+	for rows.Next() {
+		target := &ByokCheckTarget{}
+		var azureAccountID pgtype.Text
+		var cloudTarget []byte
+		if err := rows.Scan(&target.Grant.OrganizationID, &target.Grant.ByokID, &target.Provider, &target.EncryptedSecret,
+			&cloudTarget, &azureAccountID, &target.checkedAt, &target.StartedAt, &target.claimedUntil); err != nil {
+			return nil, fmt.Errorf("%w: claim credential checks: %v", ErrGatewayUnavailable, err)
+		}
+		if (target.Provider == "azure") != azureAccountID.Valid || !target.claimedUntil.Valid {
+			return nil, fmt.Errorf("%w: claim credential checks: incomplete credential", ErrGatewayUnavailable)
+		}
+		target.AzureAccountID = azureAccountID.String
+		if len(cloudTarget) > 0 && string(cloudTarget) != "null" {
+			target.Target = new(CloudTarget)
+			if err := json.Unmarshal(cloudTarget, target.Target); err != nil {
+				return nil, fmt.Errorf("%w: claim credential checks: %v", ErrGatewayUnavailable, err)
+			}
+		}
+		targets = append(targets, target)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("%w: claim credential checks: %v", ErrGatewayUnavailable, err)
+	}
+	return targets, nil
+}
+
+// OpenStored opens the secret of a stored credential that this gateway claimed, as requests open
+// stored credentials.
+func (s *Service) OpenStored(target *ByokCheckTarget) (string, error) {
+	if s == nil || s.byok == nil || target == nil || !target.claimedUntil.Valid {
+		return "", ErrGatewayUnavailable
+	}
+	if len(target.EncryptedSecret) > storedByokMaxEnvelope {
+		return "", ErrStoredByokSecret
+	}
+	secret, err := s.byok.decrypt(target.EncryptedSecret, target.Grant.ByokID, target.Grant.OrganizationID, target.Provider)
+	if err != nil {
+		return "", ErrStoredByokSecret
+	}
+	return secret, nil
 }
 
 // Open opens the credential's secret with keys, as a request would: every key must be the one that
@@ -216,6 +269,17 @@ func (t *ByokCheckTarget) Open(keys customerkey.Keys) (string, error) {
 // otherwise the message that the dashboard shows. discovery is what a check of an Azure credential
 // found in its account, nil when it read no deployments.
 func (s *Service) RecordByokCheck(ctx context.Context, target *ByokCheckTarget, failure string, discovery *AzureDiscoveryResult) (*ByokCheckRecord, error) {
+	return s.recordByokCheck(ctx, target, failure, false, discovery)
+}
+
+// RecordByokCheckFailure records that the check of a stored credential failed for a reason of ours,
+// such as a secret that the gateway cannot open, which the credential shows and operators hear of.
+func (s *Service) RecordByokCheckFailure(ctx context.Context, target *ByokCheckTarget) error {
+	_, err := s.recordByokCheck(ctx, target, "", true, nil)
+	return err
+}
+
+func (s *Service) recordByokCheck(ctx context.Context, target *ByokCheckTarget, failure string, ours bool, discovery *AzureDiscoveryResult) (*ByokCheckRecord, error) {
 	if s == nil || s.db == nil || target == nil {
 		return nil, ErrGatewayUnavailable
 	}
@@ -230,7 +294,8 @@ func (s *Service) RecordByokCheck(ctx context.Context, target *ByokCheckTarget, 
 	var targets []byte
 	grant := target.Grant
 	if err := s.db.pool.QueryRow(queryCtx, s.recordByokCheckQuery, optionalText(grant.ActorUserID), grant.OrganizationID, grant.ByokID,
-		target.EncryptedSecret, target.checkedAt, optionalText(failure), target.StartedAt, bindings, deployments, accountOptions).Scan(&result, &checkedAt, &targets); err != nil {
+		target.EncryptedSecret, target.checkedAt, optionalText(failure), ours, target.StartedAt, target.claimedUntil,
+		bindings, deployments, accountOptions).Scan(&result, &checkedAt, &targets); err != nil {
 		return nil, fmt.Errorf("%w: record credential check: %v", ErrGatewayUnavailable, err)
 	}
 	switch result {

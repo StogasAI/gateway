@@ -23,10 +23,10 @@ import (
 // the credential, so a deployment that Azure upgraded, deleted or failed stops serving within
 // minutes instead of at the daily discovery. Requests never wait for Azure: they use the targets
 // that the last read left in service while the next read runs in the background. Reads are shared
-// through PostgreSQL, so one gateway reads Azure for the fleet. Control schedules the discovery of
-// a stored credential's targets, which a gateway runs for it; only gateways can open a
-// customer-encrypted one, so a request that finds its discovery due starts one in the background,
-// under the same claim.
+// through PostgreSQL, so one gateway reads Azure for the fleet. A stored credential's targets are
+// discovered by its check, which a gateway claims once it is due. A customer-encrypted credential
+// opens only with the key that a request or a member sends, so a request that finds its discovery
+// due starts one in the background, under the same kind of claim.
 const (
 	// A request whose targets were confirmed longer ago than this starts a check.
 	azureCheckFresh = 10 * time.Minute
@@ -71,8 +71,8 @@ type azureCheckStore interface {
 	ClaimAzureCheck(ctx context.Context, byokID string, staleAfter time.Duration) (billing.AzureClaim, error)
 	RecordAzureCheck(ctx context.Context, byokID string, startedAt time.Time, deployments []billing.AzureDeployment) error
 	RefuseAzureCheck(ctx context.Context, byokID string, startedAt time.Time) error
-	ClaimAzureDiscovery(ctx context.Context, byokID string) (bool, time.Time, error)
-	RecordAzureDiscovery(ctx context.Context, byokID string, startedAt time.Time, envelope string, failure string, discovery *billing.AzureDiscoveryResult) (changed bool, err error)
+	ClaimAzureDiscovery(ctx context.Context, byokID string) (billing.AzureDiscoveryClaim, error)
+	RecordAzureDiscovery(ctx context.Context, byokID string, claim billing.AzureDiscoveryClaim, envelope string, failure string, discovery *billing.AzureDiscoveryResult) (changed bool, err error)
 }
 
 type azureTargetChecker interface {
@@ -200,13 +200,13 @@ func (c *AzureChecks) discover(target azureCheckTarget) {
 		// and the record has its own, so a discovery records before its 30-second claim lapses.
 		ctx, cancel := context.WithTimeout(c.ctx, azureDiscoveryTimeout)
 		defer cancel()
-		claimed, startedAt, err := c.store.ClaimAzureDiscovery(ctx, target.ByokID)
+		claim, err := c.store.ClaimAzureDiscovery(ctx, target.ByokID)
 		if err != nil {
 			c.fail(key)
 			return nil, nil
 		}
-		if !claimed {
-			// Another gateway holds the claim for at most 30 seconds, or recorded since the hold.
+		if !claim.Claimed {
+			// Another gateway holds the claim, or a check recorded since the hold.
 			c.pause(key, azureCheckRetry)
 			return nil, nil
 		}
@@ -219,9 +219,9 @@ func (c *AzureChecks) discover(target azureCheckTarget) {
 			writeOperationalLog(operationalLogEvent{Event: "azure_discovery_failed", ReasonCode: "busy", Severity: "warning"})
 			return nil, nil
 		}
-		failure, discovery, reason := c.discoverTargets(ctx, target, startedAt)
+		failure, discovery, reason := c.discoverTargets(ctx, target, claim.StartedAt)
 		<-c.slots
-		changed, err := c.store.RecordAzureDiscovery(c.ctx, target.ByokID, startedAt, target.Envelope, failure, discovery)
+		changed, err := c.store.RecordAzureDiscovery(c.ctx, target.ByokID, claim, target.Envelope, failure, discovery)
 		switch {
 		case err != nil:
 			c.fail(key)
