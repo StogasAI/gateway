@@ -15,7 +15,6 @@
 	"deployment.capabilities.structuredOutputs": "boolean",
 	"deployment.capabilities.systemMessages": "boolean",
 	"deployment.capabilities.toolChoice": "boolean",
-	"deployment.capabilities.toolChoiceNone": "boolean",
 	"deployment.capabilities.toolResultDocuments": "boolean",
 	"deployment.capabilities.toolResultImages": "boolean",
 	"deployment.companies": "string_list",
