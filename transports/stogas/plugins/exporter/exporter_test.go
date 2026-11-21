@@ -393,11 +393,12 @@ func TestSlowReceiverDoesNotDelayOtherDestinations(t *testing.T) {
 	for i := range 20 {
 		e.Start(testConfig(fast.URL), "id", "", Trace{}).Finish(fmt.Sprint("fast", i), "success", testRecord("fast"), testMetadata())
 	}
-	// Wait for the exporter's own count: the receiver sees a request before its response is recorded.
-	await(t, func() bool { return e.Diagnostics().Delivered == 20 })
-	if d := e.Diagnostics(); d.PendingDeliveries != 4*maxConnsPerHost {
-		t.Fatalf("slow receiver blocked others: %+v", d)
-	}
+	// Wait for the exporter's own counts: the receiver sees a request before its response is
+	// recorded, and a delivery counts as delivered before it stops being pending.
+	await(t, func() bool {
+		d := e.Diagnostics()
+		return d.Delivered == 20 && d.PendingDeliveries == 4*maxConnsPerHost
+	})
 }
 
 // Inference reclaims finished records immediately, including during an upload.
