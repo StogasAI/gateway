@@ -73,11 +73,12 @@ func (r *reservation) release() {
 	r.bytes = 0
 }
 
-// destination is one receiver of a capture. take decides whether it gets
-// bodies, once the outcome is known.
+// destination is one receiver of a capture, with the request's sample position
+// for it. take decides whether it gets bodies, once the outcome is known.
 type destination struct {
 	exportconfig.Destination
-	content bool
+	position float64
+	content  bool
 }
 
 // form is the shape of a record that a destination takes: its format, with or
@@ -128,10 +129,9 @@ type Trace struct {
 type Capture struct {
 	engine       *Engine
 	destinations []destination
-	// The request's sample position and, for each outcome, the highest rate of
-	// the destinations that Start kept. Both outlive a dropped capture.
-	position                    float64
-	reach                       exportconfig.Sample
+	// The outcomes whose record a destination gets, in the order of
+	// exportconfig.Outcomes. It outlives a dropped capture.
+	due                         [len(exportconfig.Outcomes)]bool
 	content                     bool
 	trace                       Trace
 	request, response, metadata []byte
@@ -218,21 +218,23 @@ func New(ctx context.Context, options Options) *Engine {
 // Start returns nil only when no export applies: no destination, or none whose
 // sample reaches this request however it ends. Such a request copies nothing. A
 // capture dropped here still marks the request record as exported, so receivers
-// can find the records that never arrived.
-func (e *Engine) Start(config *exportconfig.Config, requestID string, trace Trace) *Capture {
+// can find the records that never arrived. sessionID is empty for a request
+// that names no session.
+func (e *Engine) Start(config *exportconfig.Config, requestID, sessionID string, trace Trace) *Capture {
 	if e == nil || config == nil || len(config.Destinations) == 0 {
 		return nil
 	}
-	dropped := &Capture{engine: e, position: exportconfig.Position(requestID)}
+	dropped := &Capture{engine: e}
 	// The measured per-destination state includes the capture and record.
 	size, reached := 0, 0
 	for _, d := range config.Destinations {
-		if dropped.position >= d.Reach() {
+		position := d.Position(requestID, sessionID)
+		if position >= d.Reach() {
 			continue
 		}
 		reached++
-		for i := range dropped.reach {
-			dropped.reach[i] = max(dropped.reach[i], d.Rate(exportconfig.Outcomes[i]))
+		for i, outcome := range exportconfig.Outcomes {
+			dropped.due[i] = dropped.due[i] || position < d.Rate(outcome)
 		}
 		size += len(d.URL) + deliveryStateBytes
 		for key, value := range d.Headers {
@@ -255,12 +257,13 @@ func (e *Engine) Start(config *exportconfig.Config, requestID string, trace Trac
 		e.memoryDropped.Add(uint64(reached))
 		return dropped
 	}
-	c := &Capture{engine: e, position: dropped.position, reach: dropped.reach, trace: trace, reservation: r}
+	c := &Capture{engine: e, due: dropped.due, trace: trace, reservation: r}
 	for _, d := range config.Destinations {
-		if c.position >= d.Reach() {
+		position := d.Position(requestID, sessionID)
+		if position >= d.Reach() {
 			continue
 		}
-		copy := exportconfig.Destination{URL: strings.Clone(d.URL), Headers: make(map[string]string, len(d.Headers)), Format: d.Format}
+		copy := exportconfig.Destination{URL: strings.Clone(d.URL), Headers: make(map[string]string, len(d.Headers)), Format: d.Format, SampleBy: d.SampleBy}
 		for key, value := range d.Headers {
 			copy.Headers[strings.Clone(key)] = strings.Clone(value)
 		}
@@ -272,9 +275,9 @@ func (e *Engine) Start(config *exportconfig.Config, requestID string, trace Trac
 			content := *d.Content
 			copy.Content = &content
 		}
-		c.destinations = append(c.destinations, destination{Destination: copy})
+		c.destinations = append(c.destinations, destination{Destination: copy, position: position})
 		// Bodies are copied only for a request that can send them.
-		c.content = c.content || c.position < d.ContentReach()
+		c.content = c.content || position < d.ContentReach()
 	}
 	return c
 }
@@ -283,19 +286,37 @@ func (e *Engine) Start(config *exportconfig.Config, requestID string, trace Trac
 // with this outcome. It holds for a dropped capture too, whose record was due
 // and did not leave.
 func (c *Capture) Due(outcome string) bool {
-	return c != nil && c.position < exportconfig.Destination{Sample: &c.reach}.Rate(outcome)
+	if c == nil {
+		return false
+	}
+	for i, name := range exportconfig.Outcomes {
+		if name == outcome {
+			return c.due[i]
+		}
+	}
+	return false
 }
 
 // take keeps the destinations that get this outcome's record, decides which
-// of them get its bodies, and reports whether one is left. The capture's
-// content stays as captured.
+// of them get its bodies, and reports whether one is left. A receiver that two
+// destinations name, one sampling by request and one by session, gets the
+// record once, with bodies if either sends them. The capture's content stays
+// as captured.
 func (c *Capture) take(outcome string) bool {
 	due := c.destinations[:0]
+next:
 	for _, d := range c.destinations {
-		if c.position < d.Rate(outcome) {
-			d.content = c.position < d.ContentRate(outcome)
-			due = append(due, d)
+		if d.position >= d.Rate(outcome) {
+			continue
 		}
+		d.content = d.position < d.ContentRate(outcome)
+		for i := range due {
+			if due[i].SampleBy != d.SampleBy && due[i].SameReceiver(d.Destination) {
+				due[i].content = due[i].content || d.content
+				continue next
+			}
+		}
+		due = append(due, d)
 	}
 	clear(c.destinations[len(due):])
 	c.destinations = due
@@ -322,7 +343,6 @@ func (c *Capture) Discard() {
 type Held struct {
 	engine       *Engine
 	destinations []destination
-	position     float64
 	content      bool
 	trace        Trace
 	response     []byte
@@ -335,7 +355,7 @@ func (c *Capture) Hold() *Held {
 	if !c.held() {
 		return nil
 	}
-	h := &Held{engine: c.engine, destinations: c.destinations, position: c.position, content: c.content, trace: c.trace, response: c.response}
+	h := &Held{engine: c.engine, destinations: c.destinations, content: c.content, trace: c.trace, response: c.response}
 	c.destinations, c.response = nil, nil
 	c.Discard()
 	size := len(h.response)
@@ -359,7 +379,7 @@ func (h *Held) Finish(requestID, outcome string, event any, finalMetadata any) {
 	if h == nil || h.reservation == nil {
 		return
 	}
-	c := &Capture{engine: h.engine, destinations: h.destinations, position: h.position, content: h.content, trace: h.trace, response: h.response, reservation: h.reservation}
+	c := &Capture{engine: h.engine, destinations: h.destinations, content: h.content, trace: h.trace, response: h.response, reservation: h.reservation}
 	h.destinations, h.response, h.reservation = nil, nil, nil
 	if !c.take(outcome) {
 		c.Discard()

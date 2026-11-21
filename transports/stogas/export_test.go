@@ -32,7 +32,7 @@ func TestExportFollowsTheRequestOutcome(t *testing.T) {
 	failed := []billing.ProviderAttempt{{Status: "timeout"}}
 
 	finish := func(attempts []billing.ProviderAttempt) *billing.RequestEvent {
-		state := &State{RequestID: "request", Export: engine.Start(failures, "request", exporter.Trace{})}
+		state := &State{RequestID: "request", Export: engine.Start(failures, "request", "", exporter.Trace{})}
 		// An earlier pass over the same event may have marked it.
 		state.FinalEvent = &billing.RequestEvent{RequestID: "request", ProviderAttempts: attempts, Plugins: plugins.Metrics{Export: &plugins.ExportMetrics{}}}
 		finalizeExportMetrics(state)

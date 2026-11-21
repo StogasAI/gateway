@@ -761,7 +761,7 @@ func TestDestinationsGetTheirOwnFormat(t *testing.T) {
 		{URL: receiver.URL + "/metadata/v1/traces", Format: exportconfig.FormatOTLPGenAI141, Content: &none},
 		{URL: receiver.URL + "/latest/v1/traces", Format: exportconfig.FormatOTLPGenAI01},
 	}}
-	c := e.Start(config, "req_trace", Trace{Model: "gpt-5.6-sol", TraceID: testTraceID, ParentSpanID: testParentID})
+	c := e.Start(config, "req_trace", "", Trace{Model: "gpt-5.6-sol", TraceID: testTraceID, ParentSpanID: testParentID})
 	c.Input(map[string]json.RawMessage{"messages": json.RawMessage(`[{"role":"user","content":"Hi"}]`)}, false)
 	c.Response([]byte(`{"choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"Hello"}}]}`))
 	c.Finish("req_trace", "success", traceEvent(), testMetadata())
@@ -795,7 +795,7 @@ func TestDestinationsGetTheirOwnFormat(t *testing.T) {
 	}
 
 	// A rejection's export keeps the trace until its record is complete.
-	c = e.Start(&exportconfig.Config{Destinations: config.Destinations[1:2]}, "req_rejected", Trace{Model: "gpt-5.6-sol", TraceID: testTraceID, ParentSpanID: testParentID})
+	c = e.Start(&exportconfig.Config{Destinations: config.Destinations[1:2]}, "req_rejected", "", Trace{Model: "gpt-5.6-sol", TraceID: testTraceID, ParentSpanID: testParentID})
 	rejected := traceEvent()
 	rejected.RequestID, rejected.ProviderAttempts, rejected.GatewayError = "req_rejected", nil, &billing.EventError{Code: "insufficient_balance", Status: 402}
 	c.Hold().Finish("req_rejected", "rejected", rejected, testMetadata())
@@ -817,7 +817,7 @@ func TestTraceExportDropsWithoutMemory(t *testing.T) {
 	config := &exportconfig.Config{Destinations: []exportconfig.Destination{
 		{URL: receiver.URL}, {URL: receiver.URL, Format: exportconfig.FormatOTLPGenAI141}, {URL: receiver.URL, Format: exportconfig.FormatOTLPGenAI01},
 	}}
-	c := e.Start(config, "id", Trace{})
+	c := e.Start(config, "id", "", Trace{})
 	c.Response([]byte(`{"choices":[{"message":{"role":"assistant","content":"` + strings.Repeat("x", 16<<10) + `"}}]}`))
 	c.Finish("id", "success", traceEvent(), testMetadata())
 	if d := e.Diagnostics(); d.MemoryDropped != 3 || d.ReservedBytes != 0 || d.PendingDeliveries != 0 || c.held() {

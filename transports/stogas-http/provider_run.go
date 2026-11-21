@@ -126,7 +126,7 @@ func (r *providerRun) bind(resolution *catalog.ResolvedRequest) error {
 func (r *providerRun) prepare(pair *providerPair, resolution *catalog.ResolvedRequest) error {
 	state := r.state
 	if r.keyConfig.Claims != nil {
-		state.Export = r.server.exports.Start(resolution.ExportConfig, state.RequestID, exporter.Trace{Model: resolution.Deployment.ModelID, TraceID: state.TraceID, ParentSpanID: state.ParentSpanID})
+		state.Export = r.server.exports.Start(resolution.ExportConfig, state.RequestID, state.SessionID, exporter.Trace{Model: resolution.Deployment.ModelID, TraceID: state.TraceID, ParentSpanID: state.ParentSpanID})
 	}
 	resolution.ExportConfig = nil
 	selected, err := r.keyConfig.PolicyForCredential(string(resolution.Provider), resolution.CredentialIndex, r.credential.EncryptionKeys, r.startedAt)

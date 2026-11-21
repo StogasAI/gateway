@@ -37,6 +37,10 @@ const (
 	FormatOTLPGenAI01 = "otlp-genai-0.1"
 )
 
+// SampleBySession places a request by its session, so that a destination gets every request of a
+// session or none of them.
+const SampleBySession = "session"
+
 var ErrConfig = errors.New("invalid export configuration")
 
 type Config struct {
@@ -47,12 +51,14 @@ type Config struct {
 // no path is appended. Headers authenticate export delivery, never inference.
 // Format empty posts the record as JSON. Sample nil sends every record, and
 // Content nil sends each of them with its request and response bodies.
+// SampleBy empty places each request by itself.
 type Destination struct {
-	URL     string            `json:"url"`
-	Headers map[string]string `json:"headers,omitempty"`
-	Format  string            `json:"format,omitempty"`
-	Content *Content          `json:"content,omitempty"`
-	Sample  *Sample           `json:"sample,omitempty"`
+	URL      string            `json:"url"`
+	Headers  map[string]string `json:"headers,omitempty"`
+	Format   string            `json:"format,omitempty"`
+	Content  *Content          `json:"content,omitempty"`
+	Sample   *Sample           `json:"sample,omitempty"`
+	SampleBy string            `json:"sampleBy,omitempty"`
 }
 
 // Outcomes are how a request ended, as its record and Analytics name it.
@@ -219,12 +225,33 @@ func (d Destination) ContentReach() float64 {
 // Position places a request in [0, 1) by the first 32 bits of the SHA-256 of
 // its ID. A destination gets the record of a request whose position is below
 // its rate for the outcome. The gateway makes the ID, so a caller cannot choose
-// the position, and every destination reads the same one: a higher rate gets
-// every record that a lower rate gets, and the highest rate of several
-// destinations gets exactly the records that any of them gets.
+// the position, and every destination that samples by request reads the same
+// one: a higher rate gets every record that a lower rate gets, and the highest
+// rate of several destinations gets exactly the records that any of them gets.
 func Position(requestID string) float64 {
 	sum := sha256.Sum256([]byte(requestID))
 	return float64(binary.BigEndian.Uint32(sum[:4])) / (1 << 32)
+}
+
+// Position places a request for this destination: by its session when the
+// destination samples by session and the request names one, and by itself
+// otherwise. Every request of a session then has one position, so the
+// destination gets the session's requests of an outcome together, without
+// waiting for the session to end. The caller chooses the session ID, and so
+// which of its sessions are exported: sampling by session is for reading
+// sessions whole, and only a rate of 1 or sampling by request is oversight.
+func (d Destination) Position(requestID, sessionID string) float64 {
+	if d.SampleBy == SampleBySession && sessionID != "" {
+		return Position(sessionID)
+	}
+	return Position(requestID)
+}
+
+// SameReceiver reports whether two destinations post to one receiver: the same
+// URL, headers and format. Such destinations differ only in how they sample.
+func (d Destination) SameReceiver(other Destination) bool {
+	d.SampleBy, other.SampleBy = "", ""
+	return d.Identity() == other.Identity()
 }
 
 func (c *Config) Validate() error {
@@ -275,6 +302,9 @@ func (d *Destination) Validate() error {
 	if d.Format != "" && d.Format != FormatOTLPGenAI141 && d.Format != FormatOTLPGenAI01 {
 		return ErrConfig
 	}
+	if d.SampleBy != "" && d.SampleBy != SampleBySession {
+		return ErrConfig
+	}
 	if d.Content != nil {
 		for _, rate := range d.Content {
 			if !(rate >= 0 && rate <= 1) {
@@ -291,11 +321,14 @@ func (d *Destination) Validate() error {
 // Combine unions independent required destinations. The same URL, headers and
 // format name one receiver, which gets one record: two would share an Idempotency-Key.
 // It gets that record if any duplicate does, and with bodies if a duplicate
-// that gets the record sends them. Every destination reads the same position,
-// so the highest rate of each outcome says exactly that, for records and for
-// bodies. A descendant can therefore neither withhold records or bodies from
-// an inherited destination nor alter its credentials. The union has no bound
-// of its own: MaxDestinations bounds each policy.
+// that gets the record sends them. Duplicates that sample alike read the same
+// position, so the highest rate of each outcome says exactly that, for records
+// and for bodies, and they become one destination. A receiver that one policy
+// samples by request and another by session keeps both, because no single rate
+// says their union; delivery then sends it each record once. A descendant can
+// therefore neither withhold records or bodies from an inherited destination
+// nor alter its credentials. The union has no bound of its own:
+// MaxDestinations bounds each policy.
 func Combine(configs ...*Config) (*Config, error) {
 	result := &Config{Destinations: []Destination{}}
 	seen := map[[32]byte]int{}

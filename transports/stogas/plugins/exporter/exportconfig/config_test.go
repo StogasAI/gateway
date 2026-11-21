@@ -113,6 +113,84 @@ func TestRateAndReach(t *testing.T) {
 	}
 }
 
+// A destination that samples by session places every request of a session at the session's
+// position, and a request without a session at its own.
+func TestSampleBySessionPlacesEachSessionOnce(t *testing.T) {
+	var bySession Destination
+	if err := json.Unmarshal([]byte(`{"url":"https://receiver.example/","sample":0.1,"sampleBy":"session"}`), &bySession); err != nil || bySession.Validate() != nil {
+		t.Fatalf("sampleBy session was refused: %v", err)
+	}
+	byRequest := Destination{URL: bySession.URL, Sample: bySession.Sample}
+	for i := range 100 {
+		request := fmt.Sprintf("01a14a2c-7ee1-7ad7-bbf6-%012x", i)
+		if got := bySession.Position(request, "session-a"); got != Position("session-a") {
+			t.Fatalf("request %d of a session has position %v, want the session's %v", i, got, Position("session-a"))
+		}
+		if bySession.Position(request, "") != Position(request) {
+			t.Fatal("a request without a session is not placed by its own ID")
+		}
+		if byRequest.Position(request, "session-a") != Position(request) {
+			t.Fatal("a destination that samples by request read the session")
+		}
+	}
+	if bySession.Position("request", "session-a") == bySession.Position("request", "session-b") {
+		t.Fatal("two sessions share a position")
+	}
+	for _, by := range []string{`"request"`, `"trace"`, `"Session"`, `" session"`, `""`, `true`, `1`, `["session"]`} {
+		var d Destination
+		err := json.Unmarshal([]byte(`{"url":"https://receiver.example/","sampleBy":`+by+`}`), &d)
+		if err == nil && by != `""` {
+			err = d.Validate()
+		} else if err == nil && d.SampleBy != "" {
+			t.Fatalf("an empty sampleBy read as %q", d.SampleBy)
+		}
+		if err == nil && by != `""` {
+			t.Fatalf("sampleBy %s was accepted", by)
+		}
+	}
+	encoded, err := json.Marshal(bySession)
+	if err != nil || string(encoded) != `{"url":"https://receiver.example/","sample":0.1,"sampleBy":"session"}` {
+		t.Fatalf("a destination by session writes as %s, %v", encoded, err)
+	}
+}
+
+// One receiver that policies sample by request and by session keeps one destination for each,
+// because the two read different positions. Duplicates that sample alike still become one.
+func TestCombineKeepsOneDestinationForEachWayToSample(t *testing.T) {
+	const url = "https://receiver.example/"
+	rate := func(value float64) *Sample { return &Sample{value, value, value, value, value} }
+	off := Content{}
+	combined, err := Combine(
+		&Config{Destinations: []Destination{{URL: url, Sample: rate(0.1), SampleBy: SampleBySession}}},
+		&Config{Destinations: []Destination{{URL: url, Sample: rate(0.2), Content: &off}}},
+		&Config{Destinations: []Destination{
+			{URL: url, Sample: rate(0.3), SampleBy: SampleBySession, Content: &off},
+			{URL: url, Sample: rate(0.05)},
+			{URL: url, Headers: map[string]string{"authorization": "other"}, Sample: rate(0.5), SampleBy: SampleBySession},
+		}},
+	)
+	if err != nil || len(combined.Destinations) != 3 {
+		t.Fatalf("combined = %+v, %v", combined, err)
+	}
+	session, request, other := combined.Destinations[0], combined.Destinations[1], combined.Destinations[2]
+	if session.SampleBy != SampleBySession || session.Rate("success") != 0.3 || session.ContentRate("success") != 0.1 {
+		t.Fatalf("by session = %+v: want the highest rate, with bodies at the rate that sent them", session)
+	}
+	if request.SampleBy != "" || request.Rate("success") != 0.2 || request.ContentRate("success") != 0.05 {
+		t.Fatalf("by request = %+v: want the highest rate, with bodies at the rate that sent them", request)
+	}
+	if !session.SameReceiver(request) || !request.SameReceiver(session) {
+		t.Fatal("one URL, headers and format are one receiver however they sample")
+	}
+	if session.SameReceiver(other) || session.SameReceiver(Destination{URL: url, Format: FormatOTLPGenAI01}) || session.SameReceiver(Destination{URL: url + "x"}) {
+		t.Fatal("other headers, another format or another URL is another receiver")
+	}
+	again, err := Combine(combined, combined)
+	if err != nil || !reflect.DeepEqual(again, combined) {
+		t.Fatalf("combined twice = %+v, %v", again, err)
+	}
+}
+
 // The positions are the first 32 bits of each ID's SHA-256, worked out apart
 // from this code, so that a receiver can repeat the choice.
 func TestPositionFollowsTheRequestID(t *testing.T) {
