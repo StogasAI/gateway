@@ -98,6 +98,7 @@ func TestSavedLocationsAreCatalogPlaces(t *testing.T) {
 		`deployment.dataHandling.processingLocation == "mars"`:           "cannot be 'mars'; use a location that the catalog lists",
 		`deployment.dataHandling.processingLocation == "none"`:           "cannot be 'none'; use a location that the catalog lists",
 		`author.headquarteredCountry == "EU"`:                            "cannot be 'EU'; use an uppercase ISO country code",
+		`provider.headquarteredCountry != "cn"`:                          "headquarteredCountry cannot be 'cn'; use 'CN'",
 		`deployment.dataHandling.storageWithin.exists(p, p == "Europe")`: "storageWithin cannot be 'Europe'; use 'europe'",
 	} {
 		if _, err := CompileCEL(source); err == nil || !strings.Contains(err.Error(), message) {
@@ -109,6 +110,8 @@ func TestSavedLocationsAreCatalogPlaces(t *testing.T) {
 		`deployment.dataHandling.storageLocation == "none"`,
 		`"north-america" in deployment.dataHandling.storageWithin`,
 		`author.headquarteredCountry == "US"`,
+		// A headquarters can be a country that the catalog does not list as a place.
+		`provider.headquarteredCountry != "KP"`,
 	} {
 		if _, err := CompileCEL(source); err != nil {
 			t.Errorf("%s: %v", source, err)

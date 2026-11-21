@@ -19,6 +19,7 @@ import (
 	_ "time/tzdata"
 
 	"github.com/maximhq/bifrost/transports/stogas/inputfiles/filetype"
+	"github.com/maximhq/bifrost/transports/stogas/location"
 	"github.com/maximhq/bifrost/transports/stogas/plugins/exporter/exportconfig"
 	"github.com/maximhq/bifrost/transports/stogas/plugins/redaction"
 )
@@ -671,7 +672,7 @@ func (a *Access) validate() error {
 		// A region in deny can hold every country of an allow list that names
 		// none of the same entries.
 		a.Countries = &Lists{Allow: countriesOf(a.Countries.Allow), Deny: countriesOf(a.Countries.Deny)}
-		if err := a.Countries.validate("access.countries", "country", "", CountryCode); err != nil {
+		if err := a.Countries.validate("access.countries", "country", "", location.CountryCode); err != nil {
 			return err
 		}
 	}

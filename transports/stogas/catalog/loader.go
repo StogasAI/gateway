@@ -647,8 +647,8 @@ func snapshotFromCompiled(catalog compiledCatalog) (*snapshot, error) {
 		return nil, err
 	}
 	for id, company := range catalog.Companies {
-		if country := company.HeadquarteredCountry; id == HostingUnknown || !location.Country(country) || !places.Place(country) {
-			return nil, fmt.Errorf("company %s is invalid or headquartered in %q, which is not a country of the catalog", id, country)
+		if country := company.HeadquarteredCountry; id == HostingUnknown || !location.CountryCode(country) {
+			return nil, fmt.Errorf("company %s is invalid or headquartered in %q, which is not a country code", id, country)
 		}
 	}
 	base, err := stateFromGraph(catalog.Graph, places, catalog.Companies)
@@ -1310,20 +1310,11 @@ func validateCompanies(graph compiledGraph, companies map[string]company) error 
 	return nil
 }
 
-// validateLocations checks that a graph names only the catalog's places: each headquarters is a
-// country among them, and each deployment's data handling, and each of its hosted tools', names
-// one of them or unknown, or none for the deployment's storage.
+// validateLocations checks that a graph names only the catalog's places: each deployment's data
+// handling, and each of its hosted tools', names one of them or unknown, or none for the
+// deployment's storage. A headquarters can be any country, which validateCompanies holds to the
+// company's.
 func validateLocations(graph compiledGraph, places *location.Places) error {
-	for id, author := range graph.Authors {
-		if country := author.HeadquarteredCountry; !location.Country(country) || !places.Place(country) {
-			return fmt.Errorf("author %s is headquartered in %q, which is not a country of the catalog", id, country)
-		}
-	}
-	for id, provider := range graph.Providers {
-		if country := provider.HeadquarteredCountry; !location.Country(country) || !places.Place(country) {
-			return fmt.Errorf("provider %s is headquartered in %q, which is not a country of the catalog", id, country)
-		}
-	}
 	for deploymentID, deployment := range graph.Deployments {
 		for routeID, route := range deployment.Routes {
 			if !places.Valid(route.DataHandling.ProcessingLocation, false) || !places.Valid(route.DataHandling.StorageLocation, true) {

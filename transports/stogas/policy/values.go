@@ -76,13 +76,16 @@ func meantPlace(value string) (string, bool) {
 	return places.Fold(value)
 }
 
+func meantCountry(value string) (string, bool) {
+	upper := strings.ToUpper(value)
+	return upper, location.CountryCode(upper)
+}
+
 var (
 	catalogID = patternDomain(`^[a-z0-9][a-z0-9._:-]*$`, "a catalog ID, which uses lowercase letters, digits, '.', '_', ':' and '-'")
 	selection = fieldDomain{validSelection, "kind:ID terms with the catalog's IDs, each kind once and in the order " +
 		strings.Join(SelectionKinds[:], ", ") + ", such as 'model:gpt-5.6-sol' or 'provider:azure group:gpt-6'", nil}
-	country = fieldDomain{func(value string) bool {
-		return location.Country(value) && (places == nil || places.Place(value))
-	}, "an uppercase ISO country code that the catalog lists, such as 'US'", meantPlace}
+	country            = fieldDomain{location.CountryCode, "an uppercase ISO country code, such as 'US'", meantCountry}
 	processingLocation = fieldDomain{func(value string) bool { return validLocation(value, false) },
 		"a location that the catalog lists, such as 'eu', 'world', 'unknown' or 'DE'", meantPlace}
 	storageLocation = fieldDomain{func(value string) bool { return validLocation(value, true) },

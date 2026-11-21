@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"maps"
 	"slices"
+
+	"github.com/maximhq/bifrost/transports/stogas/location"
 )
 
 // regionsJSON gives each continent, region and union of the catalog that the
@@ -36,7 +38,7 @@ var regionsBySize = slices.SortedFunc(maps.Keys(regionCountries), func(a, b stri
 // or a region.
 func countryEntry(entry string) bool {
 	_, region := regionCountries[entry]
-	return region || CountryCode(entry)
+	return region || location.CountryCode(entry)
 }
 
 // countriesOf gives the countries of the entries in order, each once, with

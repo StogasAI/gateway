@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/maximhq/bifrost/transports/stogas/location"
 )
 
 func TestRegionsHoldCountriesThatPoliciesTake(t *testing.T) {
@@ -13,11 +15,11 @@ func TestRegionsHoldCountriesThatPoliciesTake(t *testing.T) {
 		t.Fatal("no regions")
 	}
 	for region, countries := range regionCountries {
-		if CountryCode(region) || len(countries) == 0 || !slices.IsSorted(countries) || len(slices.Compact(slices.Clone(countries))) != len(countries) {
+		if location.CountryCode(region) || len(countries) == 0 || !slices.IsSorted(countries) || len(slices.Compact(slices.Clone(countries))) != len(countries) {
 			t.Errorf("%s: %q", region, countries)
 		}
 		for _, country := range countries {
-			if !CountryCode(country) {
+			if !location.CountryCode(country) {
 				t.Errorf("%s holds %s, which access.countries does not take", region, country)
 			}
 		}
