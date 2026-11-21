@@ -12,10 +12,11 @@ import (
 
 // Gateways check stored credentials themselves and take the checks from PostgreSQL as workers take
 // jobs from a queue: each gateway claims credentials whose checks are due, checks them and records
-// the results, and each record sets when the next check is due. A claim moves the due time two
-// minutes ahead, so a check that a gateway loses to a crash or a restart is due again then. A
-// member or Control asks for a check by making it due now. The checks that the fleet runs at once
-// grow with its gateways, and the claim takes the credentials of every organization in turn.
+// the results, and each record sets when the next check is due. A claim holds the credential for
+// two minutes and moves the due time to then, so a check that a gateway loses to a crash or a
+// restart is due again then. A member or Control asks for a check by making it due now, and the
+// claim takes each organization's oldest ask ahead of the scheduled checks. The checks that the
+// fleet runs at once grow with its gateways.
 const (
 	// Stored checks take all of the checker's slots but one, which stays for the members' checks and
 	// Control's probes that someone waits for.
