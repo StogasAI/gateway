@@ -92,7 +92,7 @@ gh attestation verify gateway.igvm --repo StogasAI/gateway --predicate-type http
 
 ## Reproducibility
 
-GitHub and GitLab.com's hosted runners each build every tag and attest the manifest and the image, GitLab in `gitlab-attestation.jsonl`. Stogas approves a release only if both proofs name the same `release-manifest.json` and image.
+GitHub and GitLab.com's hosted runners each build every tag and attest every file of the release, GitLab in `gitlab-attestation.jsonl`. Stogas approves a release only if both proofs name the same files.
 
 To check a release:
 

@@ -55,6 +55,8 @@ jobs:
           STOGAS_GUIX_SUBSTITUTE_URLS: https://ci.guix.gnu.org https://bordeaux.guix.gnu.org
         run: stogas/release/scripts/build-release.sh "$GITHUB_REF_NAME" "dist/gateway/$GITHUB_REF_NAME"
 
+      # One build proof names every file of the release, as GitLab's does, so
+      # `gh attestation verify` works on any of them.
       - name: Generate GitHub artifact attestation
         id: attest
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
@@ -62,6 +64,9 @@ jobs:
           subject-path: |
             dist/gateway/${{ github.ref_name }}/release-manifest.json
             dist/gateway/${{ github.ref_name }}/gateway.igvm
+            dist/gateway/${{ github.ref_name }}/LICENSE
+            dist/gateway/${{ github.ref_name }}/NOTICE
+            dist/gateway/${{ github.ref_name }}/sbom.cdx.json
 
       - name: Attest the bill of materials of the image
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
