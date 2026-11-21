@@ -10,9 +10,9 @@ import (
 )
 
 func TestDenyPeriodsUseTheSourceBudgetAndShareTimeZones(t *testing.T) {
-	windows := make([]DenyWindow, 1000)
+	windows := make([]Window, 1000)
 	for i := range windows {
-		windows[i] = DenyWindow{Days: []string{"mon"}, TimeZone: "America/New_York",
+		windows[i] = Window{Days: []string{"mon"}, TimeZone: "America/New_York",
 			Start: fmt.Sprintf("%02d:%02d", i/60, i%60), End: fmt.Sprintf("%02d:%02d", (i+1)/60, (i+1)%60)}
 	}
 	raw := mustRawJSON(map[string]any{"access": &Access{Schedule: &Schedule{Deny: windows}}})
@@ -61,7 +61,7 @@ func (v testValues) PolicyTokenPrice(meter string, promptTokens int64) (Value, b
 
 func TestDenyWindowsAreTimeZoneAwareAndHalfOpen(t *testing.T) {
 	config := validCompiledConfig()
-	config.Access = &Access{Schedule: &Schedule{Deny: []DenyWindow{{
+	config.Access = &Access{Schedule: &Schedule{Deny: []Window{{
 		Days:     []string{"mon"},
 		Start:    "09:00",
 		End:      "10:00",
@@ -93,7 +93,7 @@ func TestDenyWindowsAreTimeZoneAwareAndHalfOpen(t *testing.T) {
 
 func TestDenyWindowCanEndAtMidnight(t *testing.T) {
 	config := validCompiledConfig()
-	config.Access = &Access{Schedule: &Schedule{Deny: []DenyWindow{{
+	config.Access = &Access{Schedule: &Schedule{Deny: []Window{{
 		Days:     []string{"mon"},
 		Start:    "20:00",
 		End:      "24:00",
@@ -136,7 +136,7 @@ func TestDenyWindowsTakeOnlyTheContractsTimeZones(t *testing.T) {
 		"Mars/Olympus":     false,
 	} {
 		config := validCompiledConfig()
-		config.Access = &Access{Schedule: &Schedule{Deny: []DenyWindow{{
+		config.Access = &Access{Schedule: &Schedule{Deny: []Window{{
 			Days: []string{"mon"}, Start: "09:00", End: "17:00", TimeZone: zone,
 		}}}}
 		if err := config.validate(); (err == nil) != valid {
@@ -202,4 +202,44 @@ func FuzzCompileSourceNeverPanics(f *testing.F) {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, raw []byte) { _, _ = CompileSource(raw) })
+}
+
+func TestAllowPeriodsAdmitOnlyTheirTimes(t *testing.T) {
+	office := `{"access":{"schedule":{"allow":[{"days":["mon","tue","wed","thu","fri"],"start":"09:00","end":"17:00","timeZone":"Europe/Paris"}]}}}`
+	config := ruleSource(t, office).Config
+	monday := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC) // 02:00 in Paris
+	for hour, denied := range map[int]bool{6: true, 7: false, 14: false, 15: true} {
+		if got := config.DeniedAt(monday.Add(time.Duration(hour) * time.Hour)); got != denied {
+			t.Errorf("Monday %02d:00 UTC: denied %t, want %t", hour, got, denied)
+		}
+	}
+	if !config.DeniedAt(monday.Add(-12 * time.Hour)) {
+		t.Fatal("a Sunday passed a weekday allow list")
+	}
+
+	// A request must fall in a period of every policy's allow list and in no
+	// deny period, and the origin names the policy that refuses it.
+	key := `{"access":{"schedule":{"allow":[{"days":["mon"],"start":"10:00","end":"20:00","timeZone":"UTC"}],"deny":[{"days":["mon"],"start":"12:00","end":"13:00","timeZone":"UTC"}]}}}`
+	composed, err := ComposeSources([]ScopedSource{
+		{Scope: OrganizationScope, Value: ruleSource(t, office)},
+		{Scope: KeyScope, Value: ruleSource(t, key)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for hour, want := range map[int]string{8: "1 true", 10: "", 12: "1 true", 14: "", 15: "0 true"} {
+		origin, denied := composed.DenyOrigin(monday.Add(time.Duration(hour) * time.Hour))
+		got := ""
+		if denied {
+			got = fmt.Sprint(origin.Source, " ", denied)
+		}
+		if got != want || composed.DeniedAt(monday.Add(time.Duration(hour)*time.Hour)) != denied {
+			t.Errorf("Monday %02d:00 UTC: %q, want %q", hour, got, want)
+		}
+	}
+	raw, err := json.Marshal(composed.Access.Schedule.Effective())
+	want := `{"allow":[[{"days":["mon","tue","wed","thu","fri"],"end":"17:00","start":"09:00","timeZone":"Europe/Paris"}],[{"days":["mon"],"end":"20:00","start":"10:00","timeZone":"UTC"}]],"deny":[{"days":["mon"],"end":"13:00","start":"12:00","timeZone":"UTC"}]}`
+	if err != nil || string(raw) != want {
+		t.Fatalf("effective schedule %s %v", raw, err)
+	}
 }

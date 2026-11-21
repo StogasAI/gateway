@@ -1020,17 +1020,12 @@ func (c *Config) FilterOrigin(index int) (Origin, bool) {
 	return Origin{}, false
 }
 
-// DenyOrigin locates the first deny period that covers now.
+// DenyOrigin locates the first policy whose schedule refuses a request at
+// now.
 func (c *Config) DenyOrigin(now time.Time) (Origin, bool) {
 	for i, entry := range c.sources {
-		if c.allowedSettings(entry.Value)&permissionSchedule == 0 {
-			continue
-		}
-		periods := entry.Value.Config.Access.denyPeriods()
-		for index := range periods {
-			if periods[index].covers(now) {
-				return c.origin(i), true
-			}
+		if c.allowedSettings(entry.Value)&permissionSchedule != 0 && entry.Value.Config.Access.schedule().refuses(now) {
+			return c.origin(i), true
 		}
 	}
 	return Origin{}, false
@@ -1231,7 +1226,7 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 	// request unless a policy skips it and none fails it.
 	missingKeys := ""
 	seenPlugins := map[*Plugins]bool{}
-	seenWindows := map[string]bool{}
+	seenPeriods := map[string]bool{}
 	var networks []*Networks
 	var countries, transportLists []*Lists
 	var catalogLists [len(routingLists)][]*Lists
@@ -1290,18 +1285,28 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 				out.Timeouts.OutputIdleSeconds = value
 			}
 		}
-		if allowed&permissionSchedule != 0 && config.Access != nil && config.Access.Schedule != nil {
-			if out.Access == nil {
-				out.Access = &Access{}
+		// A request must fall in a period of every allow list and in no deny
+		// period of any policy.
+		if schedule := config.Access.schedule(); allowed&permissionSchedule != 0 && schedule != nil {
+			combined := func() *Schedule {
+				if out.Access == nil {
+					out.Access = &Access{}
+				}
+				if out.Access.Schedule == nil {
+					out.Access.Schedule = &Schedule{}
+				}
+				return out.Access.Schedule
 			}
-			for _, window := range config.Access.Schedule.Deny {
-				raw, _ := json.Marshal(window)
-				if !seenWindows[string(raw)] {
-					if out.Access.Schedule == nil {
-						out.Access.Schedule = &Schedule{}
-					}
-					out.Access.Schedule.Deny = append(out.Access.Schedule.Deny, window)
-					seenWindows[string(raw)] = true
+			for _, window := range schedule.Deny {
+				if raw, _ := json.Marshal(window); !seenPeriods[string(raw)] {
+					combined().Deny = append(combined().Deny, window)
+					seenPeriods[string(raw)] = true
+				}
+			}
+			for _, allow := range schedule.allows {
+				if raw, _ := json.Marshal(allow); !seenPeriods["allow"+string(raw)] {
+					combined().allows = append(combined().allows, allow)
+					seenPeriods["allow"+string(raw)] = true
 				}
 			}
 		}

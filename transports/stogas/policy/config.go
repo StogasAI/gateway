@@ -323,14 +323,28 @@ type Access struct {
 	Transports *Lists    `json:"transports,omitempty"`
 }
 
-// Schedule refuses requests during weekly periods. It has no allow list,
-// because periods in several time zones have no common form to intersect in,
-// so the allow lists of several policies could not combine into one.
+// Schedule limits requests by the time of the week. A request must fall in a
+// period of the allow list, when there is one, and in no period of deny.
 type Schedule struct {
-	Deny []DenyWindow `json:"deny,omitzero"`
+	Allow []Window `json:"allow,omitzero"`
+	Deny  []Window `json:"deny,omitzero"`
+
+	// allows holds the allow list of each policy, and a request must fall in
+	// a period of every one. Periods in several time zones, with their
+	// daylight saving rules, have no common form to intersect in.
+	allows [][]Window
 }
 
-type DenyWindow struct {
+// EffectiveSchedule shows composed schedules: the allow lists that a request
+// must each fall in, and the periods that any policy denies.
+type EffectiveSchedule struct {
+	Allow [][]Window `json:"allow,omitzero"`
+	Deny  []Window   `json:"deny,omitzero"`
+}
+
+// Window is a weekly period in a time zone, from its start up to its end on
+// each of its days.
+type Window struct {
 	Days     []string `json:"days"`
 	End      string   `json:"end"`
 	Start    string   `json:"start"`
@@ -681,51 +695,106 @@ func (a *Access) validate() error {
 	}); err != nil {
 		return err
 	}
-	if a.Schedule == nil {
+	return a.Schedule.validate()
+}
+
+func (s *Schedule) validate() error {
+	if s == nil {
 		return nil
 	}
-	// An empty list is the neutral value that replaces a default.
-	if a.Schedule.Deny == nil {
-		return configError("access.schedule requires deny")
+	// An empty deny list is the neutral value that replaces a default. An
+	// empty allow list would refuse every request, which enabled already says.
+	if s.Allow == nil && s.Deny == nil {
+		return configError("access.schedule requires allow or deny")
+	}
+	if s.Allow != nil && len(s.Allow) == 0 {
+		return configError("access.schedule.allow requires at least one period")
 	}
 	locations := make(map[string]*time.Location)
-	for index := range a.Schedule.Deny {
-		if err := a.Schedule.Deny[index].validate(locations); err != nil {
-			return err
+	for _, list := range [2]struct {
+		name    string
+		windows []Window
+	}{{"allow", s.Allow}, {"deny", s.Deny}} {
+		for index := range list.windows {
+			if err := list.windows[index].validate(list.name, locations); err != nil {
+				return err
+			}
 		}
+	}
+	s.allows = nil
+	if s.Allow != nil {
+		s.allows = [][]Window{s.Allow}
 	}
 	return nil
 }
 
-// denyPeriods returns the periods of the schedule, if any.
-func (a *Access) denyPeriods() []DenyWindow {
-	if a == nil || a.Schedule == nil {
+// schedule returns the schedule, if any.
+func (a *Access) schedule() *Schedule {
+	if a == nil {
 		return nil
 	}
-	return a.Schedule.Deny
+	return a.Schedule
 }
 
-func (w *DenyWindow) validate(locations map[string]*time.Location) error {
+// periods counts the periods of the schedule.
+func (s *Schedule) periods() int {
+	if s == nil {
+		return 0
+	}
+	count := len(s.Deny)
+	for _, allow := range s.allows {
+		count += len(allow)
+	}
+	return count
+}
+
+// refuses reports whether the schedule refuses a request at now: a deny
+// period covers it, or an allow list has no period that does.
+func (s *Schedule) refuses(now time.Time) bool {
+	if s == nil {
+		return false
+	}
+	covers := func(window Window) bool { return window.covers(now) }
+	if slices.ContainsFunc(s.Deny, covers) {
+		return true
+	}
+	for _, allow := range s.allows {
+		if !slices.ContainsFunc(allow, covers) {
+			return true
+		}
+	}
+	return false
+}
+
+// Effective returns the schedule as the effective policy shows it.
+func (s *Schedule) Effective() *EffectiveSchedule {
+	if s == nil {
+		return nil
+	}
+	return &EffectiveSchedule{Allow: s.allows, Deny: s.Deny}
+}
+
+func (w *Window) validate(list string, locations map[string]*time.Location) error {
 	if w == nil || len(w.Days) == 0 || len(w.Days) > 7 {
-		return configError("deny window days are invalid")
+		return configError("access.schedule.%s period days are invalid", list)
 	}
 	start, ok := clockMinute(w.Start)
 	if !ok {
-		return configError("deny window start is invalid")
+		return configError("access.schedule.%s period start is invalid", list)
 	}
 	end, ok := clockEndMinute(w.End)
 	if !ok || start >= end {
-		return configError("deny window end is invalid")
+		return configError("access.schedule.%s period end is invalid", list)
 	}
 	if len(w.TimeZone) > 64 || !timeZonePattern.MatchString(w.TimeZone) {
-		return configError("deny window time zone is invalid")
+		return configError("access.schedule.%s period time zone is invalid", list)
 	}
 	location := locations[w.TimeZone]
 	if location == nil {
 		var err error
 		location, err = time.LoadLocation(w.TimeZone)
 		if err != nil {
-			return configError("deny window time zone is invalid")
+			return configError("access.schedule.%s period time zone is invalid", list)
 		}
 		locations[w.TimeZone] = location
 	}
@@ -733,7 +802,7 @@ func (w *DenyWindow) validate(locations map[string]*time.Location) error {
 	for _, day := range w.Days {
 		weekday, ok := policyWeekday(day)
 		if !ok || weekdays[weekday] {
-			return configError("deny window days are invalid")
+			return configError("access.schedule.%s period days are invalid", list)
 		}
 		weekdays[weekday] = true
 	}
@@ -802,20 +871,13 @@ func (p *Plugins) validate() error {
 	return nil
 }
 
+// DeniedAt reports whether the schedules of the policies refuse a request at
+// now.
 func (c *Config) DeniedAt(now time.Time) bool {
-	if c == nil {
-		return false
-	}
-	periods := c.Access.denyPeriods()
-	for index := range periods {
-		if periods[index].covers(now) {
-			return true
-		}
-	}
-	return false
+	return c != nil && c.Access.schedule().refuses(now)
 }
 
-func (w *DenyWindow) covers(now time.Time) bool {
+func (w *Window) covers(now time.Time) bool {
 	local := now.In(w.location)
 	minute := local.Hour()*60 + local.Minute()
 	return w.weekdays[local.Weekday()] && minute >= w.startMinute && minute < w.endMinute

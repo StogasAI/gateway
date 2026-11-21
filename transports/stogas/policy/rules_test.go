@@ -342,7 +342,7 @@ func TestRulesExplicitEmptySettingsReplaceDefaultsWithoutWeakeningRequirements(t
 				t.Fatal(err)
 			}
 			// Orderings stack, so the default sort applies beside an empty one.
-			if (active.Input != nil && active.Input.ASCIIOnly) != withRequired || (len(active.Access.denyPeriods()) > 0) != withRequired || len(active.Routing.Query.OrderBy) != 1 {
+			if (active.Input != nil && active.Input.ASCIIOnly) != withRequired || (active.Access.schedule().periods() > 0) != withRequired || len(active.Routing.Query.OrderBy) != 1 {
 				t.Fatalf("required=%v: wrong active restrictions: %+v", withRequired, active)
 			}
 			// The smallest required value applies; the default rule's never does.

@@ -31,18 +31,28 @@ type Lists struct {
 }
 
 // Networks limits requests by where they come from. Both lists take
-// addresses, CIDR ranges and onion, the clients of the onion service. A deny
-// list also takes AS numbers, tor, vpn and hosting: networks that anyone can
-// send from, so an allow list of them would not bound where a key works.
+// addresses, CIDR ranges, AS numbers, onion for the clients of the onion
+// service, tor for Tor exit relays, and vpn and hosting for the networks of
+// VPN and hosting providers.
 type Networks struct {
-	// Allow, when present, admits only clients in its networks. A composed
-	// config holds the networks that every policy allows, so an empty list
-	// admits none.
+	// Allow, when present, admits only clients in one of its networks.
 	Allow []string `json:"allow,omitzero"`
 	// Deny refuses clients in its networks.
 	Deny []string `json:"deny,omitzero"`
 
-	allow, deny networkSet
+	// allows holds the allow list of each policy, and a client must be in a
+	// network of every one. Lists of only addresses and onion intersect into
+	// one. A list that names an AS, tor, vpn or hosting stays apart, because
+	// those meet a range only through the gateway's tables.
+	allows []networkSet
+	deny   networkSet
+}
+
+// EffectiveNetworks shows composed network lists: the allow lists that a
+// client must each be in, and the networks that any policy denies.
+type EffectiveNetworks struct {
+	Allow [][]string `json:"allow,omitzero"`
+	Deny  []string   `json:"deny,omitzero"`
 }
 
 // Client is where a request came from, with what the gateway's network lists
@@ -164,31 +174,41 @@ func (n *Networks) validate() error {
 	if n.Allow != nil && len(n.Allow) == 0 {
 		return configError("access.networks.allow requires at least one entry")
 	}
-	var err error
-	if n.allow, err = parseNetworks("allow", n.Allow); err != nil {
+	allow, err := parseNetworks("allow", n.Allow)
+	if err != nil {
 		return err
 	}
 	if n.deny, err = parseNetworks("deny", n.Deny); err != nil {
 		return err
 	}
-	if n.Allow != nil && len(subtractNetworks(n.allow.ranges, n.deny.ranges)) == 0 && n.allow.kinds&^n.deny.kinds == 0 {
-		return configError("access.networks.deny holds every network that allow lists")
+	n.allows = nil
+	if n.Allow != nil {
+		if n.deny.holdsAll(allow) {
+			return configError("access.networks.deny holds every network that allow lists")
+		}
+		n.allows = []networkSet{allow}
 	}
 	return nil
 }
 
 // refusal returns why the lists refuse the client, or Admitted. Address
-// ranges decide first, because they need no list of the gateway's.
+// ranges decide first, because they need no list of the gateway's, and a
+// refusal that the loaded lists prove comes before ListsMissing.
 func (n *Networks) refusal(client Client) Refusal {
 	if client.Onion {
-		if n.deny.kinds&kindOnion != 0 || n.Allow != nil && n.allow.kinds&kindOnion == 0 {
+		if n.deny.kinds&kindOnion != 0 {
 			return RefusedOnion
+		}
+		for _, allow := range n.allows {
+			if allow.kinds&kindOnion == 0 {
+				return RefusedOnion
+			}
 		}
 		return Admitted
 	}
 	address := client.Address
 	if !address.IsValid() {
-		if n.Allow != nil || len(n.deny.ranges) > 0 || len(n.deny.ases) > 0 || n.deny.kinds != 0 {
+		if len(n.allows) > 0 || len(n.deny.ranges) > 0 || len(n.deny.ases) > 0 || n.deny.kinds != 0 {
 			return RefusedAddress
 		}
 		return Admitted
@@ -196,49 +216,79 @@ func (n *Networks) refusal(client Client) Refusal {
 	if _, denied := networkHolding(n.deny.ranges, address); denied {
 		return RefusedAddress
 	}
-	if n.Allow != nil {
-		if _, ok := networkHolding(n.allow.ranges, address); !ok {
+	missing := false
+	for _, allow := range n.allows {
+		if _, in := networkHolding(allow.ranges, address); in {
+			continue
+		}
+		switch named, unknown := allow.named(client); {
+		case named != Admitted:
+		case unknown:
+			missing = true
+		default:
 			return RefusedAddress
 		}
 	}
-	if client.Missing&n.deny.lists() != 0 {
-		return ListsMissing
-	}
-	_, deniedAS := slices.BinarySearch(n.deny.ases, client.AS)
+	named, unknown := n.deny.named(client)
 	switch {
-	case n.deny.kinds&kindTor != 0 && client.TorExit:
-		return RefusedTorExit
-	case deniedAS:
-		return RefusedAS
-	case n.deny.kinds&kindVPN != 0 && client.VPN:
-		return RefusedVPN
-	case n.deny.kinds&kindHosting != 0 && client.Hosting:
-		return RefusedHosting
+	case named != Admitted:
+		return named
+	case unknown || missing:
+		return ListsMissing
 	}
 	return Admitted
 }
 
-// lists returns the gateway's lists that the set reads.
-func (s networkSet) lists() NetworkLists {
-	var lists NetworkLists
-	if len(s.ases) > 0 {
-		lists |= ASList
+// named returns the refusal for the first named network of the set that
+// holds the client: Tor, then the AS, then vpn and hosting, so that a
+// refusal names the narrowest fact. unknown reports that no loaded list
+// matched and a list that the set reads is not loaded.
+func (s networkSet) named(client Client) (refusal Refusal, unknown bool) {
+	_, inAS := slices.BinarySearch(s.ases, client.AS)
+	for _, fact := range [...]struct {
+		listed  bool
+		lists   NetworkLists
+		holds   bool
+		refusal Refusal
+	}{
+		{s.kinds&kindTor != 0, TorExitList, client.TorExit, RefusedTorExit},
+		{len(s.ases) > 0, ASList, inAS, RefusedAS},
+		{s.kinds&kindVPN != 0, ASList | VPNList, client.VPN, RefusedVPN},
+		{s.kinds&kindHosting != 0, ASList | HostingList, client.Hosting, RefusedHosting},
+	} {
+		switch {
+		case !fact.listed:
+		case client.Missing&fact.lists != 0:
+			unknown = true
+		case fact.holds:
+			return fact.refusal, false
+		}
 	}
-	if s.kinds&kindTor != 0 {
-		lists |= TorExitList
-	}
-	if s.kinds&kindVPN != 0 {
-		lists |= ASList | VPNList
-	}
-	if s.kinds&kindHosting != 0 {
-		lists |= ASList | HostingList
-	}
-	return lists
+	return Admitted, unknown
 }
 
-// combineNetworks returns the networks that every list allows and the
-// networks that any denies. A chain's lists can hold several hundred thousand
-// entries together, so they join in one pass.
+// holdsAll reports whether the set lists every network of other.
+func (s networkSet) holdsAll(other networkSet) bool {
+	return len(subtractNetworks(other.ranges, s.ranges)) == 0 && other.kinds&^s.kinds == 0 &&
+		!slices.ContainsFunc(other.ases, func(number uint32) bool {
+			_, listed := slices.BinarySearch(s.ases, number)
+			return !listed
+		})
+}
+
+// addressesOnly reports whether the set names only addresses and onion, which
+// intersect exactly.
+func (s networkSet) addressesOnly() bool {
+	return len(s.ases) == 0 && s.kinds&^kindOnion == 0
+}
+
+func (s networkSet) equal(other networkSet) bool {
+	return s.kinds == other.kinds && slices.Equal(s.ranges, other.ranges) && slices.Equal(s.ases, other.ases)
+}
+
+// combineNetworks returns the allow lists of every policy and the networks
+// that any denies. A chain's lists can hold several hundred thousand entries
+// together, so they join in one pass.
 func combineNetworks(lists []*Networks) *Networks {
 	switch len(lists) {
 	case 0:
@@ -249,29 +299,50 @@ func combineNetworks(lists []*Networks) *Networks {
 	out := &Networks{}
 	var ranges []netip.Prefix
 	var ases []uint32
-	allows, denies := false, false
+	var addresses *networkSet
+	denies := false
 	for _, list := range lists {
 		ranges = append(ranges, list.deny.ranges...)
 		ases = append(ases, list.deny.ases...)
 		out.deny.kinds |= list.deny.kinds
 		denies = denies || list.Deny != nil
-		switch {
-		case list.Allow == nil:
-		case !allows:
-			out.allow, allows = list.allow, true
-		default:
-			out.allow = networkSet{ranges: intersectNetworks(out.allow.ranges, list.allow.ranges), kinds: out.allow.kinds & list.allow.kinds}
+		for _, allow := range list.allows {
+			switch {
+			case !allow.addressesOnly():
+				if !slices.ContainsFunc(out.allows, allow.equal) {
+					out.allows = append(out.allows, allow)
+				}
+			case addresses == nil:
+				addresses = &allow
+			default:
+				addresses = &networkSet{ranges: intersectNetworks(addresses.ranges, allow.ranges), kinds: addresses.kinds & allow.kinds}
+			}
 		}
+	}
+	if addresses != nil {
+		out.allows = append([]networkSet{*addresses}, out.allows...)
 	}
 	slices.Sort(ases)
 	out.deny.ranges, out.deny.ases = disjointNetworks(ranges), slices.Compact(ases)
-	// Allow and Deny stay nil where no policy set them, because an empty
-	// allow list admits no client.
-	if allows {
-		out.Allow = out.allow.strings()
-	}
+	// Deny stays nil where no policy set one, so the effective policy shows
+	// only lists that policies set.
 	if denies {
 		out.Deny = out.deny.strings()
+	}
+	return out
+}
+
+// Effective returns the lists as the effective policy shows them.
+func (n *Networks) Effective() *EffectiveNetworks {
+	if n == nil {
+		return nil
+	}
+	out := &EffectiveNetworks{}
+	for _, allow := range n.allows {
+		out.Allow = append(out.Allow, allow.strings())
+	}
+	if n.Deny != nil {
+		out.Deny = n.deny.strings()
 	}
 	return out
 }
@@ -305,9 +376,6 @@ func parseNetworks(list string, entries []string) (networkSet, error) {
 			if entry == named.name {
 				kind = named.kind
 			}
-		}
-		if (isAS || kind != 0 && kind != kindOnion) && list == "allow" {
-			return networkSet{}, configError("access.networks.allow has %q, which only deny lists take", entry)
 		}
 		if isAS && ases[number] || set.kinds&kind != 0 {
 			return networkSet{}, configError("access.networks.%s lists %s twice", list, entry)
@@ -359,10 +427,7 @@ func parseNetwork(list, entry string) (netip.Prefix, error) {
 }
 
 func invalidNetwork(list, entry string) error {
-	if list == "allow" {
-		return configError("access.networks.allow has %q, which is not an IP address, CIDR range or onion", entry)
-	}
-	return configError("access.networks.deny has %q, which is not an IP address, CIDR range, AS number, onion, tor, vpn or hosting", entry)
+	return configError("access.networks.%s has %q, which is not an IP address, CIDR range, AS number, onion, tor, vpn or hosting", list, entry)
 }
 
 // parseAS reads an AS number in the form AS64496. AS0 is reserved, and no

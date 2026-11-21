@@ -224,12 +224,21 @@ func (v *Inspector) Finish() (*Inspection, error) {
 	if compiled.Timeouts != nil {
 		effective["timeouts"] = compiled.Timeouts
 	}
-	if compiled.Access != nil && (compiled.Access.Schedule != nil || compiled.Access.Networks != nil || compiled.Access.Countries != nil || compiled.Access.Transports != nil) {
-		access := *compiled.Access
-		if countries := access.Countries; countries != nil {
-			access.Countries = &Lists{Allow: namedCountries(countries.Allow), Deny: namedCountries(countries.Deny)}
+	if access := compiled.Access; access != nil && (access.Schedule != nil || access.Networks != nil || access.Countries != nil || access.Transports != nil) {
+		shown := map[string]any{}
+		if access.Schedule != nil {
+			shown["schedule"] = access.Schedule.Effective()
 		}
-		effective["access"] = &access
+		if access.Networks != nil {
+			shown["networks"] = access.Networks.Effective()
+		}
+		if countries := access.Countries; countries != nil {
+			shown["countries"] = &Lists{Allow: namedCountries(countries.Allow), Deny: namedCountries(countries.Deny)}
+		}
+		if access.Transports != nil {
+			shown["transports"] = access.Transports
+		}
+		effective["access"] = shown
 	}
 	routing := map[string]any{}
 	for _, list := range routingLists {
@@ -495,7 +504,7 @@ func inspectionSetBy(entries []InspectionSource, sources []ScopedSource, compile
 	equal := func(value *int, other *int) bool { return value != nil && other != nil && *value == *other }
 	always := func(*Config) bool { return true }
 	if compiled.Access != nil && compiled.Access.Schedule != nil {
-		add("access.schedule", permissionSchedule, true, func(c *Config) bool { return len(c.Access.denyPeriods()) > 0 })
+		add("access.schedule", permissionSchedule, true, func(c *Config) bool { return c.Access.schedule().periods() > 0 })
 	}
 	if compiled.Access != nil && compiled.Access.Networks != nil {
 		add("access.networks", permissionNetworks, true, func(c *Config) bool { return c.Access != nil && c.Access.Networks != nil })
