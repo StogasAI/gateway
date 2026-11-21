@@ -275,7 +275,7 @@ func finalizeRoutingCandidates(resolved []*ResolvedRequest, config *policy.Confi
 		if !ok {
 			continue
 		}
-		failed, _, err := policyFilterFailure(config, values, nil)
+		failed, _, err := policyFilterFailure(config, values, nil, nil)
 		if err != nil {
 			return nil, err
 		}

@@ -196,8 +196,11 @@ func (e *WorkLimitError) Unwrap() error { return e.APIError }
 
 // policyEvaluationError makes an evaluation failure of config a public
 // error. Each policy has its own expression allowance, so a work limit names
-// the one that used its up, which is the one to change.
-func policyEvaluationError(err error, config *policy.Config, pair *PlannedPair) error {
+// the one that used its up, which is the one to change. Filters and sort
+// expressions run once for each deployment that the request reaches, so the
+// refusal names their number, and tells a group's caller that one of its models
+// reaches fewer.
+func policyEvaluationError(err error, config *policy.Config, pair *PlannedPair, selections []routingSelection) error {
 	public := APIError{StatusCode: 400, Type: ErrorTypeInvalidRequest, Code: "invalid_request", Message: err.Error()}
 	if !errors.Is(err, policy.ErrPolicyWorkLimit) {
 		return public
@@ -208,7 +211,14 @@ func policyEvaluationError(err error, config *policy.Config, pair *PlannedPair) 
 		public.Message = "The policies of this key and its credentials exceeded their expression work limit together. Reduce the cost of the credential policies' conditions, filters and sort expressions, or assign fewer credentials with policies of their own."
 		return public
 	}
-	public.Message = fmt.Sprintf("The %s policy exceeded its expression work limit. Reduce the cost of its conditions, filters and sort expressions.", scope)
+	deployments, models := make(map[string]bool), make(map[string]bool)
+	for _, selection := range selections {
+		deployments[selection.deployment.ID], models[selection.deployment.ModelID] = true, true
+	}
+	public.Message = fmt.Sprintf("The %s policy exceeded its expression work limit on the %d deployments that this request reaches. Reduce the cost of its conditions, filters and sort expressions.", scope, len(deployments))
+	if len(models) > 1 {
+		public.Message = fmt.Sprintf("The %s policy exceeded its expression work limit on the %d deployments of the %d models that this request reaches. Request one of the models, or reduce the cost of the policy's conditions, filters and sort expressions.", scope, len(deployments), len(models))
+	}
 	return &WorkLimitError{APIError: public, Origin: origin, Pair: pair}
 }
 
@@ -218,17 +228,19 @@ type routingCandidates struct {
 	trace    *routingTrace
 	// now is when the request started.
 	now time.Time
+	// selections are the deployments that the request reaches, which a work limit refusal names.
+	selections []routingSelection
 }
 
 // policyFilterFailure returns the index of the first routing filter that
 // removes a candidate, or -1, and whether that filter read only stated facts.
-func policyFilterFailure(config *policy.Config, values *resolvedPolicyValues, pair *PlannedPair) (int, bool, error) {
+func policyFilterFailure(config *policy.Config, values *resolvedPolicyValues, pair *PlannedPair, selections []routingSelection) (int, bool, error) {
 	if config == nil || config.Routing.Query == nil {
 		return -1, true, nil
 	}
 	index, known, err := config.Routing.Query.FirstFailure(values)
 	if err != nil {
-		return index, known, policyEvaluationError(err, config, pair)
+		return index, known, policyEvaluationError(err, config, pair, selections)
 	}
 	return index, known, nil
 }
@@ -279,7 +291,7 @@ func (r *routingCandidates) finish(preference ProviderRoutingPreference) ([][]*R
 	}
 	indexes, ties, err := query.Sort(candidates)
 	if err != nil {
-		return nil, nil, policyEvaluationError(err, filtered[0].policy, nil)
+		return nil, nil, policyEvaluationError(err, filtered[0].policy, nil, r.selections)
 	}
 	groups := make([][]*ResolvedRequest, 0, len(filtered))
 	groupTies := make([]bool, 0, len(filtered))

@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/policy"
@@ -645,4 +648,48 @@ func mustRouting(t *testing.T, filter string, order []policy.Sort) *policy.Query
 		t.Fatal(err)
 	}
 	return query
+}
+
+// A policy that uses up its expression allowance names the deployments that the request reaches,
+// because its filters run once for each, and a group's caller learns that one model reaches fewer.
+func TestWorkLimitRefusalNamesTheDeploymentsThatTheRequestReaches(t *testing.T) {
+	snap := testSnapshot(t)
+	previous := active.Swap(snap)
+	t.Cleanup(func() { active.Store(previous) })
+	base, err := ResolveRequest(RequestInput{Body: []byte(`{"model":"openai-gpt-5.6-sol","messages":[{"role":"user","content":"hi"}]}`), Method: "POST", Path: "/v1/chat/completions"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	excluded := make([]string, 30)
+	for index := range excluded {
+		excluded[index] = fmt.Sprintf("deployment.id != 'excluded-%d'", index)
+	}
+	config := composedPolicy(t, `{"routing":{"filter":"`+strings.Join(excluded, " && ")+`","sort":[{"by":"deployment.id"}]}}`)
+	// Each deployment reads as the requested one, under one of the catalog's models.
+	others := slices.Sorted(maps.Keys(snap.graph.Models))
+	refusal := func(models int) string {
+		selections := make([]routingSelection, 10_000)
+		for index := range selections {
+			deployment := base.Deployment
+			deployment.ID = fmt.Sprintf("work-limit-%05d", index)
+			if index%models != 0 {
+				deployment.ModelID = others[index%models]
+			}
+			snap.graph.Deployments[deployment.ID] = snap.graph.Deployments[base.Deployment.ID]
+			selections[index] = routingSelection{provider: schemas.OpenAI, deployment: deployment}
+		}
+		variants := &requestVariants{base: RequestPolicy{Config: config}, selections: selections}
+		input := RequestInput{now: time.Now(), policyBudget: policy.NewCELBudget(), Policy: config, AvailableCredentials: map[string][]int{"openai": {0}}}
+		err := planFirstPair(input, base.policyModel, variants)
+		if public := PublicError(err); public.Code != "policy_work_limit_exceeded" {
+			t.Fatalf("refusal = %v", err)
+		}
+		return PublicError(err).Message
+	}
+	if got, want := refusal(1), "The organization policy exceeded its expression work limit on the 10000 deployments that this request reaches. Reduce the cost of its conditions, filters and sort expressions."; got != want {
+		t.Fatalf("model refusal = %q", got)
+	}
+	if got, want := refusal(4), "The organization policy exceeded its expression work limit on the 10000 deployments of the 4 models that this request reaches. Request one of the models, or reduce the cost of the policy's conditions, filters and sort expressions."; got != want {
+		t.Fatalf("group refusal = %q", got)
+	}
 }

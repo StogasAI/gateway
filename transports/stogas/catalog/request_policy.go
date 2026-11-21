@@ -135,7 +135,7 @@ func stopsPlan(err error) bool {
 func planRequest(input RequestInput, route Route, model string, preference ProviderRoutingPreference, variants *requestVariants) (*requestPlan, error) {
 	const maxPairs = 1 + policy.MaxFallbacks
 	trace := input.trace
-	candidates := routingCandidates{trace: trace, now: input.now}
+	candidates := routingCandidates{trace: trace, now: input.now, selections: variants.selections}
 	credentials := make(map[*ResolvedRequest][]int, len(variants.selections))
 	ranks := make(map[credentialCandidate]int)
 	var firstErr error
@@ -301,14 +301,14 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 			pair := &PlannedPair{Provider: selection.provider, Credential: index}
 			value.Config, err = value.Config.Activate(values)
 			if errors.Is(err, policy.ErrUnknownCondition) {
-				keep(selection, policyEvaluationError(err, original, pair))
+				keep(selection, policyEvaluationError(err, original, pair, variants.selections))
 				if unknown := (*policy.UnknownConditionError)(nil); trace != nil && errors.As(err, &unknown) {
 					trace.removePair(selection, index, original, RemovedCandidate{Reason: RemovedCondition, Origin: &unknown.Origin, Expression: unknown.Condition})
 				}
 				continue
 			}
 			if err != nil {
-				return nil, policyEvaluationError(err, original, pair)
+				return nil, policyEvaluationError(err, original, pair, variants.selections)
 			}
 			if !policyAllowsSelection(value.Config, selection) {
 				if trace != nil {
@@ -316,7 +316,7 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 				}
 				continue
 			}
-			failed, known, err := policyFilterFailure(value.Config, values, pair)
+			failed, known, err := policyFilterFailure(value.Config, values, pair, variants.selections)
 			if err != nil {
 				return nil, err
 			}
