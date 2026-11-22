@@ -406,9 +406,10 @@ func parseResponsesTools(state *State, raw json.RawMessage) ([]schemas.Responses
 		case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview, schemas.ResponsesToolTypeWebFetch:
 		case schemas.ResponsesToolTypeMCP, schemas.ResponsesToolTypeToolSearch, schemas.ResponsesToolTypeFileSearch:
 		case schemas.ResponsesToolTypeShell, schemas.ResponsesToolTypeApplyPatch, schemas.ResponsesToolTypeComputer:
+		case schemas.ResponsesToolTypeCodeInterpreter:
 		case catalog.AnthropicBashToolType, catalog.AnthropicTextEditorToolType:
 		default:
-			return nil, invalidRequest("Only function, custom, namespace, shell, apply_patch, computer, tool_search, file_search, web_fetch, and priced hosted web search tools are supported")
+			return nil, invalidRequest("Only function, custom, namespace, shell, apply_patch, computer, tool_search, file_search, code_interpreter, web_fetch, and priced hosted web search tools are supported")
 		}
 	}
 	return tools, nil
@@ -462,6 +463,8 @@ func validateRawResponsesToolShape(state *State, tool map[string]json.RawMessage
 		return toolType, server.label, err
 	case schemas.ResponsesToolTypeShell:
 		return toolType, "", validateResponsesShellTool(tool, path)
+	case schemas.ResponsesToolTypeCodeInterpreter:
+		return toolType, "", validateResponsesCodeInterpreterTool(tool, path)
 	case schemas.ResponsesToolTypeApplyPatch, schemas.ResponsesToolTypeComputer:
 		return toolType, "", rejectUnsupportedResponsesToolKeys(tool, path, "type")
 	default:
@@ -532,11 +535,16 @@ func validateResponsesToolSearchTool(tool map[string]json.RawMessage, path strin
 	return nil
 }
 
-// validateResponsesShellTool accepts only a shell that the client runs. A hosted environment
-// starts a container that bills by the minute for longer than the request, and OpenAI starts it
-// even when tool_choice is none (live, November 12, 2026). An omitted environment is local.
+// validateResponsesShellTool checks a shell tool: one that the client runs, in a local environment
+// or where the tool names none, or a hosted shell, which runs in a container that OpenAI makes for
+// the request (container_auto) or one that the request names (container_reference). The core's
+// typed decode drops keys that it does not know, so this refuses them rather than forward another
+// tool, and a key that it knows could name content in the account that no check would see.
 func validateResponsesShellTool(tool map[string]json.RawMessage, path string) error {
-	if err := rejectUnsupportedResponsesToolKeys(tool, path, "type", "environment"); err != nil {
+	if err := rejectUnsupportedResponsesToolKeys(tool, path, "type", "environment", "allowed_callers"); err != nil {
+		return err
+	}
+	if err := validateDirectCallers(tool["allowed_callers"], path+".allowed_callers"); err != nil {
 		return err
 	}
 	raw, ok := tool["environment"]
@@ -548,29 +556,158 @@ func validateResponsesShellTool(tool map[string]json.RawMessage, path string) er
 	if !ok {
 		return invalidRequest(path + " must be an object")
 	}
-	if kind, _ := rawStringValue(environment["type"]); kind != "local" {
-		return invalidRequest(path + ".type must be local; hosted shell containers are not supported")
-	}
-	if err := rejectUnsupportedResponsesToolKeys(environment, path, "type", "skills"); err != nil {
+	switch kind, _ := rawStringValue(environment["type"]); kind {
+	case "local":
+		if err := rejectUnsupportedResponsesToolKeys(environment, path, "type", "skills"); err != nil {
+			return err
+		}
+	case "container_auto":
+		if err := validateContainerOptions(environment, path, "skills"); err != nil {
+			return err
+		}
+	case "container_reference":
+		if err := rejectUnsupportedResponsesToolKeys(environment, path, "type", "container_id"); err != nil {
+			return err
+		}
+		_, err := requiredInputString(environment, "container_id", path, false)
 		return err
+	default:
+		return invalidRequest(path + ".type must be local, container_auto or container_reference")
 	}
-	rawSkills, ok := environment["skills"]
-	if !ok || !rawJSONValueSet(rawSkills) {
+	rawSkills := environment["skills"]
+	if !rawJSONValueSet(rawSkills) {
 		return nil
 	}
 	var skills []map[string]json.RawMessage
 	if err := sonic.Unmarshal(rawSkills, &skills); err != nil {
 		return invalidRequest(path + ".skills must be an array of objects")
 	}
+	local := rawString(environment["type"]) == "local"
 	for index, skill := range skills {
-		skillPath := fmt.Sprintf("%s.skills[%d]", path, index)
-		if err := rejectUnsupportedResponsesToolKeys(skill, skillPath, "name", "description", "path"); err != nil {
+		if err := validateResponsesShellSkill(skill, fmt.Sprintf("%s.skills[%d]", path, index), local); err != nil {
 			return err
 		}
-		for _, key := range []string{"name", "description", "path"} {
-			if _, err := requiredInputString(skill, key, skillPath, false); err != nil {
+	}
+	return nil
+}
+
+// validateResponsesShellSkill checks a skill of a shell: a directory of the client's in a local
+// environment, or in a container a skill that the account holds (skill_reference) or a zip archive
+// that the request sends (inline).
+func validateResponsesShellSkill(skill map[string]json.RawMessage, path string, local bool) error {
+	if local {
+		if err := rejectUnsupportedResponsesToolKeys(skill, path, "name", "description", "path"); err != nil {
+			return err
+		}
+		return requiredInputStrings(skill, path, "name", "description", "path")
+	}
+	switch kind, _ := rawStringValue(skill["type"]); kind {
+	case "skill_reference":
+		if err := rejectUnsupportedResponsesToolKeys(skill, path, "type", "skill_id", "version"); err != nil {
+			return err
+		}
+		if err := optionalInputStrings(skill, path, "version"); err != nil {
+			return err
+		}
+		_, err := requiredInputString(skill, "skill_id", path, false)
+		return err
+	case "inline":
+		if err := rejectUnsupportedResponsesToolKeys(skill, path, "type", "name", "description", "source"); err != nil {
+			return err
+		}
+		source, ok := rawObject(skill["source"])
+		if !ok {
+			return invalidRequest(path + ".source must be an object")
+		}
+		if err := rejectUnsupportedResponsesToolKeys(source, path+".source", "type", "media_type", "data"); err != nil {
+			return err
+		}
+		if err := requiredInputStrings(source, path+".source", "type", "media_type", "data"); err != nil {
+			return err
+		}
+		return requiredInputStrings(skill, path, "name", "description")
+	default:
+		return invalidRequest(path + ".type must be skill_reference or inline")
+	}
+}
+
+// validateResponsesCodeInterpreterTool checks a code interpreter tool, which runs in a container
+// that the request names by its ID or one that OpenAI makes for the request (auto).
+func validateResponsesCodeInterpreterTool(tool map[string]json.RawMessage, path string) error {
+	if err := rejectUnsupportedResponsesToolKeys(tool, path, "type", "container", "allowed_callers"); err != nil {
+		return err
+	}
+	if err := validateDirectCallers(tool["allowed_callers"], path+".allowed_callers"); err != nil {
+		return err
+	}
+	path += ".container"
+	if id, ok := rawStringValue(tool["container"]); ok {
+		if strings.TrimSpace(id) == "" {
+			return invalidRequest(path + " must name a container")
+		}
+		return nil
+	}
+	container, ok := rawObject(tool["container"])
+	if !ok {
+		return invalidRequest(path + " must be a container ID or an object")
+	}
+	if kind, _ := rawStringValue(container["type"]); kind != "auto" {
+		return invalidRequest(path + ".type must be auto")
+	}
+	return validateContainerOptions(container, path)
+}
+
+// validateContainerOptions checks the options of a container that OpenAI makes for the request: the
+// files that it mounts, its memory and its network policy, and the keys in extra. Each key that the
+// gateway does not know could name content in the account that no check would see.
+func validateContainerOptions(options map[string]json.RawMessage, path string, extra ...string) error {
+	if err := rejectUnsupportedResponsesToolKeys(options, path, append([]string{"type", "file_ids", "memory_limit", "network_policy"}, extra...)...); err != nil {
+		return err
+	}
+	for _, key := range []string{"file_ids", "memory_limit"} {
+		kind := inputTexts
+		if key == "memory_limit" {
+			kind = inputText
+		}
+		if raw := options[key]; rawJSONValueSet(raw) {
+			if err := checkInputKind(raw, path+"."+key, kind); err != nil {
 				return err
 			}
+		}
+	}
+	raw := options["network_policy"]
+	if !rawJSONValueSet(raw) {
+		return nil
+	}
+	path += ".network_policy"
+	policy, ok := rawObject(raw)
+	if !ok {
+		return invalidRequest(path + " must be an object")
+	}
+	switch kind, _ := rawStringValue(policy["type"]); kind {
+	case "disabled":
+		return rejectUnsupportedResponsesToolKeys(policy, path, "type")
+	case "allowlist":
+		return checkInputShape(policy, path, inputShape{"type": inputText, "allowed_domains": inputTexts,
+			"domain_secrets": inputObjects{"domain": inputText, "name": inputText, "value": inputText}})
+	default:
+		return invalidRequest(path + ".type must be disabled or allowlist")
+	}
+}
+
+// validateDirectCallers accepts allowed_callers that let only the model call the tool. A program
+// that the model's code runs can call a tool too, and the reply checks take no such calls.
+func validateDirectCallers(raw json.RawMessage, path string) error {
+	if !rawJSONValueSet(raw) {
+		return nil
+	}
+	var callers []string
+	if err := sonic.Unmarshal(raw, &callers); err != nil || len(callers) == 0 {
+		return invalidRequest(path + " must list callers")
+	}
+	for _, caller := range callers {
+		if caller != "direct" {
+			return invalidRequest(path + " can only be direct; programmatic calls are not supported")
 		}
 	}
 	return nil
@@ -1055,8 +1192,8 @@ func validateRawResponsesToolType(state *State, tool map[string]json.RawMessage)
 // hostedToolOffered refuses a hosted tool that the deployment's route does not run for it, whose
 // price and data handling the catalog therefore does not state. Routing already skips such
 // deployments, so this guards the adapters.
-func hostedToolOffered(state *State, rawType string) error {
-	tool, hosted := catalog.HostedToolForType(rawType)
+func hostedToolOffered(state *State, rawTool map[string]json.RawMessage) error {
+	tool, hosted := catalog.HostedToolOf(rawTool)
 	if !hosted || state == nil || state.Resolution == nil {
 		return nil
 	}
@@ -1067,11 +1204,13 @@ func hostedToolOffered(state *State, rawType string) error {
 	return invalidRequest(string(tool) + " is not available on deployment " + deployment.ID + ". Remove the tool or choose another deployment.")
 }
 
+// responsesHasHostedTool reports whether a request lists a hosted tool whose calls max_tool_calls
+// caps. It caps no call of a hosted shell (capture openai/container-tool-calls).
 func responsesHasHostedTool(tools []schemas.ResponsesTool) bool {
 	for _, tool := range tools {
 		switch tool.Type {
 		case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview, schemas.ResponsesToolTypeWebFetch,
-			schemas.ResponsesToolTypeMCP, schemas.ResponsesToolTypeFileSearch:
+			schemas.ResponsesToolTypeMCP, schemas.ResponsesToolTypeFileSearch, schemas.ResponsesToolTypeCodeInterpreter:
 			return true
 		}
 	}
@@ -1104,21 +1243,33 @@ func responsesHostedToolChoiceAllowsCalls(raw map[string]json.RawMessage) bool {
 			return true
 		}
 		for _, tool := range allowed {
-			switch catalog.CanonicalResponsesToolType(rawString(tool["type"])) {
-			case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview, schemas.ResponsesToolTypeWebFetch,
-				schemas.ResponsesToolTypeMCP, schemas.ResponsesToolTypeFileSearch:
+			if responsesHostedSelector(raw, rawString(tool["type"])) {
 				return true
 			}
 		}
 		return false
 	}
-	switch catalog.CanonicalResponsesToolType(rawString(choice["type"])) {
+	return responsesHostedSelector(raw, rawString(choice["type"]))
+}
+
+// responsesHostedSelector reports whether a tool_choice entry of this type selects a hosted tool. A
+// shell is hosted where the request lists one that runs in a container.
+func responsesHostedSelector(raw map[string]json.RawMessage, kind string) bool {
+	switch catalog.CanonicalResponsesToolType(kind) {
 	case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview, schemas.ResponsesToolTypeWebFetch,
-		schemas.ResponsesToolTypeMCP, schemas.ResponsesToolTypeFileSearch:
+		schemas.ResponsesToolTypeMCP, schemas.ResponsesToolTypeFileSearch, schemas.ResponsesToolTypeCodeInterpreter:
 		return true
-	default:
-		return false
+	case schemas.ResponsesToolTypeShell:
+		tools, _ := rawjson.Array(raw["tools"])
+		for _, rawTool := range tools {
+			if tool, err := rawjson.Object(rawTool); err == nil {
+				if hosted, _ := catalog.HostedToolOf(tool); hosted == catalog.HostedToolShell {
+					return true
+				}
+			}
+		}
 	}
+	return false
 }
 
 func validateResponsesToolChoice(state *State, raw json.RawMessage, tools []schemas.ResponsesTool) error {
@@ -1187,7 +1338,7 @@ func validateResponsesToolChoice(state *State, raw json.RawMessage, tools []sche
 	case schemas.ResponsesToolTypeMCP:
 		return validateResponsesMCPToolSelector(choice, "tool_choice", tools)
 	case schemas.ResponsesToolTypeShell, schemas.ResponsesToolTypeApplyPatch, schemas.ResponsesToolTypeComputer,
-		schemas.ResponsesToolTypeFileSearch:
+		schemas.ResponsesToolTypeFileSearch, schemas.ResponsesToolTypeCodeInterpreter:
 		if err := rejectUnsupportedResponsesToolKeys(choice, "tool_choice", "type"); err != nil {
 			return err
 		}
@@ -1279,7 +1430,7 @@ func validateResponsesAllowedToolChoice(state *State, raw json.RawMessage, tools
 			}
 			seen[identity] = true
 		case schemas.ResponsesToolTypeShell, schemas.ResponsesToolTypeApplyPatch, schemas.ResponsesToolTypeComputer,
-			schemas.ResponsesToolTypeFileSearch:
+			schemas.ResponsesToolTypeFileSearch, schemas.ResponsesToolTypeCodeInterpreter:
 			if err := rejectUnsupportedResponsesToolKeys(allowed, path, "type"); err != nil {
 				return err
 			}
@@ -1354,8 +1505,8 @@ func validateResponsesToolSelectorType(state *State, rawType string) (schemas.Re
 		if responsesLocalToolsSupported(state) {
 			return toolType, nil
 		}
-	case schemas.ResponsesToolTypeFileSearch:
-		if rawType == "file_search" && state != nil && state.Resolution != nil && state.Resolution.Provider == schemas.OpenAI {
+	case schemas.ResponsesToolTypeFileSearch, schemas.ResponsesToolTypeCodeInterpreter:
+		if rawType == string(toolType) && state != nil && state.Resolution != nil && state.Resolution.Provider == schemas.OpenAI {
 			return toolType, nil
 		}
 	}
@@ -1412,7 +1563,10 @@ type responsesInputValidation struct {
 	// heldCalls reports a request that continues a reply or a conversation that the provider
 	// holds, whose outputs can answer calls that only the provider has. The provider matches
 	// those itself.
-	heldCalls    bool
+	heldCalls bool
+	// hostedShells holds the call IDs of the shell calls that ran in a container, whose outputs
+	// OpenAI wrote, as it writes the results of other hosted tools.
+	hostedShells map[string]bool
 	meaningful   bool
 	outputs      map[string]bool
 	pendingCalls int
@@ -1467,9 +1621,10 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 		return invalidRequest("input must contain at least one item")
 	}
 	validation := responsesInputValidation{
-		calls:     make(map[string]string),
-		outputs:   make(map[string]bool),
-		heldCalls: state != nil && state.Resolution.ProviderState().Held != "",
+		calls:        make(map[string]string),
+		outputs:      make(map[string]bool),
+		hostedShells: make(map[string]bool),
+		heldCalls:    state != nil && state.Resolution.ProviderState().Held != "",
 	}
 	var turn inputTurn
 	for index, itemRaw := range items {
@@ -1495,7 +1650,7 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 			// Reasoning, MCP and hosted tool items are the provider's own steps, which a response can
 			// interleave with client calls, as Claude does with a progress update before each call.
 			case "reasoning", "mcp_list_tools", "mcp_call", "mcp_approval_request", "mcp_approval_response",
-				"web_search_call", "web_fetch_call", "file_search_call":
+				"web_search_call", "web_fetch_call", "file_search_call", "code_interpreter_call":
 			default:
 				return invalidRequest(path + " must resolve the preceding client tool calls before adding another input item")
 			}
@@ -1542,21 +1697,29 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 			}
 			turn.result(rawString(item["call_id"]))
 		case "shell_call", "apply_patch_call":
-			if !responsesLocalToolsSupported(state) {
+			// A deployment that does not read a hosted shell's steps never gets them, as with other
+			// hosted tools (catalog.ResolvedRequest.KeepReadableHistory).
+			hosted := itemType == "shell_call" && hostedShellCallInput(item)
+			if !hosted && !responsesLocalToolsSupported(state) {
 				return invalidRequest(itemType + " input items are supported only for OpenAI deployments")
 			}
-			if err := validateResponsesLocalToolCallInput(item, path, itemType, &validation); err != nil {
+			if err := validateResponsesLocalToolCallInput(item, path, itemType, hosted, &validation); err != nil {
 				return err
 			}
 			turn.call()
 		case "shell_call_output", "apply_patch_call_output":
-			if !responsesLocalToolsSupported(state) {
+			hosted := itemType == "shell_call_output" && validation.hostedShells[rawString(item["call_id"])]
+			if !hosted && !responsesLocalToolsSupported(state) {
 				return invalidRequest(itemType + " input items are supported only for OpenAI deployments")
 			}
-			if err := validateResponsesLocalToolOutputInput(item, path, itemType, &validation); err != nil {
+			if err := validateResponsesLocalToolOutputInput(item, path, itemType, hosted, &validation); err != nil {
 				return err
 			}
-			turn.result(rawString(item["call_id"]))
+			if hosted {
+				turn.call()
+			} else {
+				turn.result(rawString(item["call_id"]))
+			}
 		case "computer_call":
 			if !responsesLocalToolsSupported(state) {
 				return invalidRequest(itemType + " input items are supported only for OpenAI deployments")
@@ -1597,6 +1760,11 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 				return err
 			}
 			turn.call()
+		case "code_interpreter_call":
+			if err := checkInputShape(item, path, codeInterpreterCallShape); err != nil {
+				return err
+			}
+			turn.call()
 		case "tool_search_call", "tool_search_output":
 			if !responsesToolSearchSupported(state) {
 				return invalidRequest(itemType + " input items are supported only for OpenAI deployments")
@@ -1623,10 +1791,11 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 			switch {
 			case isSystemMessage:
 				side = placementSystem
-			case itemType == "web_search_call", itemType == "web_fetch_call", itemType == "file_search_call":
+			case itemType == "web_search_call", itemType == "web_fetch_call", itemType == "file_search_call",
+				itemType == "code_interpreter_call", validation.hostedShells[rawString(item["call_id"])]:
 				// A call that the deployment does not read never reaches it, so it takes no place
 				// in the turns that the deployment gets.
-				if !state.Resolution.ReadsHostedCallInput(itemRaw) {
+				if !state.Resolution.ReadsHostedCallInput(itemRaw, validation.hostedShells[rawString(item["call_id"])]) {
 					continue
 				}
 				side = placementServerResult
@@ -1795,8 +1964,14 @@ func validateResponsesOutputAnnotations(state *State, raw json.RawMessage, path 
 	}
 	for index, annotation := range annotations {
 		annotationPath := fmt.Sprintf("%s[%d]", path, index)
-		if rawString(annotation["type"]) == "file_citation" {
+		switch rawString(annotation["type"]) {
+		case "file_citation":
 			if err := validateResponsesFileCitation(annotation, annotationPath); err != nil {
+				return err
+			}
+			continue
+		case "container_file_citation":
+			if err := validateResponsesContainerFileCitation(annotation, annotationPath); err != nil {
 				return err
 			}
 			continue
@@ -1809,15 +1984,10 @@ func validateResponsesOutputAnnotations(state *State, raw json.RawMessage, path 
 			return err
 		}
 		if rawString(annotation["type"]) != "url_citation" {
-			return invalidRequest(annotationPath + ".type must be url_citation or file_citation")
+			return invalidRequest(annotationPath + ".type must be url_citation, file_citation or container_file_citation")
 		}
-		start, startExists, startErr := rawInteger(annotation["start_index"], annotationPath+".start_index")
-		if startErr != nil || !startExists || start < 0 {
-			return invalidRequest(annotationPath + ".start_index must be a non-negative integer")
-		}
-		end, endExists, endErr := rawInteger(annotation["end_index"], annotationPath+".end_index")
-		if endErr != nil || !endExists || end < start {
-			return invalidRequest(annotationPath + ".end_index must be an integer at or after start_index")
+		if err := validateResponsesAnnotationRange(annotation, annotationPath); err != nil {
+			return err
 		}
 		if _, err := requiredInputString(annotation, "url", annotationPath, false); err != nil {
 			return err
@@ -1832,6 +2002,34 @@ func validateResponsesOutputAnnotations(state *State, raw json.RawMessage, path 
 				}
 			}
 		}
+	}
+	return nil
+}
+
+// validateResponsesContainerFileCitation checks a citation of a file in a container, which code
+// interpreter or a hosted shell wrote or read.
+func validateResponsesContainerFileCitation(annotation map[string]json.RawMessage, path string) error {
+	if err := rejectUnsupportedInputKeys(annotation, path, "type", "container_id", "file_id", "filename", "start_index", "end_index"); err != nil {
+		return err
+	}
+	if err := requiredInputStrings(annotation, path, "container_id", "file_id"); err != nil {
+		return err
+	}
+	if _, err := requiredInputString(annotation, "filename", path, true); err != nil {
+		return err
+	}
+	return validateResponsesAnnotationRange(annotation, path)
+}
+
+// validateResponsesAnnotationRange checks the place in the text that a citation covers.
+func validateResponsesAnnotationRange(annotation map[string]json.RawMessage, path string) error {
+	start, startExists, startErr := rawInteger(annotation["start_index"], path+".start_index")
+	if startErr != nil || !startExists || start < 0 {
+		return invalidRequest(path + ".start_index must be a non-negative integer")
+	}
+	end, endExists, endErr := rawInteger(annotation["end_index"], path+".end_index")
+	if endErr != nil || !endExists || end < start {
+		return invalidRequest(path + ".end_index must be an integer at or after start_index")
 	}
 	return nil
 }
@@ -2055,10 +2253,24 @@ func validateResponsesLoadedTools(raw json.RawMessage, path string) error {
 	return nil
 }
 
+// hostedShellCallInput reports whether a replayed shell_call ran in a container.
+func hostedShellCallInput(item map[string]json.RawMessage) bool {
+	environment, _ := rawObject(item["environment"])
+	kind := rawString(environment["type"])
+	return kind != "" && kind != "local"
+}
+
+// codeInterpreterCallShape is a code interpreter call that a reply returned: its code, its container
+// and the logs that it wrote. Planning has dropped the images that the code showed (catalog's
+// dropCodeImageOutputs), which OpenAI ignores in input.
+var codeInterpreterCallShape = inputShape{"type": inputText, "id": inputText, "status": inputText, "code": inputText,
+	"container_id": inputText, "outputs": inputObjects{"type": inputText, "logs": inputText, "url": inputText}}
+
 // validateResponsesLocalToolCallInput checks a replayed shell_call or apply_patch_call. Each key
 // holds the type that OpenAI returns it with; OpenAI decides the rest, such as which statuses and
-// operations it takes back.
-func validateResponsesLocalToolCallInput(item map[string]json.RawMessage, path, itemType string, validation *responsesInputValidation) error {
+// operations it takes back. hosted marks a shell call that ran in a container, whose output OpenAI
+// wrote, so no client output answers it.
+func validateResponsesLocalToolCallInput(item map[string]json.RawMessage, path, itemType string, hosted bool, validation *responsesInputValidation) error {
 	payloadKey, kind := "action", "shell"
 	allowed := []string{"type", "id", "status", "call_id", "action", "environment"}
 	if itemType == "apply_patch_call" {
@@ -2078,8 +2290,11 @@ func validateResponsesLocalToolCallInput(item map[string]json.RawMessage, path, 
 	if len(callID) > 64 {
 		return invalidRequest(path + ".call_id must contain at most 64 bytes")
 	}
-	if _, exists := validation.calls[callID]; exists {
+	switch _, client := validation.calls[callID]; {
+	case client:
 		return invalidRequest(path + ".call_id duplicates another client tool call")
+	case validation.hostedShells[callID]:
+		return invalidRequest(path + ".call_id duplicates another hosted shell call")
 	}
 	payload, ok := rawObject(item[payloadKey])
 	if !ok {
@@ -2101,11 +2316,16 @@ func validateResponsesLocalToolCallInput(item map[string]json.RawMessage, path, 
 				}
 			}
 		}
-		// A replayed call names the environment that ran it, which is only the client's.
+		// A replayed call names the environment that ran it: the client's, or a container.
 		if raw, ok := item["environment"]; ok {
-			environment, ok := rawObject(raw)
-			if !ok || rawString(environment["type"]) != "local" || len(environment) != 1 {
-				return invalidRequest(path + ".environment must be {\"type\": \"local\"}")
+			environment, _ := rawObject(raw)
+			switch kind := rawString(environment["type"]); {
+			case !hosted && kind == "local" && len(environment) == 1:
+			case hosted && kind == "container_reference" && len(environment) == 2 && strings.TrimSpace(rawString(environment["container_id"])) != "":
+				validation.hostedShells[callID] = true
+				return nil
+			default:
+				return invalidRequest(path + ".environment must be {\"type\": \"local\"} or a container_reference with a container_id")
 			}
 		}
 	} else {
@@ -2129,8 +2349,8 @@ func validateResponsesLocalToolCallInput(item map[string]json.RawMessage, path, 
 }
 
 // validateResponsesLocalToolOutputInput checks the client's result of a shell_call or
-// apply_patch_call.
-func validateResponsesLocalToolOutputInput(item map[string]json.RawMessage, path, itemType string, validation *responsesInputValidation) error {
+// apply_patch_call, or the output that OpenAI wrote for a hosted shell's call.
+func validateResponsesLocalToolOutputInput(item map[string]json.RawMessage, path, itemType string, hosted bool, validation *responsesInputValidation) error {
 	kind := "shell"
 	allowed := []string{"type", "id", "status", "call_id", "output", "max_output_length"}
 	if itemType == "apply_patch_call_output" {
@@ -2154,8 +2374,10 @@ func validateResponsesLocalToolOutputInput(item map[string]json.RawMessage, path
 	if err != nil {
 		return err
 	}
-	if err := validation.output(callID, kind, path); err != nil {
-		return err
+	if !hosted {
+		if err := validation.output(callID, kind, path); err != nil {
+			return err
+		}
 	}
 	if kind == "apply_patch" {
 		if raw, ok := item["output"]; ok {

@@ -1,0 +1,746 @@
+{
+	"shows": "max_tool_calls caps the calls of code interpreter, and leaves the call that it stops in the output with the status interpreting, but not the calls of a hosted shell: a request that asks for two runs, the second after the first, without a cap and under max_tool_calls: 1.",
+	"recorded": "2026-11-22",
+	"exchanges": [
+		{
+			"name": "two runs",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 600,
+					"tools": [
+						{
+							"type": "code_interpreter",
+							"container": {
+								"type": "auto"
+							}
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Use Python twice, in two separate calls. First print 6*7. After you see what it printed, make a second call that prints that number plus 1. Then tell me both numbers."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_02826873e4e55353016b0276cb163087d29529122157d64564",
+					"object": "response",
+					"created_at": 1795323595,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795323598,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 600,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "ci_02826873e4e55353016b0276cbaae887d28a0ffb70ae555f1b",
+							"type": "code_interpreter_call",
+							"status": "completed",
+							"code": "print(6*7)\n",
+							"container_id": "cntr_6b0276cb3318819181b0ae066df1cb3a086d52287ef87ff3",
+							"outputs": null
+						},
+						{
+							"id": "ci_02826873e4e55353016b0276ccf57487d286352ff9b29395d5",
+							"type": "code_interpreter_call",
+							"status": "completed",
+							"code": "print(42+1)\n",
+							"container_id": "cntr_6b0276cb3318819181b0ae066df1cb3a086d52287ef87ff3",
+							"outputs": null
+						},
+						{
+							"id": "msg_02826873e4e55353016b0276cdf58887d2a588c15feab4fc5a",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "The numbers are **42** and **43**."
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "code_interpreter",
+							"container": {
+								"type": "auto"
+							}
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 1312,
+						"input_tokens_details": {
+							"cache_write_tokens": 1255,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 1255
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 45,
+						"output_tokens_details": {
+							"reasoning_tokens": 30
+						},
+						"total_tokens": 1357
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "two runs under max_tool_calls 1",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 600,
+					"tools": [
+						{
+							"type": "code_interpreter",
+							"container": {
+								"type": "auto"
+							}
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Use Python twice, in two separate calls. First print 6*7. After you see what it printed, make a second call that prints that number plus 1. Then tell me both numbers."
+						}
+					],
+					"max_tool_calls": 1
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_0871d6511d12f334016b0276cebe2c87d2a27d5120cd1826b6",
+					"object": "response",
+					"created_at": 1795323598,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795323601,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 600,
+					"max_tool_calls": 1,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "ci_0871d6511d12f334016b0276cf599087d2bd6b73e3af215822",
+							"type": "code_interpreter_call",
+							"status": "completed",
+							"code": "print(6*7)\n",
+							"container_id": "cntr_6b0276cee51881919bc8a613e78f88930b576ecbf89f5695",
+							"outputs": null
+						},
+						{
+							"id": "ci_0871d6511d12f334016b0276d074d887d29ed2633b4720a2a6",
+							"type": "code_interpreter_call",
+							"status": "interpreting",
+							"code": "print(42+1)\n",
+							"container_id": "cntr_6b0276cee51881919bc8a613e78f88930b576ecbf89f5695",
+							"outputs": null
+						},
+						{
+							"id": "msg_0871d6511d12f334016b0276d0bfc487d293722b3c9ac4b16d",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "The first call printed **42**. I couldn’t make the second call, so I can’t report a second printed number."
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "code_interpreter",
+							"container": {
+								"type": "auto"
+							}
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 1352,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 1255
+						},
+						"output_tokens": 45,
+						"output_tokens_details": {
+							"reasoning_tokens": 15
+						},
+						"total_tokens": 1397
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "two hosted runs",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 600,
+					"tools": [
+						{
+							"type": "shell",
+							"environment": {
+								"type": "container_auto"
+							}
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Use the shell twice, in two separate calls. First run echo $((6*7)). After you see what it printed, make a second call that echoes that number plus 1. Then tell me both numbers."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_0c93011d0c5bcca8016b0276d17aa087d28182eae32de99c2e",
+					"object": "response",
+					"created_at": 1795323601,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795323604,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 600,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "sh_0c93011d0c5bcca8016b0276d2417487d2aa2b6137199959ce",
+							"type": "shell_call",
+							"status": "completed",
+							"action": {
+								"commands": [
+									"echo $((6*7))"
+								],
+								"max_output_length": null,
+								"timeout_ms": null
+							},
+							"call_id": "call_9HOKEVWwJIrzdGwpzqEYHBYj",
+							"environment": {
+								"type": "container_reference",
+								"container_id": "cntr_6b0276d19b688191938e9adcf5d2d9fb079b24ece4194b39"
+							}
+						},
+						{
+							"id": "sho_0c93011d0c5bcca8016b0276d28bd087d2a6405cb7bf9d8439",
+							"type": "shell_call_output",
+							"status": "completed",
+							"call_id": "call_9HOKEVWwJIrzdGwpzqEYHBYj",
+							"max_output_length": null,
+							"output": [
+								{
+									"outcome": {
+										"type": "exit",
+										"exit_code": 0
+									},
+									"stderr": "",
+									"stdout": "42\n"
+								}
+							]
+						},
+						{
+							"id": "sh_0c93011d0c5bcca8016b0276d3395c87d2bc0a99e71e8ef10d",
+							"type": "shell_call",
+							"status": "completed",
+							"action": {
+								"commands": [
+									"echo $((42+1))"
+								],
+								"max_output_length": null,
+								"timeout_ms": null
+							},
+							"call_id": "call_sB5ROQodZp4LF7lSLFvcj3B1",
+							"environment": {
+								"type": "container_reference",
+								"container_id": "cntr_6b0276d19b688191938e9adcf5d2d9fb079b24ece4194b39"
+							}
+						},
+						{
+							"id": "sho_0c93011d0c5bcca8016b0276d380f487d2899ae044eacc8858",
+							"type": "shell_call_output",
+							"status": "completed",
+							"call_id": "call_sB5ROQodZp4LF7lSLFvcj3B1",
+							"max_output_length": null,
+							"output": [
+								{
+									"outcome": {
+										"type": "exit",
+										"exit_code": 0
+									},
+									"stderr": "",
+									"stdout": "43\n"
+								}
+							]
+						},
+						{
+							"id": "msg_0c93011d0c5bcca8016b0276d3f20c87d2a3e2afd3ed819666",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "The numbers are **42** and **43**."
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "shell",
+							"environment": {
+								"type": "container_reference",
+								"container_id": "cntr_6b0276d19b688191938e9adcf5d2d9fb079b24ece4194b39"
+							}
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 827,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 55,
+						"output_tokens_details": {
+							"reasoning_tokens": 40
+						},
+						"total_tokens": 882
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "two hosted runs under max_tool_calls 1",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 600,
+					"tools": [
+						{
+							"type": "shell",
+							"environment": {
+								"type": "container_auto"
+							}
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Use the shell twice, in two separate calls. First run echo $((6*7)). After you see what it printed, make a second call that echoes that number plus 1. Then tell me both numbers."
+						}
+					],
+					"max_tool_calls": 1
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_07c42788ef7e9f99016b0276d483a087d28c1331e647af795d",
+					"object": "response",
+					"created_at": 1795323604,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795323607,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 600,
+					"max_tool_calls": 1,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "sh_07c42788ef7e9f99016b0276d58ab087d29579adc0faf0ece1",
+							"type": "shell_call",
+							"status": "completed",
+							"action": {
+								"commands": [
+									"echo $((6*7))"
+								],
+								"max_output_length": null,
+								"timeout_ms": null
+							},
+							"call_id": "call_qPu0fC0RIA66euPNsoqxV0QL",
+							"environment": {
+								"type": "container_reference",
+								"container_id": "cntr_6b0276d4a9e0819193ca3bdd193656810b646de8f21b0858"
+							}
+						},
+						{
+							"id": "sho_07c42788ef7e9f99016b0276d602cc87d2816fb92072a7a84f",
+							"type": "shell_call_output",
+							"status": "completed",
+							"call_id": "call_qPu0fC0RIA66euPNsoqxV0QL",
+							"max_output_length": null,
+							"output": [
+								{
+									"outcome": {
+										"type": "exit",
+										"exit_code": 0
+									},
+									"stderr": "",
+									"stdout": "42\n"
+								}
+							]
+						},
+						{
+							"id": "sh_07c42788ef7e9f99016b0276d6893c87d2aaf2fb4128ccb455",
+							"type": "shell_call",
+							"status": "completed",
+							"action": {
+								"commands": [
+									"echo $((42+1))"
+								],
+								"max_output_length": null,
+								"timeout_ms": null
+							},
+							"call_id": "call_95pTpHw5douNP5TElLOLZwJd",
+							"environment": {
+								"type": "container_reference",
+								"container_id": "cntr_6b0276d4a9e0819193ca3bdd193656810b646de8f21b0858"
+							}
+						},
+						{
+							"id": "sho_07c42788ef7e9f99016b0276d6e98887d28bcfa477709a8d7f",
+							"type": "shell_call_output",
+							"status": "completed",
+							"call_id": "call_95pTpHw5douNP5TElLOLZwJd",
+							"max_output_length": null,
+							"output": [
+								{
+									"outcome": {
+										"type": "exit",
+										"exit_code": 0
+									},
+									"stderr": "",
+									"stdout": "43\n"
+								}
+							]
+						},
+						{
+							"id": "msg_07c42788ef7e9f99016b0276d7511887d29d29ebd1b2e0d9a5",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "The first number was 42; the second was 43."
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "shell",
+							"environment": {
+								"type": "container_reference",
+								"container_id": "cntr_6b0276d4a9e0819193ca3bdd193656810b646de8f21b0858"
+							}
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 828,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 57,
+						"output_tokens_details": {
+							"reasoning_tokens": 40
+						},
+						"total_tokens": 885
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		}
+	]
+}

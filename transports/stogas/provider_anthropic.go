@@ -686,7 +686,7 @@ func (AnthropicAdapter) ValidateRawResponsesToolType(state *State, tool map[stri
 		return invalidRequest("Custom tools are not supported for Anthropic-format deployments because free-form input formats are not preserved by the provider translation")
 	}
 	if anthropicResponsesToolTypeSupported(rawType) {
-		if err := hostedToolOffered(state, rawType); err != nil {
+		if err := hostedToolOffered(state, tool); err != nil {
 			return err
 		}
 		if anthropicResponsesWebSearchToolType(rawType) {

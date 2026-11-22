@@ -15,7 +15,7 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/rawjson"
 )
 
-func TestValidateToolsAllowsOnlyExplicitPricedOrClientExecutedTools(t *testing.T) {
+func TestValidateToolsAcceptsSupportedTools(t *testing.T) {
 	for _, item := range []struct {
 		name  string
 		route openAIAdapterRoute
@@ -27,6 +27,9 @@ func TestValidateToolsAllowsOnlyExplicitPricedOrClientExecutedTools(t *testing.T
 		{"responses web search", openAIAdapterRouteResponses, `{"tools":[{"type":"web_search"}]}`},
 		{"responses versioned web search", openAIAdapterRouteResponses, `{"tools":[{"type":"web_search_2025_08_26"}]}`},
 		{"responses versioned preview web search", openAIAdapterRouteResponses, `{"tools":[{"type":"web_search_preview_2025_03_11"}]}`},
+		{"responses local shell", openAIAdapterRouteResponses, `{"tools":[{"type":"shell","environment":{"type":"local"}}]}`},
+		{"responses hosted shell", openAIAdapterRouteResponses, `{"tools":[{"type":"shell","environment":{"type":"container_auto"}}]}`},
+		{"responses code interpreter", openAIAdapterRouteResponses, `{"tools":[{"type":"code_interpreter","container":"cntr_1"}]}`},
 	} {
 		t.Run(item.name, func(t *testing.T) {
 			if err := validateOpenAIGuardrails(toolAdapterContext(t, item.route, item.body)); err != nil {
@@ -95,27 +98,6 @@ func TestValidateResponsesGuardrailsAcceptRemoteMCP(t *testing.T) {
 	}
 	if err := validateOpenAIGuardrails(toolAdapterContext(t, openAIAdapterRouteChat, `{"tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp"}]}`)); !errors.Is(err, errOpenAIUnsupportedTool) {
 		t.Fatalf("expected remote MCP on chat completions to fail closed, got %v", err)
-	}
-}
-
-// The client runs a local shell and apply_patch, which cost only their tokens. A hosted shell
-// starts a container that bills by the minute for longer than the request.
-func TestValidateResponsesToolsAllowsOnlyShellsThatTheClientRuns(t *testing.T) {
-	for _, item := range []struct {
-		body string
-		err  error
-	}{
-		{`{"tools":[{"type":"apply_patch"}]}`, nil},
-		{`{"tools":[{"type":"shell"}]}`, nil},
-		{`{"tools":[{"type":"shell","environment":{"type":"local"}}]}`, nil},
-		{`{"tools":[{"type":"local_shell"}]}`, errOpenAIUnsupportedTool},
-		{`{"tools":[{"type":"shell","environment":{"type":"container_auto"}}]}`, errOpenAIUnsupportedTool},
-		{`{"tools":[{"type":"shell","environment":{"type":"container_reference","container_id":"cntr_123"}}]}`, errOpenAIUnsupportedTool},
-	} {
-		err := validateOpenAIGuardrails(toolAdapterContext(t, openAIAdapterRouteResponses, item.body))
-		if !errors.Is(err, item.err) {
-			t.Fatalf("got %v for %s, want %v", err, item.body, item.err)
-		}
 	}
 }
 

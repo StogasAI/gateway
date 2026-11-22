@@ -24,10 +24,15 @@ type observedToolCall struct {
 // responsesLoggedToolCall reports whether the request log records an output item as a tool call,
 // and the ID that answers it. The client answers its own calls and the provider's approval
 // requests; the provider runs the rest.
-func responsesLoggedToolCall(item providerResponsesItem) (string, bool) {
+func (s *State) responsesLoggedToolCall(item providerResponsesItem) (string, bool) {
 	switch item.itemType {
+	case schemas.ResponsesMessageTypeShellCall:
+		if s.responsesHostedShellCalls[item.callID] {
+			return "", true
+		}
+		return item.callID, true
 	case schemas.ResponsesMessageTypeFunctionCall, schemas.ResponsesMessageTypeCustomToolCall,
-		schemas.ResponsesMessageTypeShellCall, schemas.ResponsesMessageTypeApplyPatchCall, schemas.ResponsesMessageTypeComputerCall:
+		schemas.ResponsesMessageTypeApplyPatchCall, schemas.ResponsesMessageTypeComputerCall:
 		return item.callID, true
 	case schemas.ResponsesMessageTypeMCPApprovalRequest:
 		return item.id, true
@@ -37,7 +42,7 @@ func responsesLoggedToolCall(item providerResponsesItem) (string, bool) {
 		}
 		return "", true
 	case schemas.ResponsesMessageTypeWebSearchCall, schemas.ResponsesMessageTypeWebFetchCall, schemas.ResponsesMessageTypeFileSearchCall,
-		schemas.ResponsesMessageTypeMCPCall, schemas.ResponsesMessageTypeMCPListTools:
+		schemas.ResponsesMessageTypeCodeInterpreterCall, schemas.ResponsesMessageTypeMCPCall, schemas.ResponsesMessageTypeMCPListTools:
 		return "", true
 	default:
 		return "", false
@@ -47,8 +52,11 @@ func responsesLoggedToolCall(item providerResponsesItem) (string, bool) {
 // observeResponsesToolCall records a tool call the first time the response shows it: when a
 // stream adds it, or untimed in a whole response. Calls past the log's limit are left out.
 func (s *State) observeResponsesToolCall(item providerResponsesItem, at time.Time) {
-	callID, ok := responsesLoggedToolCall(item)
-	if s == nil || !ok || len(s.toolCalls) >= billing.MaxLoggedToolCalls {
+	if s == nil {
+		return
+	}
+	callID, ok := s.responsesLoggedToolCall(item)
+	if !ok || len(s.toolCalls) >= billing.MaxLoggedToolCalls {
 		return
 	}
 	if _, seen := s.toolCallPositions[item.id]; seen {

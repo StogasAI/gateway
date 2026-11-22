@@ -92,7 +92,10 @@ func (e providerExchange) responsesStream(t *testing.T) []*schemas.BifrostRespon
 	for _, data := range e.Response.Events {
 		event := &schemas.BifrostResponsesStreamResponse{}
 		if err := sonic.Unmarshal(data, event); err != nil {
-			t.Fatalf("%s: decode %s: %v", e.Name, data, err)
+			*event = schemas.BifrostResponsesStreamResponse{}
+			if err := schemas.UnmarshalResponsesStreamObjectDelta(data, event); err != nil {
+				t.Fatalf("%s: decode %s: %v", e.Name, data, err)
+			}
 		}
 		events = append(events, event)
 	}

@@ -1,0 +1,1996 @@
+{
+	"shows": "With store: false, OpenAI runs a shell tool whose environment is a container: the reply carries shell_call and shell_call_output items that OpenAI ran, and the requests without the tool and under tool_choice none show what the declaration adds to the input. The exchanges show the stream events, what OpenAI takes back in input, a container named by reference, an inline skill, a network allowlist with a domain secret, a forced call, and a container that the account does not hold.",
+	"recorded": "2026-11-22",
+	"exchanges": [
+		{
+			"name": "a hosted run",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 600,
+					"tools": [
+						{
+							"type": "shell",
+							"environment": {
+								"type": "container_auto"
+							}
+						}
+					],
+					"tool_choice": "required",
+					"input": [
+						{
+							"role": "user",
+							"content": "Run echo $((6*7)) in the shell, then tell me what it printed."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_0c093937b7776646016b027013048087d28c02ae955fbd59e5",
+					"object": "response",
+					"created_at": 1795321875,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795321877,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 600,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "sh_0c093937b7776646016b027013de0c87d284095d839de3d15b",
+							"type": "shell_call",
+							"status": "completed",
+							"action": {
+								"commands": [
+									"echo $((6*7))"
+								],
+								"max_output_length": null,
+								"timeout_ms": null
+							},
+							"call_id": "call_OSGCSSeCsJXuE0voS10oVsOP",
+							"environment": {
+								"type": "container_reference",
+								"container_id": "cntr_6b02701320b08191bbc765d54fb3846a0d7af34a719edddb"
+							}
+						},
+						{
+							"id": "sho_0c093937b7776646016b027014296087d28ce4cafc7ee40d3a",
+							"type": "shell_call_output",
+							"status": "completed",
+							"call_id": "call_OSGCSSeCsJXuE0voS10oVsOP",
+							"max_output_length": null,
+							"output": [
+								{
+									"outcome": {
+										"type": "exit",
+										"exit_code": 0
+									},
+									"stderr": "",
+									"stdout": "42\n"
+								}
+							]
+						},
+						{
+							"id": "msg_0c093937b7776646016b0270146be487d2b14544df62aa9bc8",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "It printed `42`."
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "required",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "shell",
+							"environment": {
+								"type": "container_reference",
+								"container_id": "cntr_6b02701320b08191bbc765d54fb3846a0d7af34a719edddb"
+							}
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 739,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 29,
+						"output_tokens_details": {
+							"reasoning_tokens": 20
+						},
+						"total_tokens": 768
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "without the tool",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 600,
+					"input": [
+						{
+							"role": "user",
+							"content": "Run echo $((6*7)) in the shell, then tell me what it printed."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795321878,
+					"created_at": 1795321877,
+					"error": null,
+					"frequency_penalty": 0,
+					"id": "resp_0ce6c65f6d4a01cd016b027015235087d29af97531e3652ce4",
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 600,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"object": "response",
+					"output": [
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "I’ll run the command in the shell.",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_0ce6c65f6d4a01cd016b0270156fb487d29cb75e61c705ee40",
+							"phase": "commentary",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "I can’t run shell commands in this chat, but `echo $((6*7))` prints `42`.",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_0ce6c65f6d4a01cd016b027015bc5887d2b66f875ec148e85f",
+							"phase": "final_answer",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"status": "completed",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 25,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 50,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 75
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "the tool under tool_choice none",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 600,
+					"tools": [
+						{
+							"type": "shell",
+							"environment": {
+								"type": "container_auto"
+							}
+						}
+					],
+					"tool_choice": "none",
+					"input": [
+						{
+							"role": "user",
+							"content": "Run echo $((6*7)) in the shell, then tell me what it printed."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_0a3f4ce82a67ee60016b027016ad0887d2b3828b0ab1ad486e",
+					"object": "response",
+					"created_at": 1795321878,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795321879,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 600,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "msg_0a3f4ce82a67ee60016b027017146087d2b3ca6c78d068eeff",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "I can’t run shell commands right now, but `echo $((6*7))` would print `42`."
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "none",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "shell",
+							"environment": {
+								"type": "container_reference",
+								"container_id": "cntr_6b027016c6588191b1c0666ffe6774e20b5db6a1da3b7b40"
+							}
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 680,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 28,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 708
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "a streamed hosted run",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 600,
+					"tools": [
+						{
+							"type": "shell",
+							"environment": {
+								"type": "container_auto"
+							}
+						}
+					],
+					"tool_choice": "required",
+					"stream": true,
+					"input": [
+						{
+							"role": "user",
+							"content": "Run echo $((6*7)) in the shell, then tell me what it printed."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"events": [
+					{
+						"type": "response.created",
+						"response": {
+							"id": "resp_0cdaf91dac986ae2016b0270178a0c87d2a1610218c2e8135d",
+							"object": "response",
+							"created_at": 1795321879,
+							"status": "in_progress",
+							"access_programs": null,
+							"background": false,
+							"completed_at": null,
+							"error": null,
+							"frequency_penalty": 0,
+							"image": {
+								"context_compression": "disabled"
+							},
+							"incomplete_details": null,
+							"input_transformations": [],
+							"instructions": null,
+							"max_output_tokens": 600,
+							"max_tool_calls": null,
+							"model": "gpt-6-luna",
+							"moderation": null,
+							"output": [],
+							"parallel_tool_calls": true,
+							"presence_penalty": 0,
+							"previous_response_id": null,
+							"prompt_cache_key": null,
+							"prompt_cache_retention": "24h",
+							"reasoning": {
+								"context": "all_turns",
+								"effort": "none",
+								"mode": "standard",
+								"summary": null
+							},
+							"safety_identifier": null,
+							"service_tier": "auto",
+							"store": false,
+							"temperature": 1,
+							"text": {
+								"format": {
+									"type": "text"
+								},
+								"verbosity": "medium"
+							},
+							"tool_choice": "required",
+							"tool_usage": {
+								"image_gen": {
+									"input_tokens": 0,
+									"input_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"output_tokens": 0,
+									"output_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"total_tokens": 0
+								},
+								"web_search": {
+									"num_requests": 0
+								}
+							},
+							"tools": [
+								{
+									"type": "shell",
+									"environment": {
+										"type": "container_reference",
+										"container_id": "cntr_6b027017a82c8191ab654e4651d62ada0d2f4ab690be7f75"
+									}
+								}
+							],
+							"top_logprobs": 0,
+							"top_p": 0.98,
+							"truncation": "disabled",
+							"usage": null,
+							"user": null,
+							"metadata": {}
+						},
+						"sequence_number": 0
+					},
+					{
+						"type": "response.in_progress",
+						"response": {
+							"id": "resp_0cdaf91dac986ae2016b0270178a0c87d2a1610218c2e8135d",
+							"object": "response",
+							"created_at": 1795321879,
+							"status": "in_progress",
+							"access_programs": null,
+							"background": false,
+							"completed_at": null,
+							"error": null,
+							"frequency_penalty": 0,
+							"image": {
+								"context_compression": "disabled"
+							},
+							"incomplete_details": null,
+							"input_transformations": [],
+							"instructions": null,
+							"max_output_tokens": 600,
+							"max_tool_calls": null,
+							"model": "gpt-6-luna",
+							"moderation": null,
+							"output": [],
+							"parallel_tool_calls": true,
+							"presence_penalty": 0,
+							"previous_response_id": null,
+							"prompt_cache_key": null,
+							"prompt_cache_retention": "24h",
+							"reasoning": {
+								"context": "all_turns",
+								"effort": "none",
+								"mode": "standard",
+								"summary": null
+							},
+							"safety_identifier": null,
+							"service_tier": "auto",
+							"store": false,
+							"temperature": 1,
+							"text": {
+								"format": {
+									"type": "text"
+								},
+								"verbosity": "medium"
+							},
+							"tool_choice": "required",
+							"tool_usage": {
+								"image_gen": {
+									"input_tokens": 0,
+									"input_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"output_tokens": 0,
+									"output_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"total_tokens": 0
+								},
+								"web_search": {
+									"num_requests": 0
+								}
+							},
+							"tools": [
+								{
+									"type": "shell",
+									"environment": {
+										"type": "container_reference",
+										"container_id": "cntr_6b027017a82c8191ab654e4651d62ada0d2f4ab690be7f75"
+									}
+								}
+							],
+							"top_logprobs": 0,
+							"top_p": 0.98,
+							"truncation": "disabled",
+							"usage": null,
+							"user": null,
+							"metadata": {}
+						},
+						"sequence_number": 1
+					},
+					{
+						"type": "response.output_item.added",
+						"item": {
+							"id": "sh_0cdaf91dac986ae2016b027018074887d2a5343ac178e18aa4",
+							"type": "shell_call",
+							"status": "in_progress",
+							"action": {
+								"commands": [],
+								"max_output_length": null,
+								"timeout_ms": null
+							},
+							"call_id": "call_8PRCFugimsiQJn8XyClM1RSg",
+							"environment": {
+								"type": "container_reference",
+								"container_id": "cntr_6b027017a82c8191ab654e4651d62ada0d2f4ab690be7f75"
+							}
+						},
+						"output_index": 0,
+						"sequence_number": 2
+					},
+					{
+						"type": "response.shell_call_command.added",
+						"command": "",
+						"command_index": 0,
+						"output_index": 0,
+						"sequence_number": 3
+					},
+					{
+						"type": "response.shell_call_command.delta",
+						"command_index": 0,
+						"delta": "echo",
+						"obfuscation": "8DVNKXVTxpgN",
+						"output_index": 0,
+						"sequence_number": 4
+					},
+					{
+						"type": "response.shell_call_command.delta",
+						"command_index": 0,
+						"delta": " $",
+						"obfuscation": "GTwcO0u1yQPCiR",
+						"output_index": 0,
+						"sequence_number": 5
+					},
+					{
+						"type": "response.shell_call_command.delta",
+						"command_index": 0,
+						"delta": "((",
+						"obfuscation": "8hXaHCJI50omkv",
+						"output_index": 0,
+						"sequence_number": 6
+					},
+					{
+						"type": "response.shell_call_command.delta",
+						"command_index": 0,
+						"delta": "6",
+						"obfuscation": "SOcSPxhK7UxayNd",
+						"output_index": 0,
+						"sequence_number": 7
+					},
+					{
+						"type": "response.shell_call_command.delta",
+						"command_index": 0,
+						"delta": "*",
+						"obfuscation": "P26bPDzFTEbCi6b",
+						"output_index": 0,
+						"sequence_number": 8
+					},
+					{
+						"type": "response.shell_call_command.delta",
+						"command_index": 0,
+						"delta": "7",
+						"obfuscation": "wu4bi8ALjygMiWN",
+						"output_index": 0,
+						"sequence_number": 9
+					},
+					{
+						"type": "response.shell_call_command.delta",
+						"command_index": 0,
+						"delta": "))",
+						"obfuscation": "fDHKhkIlVYsXU6",
+						"output_index": 0,
+						"sequence_number": 10
+					},
+					{
+						"type": "response.shell_call_command.done",
+						"command": "echo $((6*7))",
+						"command_index": 0,
+						"output_index": 0,
+						"sequence_number": 11
+					},
+					{
+						"type": "response.output_item.done",
+						"item": {
+							"id": "sh_0cdaf91dac986ae2016b027018074887d2a5343ac178e18aa4",
+							"type": "shell_call",
+							"status": "completed",
+							"action": {
+								"commands": [
+									"echo $((6*7))"
+								],
+								"max_output_length": null,
+								"timeout_ms": null
+							},
+							"call_id": "call_8PRCFugimsiQJn8XyClM1RSg",
+							"environment": {
+								"type": "container_reference",
+								"container_id": "cntr_6b027017a82c8191ab654e4651d62ada0d2f4ab690be7f75"
+							}
+						},
+						"output_index": 0,
+						"sequence_number": 12
+					},
+					{
+						"type": "response.output_item.added",
+						"item": {
+							"id": "sho_0cdaf91dac986ae2016b027018a37c87d2b4bffebf72811271",
+							"type": "shell_call_output",
+							"status": "in_progress",
+							"call_id": "call_8PRCFugimsiQJn8XyClM1RSg",
+							"max_output_length": null,
+							"output": []
+						},
+						"output_index": 1,
+						"sequence_number": 13
+					},
+					{
+						"type": "response.shell_call_output_content.delta",
+						"command_index": 0,
+						"delta": {
+							"stdout": "42\n"
+						},
+						"item_id": "sho_0cdaf91dac986ae2016b027018a37c87d2b4bffebf72811271",
+						"output_index": 1,
+						"sequence_number": 14
+					},
+					{
+						"type": "response.shell_call_output_content.done",
+						"command_index": 0,
+						"item_id": "sho_0cdaf91dac986ae2016b027018a37c87d2b4bffebf72811271",
+						"output": [
+							{
+								"outcome": {
+									"type": "exit",
+									"exit_code": 0
+								},
+								"stderr": "",
+								"stdout": "42\n"
+							}
+						],
+						"output_index": 1,
+						"sequence_number": 15
+					},
+					{
+						"type": "response.output_item.done",
+						"item": {
+							"id": "sho_0cdaf91dac986ae2016b027018a37c87d2b4bffebf72811271",
+							"type": "shell_call_output",
+							"status": "completed",
+							"call_id": "call_8PRCFugimsiQJn8XyClM1RSg",
+							"max_output_length": null,
+							"output": [
+								{
+									"outcome": {
+										"type": "exit",
+										"exit_code": 0
+									},
+									"stderr": "",
+									"stdout": "42\n"
+								}
+							]
+						},
+						"output_index": 1,
+						"sequence_number": 16
+					},
+					{
+						"type": "response.output_item.added",
+						"item": {
+							"id": "msg_0cdaf91dac986ae2016b027018d06887d28fbea4206379c239",
+							"type": "message",
+							"status": "in_progress",
+							"content": [],
+							"phase": "final_answer",
+							"role": "assistant"
+						},
+						"output_index": 2,
+						"sequence_number": 17
+					},
+					{
+						"type": "response.content_part.added",
+						"content_index": 0,
+						"item_id": "msg_0cdaf91dac986ae2016b027018d06887d28fbea4206379c239",
+						"output_index": 2,
+						"part": {
+							"type": "output_text",
+							"annotations": [],
+							"logprobs": [],
+							"text": ""
+						},
+						"sequence_number": 18
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": "It",
+						"item_id": "msg_0cdaf91dac986ae2016b027018d06887d28fbea4206379c239",
+						"logprobs": [],
+						"obfuscation": "rTbWuz8GTQhYEI",
+						"output_index": 2,
+						"sequence_number": 19
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": " printed",
+						"item_id": "msg_0cdaf91dac986ae2016b027018d06887d28fbea4206379c239",
+						"logprobs": [],
+						"obfuscation": "yMWkYb7K",
+						"output_index": 2,
+						"sequence_number": 20
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": " `",
+						"item_id": "msg_0cdaf91dac986ae2016b027018d06887d28fbea4206379c239",
+						"logprobs": [],
+						"obfuscation": "SHuHwOPQ6qqGl1",
+						"output_index": 2,
+						"sequence_number": 21
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": "42",
+						"item_id": "msg_0cdaf91dac986ae2016b027018d06887d28fbea4206379c239",
+						"logprobs": [],
+						"obfuscation": "3FTzxSO4bwCLHg",
+						"output_index": 2,
+						"sequence_number": 22
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": "`.",
+						"item_id": "msg_0cdaf91dac986ae2016b027018d06887d28fbea4206379c239",
+						"logprobs": [],
+						"obfuscation": "Xb81SraJdpu784",
+						"output_index": 2,
+						"sequence_number": 23
+					},
+					{
+						"type": "response.output_text.done",
+						"content_index": 0,
+						"item_id": "msg_0cdaf91dac986ae2016b027018d06887d28fbea4206379c239",
+						"logprobs": [],
+						"output_index": 2,
+						"sequence_number": 24,
+						"text": "It printed `42`."
+					},
+					{
+						"type": "response.content_part.done",
+						"content_index": 0,
+						"item_id": "msg_0cdaf91dac986ae2016b027018d06887d28fbea4206379c239",
+						"output_index": 2,
+						"part": {
+							"type": "output_text",
+							"annotations": [],
+							"logprobs": [],
+							"text": "It printed `42`."
+						},
+						"sequence_number": 25
+					},
+					{
+						"type": "response.output_item.done",
+						"item": {
+							"id": "msg_0cdaf91dac986ae2016b027018d06887d28fbea4206379c239",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "It printed `42`."
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						},
+						"output_index": 2,
+						"sequence_number": 26
+					},
+					{
+						"type": "response.completed",
+						"response": {
+							"id": "resp_0cdaf91dac986ae2016b0270178a0c87d2a1610218c2e8135d",
+							"object": "response",
+							"created_at": 1795321879,
+							"status": "completed",
+							"access_programs": null,
+							"background": false,
+							"completed_at": 1795321881,
+							"error": null,
+							"frequency_penalty": 0,
+							"image": {
+								"context_compression": "disabled"
+							},
+							"incomplete_details": null,
+							"input_transformations": [],
+							"instructions": null,
+							"max_output_tokens": 600,
+							"max_tool_calls": null,
+							"model": "gpt-6-luna",
+							"moderation": null,
+							"output": [
+								{
+									"id": "sh_0cdaf91dac986ae2016b027018074887d2a5343ac178e18aa4",
+									"type": "shell_call",
+									"status": "completed",
+									"action": {
+										"commands": [
+											"echo $((6*7))"
+										],
+										"max_output_length": null,
+										"timeout_ms": null
+									},
+									"call_id": "call_8PRCFugimsiQJn8XyClM1RSg",
+									"environment": {
+										"type": "container_reference",
+										"container_id": "cntr_6b027017a82c8191ab654e4651d62ada0d2f4ab690be7f75"
+									}
+								},
+								{
+									"id": "sho_0cdaf91dac986ae2016b027018a37c87d2b4bffebf72811271",
+									"type": "shell_call_output",
+									"status": "completed",
+									"call_id": "call_8PRCFugimsiQJn8XyClM1RSg",
+									"max_output_length": null,
+									"output": [
+										{
+											"outcome": {
+												"type": "exit",
+												"exit_code": 0
+											},
+											"stderr": "",
+											"stdout": "42\n"
+										}
+									]
+								},
+								{
+									"id": "msg_0cdaf91dac986ae2016b027018d06887d28fbea4206379c239",
+									"type": "message",
+									"status": "completed",
+									"content": [
+										{
+											"type": "output_text",
+											"annotations": [],
+											"logprobs": [],
+											"text": "It printed `42`."
+										}
+									],
+									"phase": "final_answer",
+									"role": "assistant"
+								}
+							],
+							"parallel_tool_calls": true,
+							"presence_penalty": 0,
+							"previous_response_id": null,
+							"prompt_cache_key": null,
+							"prompt_cache_retention": "24h",
+							"reasoning": {
+								"context": "all_turns",
+								"effort": "none",
+								"mode": "standard",
+								"summary": null
+							},
+							"safety_identifier": null,
+							"service_tier": "default",
+							"store": false,
+							"temperature": 1,
+							"text": {
+								"format": {
+									"type": "text"
+								},
+								"verbosity": "medium"
+							},
+							"tool_choice": "required",
+							"tool_usage": {
+								"image_gen": {
+									"input_tokens": 0,
+									"input_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"output_tokens": 0,
+									"output_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"total_tokens": 0
+								},
+								"web_search": {
+									"num_requests": 0
+								}
+							},
+							"tools": [
+								{
+									"type": "shell",
+									"environment": {
+										"type": "container_reference",
+										"container_id": "cntr_6b027017a82c8191ab654e4651d62ada0d2f4ab690be7f75"
+									}
+								}
+							],
+							"top_logprobs": 0,
+							"top_p": 0.98,
+							"truncation": "disabled",
+							"usage": {
+								"input_tokens": 742,
+								"input_tokens_details": {
+									"cache_write_tokens": 0,
+									"cache_write_tokens_details": {
+										"ttl_12h_tokens": 0,
+										"ttl_30m_tokens": 0
+									},
+									"cached_tokens": 0
+								},
+								"output_tokens": 29,
+								"output_tokens_details": {
+									"reasoning_tokens": 20
+								},
+								"total_tokens": 771
+							},
+							"user": null,
+							"metadata": {}
+						},
+						"sequence_number": 27
+					}
+				]
+			}
+		},
+		{
+			"name": "a hosted run sent back",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 600,
+					"tools": [
+						{
+							"type": "shell",
+							"environment": {
+								"type": "container_auto"
+							}
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Run echo $((6*7)) in the shell, then tell me what it printed."
+						},
+						{
+							"id": "sh_0c093937b7776646016b027013de0c87d284095d839de3d15b",
+							"type": "shell_call",
+							"status": "completed",
+							"action": {
+								"commands": [
+									"echo $((6*7))"
+								],
+								"max_output_length": null,
+								"timeout_ms": null
+							},
+							"call_id": "call_OSGCSSeCsJXuE0voS10oVsOP",
+							"environment": {
+								"type": "container_reference",
+								"container_id": "cntr_6b02701320b08191bbc765d54fb3846a0d7af34a719edddb"
+							}
+						},
+						{
+							"id": "sho_0c093937b7776646016b027014296087d28ce4cafc7ee40d3a",
+							"type": "shell_call_output",
+							"status": "completed",
+							"call_id": "call_OSGCSSeCsJXuE0voS10oVsOP",
+							"max_output_length": null,
+							"output": [
+								{
+									"outcome": {
+										"type": "exit",
+										"exit_code": 0
+									},
+									"stderr": "",
+									"stdout": "42\n"
+								}
+							]
+						},
+						{
+							"id": "msg_0c093937b7776646016b0270146be487d2b14544df62aa9bc8",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "It printed `42`."
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						},
+						{
+							"role": "user",
+							"content": "Now run echo $((6*8)) in the same shell and tell me what it printed."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_0c093937b7776646016b0270194c7487d2b785631054c1cd93",
+					"object": "response",
+					"created_at": 1795321881,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795321884,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 600,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "sh_0c093937b7776646016b02701c0f2c87d2b76e2548dd910ca9",
+							"type": "shell_call",
+							"status": "completed",
+							"action": {
+								"commands": [
+									"echo $((6*8))"
+								],
+								"max_output_length": null,
+								"timeout_ms": null
+							},
+							"call_id": "call_nLmEIJvvBmNfmTIIUnz8iEUs",
+							"environment": {
+								"type": "container_reference",
+								"container_id": "cntr_6b02701320b08191bbc765d54fb3846a0d7af34a719edddb"
+							}
+						},
+						{
+							"id": "sho_0c093937b7776646016b02701c503487d287c8289f1cfd5333",
+							"type": "shell_call_output",
+							"status": "completed",
+							"call_id": "call_nLmEIJvvBmNfmTIIUnz8iEUs",
+							"max_output_length": null,
+							"output": [
+								{
+									"outcome": {
+										"type": "exit",
+										"exit_code": 0
+									},
+									"stderr": "",
+									"stdout": "48\n"
+								}
+							]
+						},
+						{
+							"id": "msg_0c093937b7776646016b02701c8a8487d28b13a8c5f5ca66b0",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "It printed `48`."
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "shell",
+							"environment": {
+								"type": "container_reference",
+								"container_id": "cntr_6b02701320b08191bbc765d54fb3846a0d7af34a719edddb"
+							}
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 824,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 29,
+						"output_tokens_details": {
+							"reasoning_tokens": 20
+						},
+						"total_tokens": 853
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "a container by reference",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 600,
+					"tools": [
+						{
+							"type": "shell",
+							"environment": {
+								"type": "container_reference",
+								"container_id": "cntr_6b02701320b08191bbc765d54fb3846a0d7af34a719edddb"
+							}
+						}
+					],
+					"tool_choice": "required",
+					"input": [
+						{
+							"role": "user",
+							"content": "Run echo $((6*7)) in the shell, then tell me what it printed."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_08cb5b56bed7e4b0016b02701ce86087d29f4da78e2354fc99",
+					"object": "response",
+					"created_at": 1795321884,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795321886,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 600,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "sh_08cb5b56bed7e4b0016b02701d6ce087d290ae77a77bfa62e1",
+							"type": "shell_call",
+							"status": "completed",
+							"action": {
+								"commands": [
+									"echo $((6*7))"
+								],
+								"max_output_length": null,
+								"timeout_ms": null
+							},
+							"call_id": "call_KkwGvAnQ3sQrFyAo4EypQwTH",
+							"environment": {
+								"type": "container_reference",
+								"container_id": "cntr_6b02701320b08191bbc765d54fb3846a0d7af34a719edddb"
+							}
+						},
+						{
+							"id": "sho_08cb5b56bed7e4b0016b02701db01c87d29583cf06c68c040d",
+							"type": "shell_call_output",
+							"status": "completed",
+							"call_id": "call_KkwGvAnQ3sQrFyAo4EypQwTH",
+							"max_output_length": null,
+							"output": [
+								{
+									"outcome": {
+										"type": "exit",
+										"exit_code": 0
+									},
+									"stderr": "",
+									"stdout": "42\n"
+								}
+							]
+						},
+						{
+							"id": "msg_08cb5b56bed7e4b0016b02701ddb0487d2897f2b08a25c993c",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "It printed `42`."
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "required",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "shell",
+							"environment": {
+								"type": "container_reference",
+								"container_id": "cntr_6b02701320b08191bbc765d54fb3846a0d7af34a719edddb"
+							}
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 740,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 29,
+						"output_tokens_details": {
+							"reasoning_tokens": 20
+						},
+						"total_tokens": 769
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "an inline skill",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 600,
+					"tools": [
+						{
+							"type": "shell",
+							"environment": {
+								"type": "container_auto",
+								"skills": [
+									{
+										"type": "inline",
+										"name": "zorbia-greeting",
+										"description": "How to greet someone in Zorbian.",
+										"source": {
+											"type": "base64",
+											"media_type": "application/zip",
+											"data": "UEsDBBQAAAAAAAAAAABnOsxgcAAAAHAAAAAYAAAAem9yYmlhLWdyZWV0aW5nL1NLSUxMLm1kLS0tCm5hbWU6IHpvcmJpYS1ncmVldGluZwpkZXNjcmlwdGlvbjogSG93IHRvIGdyZWV0IHNvbWVvbmUgaW4gWm9yYmlhbi4KLS0tCgpJbiBab3JiaWFuLCBoZWxsbyBpcyAicXVpbGxhLW1vciIuClBLAQIUABQAAAAAAAAAAABnOsxgcAAAAHAAAAAYAAAAAAAAAAAAAAAAAAAAAAB6b3JiaWEtZ3JlZXRpbmcvU0tJTEwubWRQSwUGAAAAAAEAAQBGAAAApgAAAAAA"
+										}
+									}
+								]
+							}
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Use the zorbia-greeting skill: how do I say hello in Zorbian?"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_00d9e90ed9dab0b4016b02701e33fc87d2910332585be0771c",
+					"object": "response",
+					"created_at": 1795321886,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795321888,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 600,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "msg_00d9e90ed9dab0b4016b02701eea2087d2a198273b18b0fd84",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "I’m using the zorbia-greeting skill to check the correct Zorbian greeting."
+								}
+							],
+							"phase": "commentary",
+							"role": "assistant"
+						},
+						{
+							"id": "sh_00d9e90ed9dab0b4016b02701f30a087d2bb23453703bfe7b4",
+							"type": "shell_call",
+							"status": "completed",
+							"action": {
+								"commands": [
+									"cat /home/oai/skills/zorbia-greeting-88577afc1c2b161beee73bb8091aa5d7/SKILL.md"
+								],
+								"max_output_length": null,
+								"timeout_ms": null
+							},
+							"call_id": "call_2vXtezP9kRHZjxg2NP1ithFy",
+							"environment": {
+								"type": "container_reference",
+								"container_id": "cntr_6b02701e4e988191b50c3e7dd9ccaae50f4d683f4b53ae24"
+							}
+						},
+						{
+							"id": "sho_00d9e90ed9dab0b4016b02701fa5bc87d2a78370710767af2d",
+							"type": "shell_call_output",
+							"status": "completed",
+							"call_id": "call_2vXtezP9kRHZjxg2NP1ithFy",
+							"max_output_length": null,
+							"output": [
+								{
+									"outcome": {
+										"type": "exit",
+										"exit_code": 0
+									},
+									"stderr": "",
+									"stdout": "---\nname: zorbia-greeting\ndescription: How to greet someone in Zorbian.\n---\n\nIn Zorbian, hello is \"quilla-mor\".\n"
+								}
+							]
+						},
+						{
+							"id": "msg_00d9e90ed9dab0b4016b02701ff62487d2a06a854e76458abd",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "In Zorbian, “hello” is **quilla-mor**."
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "shell",
+							"environment": {
+								"type": "container_reference",
+								"container_id": "cntr_6b02701e4e988191b50c3e7dd9ccaae50f4d683f4b53ae24"
+							}
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 1397,
+						"input_tokens_details": {
+							"cache_write_tokens": 1248,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 1248
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 94,
+						"output_tokens_details": {
+							"reasoning_tokens": 51
+						},
+						"total_tokens": 1491
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "a network allowlist with a domain secret",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 600,
+					"tools": [
+						{
+							"type": "shell",
+							"environment": {
+								"type": "container_auto",
+								"network_policy": {
+									"type": "allowlist",
+									"allowed_domains": [
+										"example.com"
+									],
+									"domain_secrets": [
+										{
+											"domain": "example.com",
+											"name": "EXAMPLE_TOKEN",
+											"value": "not-a-real-secret"
+										}
+									]
+								}
+							}
+						}
+					],
+					"tool_choice": "required",
+					"input": [
+						{
+							"role": "user",
+							"content": "Run curl -s https://example.com | head -c 200 in the shell and tell me what it printed."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Network policy 'allowlist' is not permitted because the organization policy disables container network access.",
+						"type": "invalid_request_error",
+						"param": "network_policy.type",
+						"code": "invalid_value"
+					}
+				}
+			}
+		},
+		{
+			"name": "a forced hosted run",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 600,
+					"tools": [
+						{
+							"type": "shell",
+							"environment": {
+								"type": "container_auto"
+							}
+						}
+					],
+					"tool_choice": {
+						"type": "shell"
+					},
+					"input": [
+						{
+							"role": "user",
+							"content": "Run echo $((6*7)) in the shell, then tell me what it printed."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_064dddd0148f9607016b027020a50887d2a5b577f0eef801d8",
+					"object": "response",
+					"created_at": 1795321888,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795321890,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 600,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "sh_064dddd0148f9607016b02702113d887d2a4b675fe7e88f8a4",
+							"type": "shell_call",
+							"status": "completed",
+							"action": {
+								"commands": [
+									"echo $((6*7))"
+								],
+								"max_output_length": null,
+								"timeout_ms": null
+							},
+							"call_id": "call_p2jg8QQn3gqwGfZ687G72hJz",
+							"environment": {
+								"type": "container_reference",
+								"container_id": "cntr_6b027020bc408191872f131b2aac148c08824ebd9431bd41"
+							}
+						},
+						{
+							"id": "sho_064dddd0148f9607016b02702175ec87d2a3516e6892b496b1",
+							"type": "shell_call_output",
+							"status": "completed",
+							"call_id": "call_p2jg8QQn3gqwGfZ687G72hJz",
+							"max_output_length": null,
+							"output": [
+								{
+									"outcome": {
+										"type": "exit",
+										"exit_code": 0
+									},
+									"stderr": "",
+									"stdout": "42\n"
+								}
+							]
+						},
+						{
+							"id": "msg_064dddd0148f9607016b027021ba9887d2b29dceca6a71f49d",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "It printed `42`."
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": {
+						"type": "shell"
+					},
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "shell",
+							"environment": {
+								"type": "container_reference",
+								"container_id": "cntr_6b027020bc408191872f131b2aac148c08824ebd9431bd41"
+							}
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 741,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 29,
+						"output_tokens_details": {
+							"reasoning_tokens": 20
+						},
+						"total_tokens": 770
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "a container of no account",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 600,
+					"tools": [
+						{
+							"type": "shell",
+							"environment": {
+								"type": "container_reference",
+								"container_id": "cntr_000000000000000000000000"
+							}
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Run echo $((6*7)) in the shell, then tell me what it printed."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 404,
+				"body": {
+					"error": {
+						"message": "Container with id 'cntr_000000000000000000000000' not found.",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": null
+					}
+				}
+			}
+		}
+	]
+}

@@ -312,7 +312,7 @@ func (r *ResolvedRequest) AccountOptions() []HeldOption {
 // EffectiveDataHandling is the deployment's data handling with the facts that the credential's
 // account options set, joined with that of each hosted tool that the request lets the model call.
 func (r *ResolvedRequest) EffectiveDataHandling() DataHandling {
-	return r.Deployment.EffectiveDataHandling(r.accountOptions, r.hostedTools, r.providerState.Keeps)
+	return r.Deployment.EffectiveDataHandling(r.accountOptions, r.hostedTools, r.providerState.Keeps, r.providerState.Network != "")
 }
 
 // ProviderState is what the request keeps or reads in its provider account.
@@ -1798,6 +1798,56 @@ func dropNoOpCompatibilityFields(rawData map[string]json.RawMessage, route Route
 		dropRawFieldIf(rawData, "truncation", func(raw json.RawMessage) bool {
 			return rawStringValue(raw) == "disabled"
 		})
+		dropCodeImageOutputs(rawData)
+	}
+}
+
+// dropCodeImageOutputs removes the images that the input's code interpreter calls send back, which
+// OpenAI ignores: a call reads the same input tokens with and without them (capture
+// openai/container-replay). Each is a data URL that input checks and the hold would read as text.
+// A call left with no outputs sends null, as a reply without include does. JSON spells a type
+// plainly or with \u escapes, so input without either holds no such call.
+func dropCodeImageOutputs(rawData map[string]json.RawMessage) {
+	input := rawData["input"]
+	if !bytes.Contains(input, []byte("code_interpreter_call")) && !bytes.Contains(input, []byte(`\u`)) {
+		return
+	}
+	items, err := rawjson.Array(input)
+	if err != nil {
+		return
+	}
+	changed := false
+	for index, rawItem := range items {
+		item, err := rawjson.Object(rawItem)
+		if err != nil || rawStringValue(item["type"]) != "code_interpreter_call" {
+			continue
+		}
+		outputs, _ := rawjson.Array(item["outputs"])
+		kept := make([]json.RawMessage, 0, len(outputs))
+		for _, rawOutput := range outputs {
+			if output, _ := rawObjectValue(rawOutput); rawStringValue(output["type"]) != "image" {
+				kept = append(kept, rawOutput)
+			}
+		}
+		if len(kept) == len(outputs) {
+			continue
+		}
+		item["outputs"] = json.RawMessage("null")
+		if len(kept) > 0 {
+			if item["outputs"], err = sonic.Marshal(kept); err != nil {
+				return
+			}
+		}
+		if items[index], err = sonic.Marshal(item); err != nil {
+			return
+		}
+		changed = true
+	}
+	if !changed {
+		return
+	}
+	if encoded, err := sonic.Marshal(items); err == nil {
+		rawData["input"] = encoded
 	}
 }
 

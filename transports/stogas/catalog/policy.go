@@ -76,11 +76,12 @@ type policyRequestData struct {
 	MCPServersWithoutApproval []string `json:"mcpServersWithoutApproval"`
 	MCPTools                  []string `json:"mcpTools"`
 	Model                     string   `json:"model"`
-	// Store reports whether the request asks its provider to keep its content: store or
-	// conversation.
+	// Store reports whether the request asks its provider to keep its content: store,
+	// conversation or a container.
 	Store bool `json:"store"`
 	// StoredInput reports whether the model reads input that the provider holds and the gateway
-	// never sees: previous_response_id, conversation or a file search's vector stores.
+	// never sees: previous_response_id, conversation, a file search's vector stores, or a
+	// container's files and skills.
 	StoredInput bool `json:"storedInput"`
 	// SystemMessages reads the request's messages only when a policy asks.
 	SystemMessages func() bool `json:"systemMessages"`

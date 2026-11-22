@@ -483,8 +483,8 @@ func NormalizeUpstreamStatus(bifrostErr *schemas.BifrostError) string {
 	}
 }
 
-// messageRefusal reads the refusals that only their message tells apart from a refused request.
-// Another pair can serve them:
+// messageRefusal reads the refusals that only their message tells apart from others with their
+// status. Another pair can serve these:
 //   - The account behind the key refuses, rather than the request: Anthropic's spend cap and the
 //     spend limits that an account's owner sets
 //     (https://platform.claude.com/docs/en/api/rate-limits#setting-your-own-spend-limit), a
@@ -498,6 +498,13 @@ func NormalizeUpstreamStatus(bifrostErr *schemas.BifrostError) string {
 //     which Bedrock's Chat Completions API wraps in its own text for a model that runs in the
 //     Region of each request (capture aws/chat-completions-in-region-limits), and SGLang's "The
 //     input (40000 tokens) is longer than the model's context length (32768 tokens)." on Chutes.
+//
+// No pair can serve a request that names a resource that the account does not hold, such as an
+// expired container. OpenAI refuses it with a 404 that would otherwise read as a model that the
+// deployment does not serve: "Container with id 'cntr_…' not found.", "Vector store with id
+// ['vs_…'] not found." and "Item with id 'fs_…' not found. Items are not persisted when `store`
+// is set to false. …" (captures openai/code-interpreter and openai/file-search). These read as
+// invalid requests.
 func messageRefusal(bifrostErr *schemas.BifrostError) string {
 	if bifrostErr.Error == nil || len(bifrostErr.Error.Message) > maxMessageRefusalBytes {
 		return ""
@@ -522,6 +529,9 @@ func messageRefusal(bifrostErr *schemas.BifrostError) string {
 	// Claude's filter of its own output answers with a generic 400 invalid_request_error.
 	case strings.HasPrefix(message, "output blocked by content filtering policy"):
 		return "content_filter"
+	case (strings.HasPrefix(message, "container with id ") || strings.HasPrefix(message, "vector store with id ") ||
+		strings.HasPrefix(message, "item with id ")) && strings.Contains(message, " not found"):
+		return "invalid_request"
 	}
 	return ""
 }

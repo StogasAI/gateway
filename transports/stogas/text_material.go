@@ -119,6 +119,10 @@ func responsesItemOutputText(index int, item *schemas.ResponsesMessage, visit fu
 		for i, action := range providerComputerActions(tool) {
 			visit(textSource{kind: responsesValue, item: index, part: i}, stringValue(action.Text), false)
 		}
+	case schemas.ResponsesMessageTypeCodeInterpreterCall:
+		if call := tool.ResponsesCodeInterpreterToolCall; call != nil {
+			visit(source, stringValue(call.Code), false)
+		}
 	}
 }
 
@@ -131,7 +135,8 @@ func responsesOutputDelta(eventType schemas.ResponsesStreamResponseType) (output
 	case schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDelta,
 		schemas.ResponsesStreamResponseTypeCustomToolCallInputDelta,
 		schemas.ResponsesStreamResponseTypeShellCallCommandDelta,
-		schemas.ResponsesStreamResponseTypeApplyPatchCallOperationDiffDelta:
+		schemas.ResponsesStreamResponseTypeApplyPatchCallOperationDiffDelta,
+		schemas.ResponsesStreamResponseTypeCodeInterpreterCallCodeDelta:
 		return true, false
 	}
 	return false, false

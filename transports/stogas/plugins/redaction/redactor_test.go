@@ -627,6 +627,27 @@ func BenchmarkRedactDensePII(b *testing.B) {
 	}
 }
 
+// A hosted container's settings reach OpenAI as the client sent them: the domains that its code
+// may reach and the secrets that it sends them are not prompt text, and a redacted secret would
+// fail. A shell that the client runs lists skills whose names and descriptions the model reads.
+func TestHostedContainerSettingsReachTheProviderUnredacted(t *testing.T) {
+	t.Parallel()
+	githubToken := "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890"
+	policy := fmt.Sprintf(`"network_policy":{"type":"allowlist","allowed_domains":["alice.example.com"],"domain_secrets":[{"domain":"alice.example.com","name":"TOKEN","value":%q}]}`, githubToken)
+	container := `"container":{"type":"auto","file_ids":["file-alice"],` + policy + `}`
+	environment := `"environment":{"type":"container_auto",` + policy + `}`
+	raw := map[string]json.RawMessage{"tools": json.RawMessage(`[{"type":"code_interpreter",` + container + `},{"type":"shell",` + environment + `},` +
+		`{"type":"shell","environment":{"type":"local","skills":[{"name":"mail","description":"Writes to desk@corp.io","path":"/skills/mail"}]}}]`)}
+	redactor := newTestRedactor()
+	if err := redactor.RedactRequestFields(raw, SurfaceResponses, nil); err != nil {
+		t.Fatal(err)
+	}
+	tools := string(raw["tools"])
+	if !strings.Contains(tools, container) || !strings.Contains(tools, environment) || strings.Contains(tools, "desk@corp.io") || redactor.Summary().ItemsRedacted != 1 {
+		t.Fatalf("items_redacted = %d, tools = %s", redactor.Summary().ItemsRedacted, tools)
+	}
+}
+
 func TestRemoteMCPSettingsAndIdentifiersReachTheProviderUnredacted(t *testing.T) {
 	t.Parallel()
 	githubToken := "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890"

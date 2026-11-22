@@ -1,0 +1,2533 @@
+{
+	"shows": "With store: false, OpenAI runs code interpreter in a container that the request makes or names: a code_interpreter_call carries the code, the container and, with include code_interpreter_call.outputs, its logs, and the requests without the tool and under tool_choice none show what the declaration adds to the input. The exchanges show the stream events, what OpenAI takes back in input, a container named by its ID, a file mounted with file_ids, a file that the code writes, a network allowlist, a forced call, and a container that the account does not hold.",
+	"recorded": "2026-11-22",
+	"exchanges": [
+		{
+			"name": "a run",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 600,
+					"tools": [
+						{
+							"type": "code_interpreter",
+							"container": {
+								"type": "auto"
+							}
+						}
+					],
+					"tool_choice": "required",
+					"include": [
+						"code_interpreter_call.outputs"
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Use Python to compute the sum of the squares of 1 to 2026, then tell me the result."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_01803bd57e0cc1c8016b026fd442e487d29bbb9ba60d34c268",
+					"object": "response",
+					"created_at": 1795321812,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795321814,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 600,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "ci_01803bd57e0cc1c8016b026fd5082c87d28731e258a853283d",
+							"type": "code_interpreter_call",
+							"status": "completed",
+							"code": "sum(i*i for i in range(1, 2027))\n",
+							"container_id": "cntr_6b026fd45ed48191b6f00b6a128fbdd90bb0827da4db5ed9",
+							"outputs": [
+								{
+									"type": "logs",
+									"logs": "2774077201"
+								}
+							]
+						},
+						{
+							"id": "msg_01803bd57e0cc1c8016b026fd5db6087d2b21a0bae7af098c6",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "The sum of the squares of the integers from 1 to 2026 is **2,774,077,201**."
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "required",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "code_interpreter",
+							"container": {
+								"type": "auto"
+							}
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 1277,
+						"input_tokens_details": {
+							"cache_write_tokens": 1114,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 1114
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 53,
+						"output_tokens_details": {
+							"reasoning_tokens": 23
+						},
+						"total_tokens": 1330
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "without the tool",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 600,
+					"input": [
+						{
+							"role": "user",
+							"content": "Use Python to compute the sum of the squares of 1 to 2026, then tell me the result."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795321815,
+					"created_at": 1795321814,
+					"error": null,
+					"frequency_penalty": 0,
+					"id": "resp_00aab7f44f905849016b026fd6943887d28799c35863881b41",
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 600,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"object": "response",
+					"output": [
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "Using Python:\n\n```python\nsum(i**2 for i in range(1, 2027))\n```\n\nThe sum is **2,769,466,351**.",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_00aab7f44f905849016b026fd75b6c87d2978ee4873c209f40",
+							"phase": "final_answer",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"status": "completed",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 29,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 46,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 75
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "the tool under tool_choice none",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 600,
+					"tools": [
+						{
+							"type": "code_interpreter",
+							"container": {
+								"type": "auto"
+							}
+						}
+					],
+					"tool_choice": "none",
+					"input": [
+						{
+							"role": "user",
+							"content": "Use Python to compute the sum of the squares of 1 to 2026, then tell me the result."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_04e0e33015e12035016b026fd8189087d2aa969c3541b49c11",
+					"object": "response",
+					"created_at": 1795321816,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795321816,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 600,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "msg_04e0e33015e12035016b026fd8ab1887d281033afe2f977746",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "The sum of the squares from 1 to 2026 is **2,775,994,651**."
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "none",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "code_interpreter",
+							"container": {
+								"type": "auto"
+							}
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 1240,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 1165
+						},
+						"output_tokens": 27,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 1267
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "a run without its outputs",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 600,
+					"tools": [
+						{
+							"type": "code_interpreter",
+							"container": {
+								"type": "auto"
+							}
+						}
+					],
+					"tool_choice": "required",
+					"input": [
+						{
+							"role": "user",
+							"content": "Use Python to compute the sum of the squares of 1 to 2026, then tell me the result."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_0f809640a0488928016b026fd9158487d28bf1a82c0d7f673e",
+					"object": "response",
+					"created_at": 1795321817,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795321819,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 600,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "ci_0f809640a0488928016b026fd98d4487d28e0c3bc66a93b887",
+							"type": "code_interpreter_call",
+							"status": "completed",
+							"code": "sum(i*i for i in range(1, 2027))\n",
+							"container_id": "cntr_6b026fd93004819198aa61b0b6a6e172030b274ffae75608",
+							"outputs": null
+						},
+						{
+							"id": "msg_0f809640a0488928016b026fdace1087d2bfcf398e8aeba9f8",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "The sum of the squares of the integers from 1 to 2026 is **2,774,077,201**."
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "required",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "code_interpreter",
+							"container": {
+								"type": "auto"
+							}
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 1277,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 1114
+						},
+						"output_tokens": 53,
+						"output_tokens_details": {
+							"reasoning_tokens": 23
+						},
+						"total_tokens": 1330
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "a streamed run",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 600,
+					"tools": [
+						{
+							"type": "code_interpreter",
+							"container": {
+								"type": "auto"
+							}
+						}
+					],
+					"tool_choice": "required",
+					"include": [
+						"code_interpreter_call.outputs"
+					],
+					"stream": true,
+					"input": [
+						{
+							"role": "user",
+							"content": "Use Python to compute the sum of the squares of 1 to 2026, then tell me the result."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"events": [
+					{
+						"type": "response.created",
+						"response": {
+							"id": "resp_0ae2ad2fd7adbf9b016b026fdb584887d282338ff7d36d9616",
+							"object": "response",
+							"created_at": 1795321819,
+							"status": "in_progress",
+							"access_programs": null,
+							"background": false,
+							"completed_at": null,
+							"error": null,
+							"frequency_penalty": 0,
+							"image": {
+								"context_compression": "disabled"
+							},
+							"incomplete_details": null,
+							"input_transformations": [],
+							"instructions": null,
+							"max_output_tokens": 600,
+							"max_tool_calls": null,
+							"model": "gpt-6-luna",
+							"moderation": null,
+							"output": [],
+							"parallel_tool_calls": true,
+							"presence_penalty": 0,
+							"previous_response_id": null,
+							"prompt_cache_key": null,
+							"prompt_cache_retention": "24h",
+							"reasoning": {
+								"context": "all_turns",
+								"effort": "none",
+								"mode": "standard",
+								"summary": null
+							},
+							"safety_identifier": null,
+							"service_tier": "auto",
+							"store": false,
+							"temperature": 1,
+							"text": {
+								"format": {
+									"type": "text"
+								},
+								"verbosity": "medium"
+							},
+							"tool_choice": "required",
+							"tool_usage": {
+								"image_gen": {
+									"input_tokens": 0,
+									"input_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"output_tokens": 0,
+									"output_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"total_tokens": 0
+								},
+								"web_search": {
+									"num_requests": 0
+								}
+							},
+							"tools": [
+								{
+									"type": "code_interpreter",
+									"container": {
+										"type": "auto"
+									}
+								}
+							],
+							"top_logprobs": 0,
+							"top_p": 0.98,
+							"truncation": "disabled",
+							"usage": null,
+							"user": null,
+							"metadata": {}
+						},
+						"sequence_number": 0
+					},
+					{
+						"type": "response.in_progress",
+						"response": {
+							"id": "resp_0ae2ad2fd7adbf9b016b026fdb584887d282338ff7d36d9616",
+							"object": "response",
+							"created_at": 1795321819,
+							"status": "in_progress",
+							"access_programs": null,
+							"background": false,
+							"completed_at": null,
+							"error": null,
+							"frequency_penalty": 0,
+							"image": {
+								"context_compression": "disabled"
+							},
+							"incomplete_details": null,
+							"input_transformations": [],
+							"instructions": null,
+							"max_output_tokens": 600,
+							"max_tool_calls": null,
+							"model": "gpt-6-luna",
+							"moderation": null,
+							"output": [],
+							"parallel_tool_calls": true,
+							"presence_penalty": 0,
+							"previous_response_id": null,
+							"prompt_cache_key": null,
+							"prompt_cache_retention": "24h",
+							"reasoning": {
+								"context": "all_turns",
+								"effort": "none",
+								"mode": "standard",
+								"summary": null
+							},
+							"safety_identifier": null,
+							"service_tier": "auto",
+							"store": false,
+							"temperature": 1,
+							"text": {
+								"format": {
+									"type": "text"
+								},
+								"verbosity": "medium"
+							},
+							"tool_choice": "required",
+							"tool_usage": {
+								"image_gen": {
+									"input_tokens": 0,
+									"input_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"output_tokens": 0,
+									"output_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"total_tokens": 0
+								},
+								"web_search": {
+									"num_requests": 0
+								}
+							},
+							"tools": [
+								{
+									"type": "code_interpreter",
+									"container": {
+										"type": "auto"
+									}
+								}
+							],
+							"top_logprobs": 0,
+							"top_p": 0.98,
+							"truncation": "disabled",
+							"usage": null,
+							"user": null,
+							"metadata": {}
+						},
+						"sequence_number": 1
+					},
+					{
+						"type": "response.output_item.added",
+						"item": {
+							"id": "ci_0ae2ad2fd7adbf9b016b026fdbd38887d29dd3a9ef9ad848a2",
+							"type": "code_interpreter_call",
+							"status": "in_progress",
+							"code": "",
+							"container_id": "cntr_6b026fdb74048191be902bedee2956ed069ad05d4088821d",
+							"outputs": []
+						},
+						"output_index": 0,
+						"sequence_number": 2
+					},
+					{
+						"type": "response.code_interpreter_call.in_progress",
+						"item_id": "ci_0ae2ad2fd7adbf9b016b026fdbd38887d29dd3a9ef9ad848a2",
+						"output_index": 0,
+						"sequence_number": 3
+					},
+					{
+						"type": "response.code_interpreter_call_code.delta",
+						"delta": "sum",
+						"item_id": "ci_0ae2ad2fd7adbf9b016b026fdbd38887d29dd3a9ef9ad848a2",
+						"obfuscation": "yFcLtG6r1HI7v",
+						"output_index": 0,
+						"sequence_number": 4
+					},
+					{
+						"type": "response.code_interpreter_call_code.delta",
+						"delta": "(i",
+						"item_id": "ci_0ae2ad2fd7adbf9b016b026fdbd38887d29dd3a9ef9ad848a2",
+						"obfuscation": "hNG593y8fV73kH",
+						"output_index": 0,
+						"sequence_number": 5
+					},
+					{
+						"type": "response.code_interpreter_call_code.delta",
+						"delta": "*i",
+						"item_id": "ci_0ae2ad2fd7adbf9b016b026fdbd38887d29dd3a9ef9ad848a2",
+						"obfuscation": "IhSXw8ZzloWZYA",
+						"output_index": 0,
+						"sequence_number": 6
+					},
+					{
+						"type": "response.code_interpreter_call_code.delta",
+						"delta": " for",
+						"item_id": "ci_0ae2ad2fd7adbf9b016b026fdbd38887d29dd3a9ef9ad848a2",
+						"obfuscation": "E8Jt3MeMtbts",
+						"output_index": 0,
+						"sequence_number": 7
+					},
+					{
+						"type": "response.code_interpreter_call_code.delta",
+						"delta": " i",
+						"item_id": "ci_0ae2ad2fd7adbf9b016b026fdbd38887d29dd3a9ef9ad848a2",
+						"obfuscation": "fcvC3ErYODJMRp",
+						"output_index": 0,
+						"sequence_number": 8
+					},
+					{
+						"type": "response.code_interpreter_call_code.delta",
+						"delta": " in",
+						"item_id": "ci_0ae2ad2fd7adbf9b016b026fdbd38887d29dd3a9ef9ad848a2",
+						"obfuscation": "W8b92LjK3jlDt",
+						"output_index": 0,
+						"sequence_number": 9
+					},
+					{
+						"type": "response.code_interpreter_call_code.delta",
+						"delta": " range",
+						"item_id": "ci_0ae2ad2fd7adbf9b016b026fdbd38887d29dd3a9ef9ad848a2",
+						"obfuscation": "qe2MSv9WMW",
+						"output_index": 0,
+						"sequence_number": 10
+					},
+					{
+						"type": "response.code_interpreter_call_code.delta",
+						"delta": "(",
+						"item_id": "ci_0ae2ad2fd7adbf9b016b026fdbd38887d29dd3a9ef9ad848a2",
+						"obfuscation": "3yI61WuHwKTSb8a",
+						"output_index": 0,
+						"sequence_number": 11
+					},
+					{
+						"type": "response.code_interpreter_call_code.delta",
+						"delta": "1",
+						"item_id": "ci_0ae2ad2fd7adbf9b016b026fdbd38887d29dd3a9ef9ad848a2",
+						"obfuscation": "TMMYflTFBHFg44K",
+						"output_index": 0,
+						"sequence_number": 12
+					},
+					{
+						"type": "response.code_interpreter_call_code.delta",
+						"delta": ",",
+						"item_id": "ci_0ae2ad2fd7adbf9b016b026fdbd38887d29dd3a9ef9ad848a2",
+						"obfuscation": "aqp0EfuIDPvbGzi",
+						"output_index": 0,
+						"sequence_number": 13
+					},
+					{
+						"type": "response.code_interpreter_call_code.delta",
+						"delta": " ",
+						"item_id": "ci_0ae2ad2fd7adbf9b016b026fdbd38887d29dd3a9ef9ad848a2",
+						"obfuscation": "UCjhoQ3fcriNe9F",
+						"output_index": 0,
+						"sequence_number": 14
+					},
+					{
+						"type": "response.code_interpreter_call_code.delta",
+						"delta": "202",
+						"item_id": "ci_0ae2ad2fd7adbf9b016b026fdbd38887d29dd3a9ef9ad848a2",
+						"obfuscation": "i5GAivgJZvJgQ",
+						"output_index": 0,
+						"sequence_number": 15
+					},
+					{
+						"type": "response.code_interpreter_call_code.delta",
+						"delta": "7",
+						"item_id": "ci_0ae2ad2fd7adbf9b016b026fdbd38887d29dd3a9ef9ad848a2",
+						"obfuscation": "BGH5vPfW60QwonD",
+						"output_index": 0,
+						"sequence_number": 16
+					},
+					{
+						"type": "response.code_interpreter_call_code.delta",
+						"delta": "))\n",
+						"item_id": "ci_0ae2ad2fd7adbf9b016b026fdbd38887d29dd3a9ef9ad848a2",
+						"obfuscation": "yVF4dyoiv9plj",
+						"output_index": 0,
+						"sequence_number": 17
+					},
+					{
+						"type": "response.code_interpreter_call_code.done",
+						"code": "sum(i*i for i in range(1, 2027))\n",
+						"item_id": "ci_0ae2ad2fd7adbf9b016b026fdbd38887d29dd3a9ef9ad848a2",
+						"output_index": 0,
+						"sequence_number": 18
+					},
+					{
+						"type": "response.code_interpreter_call.interpreting",
+						"item_id": "ci_0ae2ad2fd7adbf9b016b026fdbd38887d29dd3a9ef9ad848a2",
+						"output_index": 0,
+						"sequence_number": 19
+					},
+					{
+						"type": "response.code_interpreter_call.completed",
+						"item_id": "ci_0ae2ad2fd7adbf9b016b026fdbd38887d29dd3a9ef9ad848a2",
+						"output_index": 0,
+						"sequence_number": 20
+					},
+					{
+						"type": "response.output_item.done",
+						"item": {
+							"id": "ci_0ae2ad2fd7adbf9b016b026fdbd38887d29dd3a9ef9ad848a2",
+							"type": "code_interpreter_call",
+							"status": "completed",
+							"code": "sum(i*i for i in range(1, 2027))\n",
+							"container_id": "cntr_6b026fdb74048191be902bedee2956ed069ad05d4088821d",
+							"outputs": [
+								{
+									"type": "logs",
+									"logs": "2774077201"
+								}
+							]
+						},
+						"output_index": 0,
+						"sequence_number": 21
+					},
+					{
+						"type": "response.output_item.added",
+						"item": {
+							"id": "msg_0ae2ad2fd7adbf9b016b026fdca06487d29b29ad2d6639ce68",
+							"type": "message",
+							"status": "in_progress",
+							"content": [],
+							"phase": "final_answer",
+							"role": "assistant"
+						},
+						"output_index": 1,
+						"sequence_number": 22
+					},
+					{
+						"type": "response.content_part.added",
+						"content_index": 0,
+						"item_id": "msg_0ae2ad2fd7adbf9b016b026fdca06487d29b29ad2d6639ce68",
+						"output_index": 1,
+						"part": {
+							"type": "output_text",
+							"annotations": [],
+							"logprobs": [],
+							"text": ""
+						},
+						"sequence_number": 23
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": "The",
+						"item_id": "msg_0ae2ad2fd7adbf9b016b026fdca06487d29b29ad2d6639ce68",
+						"logprobs": [],
+						"obfuscation": "72CJrgNDKRVqf",
+						"output_index": 1,
+						"sequence_number": 24
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": " sum",
+						"item_id": "msg_0ae2ad2fd7adbf9b016b026fdca06487d29b29ad2d6639ce68",
+						"logprobs": [],
+						"obfuscation": "oelOZ7jEyE4I",
+						"output_index": 1,
+						"sequence_number": 25
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": " of",
+						"item_id": "msg_0ae2ad2fd7adbf9b016b026fdca06487d29b29ad2d6639ce68",
+						"logprobs": [],
+						"obfuscation": "B5jaT9qz1YIz6",
+						"output_index": 1,
+						"sequence_number": 26
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": " the",
+						"item_id": "msg_0ae2ad2fd7adbf9b016b026fdca06487d29b29ad2d6639ce68",
+						"logprobs": [],
+						"obfuscation": "mr3LokSXxCN2",
+						"output_index": 1,
+						"sequence_number": 27
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": " squares",
+						"item_id": "msg_0ae2ad2fd7adbf9b016b026fdca06487d29b29ad2d6639ce68",
+						"logprobs": [],
+						"obfuscation": "8QCDOoCP",
+						"output_index": 1,
+						"sequence_number": 28
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": " of",
+						"item_id": "msg_0ae2ad2fd7adbf9b016b026fdca06487d29b29ad2d6639ce68",
+						"logprobs": [],
+						"obfuscation": "tAQm8y7AVkrs2",
+						"output_index": 1,
+						"sequence_number": 29
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": " the",
+						"item_id": "msg_0ae2ad2fd7adbf9b016b026fdca06487d29b29ad2d6639ce68",
+						"logprobs": [],
+						"obfuscation": "PmIZZSG6xAoK",
+						"output_index": 1,
+						"sequence_number": 30
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": " integers",
+						"item_id": "msg_0ae2ad2fd7adbf9b016b026fdca06487d29b29ad2d6639ce68",
+						"logprobs": [],
+						"obfuscation": "fyR3JJZ",
+						"output_index": 1,
+						"sequence_number": 31
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": " from",
+						"item_id": "msg_0ae2ad2fd7adbf9b016b026fdca06487d29b29ad2d6639ce68",
+						"logprobs": [],
+						"obfuscation": "aJebtm8OwAV",
+						"output_index": 1,
+						"sequence_number": 32
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": " ",
+						"item_id": "msg_0ae2ad2fd7adbf9b016b026fdca06487d29b29ad2d6639ce68",
+						"logprobs": [],
+						"obfuscation": "5lH2HGkvEUoWJzb",
+						"output_index": 1,
+						"sequence_number": 33
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": "1",
+						"item_id": "msg_0ae2ad2fd7adbf9b016b026fdca06487d29b29ad2d6639ce68",
+						"logprobs": [],
+						"obfuscation": "qyTEjrehmkWiXIU",
+						"output_index": 1,
+						"sequence_number": 34
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": " to",
+						"item_id": "msg_0ae2ad2fd7adbf9b016b026fdca06487d29b29ad2d6639ce68",
+						"logprobs": [],
+						"obfuscation": "u5VUId7B7wYY5",
+						"output_index": 1,
+						"sequence_number": 35
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": " ",
+						"item_id": "msg_0ae2ad2fd7adbf9b016b026fdca06487d29b29ad2d6639ce68",
+						"logprobs": [],
+						"obfuscation": "lGHwmGMNZTEVtYp",
+						"output_index": 1,
+						"sequence_number": 36
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": "202",
+						"item_id": "msg_0ae2ad2fd7adbf9b016b026fdca06487d29b29ad2d6639ce68",
+						"logprobs": [],
+						"obfuscation": "JaMx72QTbuq3Z",
+						"output_index": 1,
+						"sequence_number": 37
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": "6",
+						"item_id": "msg_0ae2ad2fd7adbf9b016b026fdca06487d29b29ad2d6639ce68",
+						"logprobs": [],
+						"obfuscation": "1553zewkPhHpWcV",
+						"output_index": 1,
+						"sequence_number": 38
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": " is",
+						"item_id": "msg_0ae2ad2fd7adbf9b016b026fdca06487d29b29ad2d6639ce68",
+						"logprobs": [],
+						"obfuscation": "TuoCaRlTk2Ruh",
+						"output_index": 1,
+						"sequence_number": 39
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": " **",
+						"item_id": "msg_0ae2ad2fd7adbf9b016b026fdca06487d29b29ad2d6639ce68",
+						"logprobs": [],
+						"obfuscation": "RBOUWuAq5OWl9",
+						"output_index": 1,
+						"sequence_number": 40
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": "2",
+						"item_id": "msg_0ae2ad2fd7adbf9b016b026fdca06487d29b29ad2d6639ce68",
+						"logprobs": [],
+						"obfuscation": "zpcBkG6cLuqaWDC",
+						"output_index": 1,
+						"sequence_number": 41
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": ",",
+						"item_id": "msg_0ae2ad2fd7adbf9b016b026fdca06487d29b29ad2d6639ce68",
+						"logprobs": [],
+						"obfuscation": "CaXObAmYGcGE6HG",
+						"output_index": 1,
+						"sequence_number": 42
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": "774",
+						"item_id": "msg_0ae2ad2fd7adbf9b016b026fdca06487d29b29ad2d6639ce68",
+						"logprobs": [],
+						"obfuscation": "UvCdlAlplhTpe",
+						"output_index": 1,
+						"sequence_number": 43
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": ",",
+						"item_id": "msg_0ae2ad2fd7adbf9b016b026fdca06487d29b29ad2d6639ce68",
+						"logprobs": [],
+						"obfuscation": "rV1OK4TE24B2Ty2",
+						"output_index": 1,
+						"sequence_number": 44
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": "077",
+						"item_id": "msg_0ae2ad2fd7adbf9b016b026fdca06487d29b29ad2d6639ce68",
+						"logprobs": [],
+						"obfuscation": "Pu81xhU3lMPli",
+						"output_index": 1,
+						"sequence_number": 45
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": ",",
+						"item_id": "msg_0ae2ad2fd7adbf9b016b026fdca06487d29b29ad2d6639ce68",
+						"logprobs": [],
+						"obfuscation": "zlouNZQibScXnPN",
+						"output_index": 1,
+						"sequence_number": 46
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": "201",
+						"item_id": "msg_0ae2ad2fd7adbf9b016b026fdca06487d29b29ad2d6639ce68",
+						"logprobs": [],
+						"obfuscation": "j9lbuKBVCAIfr",
+						"output_index": 1,
+						"sequence_number": 47
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": "**",
+						"item_id": "msg_0ae2ad2fd7adbf9b016b026fdca06487d29b29ad2d6639ce68",
+						"logprobs": [],
+						"obfuscation": "2jD441N8A1B2XA",
+						"output_index": 1,
+						"sequence_number": 48
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": ".",
+						"item_id": "msg_0ae2ad2fd7adbf9b016b026fdca06487d29b29ad2d6639ce68",
+						"logprobs": [],
+						"obfuscation": "xocR1M3ya6TST3V",
+						"output_index": 1,
+						"sequence_number": 49
+					},
+					{
+						"type": "response.output_text.done",
+						"content_index": 0,
+						"item_id": "msg_0ae2ad2fd7adbf9b016b026fdca06487d29b29ad2d6639ce68",
+						"logprobs": [],
+						"output_index": 1,
+						"sequence_number": 50,
+						"text": "The sum of the squares of the integers from 1 to 2026 is **2,774,077,201**."
+					},
+					{
+						"type": "response.content_part.done",
+						"content_index": 0,
+						"item_id": "msg_0ae2ad2fd7adbf9b016b026fdca06487d29b29ad2d6639ce68",
+						"output_index": 1,
+						"part": {
+							"type": "output_text",
+							"annotations": [],
+							"logprobs": [],
+							"text": "The sum of the squares of the integers from 1 to 2026 is **2,774,077,201**."
+						},
+						"sequence_number": 51
+					},
+					{
+						"type": "response.output_item.done",
+						"item": {
+							"id": "msg_0ae2ad2fd7adbf9b016b026fdca06487d29b29ad2d6639ce68",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "The sum of the squares of the integers from 1 to 2026 is **2,774,077,201**."
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						},
+						"output_index": 1,
+						"sequence_number": 52
+					},
+					{
+						"type": "response.completed",
+						"response": {
+							"id": "resp_0ae2ad2fd7adbf9b016b026fdb584887d282338ff7d36d9616",
+							"object": "response",
+							"created_at": 1795321819,
+							"status": "completed",
+							"access_programs": null,
+							"background": false,
+							"completed_at": 1795321820,
+							"error": null,
+							"frequency_penalty": 0,
+							"image": {
+								"context_compression": "disabled"
+							},
+							"incomplete_details": null,
+							"input_transformations": [],
+							"instructions": null,
+							"max_output_tokens": 600,
+							"max_tool_calls": null,
+							"model": "gpt-6-luna",
+							"moderation": null,
+							"output": [
+								{
+									"id": "ci_0ae2ad2fd7adbf9b016b026fdbd38887d29dd3a9ef9ad848a2",
+									"type": "code_interpreter_call",
+									"status": "completed",
+									"code": "sum(i*i for i in range(1, 2027))\n",
+									"container_id": "cntr_6b026fdb74048191be902bedee2956ed069ad05d4088821d",
+									"outputs": [
+										{
+											"type": "logs",
+											"logs": "2774077201"
+										}
+									]
+								},
+								{
+									"id": "msg_0ae2ad2fd7adbf9b016b026fdca06487d29b29ad2d6639ce68",
+									"type": "message",
+									"status": "completed",
+									"content": [
+										{
+											"type": "output_text",
+											"annotations": [],
+											"logprobs": [],
+											"text": "The sum of the squares of the integers from 1 to 2026 is **2,774,077,201**."
+										}
+									],
+									"phase": "final_answer",
+									"role": "assistant"
+								}
+							],
+							"parallel_tool_calls": true,
+							"presence_penalty": 0,
+							"previous_response_id": null,
+							"prompt_cache_key": null,
+							"prompt_cache_retention": "24h",
+							"reasoning": {
+								"context": "all_turns",
+								"effort": "none",
+								"mode": "standard",
+								"summary": null
+							},
+							"safety_identifier": null,
+							"service_tier": "default",
+							"store": false,
+							"temperature": 1,
+							"text": {
+								"format": {
+									"type": "text"
+								},
+								"verbosity": "medium"
+							},
+							"tool_choice": "required",
+							"tool_usage": {
+								"image_gen": {
+									"input_tokens": 0,
+									"input_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"output_tokens": 0,
+									"output_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"total_tokens": 0
+								},
+								"web_search": {
+									"num_requests": 0
+								}
+							},
+							"tools": [
+								{
+									"type": "code_interpreter",
+									"container": {
+										"type": "auto"
+									}
+								}
+							],
+							"top_logprobs": 0,
+							"top_p": 0.98,
+							"truncation": "disabled",
+							"usage": {
+								"input_tokens": 1277,
+								"input_tokens_details": {
+									"cache_write_tokens": 0,
+									"cache_write_tokens_details": {
+										"ttl_12h_tokens": 0,
+										"ttl_30m_tokens": 0
+									},
+									"cached_tokens": 1114
+								},
+								"output_tokens": 53,
+								"output_tokens_details": {
+									"reasoning_tokens": 23
+								},
+								"total_tokens": 1330
+							},
+							"user": null,
+							"metadata": {}
+						},
+						"sequence_number": 53
+					}
+				]
+			}
+		},
+		{
+			"name": "a run sent back",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 600,
+					"tools": [
+						{
+							"type": "code_interpreter",
+							"container": {
+								"type": "auto"
+							}
+						}
+					],
+					"include": [
+						"code_interpreter_call.outputs"
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Use Python to compute the sum of the squares of 1 to 2026, then tell me the result."
+						},
+						{
+							"id": "ci_01803bd57e0cc1c8016b026fd5082c87d28731e258a853283d",
+							"type": "code_interpreter_call",
+							"status": "completed",
+							"code": "sum(i*i for i in range(1, 2027))\n",
+							"container_id": "cntr_6b026fd45ed48191b6f00b6a128fbdd90bb0827da4db5ed9",
+							"outputs": [
+								{
+									"type": "logs",
+									"logs": "2774077201"
+								}
+							]
+						},
+						{
+							"id": "msg_01803bd57e0cc1c8016b026fd5db6087d2b21a0bae7af098c6",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "The sum of the squares of the integers from 1 to 2026 is **2,774,077,201**."
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						},
+						{
+							"role": "user",
+							"content": "Now use Python to divide that result by 7."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_01803bd57e0cc1c8016b026fdd263487d2a8ea3b259c5c80b3",
+					"object": "response",
+					"created_at": 1795321821,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795321822,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 600,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "ci_01803bd57e0cc1c8016b026fdda95487d281eac469089f798c",
+							"type": "code_interpreter_call",
+							"status": "completed",
+							"code": "2774077201 / 7\n",
+							"container_id": "cntr_6b026fd45ed48191b6f00b6a128fbdd90bb0827da4db5ed9",
+							"outputs": [
+								{
+									"type": "logs",
+									"logs": "396296743.0"
+								}
+							]
+						},
+						{
+							"id": "msg_01803bd57e0cc1c8016b026fde5fdc87d28cca3a11607e1760",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "2,774,077,201 ÷ 7 = **396,296,743**."
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "code_interpreter",
+							"container": {
+								"type": "auto"
+							}
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 1353,
+						"input_tokens_details": {
+							"cache_write_tokens": 81,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 81
+							},
+							"cached_tokens": 1237
+						},
+						"output_tokens": 41,
+						"output_tokens_details": {
+							"reasoning_tokens": 17
+						},
+						"total_tokens": 1394
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "a run sent back without its outputs",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 600,
+					"tools": [
+						{
+							"type": "code_interpreter",
+							"container": {
+								"type": "auto"
+							}
+						}
+					],
+					"include": [
+						"code_interpreter_call.outputs"
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Use Python to compute the sum of the squares of 1 to 2026, then tell me the result."
+						},
+						{
+							"id": "ci_01803bd57e0cc1c8016b026fd5082c87d28731e258a853283d",
+							"type": "code_interpreter_call",
+							"status": "completed",
+							"code": "sum(i*i for i in range(1, 2027))\n",
+							"container_id": "cntr_6b026fd45ed48191b6f00b6a128fbdd90bb0827da4db5ed9",
+							"outputs": null
+						},
+						{
+							"id": "msg_01803bd57e0cc1c8016b026fd5db6087d2b21a0bae7af098c6",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "The sum of the squares of the integers from 1 to 2026 is **2,774,077,201**."
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						},
+						{
+							"role": "user",
+							"content": "Now use Python to divide that result by 7."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_01803bd57e0cc1c8016b026fdefdf887d28398ada450eb3cba",
+					"object": "response",
+					"created_at": 1795321823,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795321825,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 600,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "ci_01803bd57e0cc1c8016b026fdfda0487d2b6ad99496af1e52e",
+							"type": "code_interpreter_call",
+							"status": "completed",
+							"code": "2774077201 / 7\n",
+							"container_id": "cntr_6b026fd45ed48191b6f00b6a128fbdd90bb0827da4db5ed9",
+							"outputs": [
+								{
+									"type": "logs",
+									"logs": "396296743.0"
+								}
+							]
+						},
+						{
+							"id": "msg_01803bd57e0cc1c8016b026fe0f52c87d28c93e1989eb08401",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "2,774,077,201 ÷ 7 = **396,296,743**."
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "code_interpreter",
+							"container": {
+								"type": "auto"
+							}
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 1349,
+						"input_tokens_details": {
+							"cache_write_tokens": 77,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 77
+							},
+							"cached_tokens": 1237
+						},
+						"output_tokens": 41,
+						"output_tokens_details": {
+							"reasoning_tokens": 17
+						},
+						"total_tokens": 1390
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "a container by its ID",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 600,
+					"tools": [
+						{
+							"type": "code_interpreter",
+							"container": "cntr_6b026fd45ed48191b6f00b6a128fbdd90bb0827da4db5ed9"
+						}
+					],
+					"tool_choice": "required",
+					"include": [
+						"code_interpreter_call.outputs"
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Use Python to list the files in /mnt/data."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_0e733d0fa5c7a81f016b026fe15b4c87d298185e32df2e4b27",
+					"object": "response",
+					"created_at": 1795321825,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795321826,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 600,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "ci_0e733d0fa5c7a81f016b026fe1df4087d2b97cc1acad2ac295",
+							"type": "code_interpreter_call",
+							"status": "completed",
+							"code": "import os\nos.listdir('/mnt/data')\n",
+							"container_id": "cntr_6b026fd45ed48191b6f00b6a128fbdd90bb0827da4db5ed9",
+							"outputs": [
+								{
+									"type": "logs",
+									"logs": "[]"
+								}
+							]
+						},
+						{
+							"id": "msg_0e733d0fa5c7a81f016b026fe29fb887d292a58c737b3331ec",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "`/mnt/data` is empty."
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "required",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "code_interpreter",
+							"container": "cntr_6b026fd45ed48191b6f00b6a128fbdd90bb0827da4db5ed9"
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 1257,
+						"input_tokens_details": {
+							"cache_write_tokens": 1102,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 1102
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 30,
+						"output_tokens_details": {
+							"reasoning_tokens": 18
+						},
+						"total_tokens": 1287
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "a file in the container",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 600,
+					"tools": [
+						{
+							"type": "code_interpreter",
+							"container": {
+								"type": "auto",
+								"file_ids": [
+									"file-DLZ8gbCWebkDdvpgNYz3qz"
+								],
+								"memory_limit": "1g"
+							}
+						}
+					],
+					"tool_choice": "required",
+					"include": [
+						"code_interpreter_call.outputs"
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Use Python to read the CSV file and tell me the total population."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_0d877108cbe8482f016b026fe314a087d29cec62eb3a579470",
+					"object": "response",
+					"created_at": 1795321827,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795321833,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 600,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "ci_0d877108cbe8482f016b026fe49a8087d29381539b826576f1",
+							"type": "code_interpreter_call",
+							"status": "completed",
+							"code": "import pandas as pd\npath=\"/mnt/data/file-DLZ8gbCWebkDdvpgNYz3qz-cities.csv\"\ndf=pd.read_csv(path)\ndf.head(), df.columns, df.shape\n",
+							"container_id": "cntr_6b026fe33388819196047908a99b1c6e03b47ff0103acf7a",
+							"outputs": [
+								{
+									"type": "logs",
+									"logs": "(         city  population\n 0   Quillmont       48213\n 1   Tapirford        9120\n 2  Crownhaven       15004,\n Index(['city', 'population'], dtype='object'),\n (3, 2))"
+								}
+							]
+						},
+						{
+							"id": "ci_0d877108cbe8482f016b026fe6e8a887d2af142a0c101a8fab",
+							"type": "code_interpreter_call",
+							"status": "completed",
+							"code": "df[\"population\"].sum()\n",
+							"container_id": "cntr_6b026fe33388819196047908a99b1c6e03b47ff0103acf7a",
+							"outputs": [
+								{
+									"type": "logs",
+									"logs": "np.int64(72337)"
+								}
+							]
+						},
+						{
+							"id": "msg_0d877108cbe8482f016b026fe8d23c87d29aa9c1f5f61d564e",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "The total population is **72,337**."
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "required",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "code_interpreter",
+							"container": {
+								"type": "auto",
+								"file_ids": [
+									"file-DLZ8gbCWebkDdvpgNYz3qz"
+								]
+							}
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 1428,
+						"input_tokens_details": {
+							"cache_write_tokens": 1105,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 1105
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 83,
+						"output_tokens_details": {
+							"reasoning_tokens": 69
+						},
+						"total_tokens": 1511
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "a file that the code writes",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 600,
+					"tools": [
+						{
+							"type": "code_interpreter",
+							"container": {
+								"type": "auto"
+							}
+						}
+					],
+					"tool_choice": "required",
+					"include": [
+						"code_interpreter_call.outputs"
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Use Python with matplotlib to plot y = x squared for x from 0 to 10, show the plot, save it as chart.png, and give me a link to the file."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_000f28dfcc2151c4016b026fe96d3087d2b2409a72ed4130f3",
+					"object": "response",
+					"created_at": 1795321833,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795321840,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 600,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "ci_000f28dfcc2151c4016b026fe9efd887d2a3635e66d3954d64",
+							"type": "code_interpreter_call",
+							"status": "completed",
+							"code": "import numpy as np\nimport matplotlib.pyplot as plt\n\nx = np.linspace(0, 10, 501)\ny = x**2\n\nplt.figure(figsize=(8, 5))\nplt.plot(x, y, color=\"steelblue\", linewidth=2, label=r\"$y=x^2$\")\nplt.title(r\"Plot of $y=x^2$\")\nplt.xlabel(\"x\")\nplt.ylabel(\"y\")\nplt.xlim(0, 10)\nplt.grid(True, alpha=0.3)\nplt.legend()\nplt.tight_layout()\nplt.savefig(\"/mnt/data/chart.png\", dpi=150)\nplt.show()\n",
+							"container_id": "cntr_6b026fe98bf08191b3c9de94dc82ae0a05d6555bcfbac5a9",
+							"outputs": [
+								{
+									"type": "image",
+									"url": "data:image/png;base64,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2/Xp8nRJkk3ShKFddEG72N9/oossPWNRWFioXbt2OR+np6dr3bp1Cg8PV2JiosaPH68nnnhCrVq1UnJysiZPnqy4uDgNHz5cktSuXTtddtlluuOOOzRjxgyVl5dr3LhxGjVqVK3OCDXuP4t1rLD03DvWsLBAH730pwFV3r9Pnz7673//63z8zjvvKCMjQ5MmTTpt3z//+c+67rrrfvd4Z/qZ2mw2Pfnkk7r22msVExOjF198UT/99JPi4+MlSUuWLNEHH3ygzp07O9cpeeedd9SpU6cqfx8AAAA4f+8u2qkPlux2Ph5/ZSf9oUtT5eXl1ejrWBosVq1apYsvvtj5+Of7HsaMGaO33npLDz74oIqKinTnnXcqLy9PAwYM0Ndff13p+vt3331X48aN06BBg2S32zVixAi98MILtdr3scJSHTlecu4dLdanTx9NnDhRhYWFstlseuihh/TEE08oMDDwtH3Dw8MVHh5+Xq9z5ZVXqn379nrsscf07bffqkOHDs5tAwYMYHYKAAAAi7z30069s+iXBabHDemgy7ol1sprWRosBg4c+LtTuNpsNj322GN67LHHzrpPeHi43nvvvdpo76zCAk+/P8MdX7dHjx6y2+1as2aNvvvuO0VGRurWW289475Tp051Xs50Nlu2bFFi4ukD8euvv9a2bdvkcDhOm8ULAAAA1vhgyS7998cdzsd/vrS9hvZsVmuv57Y3b7szVy5HspK/v786deqkTz75RK+//rq++uqrs97Mdb6XQq1Zs0bXXXed3njjDb311luaPHkyq2sDAABY7KOlu/V/3293Pr7zD+10de/kWn1NgkUD16dPH7344osaNmyYBg4ceNb9zudSqL179+qKK67QQw89pBtuuEHNmzdX3759tWbNGnXv3r2anQMAAOB8fLJ8j/6zYJvz8e2D2mpEn+a1/rpuOysUakaXLl3k5eWlZ555pkaPm5ubq8suu0zDhg3TxIkTJZ2chWrIkCF66KGHavS1AAAAUDWfrUjXzPlbnY9vvbiNruvXok5emzMWDdysWbM0btw4tWzZskaPGx4erm3btp1W//LLL2v0dQAAAFA1c9L2asa3W5yPxwxsrVEDavYz4O8hWDRAhmEoJydHb7zxhnbu3Kk5c+ZY3RIAAABq0eer9umVrzc7H990YSvdeEGrOu2BYNEALVq0SJdccona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Cxcu1NixY7V8+XLNnz9f5eXluvTSS1VUVGR1a6gH0tLS9Nprr6lz585WtwI3d+zYMfXv319eXl6aN2+etmzZomeffVZhYWFWtwY39dRTT+nVV1/VSy+9pK1bt+qpp57S008/rRdffNHq1uAmioqK1KVLF7388stn3P7000/rhRde0IwZM7RixQoFBARo8ODBKikpcel1GvV0s71791ZKSopeeuklSZJhGEpISNC9996riRMnWtwd3F1OTo6ioqK0cOFCXXjhhVa3AzdWWFio7t2765VXXtETTzyhrl27avr06Va3BTc1ceJELVmyRD/99JPVraCeuPLKKxUdHa033njDWRsxYoT8/Pz0v//9z8LO4I5sNps+++wzDR8+XNLJsxVxcXH661//qr/97W+SpPz8fEVHR+utt97SqFGjqnzsRnvGoqysTKtXr1ZqaqqzZrfblZqaqmXLllnYGeqL/Px8SVJ4eLjFncDdjR07VldccUWl9xvgbObOnauePXtq5MiRioqKUrdu3fT6669b3RbcWL9+/bRgwQLt2LFDkrR+/XotXrxYQ4YMsbgz1Afp6enKzMys9DsqJCREvXv3dvkzsWdNN1dfHDlyRA6HQ9HR0ZXq0dHR2rZtm0Vdob4wDEPjx49X//791bFjR6vbgRubNWuW1qxZo7S0NKtbQT2xZ88evfrqq5owYYIeeughpaWl6b777pO3t7fGjBljdXtwQxMnTlRBQYHatm0rDw8PORwOPfnkkxo9erTVraEeyMzMlKQzfib+eVtVNdpgAVTH2LFjtWnTJi1evNjqVuDGMjIy9Je//EXz58+Xr6+v1e2gnjAMQz179tTUqVMlSd26ddOmTZs0Y8YMggXO6MMPP9S7776r9957Tx06dNC6des0fvx4xcXFMWZQpxrtpVBNmjSRh4eHsrKyKtWzsrIUExNjUVeoD8aNG6cvvvhCP/zwg5o2bWp1O3Bjq1evVnZ2trp37y5PT095enpq4cKFeuGFF+Tp6SmHw2F1i3BDsbGxat++faVau3bttH//fos6grt74IEHNHHiRI0aNUqdOnXSzTffrPvvv1/Tpk2zujXUAz9/7q2Jz8SNNlh4e3urR48eWrBggbNmGIYWLFigvn37WtgZ3JVpmho3bpw+++wzff/990pOTra6Jbi5QYMGaePGjVq3bp3zq2fPnho9erTWrVsnDw8Pq1uEG+rfv/9pU1nv2LFDSUlJFnUEd1dcXCy7vfJHOg8PDxmGYVFHqE+Sk5MVExNT6TNxQUGBVqxY4fJn4kZ9KdSECRM0ZswY9ezZU7169dL06dNVVFSkW2+91erW4IbGjh2r9957T3PmzFFQUJDzusOQkBD5+flZ3B3cUVBQ0Gn34AQEBCgiIoJ7c3BW999/v/r166epU6fquuuu08qVKzVz5kzNnDnT6tbgpoYOHaonn3xSiYmJ6tChg9auXavnnntOt912m9WtwU0UFhZq165dzsfp6elat26dwsPDlZiYqPHjx+uJJ55Qq1atlJycrMmTJysuLs45c1SVmY3ciy++aCYmJpre3t5mr169zOXLl1vdEtyUpDN+vfnmm1a3hnrkoosuMv/yl79Y3Qbc3Oeff2527NjR9PHxMdu2bWvOnDnT6pbgxgoKCsy//OUvZmJiounr62s2b97cfPjhh83S0lKrW4Ob+OGHH874GWbMmDGmaZqmYRjm5MmTzejoaNPHx8ccNGiQuX37dpdfp1GvYwEAAACgZjTaeywAAAAA1ByCBQAAAIBqI1gAAAAAqDaCBQAAAIBqI1gAAAAAqDaCBQAAAIBqI1gAAAAAqDaCBQAAAIBqI1gAAAAAqDaCBQAAAIBqI1gAAAAAqDaCBQCgzuXk5CgmJkZTp0511pYuXSpvb28tWLDAws4AAOfLZpqmaXUTAIDG56uvvtLw4cO1dOlStWnTRl27dtWwYcP03HPPWd0aAOA8ECwAAJYZO3asvvvuO/Xs2VMbN25UWlqafHx8rG4LAHAeCBYAAMucOHFCHTt2VEZGhlavXq1OnTpZ3RIA4DxxjwUAwDK7d+/WoUOHZBiG9u7da3U7AIBq4IwFAMASZWVl6tWrl7p27ao2bdpo+vTp2rhxo6KioqxuDQBwHggWAABLPPDAA/r444+1fv16BQYG6qKLLlJISIi++OILq1sDAJwHLoUCANS5H3/8UdOnT9c777yj4OBg2e12vfPOO/rpp5/06quvWt0eAOA8cMYCAAAAQLVxxgIAAABAtREsAAAAAFQbwQIAAABAtREsAAAAAFQbwQIAAABAtREsAAAAAFQbwQIAAABAtREsAAAAAFQbwQIAAABAtREsAAAAAFQbwQIAAABAtf1/Cjp11gOp2AQAAAAASUVORK5CYII="
+								}
+							]
+						},
+						{
+							"id": "msg_000f28dfcc2151c4016b026fef69b487d29d72dc7c175ec198",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [
+										{
+											"type": "container_file_citation",
+											"container_id": "cntr_6b026fe98bf08191b3c9de94dc82ae0a05d6555bcfbac5a9",
+											"end_index": 0,
+											"file_id": "cfile_6b026feef2b88191b61360cae31a8ba2",
+											"filename": "cfile_6b026feef2b88191b61360cae31a8ba2.png",
+											"start_index": 0
+										},
+										{
+											"type": "container_file_citation",
+											"container_id": "cntr_6b026fe98bf08191b3c9de94dc82ae0a05d6555bcfbac5a9",
+											"end_index": 104,
+											"file_id": "cfile_6b026fefc01481918e4cb087aebce481",
+											"filename": "chart.png",
+											"start_index": 77
+										}
+									],
+									"logprobs": [],
+									"text": "Here’s the plot of \\(y=x^2\\) for \\(0 \\leq x \\leq 10\\):\n\n[Download chart.png](sandbox:/mnt/data/chart.png)"
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "required",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "code_interpreter",
+							"container": {
+								"type": "auto"
+							}
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 1886,
+						"input_tokens_details": {
+							"cache_write_tokens": 1129,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 1129
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 179,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 2065
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "a network allowlist",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 600,
+					"tools": [
+						{
+							"type": "code_interpreter",
+							"container": {
+								"type": "auto",
+								"network_policy": {
+									"type": "allowlist",
+									"allowed_domains": [
+										"example.com"
+									]
+								}
+							}
+						}
+					],
+					"tool_choice": "required",
+					"include": [
+						"code_interpreter_call.outputs"
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Use Python to fetch https://example.com and tell me the page title."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Network policy 'allowlist' is not permitted because the organization policy disables container network access.",
+						"type": "invalid_request_error",
+						"param": "network_policy.type",
+						"code": "invalid_value"
+					}
+				}
+			}
+		},
+		{
+			"name": "a forced run",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 600,
+					"tools": [
+						{
+							"type": "code_interpreter",
+							"container": {
+								"type": "auto"
+							}
+						}
+					],
+					"tool_choice": {
+						"type": "code_interpreter"
+					},
+					"input": [
+						{
+							"role": "user",
+							"content": "Use Python to compute the sum of the squares of 1 to 2026, then tell me the result."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_0a078fd3c4cd35f3016b026ff054f887d2a4d66a6af9bceb52",
+					"object": "response",
+					"created_at": 1795321840,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795321842,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 600,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "ci_0a078fd3c4cd35f3016b026ff0d04087d2aea1a17a97594607",
+							"type": "code_interpreter_call",
+							"status": "completed",
+							"code": "sum(i*i for i in range(1, 2027))\n",
+							"container_id": "cntr_6b026ff075c8819198c712f59416eb0d0d861643e529d31d",
+							"outputs": null
+						},
+						{
+							"id": "msg_0a078fd3c4cd35f3016b026ff22fe487d29e9100e4a00d01a4",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "The sum of the squares of the integers from 1 to 2026 is **2,774,077,201**."
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": {
+						"type": "code_interpreter"
+					},
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "code_interpreter",
+							"container": {
+								"type": "auto"
+							}
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 1277,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 1106
+						},
+						"output_tokens": 53,
+						"output_tokens_details": {
+							"reasoning_tokens": 23
+						},
+						"total_tokens": 1330
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "a container of no account",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 600,
+					"tools": [
+						{
+							"type": "code_interpreter",
+							"container": "cntr_000000000000000000000000"
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Use Python to compute the sum of the squares of 1 to 2026, then tell me the result."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 404,
+				"body": {
+					"error": {
+						"message": "Container with id 'cntr_000000000000000000000000' not found.",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": null
+					}
+				}
+			}
+		}
+	]
+}

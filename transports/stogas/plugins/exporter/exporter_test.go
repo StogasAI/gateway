@@ -1053,6 +1053,15 @@ func TestCapturedInputOmitsToolCredentials(t *testing.T) {
 		t.Fatalf("captured tools = %#v", captured.Tools)
 	}
 
+	// A container's domain secrets reach the provider but never an export.
+	containers := json.RawMessage(`[{"type":"code_interpreter","container":{"type":"auto","network_policy":{"type":"allowlist","allowed_domains":["example.com"],"domain_secrets":[{"domain":"example.com","name":"TOKEN","value":"code-secret"},null]}}},` +
+		`{"type":"shell","environment":{"type":"container_auto","network_policy":{"type":"allowlist","allowed_domains":["example.com"],"domain_secrets":[{"domain":"example.com","name":"TOKEN","value":"shell-secret"}]}}},` +
+		`{"type":"code_interpreter","container":"cntr_1"},{"type":"shell","environment":{"type":"local"}}]`)
+	got, ok := omitToolCredentials(containers)
+	if !ok || strings.Contains(string(got), "-secret") || strings.Count(string(got), `"value":"[omitted]"`) != 2 || !strings.Contains(string(got), `"container":"cntr_1"`) {
+		t.Fatalf("container tools exported as %s", got)
+	}
+
 	plain := json.RawMessage(`[{"type":"function","name":"lookup"}]`)
 	if got, ok := omitToolCredentials(plain); !ok || string(got) != string(plain) {
 		t.Fatalf("tools without credentials changed: %s", got)

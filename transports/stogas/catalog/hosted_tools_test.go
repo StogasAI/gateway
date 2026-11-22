@@ -75,10 +75,10 @@ func TestEffectiveDataHandlingOnlyWorsens(t *testing.T) {
 			HostedToolMCP: {DataHandling: HostedToolDataHandling{TrainingUse: Stated[bool]{Set: true}}},
 		},
 	}
-	if got := deployment.EffectiveDataHandling(nil, nil, false); !reflect.DeepEqual(got, deployment.DataHandling) {
+	if got := deployment.EffectiveDataHandling(nil, nil, false, false); !reflect.DeepEqual(got, deployment.DataHandling) {
 		t.Fatalf("no tools changed data handling: %+v", got)
 	}
-	search := deployment.EffectiveDataHandling(nil, []HostedTool{HostedToolWebSearch}, false)
+	search := deployment.EffectiveDataHandling(nil, []HostedTool{HostedToolWebSearch}, false, false)
 	// A tool that keeps content ends zero data retention although its record does not say so.
 	if search.ProcessingLocation != "world" || search.StorageLocation != "none" || search.RetentionDays == nil || *search.RetentionDays != 30 ||
 		search.ZeroDataRetention || !search.TEEVerified || !search.EndToEndEncrypted {
@@ -87,11 +87,11 @@ func TestEffectiveDataHandlingOnlyWorsens(t *testing.T) {
 	// A tool that leaves the TEE ends the encryption and the verification that rest on it.
 	outside := deployment
 	outside.HostedTools = map[HostedTool]HostedToolOffer{HostedToolWebSearch: {DataHandling: HostedToolDataHandling{TEE: &no}}}
-	if got := outside.EffectiveDataHandling(nil, []HostedTool{HostedToolWebSearch}, false); got.TEE || got.TEEVerified || got.EndToEndEncrypted ||
+	if got := outside.EffectiveDataHandling(nil, []HostedTool{HostedToolWebSearch}, false, false); got.TEE || got.TEEVerified || got.EndToEndEncrypted ||
 		!got.ZeroDataRetention {
 		t.Fatalf("a tool outside the TEE: %+v", got)
 	}
-	fetch := deployment.EffectiveDataHandling(nil, []HostedTool{HostedToolWebSearch, HostedToolWebFetch}, false)
+	fetch := deployment.EffectiveDataHandling(nil, []HostedTool{HostedToolWebSearch, HostedToolWebFetch}, false, false)
 	if fetch.ProcessingLocation != "unknown" || fetch.StorageLocation != "unknown" || fetch.RetentionDays != nil || fetch.ZeroDataRetention ||
 		fetch.TrainingUse == nil || !*fetch.TrainingUse || fetch.EndToEndEncrypted || fetch.TEE || fetch.TEEVerified ||
 		!slices.Equal(fetch.SharedWith, []string{"anthropic", "openai", "unknown"}) || !slices.Equal(search.SharedWith, []string{"openai"}) {
@@ -103,10 +103,10 @@ func TestEffectiveDataHandlingOnlyWorsens(t *testing.T) {
 		t.Fatalf("certifications: web fetch %v, web search %v, deployment %v", fetch.Certifications, search.Certifications, deployment.DataHandling.Certifications)
 	}
 	// Unknown training use replaces false and ends zero data retention, and never replaces true.
-	if got := deployment.EffectiveDataHandling(nil, []HostedTool{HostedToolMCP}, false); got.TrainingUse != nil || got.ZeroDataRetention {
+	if got := deployment.EffectiveDataHandling(nil, []HostedTool{HostedToolMCP}, false, false); got.TrainingUse != nil || got.ZeroDataRetention {
 		t.Fatalf("a tool whose training use is unknown: %+v", got)
 	}
-	if got := deployment.EffectiveDataHandling(nil, []HostedTool{HostedToolWebFetch, HostedToolMCP}, false); got.TrainingUse == nil || !*got.TrainingUse {
+	if got := deployment.EffectiveDataHandling(nil, []HostedTool{HostedToolWebFetch, HostedToolMCP}, false, false); got.TrainingUse == nil || !*got.TrainingUse {
 		t.Fatalf("unknown training use replaced true: %+v", got)
 	}
 	if *deployment.DataHandling.RetentionDays != 0 || deployment.DataHandling.TrainingUse == nil {
@@ -114,7 +114,7 @@ func TestEffectiveDataHandlingOnlyWorsens(t *testing.T) {
 	}
 	offered := deployment
 	delete(offered.HostedTools, HostedToolWebFetch)
-	if got := offered.EffectiveDataHandling(nil, []HostedTool{HostedToolWebFetch}, false); !reflect.DeepEqual(got, deployment.DataHandling) {
+	if got := offered.EffectiveDataHandling(nil, []HostedTool{HostedToolWebFetch}, false, false); !reflect.DeepEqual(got, deployment.DataHandling) {
 		t.Fatalf("a tool that the deployment does not run changed data handling: %+v", got)
 	}
 }
@@ -269,7 +269,7 @@ func TestSnapshotValidationRejectsHostedToolsThatTheRouteCannotRun(t *testing.T)
 	}{
 		{"an unknown tool", "openai-gpt-5.5-2026-04-23", "openai-responses",
 			func(route map[string]any) {
-				tools(route)["code_interpreter"] = map[string]any{"dataHandling": map[string]any{}}
+				tools(route)["image_generation"] = map[string]any{"dataHandling": map[string]any{}}
 			},
 			"offers unknown hosted tool"},
 		{"zero data retention that the deployment lacks", "anthropic-claude-fable-5-1", "anthropic-messages",
@@ -300,6 +300,16 @@ func TestSnapshotValidationRejectsHostedToolsThatTheRouteCannotRun(t *testing.T)
 				tools(route)["file_search"] = map[string]any{"dataHandling": map[string]any{},
 					"pricing": map[string]any{"openai_responses_file_search_calls": map[string]any{"per_1k_calls": "2.5"}}}
 			}, "offers file search on Claude's wire, which has none"},
+		{"code interpreter on Claude's wire", "anthropic-claude-fable-5-1", "anthropic-messages",
+			func(route map[string]any) {
+				tools(route)["code_interpreter"] = map[string]any{"dataHandling": map[string]any{}}
+			},
+			"offers code_interpreter on Claude's wire, which the gateway does not run"},
+		{"a price on code interpreter", "openai-gpt-5.5-2026-04-23", "openai-responses",
+			func(route map[string]any) {
+				tools(route)["code_interpreter"] = map[string]any{"dataHandling": map[string]any{},
+					"pricing": map[string]any{"openai_responses_file_search_calls": map[string]any{"per_1k_calls": "2.5"}}}
+			}, "prices code_interpreter on a meter that it does not bill"},
 		{"a search price on another tool", "anthropic-claude-fable-5-1", "anthropic-messages",
 			func(route map[string]any) {
 				pricing(route, "web_fetch")["anthropic_web_search_calls"] = pricing(route, "web_search")["anthropic_web_search_calls"]

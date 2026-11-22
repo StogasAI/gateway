@@ -3,6 +3,7 @@ package catalog
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"slices"
 	"strconv"
@@ -19,7 +20,10 @@ import (
 // body as sent. A tool counts as one the model may call unless tool_choice rules out its type, so
 // a choice that forces one function still counts every tool of that type. A remote MCP server
 // counts whenever the request lists it, because the provider can connect to a listed server to
-// read its tools before the model chooses one.
+// read its tools before the model chooses one, and so does a container tool, code interpreter or
+// a hosted shell: OpenAI starts a hosted shell's container whatever tool_choice says (capture
+// openai/hosted-shell), and looks up the container of each call that the input sends back
+// (capture openai/container-replay).
 type requestTools struct {
 	hosted hostedToolUse
 	facts  *requestFacts
@@ -36,7 +40,8 @@ type hostedToolUse struct {
 // candidate of a request shares them.
 type requestFacts struct {
 	// clientTools are the names of the tools that the model may call and the client runs: function
-	// and custom tools, and shell, apply_patch and computer under those names.
+	// and custom tools, and shell in a local environment, apply_patch and computer under those
+	// names.
 	clientTools []string
 	// mcpServers name the remote MCP servers that the request lists: a URL's host and path
 	// (mcpServerName), connector: and a connector ID, or tunnel: and a tunnel ID. mcpTools lists
@@ -46,6 +51,10 @@ type requestFacts struct {
 	// systemMessages reports whether the request sends a system or developer message, or
 	// instructions. Only policies that read it scan the messages.
 	systemMessages func() bool
+	// archive is the path of the request's first inline skill, such as
+	// tools[0].environment.skills[1]: a zip archive that the model reads in the container and no
+	// input check can.
+	archive string
 }
 
 // readRequestTools reads a request's tools in one pass. Only Responses requests list hosted tools.
@@ -75,20 +84,25 @@ func readRequestTools(route Route, raw map[string]json.RawMessage) requestTools 
 				declared = append(declared, kind)
 			}
 		}
+		facts.archive = inlineSkill(tools)
 		callable := EffectiveResponsesToolTypes(raw, declared)
-		result.hosted = hostedToolUse{listed: hostedToolsOf(declared), enabled: hostedToolsOf(callable)}
-		if slices.Contains(result.hosted.listed, HostedToolMCP) {
-			result.hosted.enabled = hostedToolsOf(append(slices.Clone(callable), string(schemas.ResponsesToolTypeMCP)))
-		}
 		types := make(map[schemas.ResponsesToolType]bool, len(callable))
 		for _, kind := range callable {
 			types[CanonicalResponsesToolType(kind)] = true
 		}
 		for _, entry := range list {
-			switch kind := CanonicalResponsesToolType(rawStringValue(entry.Tool["type"])); {
+			kind := CanonicalResponsesToolType(rawStringValue(entry.Tool["type"]))
+			hosted, isHosted := HostedToolOf(entry.Tool)
+			if isHosted {
+				result.hosted.listed = addHostedTool(result.hosted.listed, hosted)
+				if types[kind] || hosted == HostedToolMCP || hosted == HostedToolCodeInterpreter || hosted == HostedToolShell {
+					result.hosted.enabled = addHostedTool(result.hosted.enabled, hosted)
+				}
+			}
+			switch {
 			case kind == schemas.ResponsesToolTypeMCP:
 				facts.addMCPServer(entry.Tool)
-			case !types[kind]:
+			case !types[kind] || isHosted:
 			case kind == schemas.ResponsesToolTypeFunction || kind == schemas.ResponsesToolTypeCustom:
 				facts.clientTools = append(facts.clientTools, rawStringValue(entry.Tool["name"]))
 			// OpenAI's shell, apply_patch and computer tools have no name of their own; the model calls
@@ -119,6 +133,23 @@ func readRequestTools(route Route, raw map[string]json.RawMessage) requestTools 
 	facts.mcpTools = sortedNames(facts.mcpTools)
 	facts.mcpUnattended = sortedNames(facts.mcpUnattended)
 	return result
+}
+
+// inlineSkill is the path of the first inline skill of a hosted shell among tools, or "".
+func inlineSkill(tools []map[string]json.RawMessage) string {
+	for index, tool := range tools {
+		if hosted, _ := HostedToolOf(tool); hosted != HostedToolShell {
+			continue
+		}
+		environment, _ := rawObjectValue(tool["environment"])
+		skills, _ := rawjson.Array(environment["skills"])
+		for skillIndex, rawSkill := range skills {
+			if skill, _ := rawObjectValue(rawSkill); rawStringValue(skill["type"]) == "inline" {
+				return fmt.Sprintf("tools[%d].environment.skills[%d]", index, skillIndex)
+			}
+		}
+	}
+	return ""
 }
 
 // NamespacedTool is a tool that a Responses request declares, at the top level or in a namespace.

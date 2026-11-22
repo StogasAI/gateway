@@ -342,10 +342,15 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 					continue
 				}
 			}
-			// Nor does it send provider state, whose held content no input check reads.
-			if held := variants.providerState.Reads; held != "" {
-				if check := value.Config.InputCheck(); check != "" {
+			// Nor does it send provider state, whose held content no input check reads, or an inline
+			// skill's archive, which none reads either.
+			if check := value.Config.InputCheck(); check != "" {
+				if held := variants.providerState.Reads; held != "" {
 					keep(selection, heldInputCheckRefusal(held, check))
+					continue
+				}
+				if archive := variants.facts.archive; archive != "" {
+					keep(selection, attachmentRefusal(archive, " is an inline skill, whose archive "+check+" cannot check"))
 					continue
 				}
 			}

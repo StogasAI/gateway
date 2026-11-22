@@ -97,8 +97,9 @@ func (c *Capture) Metadata(body []byte) {
 
 // omitToolCredentials replaces the authorization and header values of each tool, and keeps only
 // the origin of its server URL, where servers also take tokens. A remote MCP tool carries them
-// so that the provider can reach its server, and an export must not. It reports false when it
-// cannot read the tools, and the caller then leaves them out.
+// so that the provider can reach its server, and an export must not. It replaces the value of each
+// domain secret of a container's network policy too. It reports false when it cannot read the
+// tools, and the caller then leaves them out.
 func omitToolCredentials(raw json.RawMessage) (json.RawMessage, bool) {
 	var tools []map[string]json.RawMessage
 	if json.Unmarshal(raw, &tools) != nil {
@@ -138,6 +139,16 @@ func omitToolCredentials(raw json.RawMessage) (json.RawMessage, bool) {
 			tool["headers"] = encoded
 			changed = true
 		}
+		for _, key := range []string{"container", "environment"} {
+			options, omittedSecrets, ok := omitDomainSecrets(tool[key])
+			if !ok {
+				return nil, false
+			}
+			if omittedSecrets {
+				tool[key] = options
+				changed = true
+			}
+		}
 	}
 	if !changed {
 		return raw, true
@@ -147,6 +158,42 @@ func omitToolCredentials(raw json.RawMessage) (json.RawMessage, bool) {
 		return nil, false
 	}
 	return encoded, true
+}
+
+// omitDomainSecrets replaces the value of each domain secret in a container's options. It reports
+// whether it replaced any, and false when it cannot read options that hold a network policy.
+func omitDomainSecrets(raw json.RawMessage) (json.RawMessage, bool, bool) {
+	var options map[string]json.RawMessage
+	if json.Unmarshal(raw, &options) != nil || options["network_policy"] == nil {
+		// A container's ID or a missing option holds no secret.
+		return raw, false, true
+	}
+	var policy map[string]json.RawMessage
+	if json.Unmarshal(options["network_policy"], &policy) != nil {
+		return nil, false, false
+	}
+	if policy["domain_secrets"] == nil {
+		return raw, false, true
+	}
+	var secrets []map[string]json.RawMessage
+	if json.Unmarshal(policy["domain_secrets"], &secrets) != nil {
+		return nil, false, false
+	}
+	for _, secret := range secrets {
+		// The request checks take a null entry, which holds no secret.
+		if secret != nil {
+			secret["value"] = json.RawMessage(`"[omitted]"`)
+		}
+	}
+	var err error
+	if policy["domain_secrets"], err = json.Marshal(secrets); err != nil {
+		return nil, false, false
+	}
+	if options["network_policy"], err = json.Marshal(policy); err != nil {
+		return nil, false, false
+	}
+	encoded, err := json.Marshal(options)
+	return encoded, err == nil, err == nil
 }
 
 // urlOrigin returns the scheme, host and port of a URL, or [omitted] when it has none.

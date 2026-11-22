@@ -462,8 +462,9 @@ func (r *ResolvedRequest) KeepReadableHistory() {
 // them.
 func (r *ResolvedRequest) readableResponsesInput(input []schemas.ResponsesMessage) []schemas.ResponsesMessage {
 	var kept []schemas.ResponsesMessage
+	shells := hostedShellCalls(input)
 	for index := range input {
-		item, keep, changed := r.readableResponsesItem(input[index])
+		item, keep, changed := r.readableResponsesItem(input[index], shells)
 		if kept == nil {
 			if !changed {
 				continue
@@ -488,10 +489,9 @@ func (r *ResolvedRequest) readableResponsesInput(input []schemas.ResponsesMessag
 // whole from encrypted content, and Chat Completions history has no place for one. Redaction keeps
 // the summary of an item with encrypted content as the client sent it, so it must not reach a
 // provider.
-func (r *ResolvedRequest) readableResponsesItem(item schemas.ResponsesMessage) (schemas.ResponsesMessage, bool, bool) {
-	if item.Type != nil && (*item.Type == schemas.ResponsesMessageTypeWebSearchCall || *item.Type == schemas.ResponsesMessageTypeWebFetchCall ||
-		*item.Type == schemas.ResponsesMessageTypeFileSearchCall) {
-		keep := r.readsHostedCall(&item)
+func (r *ResolvedRequest) readableResponsesItem(item schemas.ResponsesMessage, shells map[string]bool) (schemas.ResponsesMessage, bool, bool) {
+	if tool, hosted := hostedCallTool(&item, shells); hosted {
+		keep := r.readsHostedCall(&item, tool)
 		return item, keep, !keep
 	}
 	if item.Type == nil || *item.Type != schemas.ResponsesMessageTypeReasoning {

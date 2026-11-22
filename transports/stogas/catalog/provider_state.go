@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,17 +14,19 @@ import (
 
 // ProviderState is what a request keeps or reads in its provider account through OpenAI's API: a
 // reply that the provider stores (store), a stored reply that it continues (previous_response_id),
-// a conversation that it adds to (conversation), or the vector stores that file search searches.
-// Each lives in one account, so only a customer's own credential serves such a request, never
-// Stogas's, and only on the provider's own API, which no translation carries.
+// a conversation that it adds to (conversation), the vector stores that file search searches, or
+// the container that code interpreter or a hosted shell runs in. Each lives in one account, so only
+// a customer's own credential serves such a request, never Stogas's, and only on the provider's own
+// API, which no translation carries.
 //
 // OpenAI's prompt templates (prompt) stay refused: a template can hold instructions, tools and
 // output settings that the gateway never sees, so policies on tools and the checks of the reply
 // could not hold.
 type ProviderState struct {
-	// Fields lists the fields that keep or read provider state, in wire order: store where the
+	// Fields lists the fields that keep or read provider state, in this order: store where the
 	// provider gets store: true, each of previous_response_id and conversation that the request
-	// sends, and vector_store_ids where a file search reads vector stores.
+	// sends, vector_store_ids where a file search reads vector stores, and container where code
+	// interpreter or a hosted shell runs in one.
 	Fields []string
 	// Store is the store value that the provider gets: the client's, or, where the client sends
 	// none, true for a request that continues a stored reply or a conversation, as OpenAI's own
@@ -32,16 +35,27 @@ type ProviderState struct {
 	// unless the request asks.
 	Store bool
 	// Keeps reports whether the provider keeps the request's content after the call: it stores
-	// the reply, or adds the turn to a conversation.
+	// the reply, adds the turn to a conversation, or runs a container, which keeps the files that
+	// its tool mounts and its code writes until it expires.
 	Keeps bool
 	// Held names the first field whose earlier conversation the provider holds and the gateway
 	// never reads: previous_response_id or conversation. Its size is unknown, and it can hold the
 	// calls that the input answers.
 	Held string
 	// Reads is the path of the first field that names content in one account, which the model
-	// reads and no input check can: Held, or a file search's vector stores, such as
-	// tools[0].vector_store_ids.
+	// reads and no input check can: Held, a file search's vector stores, such as
+	// tools[0].vector_store_ids, a container tool's container, files and stored skills, or the
+	// container of a call that the input sends back while a container tool is listed, which OpenAI
+	// runs the next calls in (captures openai/code-interpreter and openai/hosted-shell).
 	Reads string
+	// Container is the path of the first container tool, such as tools[1]. OpenAI bills a
+	// container to the account by the session, a price that no reply reports, so only the
+	// account's owner pays for it.
+	Container string
+	// Network is the path of the first thing that can let a container's code reach the network:
+	// a network policy that allows domains, or a container that the request names or sends back,
+	// which keeps the network policy that it was made with and that the gateway never sees.
+	Network string
 }
 
 // readProviderState reads what a request keeps or reads at its provider, after planning has
@@ -59,7 +73,6 @@ func readProviderState(route Route, raw map[string]json.RawMessage) ProviderStat
 	}
 	store, set := raw["store"]
 	state.Store = rawJSONTrue(store) || !set && len(held) > 0
-	state.Keeps = state.Store || slices.Contains(held, "conversation")
 	if state.Store {
 		state.Fields = append(state.Fields, "store")
 	}
@@ -67,29 +80,134 @@ func readProviderState(route Route, raw map[string]json.RawMessage) ProviderStat
 	if len(held) > 0 {
 		state.Held, state.Reads = held[0], held[0]
 	}
-	if route != RouteResponses {
-		return state
-	}
-	tools, _ := rawjson.Array(raw["tools"])
-	for index, rawTool := range tools {
-		tool, err := rawjson.Object(rawTool)
-		if err != nil || CanonicalResponsesToolType(rawStringValue(tool["type"])) != schemas.ResponsesToolTypeFileSearch {
-			continue
+	if route == RouteResponses {
+		vectorStores := false
+		tools, _ := rawjson.Array(raw["tools"])
+		for index, rawTool := range tools {
+			tool, err := rawjson.Object(rawTool)
+			if err != nil {
+				continue
+			}
+			path := fmt.Sprintf("tools[%d]", index)
+			switch hosted, _ := HostedToolOf(tool); hosted {
+			case HostedToolFileSearch:
+				vectorStores = true
+				state.read(path + ".vector_store_ids")
+			case HostedToolCodeInterpreter, HostedToolShell:
+				if state.Container == "" {
+					state.Container = path
+				}
+				named, read := containerRead(tool, path)
+				state.read(read)
+				if state.Network == "" {
+					state.Network = named
+				}
+				if state.Network == "" {
+					state.Network = networkAllowed(tool, path)
+				}
+			}
 		}
-		if !slices.Contains(state.Fields, "vector_store_ids") {
+		if vectorStores {
 			state.Fields = append(state.Fields, "vector_store_ids")
 		}
-		if state.Reads == "" {
-			state.Reads = fmt.Sprintf("tools[%d].vector_store_ids", index)
+		if state.Container != "" {
+			state.Fields = append(state.Fields, "container")
+			replayed := replayedContainer(raw["input"])
+			state.read(replayed)
+			if state.Network == "" {
+				state.Network = replayed
+			}
 		}
 	}
+	state.Keeps = state.Store || slices.Contains(held, "conversation") || state.Container != ""
 	return state
 }
 
-// field names the field that a refusal names: the content that the request reads, or store.
+// read records path, unless it is empty or an earlier field names content in one account.
+func (s *ProviderState) read(path string) {
+	if s.Reads == "" {
+		s.Reads = path
+	}
+}
+
+// containerOptions returns a container tool's container options and their path: code
+// interpreter's container, or a hosted shell's environment.
+func containerOptions(tool map[string]json.RawMessage, path string) (json.RawMessage, string) {
+	if hosted, _ := HostedToolOf(tool); hosted == HostedToolShell {
+		return tool["environment"], path + ".environment"
+	}
+	return tool["container"], path + ".container"
+}
+
+// containerRead returns the path of the container that a container tool names, code interpreter's
+// by its ID or a hosted shell's by reference, and the path of the first thing in its account that
+// the tool names: that container, the files that the tool mounts, or a skill that a hosted shell
+// loads from the account. Either is "" when the tool names none.
+func containerRead(tool map[string]json.RawMessage, path string) (named, read string) {
+	options, place := containerOptions(tool, path)
+	if rawStringValue(options) != "" {
+		return place, place
+	}
+	object, _ := rawObjectValue(options)
+	if rawStringValue(object["container_id"]) != "" {
+		return place + ".container_id", place + ".container_id"
+	}
+	if files, _ := rawjson.Array(object["file_ids"]); len(files) > 0 {
+		return "", place + ".file_ids"
+	}
+	skills, _ := rawjson.Array(object["skills"])
+	for index, rawSkill := range skills {
+		if skill, _ := rawObjectValue(rawSkill); rawStringValue(skill["type"]) == "skill_reference" {
+			return "", fmt.Sprintf("%s.skills[%d]", place, index)
+		}
+	}
+	return "", ""
+}
+
+// networkAllowed returns the path of a container tool's network policy when it allows domains, or
+// "". A container that the request makes reaches no network otherwise.
+func networkAllowed(tool map[string]json.RawMessage, path string) string {
+	options, place := containerOptions(tool, path)
+	object, _ := rawObjectValue(options)
+	policy, _ := rawObjectValue(object["network_policy"])
+	if kind := rawStringValue(policy["type"]); kind != "" && kind != "disabled" {
+		return place + ".network_policy"
+	}
+	return ""
+}
+
+// replayedContainer is the path of the container that the input's first call of code interpreter
+// or of a hosted shell names, or "". JSON spells a member's name plainly or with \u escapes, so
+// input without either names no container.
+func replayedContainer(input json.RawMessage) string {
+	if !bytes.Contains(input, []byte("container_id")) && !bytes.Contains(input, []byte(`\u`)) {
+		return ""
+	}
+	items, _ := rawjson.Array(input)
+	for index, rawItem := range items {
+		item, _ := rawObjectValue(rawItem)
+		switch rawStringValue(item["type"]) {
+		case "code_interpreter_call":
+			if rawStringValue(item["container_id"]) != "" {
+				return fmt.Sprintf("input[%d].container_id", index)
+			}
+		case "shell_call":
+			if environment, _ := rawObjectValue(item["environment"]); rawStringValue(environment["container_id"]) != "" {
+				return fmt.Sprintf("input[%d].environment.container_id", index)
+			}
+		}
+	}
+	return ""
+}
+
+// field names the field that a refusal names: the content that the request reads, store, or the
+// container tool.
 func (s ProviderState) field() string {
-	if s.Reads != "" {
+	switch {
+	case s.Reads != "":
 		return s.Reads
+	case s.Container != "" && !s.Store:
+		return s.Container
 	}
 	return "store"
 }
@@ -137,6 +255,8 @@ func providerStateRefusal(field, reason string) APIError {
 		fix = "Omit store or set it to false."
 	case strings.HasPrefix(field, "tools["):
 		fix = "Remove the tool."
+	case strings.HasPrefix(field, "input["):
+		fix = "Remove the call from input."
 	}
 	return APIError{StatusCode: http.StatusBadRequest, Code: ProviderStateUnsupported, Type: ErrorTypeInvalidRequest, Param: field, Message: reason + " " + fix}
 }

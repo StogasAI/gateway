@@ -170,7 +170,7 @@ func (OpenAIFormatAdapter) ValidateRawResponsesToolType(state *State, tool map[s
 		}
 	}
 	// The catalog offers no hosted tool on these routes.
-	if err := hostedToolOffered(state, string(toolType)); err != nil {
+	if err := hostedToolOffered(state, tool); err != nil {
 		return err
 	}
 	return invalidRequest("Only function, custom, and namespace tools are supported for " + providerName(state) + " deployments")

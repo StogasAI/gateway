@@ -249,8 +249,10 @@ func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, repla
 	var reasoningTexts []jsonSpan
 	itemType := ""
 	// An MCP tool's connection settings reach the provider as the client sent them: its
-	// credentials and server address are not prompt text, and a redacted token would fail.
-	var mcpSettings []jsonSpan
+	// credentials and server address are not prompt text, and a redacted token would fail. So do
+	// the settings of a hosted container, whose network policy holds the domains that its code
+	// may reach and the secrets that it sends them.
+	var toolSettings []jsonSpan
 	// A web search that a reply returned holds Claude's encrypted results, which Claude refuses
 	// changed. Their spans wait for the item's type.
 	searchResults := len(r.searchResults)
@@ -416,8 +418,8 @@ func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, repla
 		if err != nil {
 			return position, err
 		}
-		if context == jsonContextResponsesTool && key == jsonKeyMCPSetting {
-			mcpSettings = append(mcpSettings, jsonSpan{start: settingStart, end: position, text: r.input.minus(settingInput)})
+		if context == jsonContextResponsesTool && key == jsonKeyToolSetting {
+			toolSettings = append(toolSettings, jsonSpan{start: settingStart, end: position, text: r.input.minus(settingInput)})
 		}
 		if context == jsonContextChatMessage && key == jsonKeyReasoning {
 			reasoningTexts = append(reasoningTexts, jsonSpan{start: settingStart, end: position, text: r.input.minus(settingInput)})
@@ -448,8 +450,12 @@ func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, repla
 				}
 				r.searchResults = r.searchResults[:searchResults]
 			}
-			if context == jsonContextResponsesTool && itemType == "mcp" {
-				for _, setting := range mcpSettings {
+			if context == jsonContextResponsesTool && (itemType == "mcp" || itemType == "code_interpreter" || itemType == "shell") {
+				for _, setting := range toolSettings {
+					// A shell that the client runs lists skills that the model reads.
+					if _, kind, _ := objectRoleAndType(source, setting.start); itemType == "shell" && (kind == "" || kind == "local") {
+						continue
+					}
 					r.discardJSONReplacements(replacements, baseReplacements, setting.start, setting.end)
 					r.input = r.input.minus(setting.text)
 				}
@@ -750,7 +756,7 @@ type jsonKeyKind uint8
 const (
 	jsonKeyOther jsonKeyKind = iota
 	jsonKeySkipScalar
-	jsonKeyMCPSetting
+	jsonKeyToolSetting
 	jsonKeyEncryptedContent
 	jsonKeySignature
 	jsonKeyData
@@ -839,8 +845,8 @@ func classifyJSONKey(encoded []byte, escaped bool) (jsonKeyKind, error) {
 	case "reasoning_details":
 		return jsonKeyReasoningDetails, nil
 	case "server_url", "connector_id", "tunnel_id", "authorization", "headers",
-		"allowed_tools", "allowed_callers", "require_approval":
-		return jsonKeyMCPSetting, nil
+		"allowed_tools", "allowed_callers", "require_approval", "container", "environment":
+		return jsonKeyToolSetting, nil
 	case "id", "item_id", "call_id", "tool_call_id", "file_id", "container_id", "conversation_id",
 		"request_id", "session_id", "previous_response_id", "prompt_cache_key", "prompt_cache_isolation_key",
 		"model", "name", "namespace", "role", "server_label", "approval_request_id":

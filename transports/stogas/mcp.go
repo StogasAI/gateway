@@ -67,16 +67,8 @@ func validateResponsesMCPTool(tool map[string]json.RawMessage, path string) (mcp
 	if err := validateMCPToolFilter(tool["allowed_tools"], path+".allowed_tools"); err != nil {
 		return mcpServer{}, err
 	}
-	if raw := tool["allowed_callers"]; rawJSONValueSet(raw) {
-		var callers []string
-		if err := sonic.Unmarshal(raw, &callers); err != nil || len(callers) == 0 {
-			return mcpServer{}, invalidRequest(path + ".allowed_callers must list callers")
-		}
-		for _, caller := range callers {
-			if caller != "direct" {
-				return mcpServer{}, invalidRequest(path + ".allowed_callers can only be direct, because programmatic calls need code execution, which is not supported")
-			}
-		}
+	if err := validateDirectCallers(tool["allowed_callers"], path+".allowed_callers"); err != nil {
+		return mcpServer{}, err
 	}
 	if raw := tool["defer_loading"]; rawJSONValueSet(raw) {
 		var deferred bool
@@ -603,38 +595,65 @@ func validateProviderResponsesCompletedMCPItem(streamItem providerResponsesItem,
 	return nil
 }
 
-// redactResponsesMCPCredentials writes the reply's copy of each MCP tool as OpenAI writes it:
-// <redacted> for its authorization and for each header value, and its server_url as sent (capture
-// openai/mcp-approval-replay). The gateway builds that copy from the request, so it redacts what
-// the provider would.
-func redactResponsesMCPCredentials(tools []schemas.ResponsesTool) []schemas.ResponsesTool {
+// redactResponsesToolCredentials writes the reply's copy of each tool, which the gateway builds
+// from the request, without its credentials. An MCP tool reads as OpenAI writes it: <redacted> for
+// its authorization and for each header value, and its server_url as sent (capture
+// openai/mcp-approval-replay). Each domain secret of a container's network policy reads
+// <redacted> too.
+func redactResponsesToolCredentials(tools []schemas.ResponsesTool) []schemas.ResponsesTool {
 	const redacted = "<redacted>"
 	for index := range tools {
-		if tools[index].Type != schemas.ResponsesToolTypeMCP || tools[index].ResponsesToolMCP == nil {
-			continue
-		}
-		server := *tools[index].ResponsesToolMCP
-		if server.Authorization != nil {
-			server.Authorization = schemas.Ptr(redacted)
-		}
-		if server.Headers != nil {
-			headers := make(map[string]string, len(*server.Headers))
-			for name := range *server.Headers {
-				headers[name] = redacted
+		tool := &tools[index]
+		switch {
+		case tool.Type == schemas.ResponsesToolTypeMCP && tool.ResponsesToolMCP != nil:
+			server := tool.ResponsesToolMCP
+			if server.Authorization != nil {
+				server.Authorization = schemas.Ptr(redacted)
 			}
-			server.Headers = &headers
+			if server.Headers != nil {
+				for name := range *server.Headers {
+					(*server.Headers)[name] = redacted
+				}
+			}
+		case tool.Type == schemas.ResponsesToolTypeShell && tool.ResponsesToolShell != nil && tool.ResponsesToolShell.Environment != nil &&
+			tool.ResponsesToolShell.Environment.NetworkPolicy != nil:
+			secrets := tool.ResponsesToolShell.Environment.NetworkPolicy.DomainSecrets
+			for secret := range secrets {
+				secrets[secret].Value = redacted
+			}
+		case tool.Type == schemas.ResponsesToolTypeCodeInterpreter && tool.ResponsesToolCodeInterpreter != nil:
+			container, _ := tool.ResponsesToolCodeInterpreter.Container.(map[string]any)
+			policy, _ := container["network_policy"].(map[string]any)
+			secrets, _ := policy["domain_secrets"].([]any)
+			for _, secret := range secrets {
+				if secret, ok := secret.(map[string]any); ok {
+					secret["value"] = redacted
+				}
+			}
 		}
-		tools[index].ResponsesToolMCP = &server
 	}
 	return tools
 }
 
-// MCPToolSecrets returns what a request's MCP tools hold beside each server's origin, which
-// echoes and exports omit: each authorization and header value, and the user information, path
-// and query of a server URL, where servers also take tokens.
-func MCPToolSecrets(tools []map[string]json.RawMessage) []string {
+// ToolSecrets returns the credentials that a request's tools hold, which echoes, exports and
+// error messages omit: each authorization and header value of an MCP tool, the user information,
+// path and query of its server URL, where servers also take tokens, and each domain secret of a
+// container's network policy.
+func ToolSecrets(tools []map[string]json.RawMessage) []string {
 	var secrets []string
 	for _, tool := range tools {
+		for _, options := range []json.RawMessage{tool["container"], tool["environment"]} {
+			policy, _ := rawObject(options)
+			policy, _ = rawObject(policy["network_policy"])
+			var domainSecrets []struct {
+				Value string `json:"value"`
+			}
+			if json.Unmarshal(policy["domain_secrets"], &domainSecrets) == nil {
+				for _, secret := range domainSecrets {
+					secrets = append(secrets, secret.Value)
+				}
+			}
+		}
 		if rawString(tool["type"]) != string(schemas.ResponsesToolTypeMCP) {
 			continue
 		}

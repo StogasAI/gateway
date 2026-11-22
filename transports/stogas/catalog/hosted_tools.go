@@ -20,14 +20,18 @@ import (
 type HostedTool string
 
 const (
-	HostedToolWebSearch  HostedTool = "web_search"
-	HostedToolWebFetch   HostedTool = "web_fetch"
-	HostedToolMCP        HostedTool = "mcp"
-	HostedToolFileSearch HostedTool = "file_search"
+	HostedToolWebSearch       HostedTool = "web_search"
+	HostedToolWebFetch        HostedTool = "web_fetch"
+	HostedToolMCP             HostedTool = "mcp"
+	HostedToolFileSearch      HostedTool = "file_search"
+	HostedToolCodeInterpreter HostedTool = "code_interpreter"
+	HostedToolShell           HostedTool = "shell"
 )
 
 // HostedTools lists every hosted tool in canonical order.
-var HostedTools = []HostedTool{HostedToolWebSearch, HostedToolWebFetch, HostedToolMCP, HostedToolFileSearch}
+var HostedTools = []HostedTool{
+	HostedToolWebSearch, HostedToolWebFetch, HostedToolMCP, HostedToolFileSearch, HostedToolCodeInterpreter, HostedToolShell,
+}
 
 func hostedToolRank(tool HostedTool) int { return slices.Index(HostedTools, tool) }
 
@@ -74,24 +78,26 @@ func (s *Stated[T]) UnmarshalJSONFrom(decoder *jsontext.Decoder) error {
 	return nil
 }
 
-// HostedToolForType reads a Responses tool type, versioned or not, as the hosted tool that it
-// runs, if it runs one.
-func HostedToolForType(kind string) (HostedTool, bool) { return hostedToolForType(kind) }
-
 // EffectiveDataHandling gives the facts of one request: the deployment's data handling, with the
 // facts that each account option of its credential sets, joined with that of each hosted tool that
 // the request lets the model call, so a fact holds for everything the request can cause. Options
 // come first and tools join after, so an option cannot hide what a tool does. Inference itself
 // stays where the deployment's own facts say. A name never makes a tool hosted: only a tool's type
-// does (hostedToolForType), so a client's function named web_search changes nothing.
+// and a shell's environment do (HostedToolOf), so a client's function named web_search changes
+// nothing.
 //
 // A request that stores (ProviderState.Keeps) asks the provider to keep its content, which it then
 // keeps for as long as it decides, OpenAI for at least 30 days and a conversation until someone
 // deletes it, where the deployment keeps what it stores. No option or agreement of the account
 // covers that content: OpenAI keeps it under Modified Abuse Monitoring. Zero Data Retention makes
 // OpenAI ignore store, but no option states such a rule, so a request that stores reads as stored
-// on every account.
-func (d Deployment) EffectiveDataHandling(options []HeldOption, tools []HostedTool, stores bool) DataHandling {
+// on every account. A container keeps the files that its tool mounts and its code writes until it
+// expires, which each use postpones, and Zero Data Retention changes none of that.
+//
+// A container that can reach the network (ProviderState.Network) can send content to the domains
+// that it allows, third parties that the request or the container names, so the request reads as
+// sending content where no fact holds, as a remote MCP tool does.
+func (d Deployment) EffectiveDataHandling(options []HeldOption, tools []HostedTool, stores, network bool) DataHandling {
 	handling := d.DataHandling
 	var applied []AccountOption
 	for _, option := range d.AccountOptions {
@@ -107,43 +113,12 @@ func (d Deployment) EffectiveDataHandling(options []HeldOption, tools []HostedTo
 		}
 	}
 	for _, tool := range tools {
-		offer, ok := d.HostedTools[tool]
-		if !ok {
-			continue
+		if offer, ok := d.HostedTools[tool]; ok {
+			d.join(&handling, offer.DataHandling)
 		}
-		effect := offer.DataHandling
-		if effect.ProcessingLocation != "" {
-			handling.ProcessingLocation = d.Locations.Join(handling.ProcessingLocation, effect.ProcessingLocation)
-		}
-		if effect.StorageLocation != "" {
-			handling.StorageLocation = d.Locations.Join(handling.StorageLocation, effect.StorageLocation)
-		}
-		if effect.RetentionDays.Set {
-			switch {
-			case handling.RetentionDays == nil:
-			case effect.RetentionDays.Value == nil:
-				handling.RetentionDays = nil
-			case *effect.RetentionDays.Value > *handling.RetentionDays:
-				days := *effect.RetentionDays.Value
-				handling.RetentionDays = &days
-			}
-		}
-		// Training use only worsens: false, then unknown, then true.
-		if effect.TrainingUse.Set && !isTrue(handling.TrainingUse) {
-			handling.TrainingUse = effect.TrainingUse.Value
-		}
-		handling.ZeroDataRetention = handling.ZeroDataRetention && !isFalse(effect.ZeroDataRetention)
-		handling.EndToEndEncrypted = handling.EndToEndEncrypted && !isFalse(effect.EndToEndEncrypted)
-		handling.TEE = handling.TEE && !isFalse(effect.TEE)
-		handling.TEEVerified = handling.TEEVerified && !isFalse(effect.TEEVerified)
-		if len(effect.SharedWith) > 0 {
-			handling.SharedWith = slices.Compact(slices.Sorted(slices.Values(slices.Concat(handling.SharedWith, effect.SharedWith))))
-		}
-		if len(effect.WithoutCertifications) > 0 {
-			handling.Certifications = slices.DeleteFunc(slices.Clone(handling.Certifications), func(id string) bool {
-				return slices.Contains(effect.WithoutCertifications, id)
-			})
-		}
+	}
+	if network {
+		d.join(&handling, unknownDestination(handling.Certifications))
 	}
 	// The joined facts keep what a deployment's own must (validateDeploymentDataHandling): a tool
 	// that keeps or trains on content ends zero data retention whether or not its record says so,
@@ -156,13 +131,64 @@ func (d Deployment) EffectiveDataHandling(options []HeldOption, tools []HostedTo
 	return handling
 }
 
+// join makes handling hold for what a tool's processing does too.
+func (d Deployment) join(handling *DataHandling, effect HostedToolDataHandling) {
+	if effect.ProcessingLocation != "" {
+		handling.ProcessingLocation = d.Locations.Join(handling.ProcessingLocation, effect.ProcessingLocation)
+	}
+	if effect.StorageLocation != "" {
+		handling.StorageLocation = d.Locations.Join(handling.StorageLocation, effect.StorageLocation)
+	}
+	if effect.RetentionDays.Set {
+		switch {
+		case handling.RetentionDays == nil:
+		case effect.RetentionDays.Value == nil:
+			handling.RetentionDays = nil
+		case *effect.RetentionDays.Value > *handling.RetentionDays:
+			days := *effect.RetentionDays.Value
+			handling.RetentionDays = &days
+		}
+	}
+	// Training use only worsens: false, then unknown, then true.
+	if effect.TrainingUse.Set && !isTrue(handling.TrainingUse) {
+		handling.TrainingUse = effect.TrainingUse.Value
+	}
+	handling.ZeroDataRetention = handling.ZeroDataRetention && !isFalse(effect.ZeroDataRetention)
+	handling.EndToEndEncrypted = handling.EndToEndEncrypted && !isFalse(effect.EndToEndEncrypted)
+	handling.TEE = handling.TEE && !isFalse(effect.TEE)
+	handling.TEEVerified = handling.TEEVerified && !isFalse(effect.TEEVerified)
+	if len(effect.SharedWith) > 0 {
+		handling.SharedWith = slices.Compact(slices.Sorted(slices.Values(slices.Concat(handling.SharedWith, effect.SharedWith))))
+	}
+	if len(effect.WithoutCertifications) > 0 {
+		handling.Certifications = slices.DeleteFunc(slices.Clone(handling.Certifications), func(id string) bool {
+			return slices.Contains(effect.WithoutCertifications, id)
+		})
+	}
+}
+
+// unknownDestination is what sending content to a third party that the request names does, as the
+// catalog states it for a remote MCP server: nothing is known of it, and none of the deployment's
+// certifications covers it.
+func unknownDestination(certifications []string) HostedToolDataHandling {
+	unknown := false
+	return HostedToolDataHandling{
+		ProcessingLocation: "unknown", StorageLocation: "unknown",
+		RetentionDays: Stated[int]{Set: true}, TrainingUse: Stated[bool]{Set: true},
+		ZeroDataRetention: &unknown, EndToEndEncrypted: &unknown, TEE: &unknown, TEEVerified: &unknown,
+		SharedWith: []string{HostingUnknown}, WithoutCertifications: certifications,
+	}
+}
+
 func isTrue(value *bool) bool  { return value != nil && *value }
 func isFalse(value *bool) bool { return value != nil && !*value }
 
 // validateHostedTools checks a deployment's tools on one route: each is known and sets only facts
 // that it can make worse, web search and file search price exactly the call meters of their wire,
-// so no call bills at zero, and nothing else prices them. validateLocations checks the tools'
-// locations.
+// so no call bills at zero, and nothing else prices them. Code interpreter and a hosted shell price
+// nothing: OpenAI bills their containers to the account by the session, which no request's reply
+// reports, so they serve only customers' own credentials (ProviderState.Container) and bill their
+// tokens alone. validateLocations checks the tools' locations.
 func validateHostedTools(owner string, claudeWire bool, tools map[HostedTool]HostedToolOffer, deployment Pricing) error {
 	required, foreign := webSearchMeters(claudeWire)
 	for tool, offer := range tools {
@@ -188,6 +214,11 @@ func validateHostedTools(owner string, claudeWire bool, tools map[HostedTool]Hos
 				return fmt.Errorf("%s offers file search on Claude's wire, which has none", owner)
 			}
 			meters = []string{meterOpenAIResponsesFileSearchCalls}
+		case HostedToolCodeInterpreter, HostedToolShell:
+			// Claude's code execution has another wire, prices and limits, which nothing serves yet.
+			if claudeWire {
+				return fmt.Errorf("%s offers %s on Claude's wire, which the gateway does not run", owner, tool)
+			}
 		}
 		for _, meter := range meters {
 			if len(offer.Pricing[meter]) == 0 {
@@ -220,13 +251,12 @@ func webSearchMeters(claudeWire bool) (required, foreign []string) {
 	return openai, anthropic
 }
 
-func hostedToolsOf(kinds []string) []HostedTool {
-	var tools []HostedTool
-	for _, kind := range kinds {
-		if tool, ok := hostedToolForType(kind); ok && !slices.Contains(tools, tool) {
-			tools = append(tools, tool)
-		}
+// addHostedTool adds tool to a list in canonical order, once.
+func addHostedTool(tools []HostedTool, tool HostedTool) []HostedTool {
+	if slices.Contains(tools, tool) {
+		return tools
 	}
+	tools = append(tools, tool)
 	slices.SortFunc(tools, func(a, b HostedTool) int { return hostedToolRank(a) - hostedToolRank(b) })
 	return tools
 }
@@ -292,9 +322,11 @@ func hostedToolsUnavailable(tools []HostedTool, credentials bool) APIError {
 	return APIError{Code: ErrUnsupportedTool.Code, StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: message, Param: "tools"}
 }
 
-// hostedToolForType reads a Responses tool type, versioned or not, as the hosted tool it runs.
-func hostedToolForType(kind string) (HostedTool, bool) {
-	switch CanonicalResponsesToolType(kind) {
+// HostedToolOf reads a Responses tool as the hosted tool that it runs, if it runs one: by its type,
+// versioned or not, and for a shell by its environment. OpenAI runs a shell in a container, and
+// the client runs one in a local environment or where the tool names none.
+func HostedToolOf(tool map[string]json.RawMessage) (HostedTool, bool) {
+	switch CanonicalResponsesToolType(rawStringValue(tool["type"])) {
 	case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview:
 		return HostedToolWebSearch, true
 	case schemas.ResponsesToolTypeWebFetch:
@@ -303,27 +335,76 @@ func hostedToolForType(kind string) (HostedTool, bool) {
 		return HostedToolMCP, true
 	case schemas.ResponsesToolTypeFileSearch:
 		return HostedToolFileSearch, true
+	case schemas.ResponsesToolTypeCodeInterpreter:
+		// Claude's code execution tools read as code interpreter, but they are another tool, which
+		// the gateway does not run.
+		if rawStringValue(tool["type"]) == string(schemas.ResponsesToolTypeCodeInterpreter) {
+			return HostedToolCodeInterpreter, true
+		}
+	case schemas.ResponsesToolTypeShell:
+		environment, _ := rawObjectValue(tool["environment"])
+		if kind := rawStringValue(environment["type"]); kind != "" && kind != "local" {
+			return HostedToolShell, true
+		}
 	}
 	return "", false
 }
 
-// readsHostedCall reports whether the deployment takes back an earlier call of a hosted tool. Only
-// a route that runs the tool takes its calls, and only in the form that its provider reads: OpenAI
-// takes web searches with their IDs (openAIWebSearchCallID) and file searches with their results,
-// and Claude takes web searches with the encrypted content of every result and web fetches with
-// what they got. Codex keeps only a search's query, so Claude does not read a search that Codex
-// sends back. A file search without its results names a stored reply's search, whose results OpenAI
-// would read where no input check can, and which it refuses when the reply was not stored (capture
-// openai/file-search). The calls that the deployment does not read go, as reasoning that it does
-// not read goes.
-func (r *ResolvedRequest) readsHostedCall(item *schemas.ResponsesMessage) bool {
-	tool := HostedToolWebSearch
-	switch *item.Type {
-	case schemas.ResponsesMessageTypeWebFetchCall:
-		tool = HostedToolWebFetch
-	case schemas.ResponsesMessageTypeFileSearchCall:
-		tool = HostedToolFileSearch
+// hostedCallTool reads an input item as a step of a hosted tool, if it is one: a call of a search,
+// a web fetch or code interpreter, or a call of a hosted shell or its output. shells holds the
+// call IDs of the input's hosted shell calls (hostedShellCalls).
+func hostedCallTool(item *schemas.ResponsesMessage, shells map[string]bool) (HostedTool, bool) {
+	if item.Type == nil {
+		return "", false
 	}
+	switch *item.Type {
+	case schemas.ResponsesMessageTypeWebSearchCall:
+		return HostedToolWebSearch, true
+	case schemas.ResponsesMessageTypeWebFetchCall:
+		return HostedToolWebFetch, true
+	case schemas.ResponsesMessageTypeFileSearchCall:
+		return HostedToolFileSearch, true
+	case schemas.ResponsesMessageTypeCodeInterpreterCall:
+		return HostedToolCodeInterpreter, true
+	case schemas.ResponsesMessageTypeShellCall, schemas.ResponsesMessageTypeShellCallOutput:
+		if call := item.ResponsesToolMessage; call != nil && call.CallID != nil && shells[*call.CallID] {
+			return HostedToolShell, true
+		}
+	}
+	return "", false
+}
+
+// hostedShellCalls returns the call IDs of the input's shell calls that ran in a container, which
+// their outputs name.
+func hostedShellCalls(input []schemas.ResponsesMessage) map[string]bool {
+	var shells map[string]bool
+	for index := range input {
+		item := &input[index]
+		if item.Type == nil || *item.Type != schemas.ResponsesMessageTypeShellCall || item.ResponsesToolMessage == nil ||
+			item.ResponsesToolMessage.CallID == nil || item.ResponsesShellCall == nil || item.Environment == nil {
+			continue
+		}
+		if kind := item.Environment.Type; kind != "" && kind != "local" {
+			if shells == nil {
+				shells = make(map[string]bool)
+			}
+			shells[*item.ResponsesToolMessage.CallID] = true
+		}
+	}
+	return shells
+}
+
+// readsHostedCall reports whether the deployment takes back an earlier step of a hosted tool. Only
+// a route that runs the tool takes its steps, and only in the form that its provider reads: OpenAI
+// takes web searches with their IDs (openAIWebSearchCallID), file searches with their results, and
+// every call of code interpreter and of a hosted shell, with the shell's outputs; Claude takes web
+// searches with the encrypted content of every result and web fetches with what they got. Codex
+// keeps only a search's query, so Claude does not read a search that Codex sends back. A file
+// search without its results names a stored reply's search, whose results OpenAI would read where
+// no input check can, and which it refuses when the reply was not stored (capture
+// openai/file-search). The steps that the deployment does not read go, as reasoning that it does
+// not read goes.
+func (r *ResolvedRequest) readsHostedCall(item *schemas.ResponsesMessage, tool HostedTool) bool {
 	call := item.ResponsesToolMessage
 	if _, runs := r.Deployment.HostedTools[tool]; !runs || call == nil {
 		return false
@@ -335,19 +416,31 @@ func (r *ResolvedRequest) readsHostedCall(item *schemas.ResponsesMessage) bool {
 		}
 		return call.Action != nil && claudeSearchResults(call.Action.ResponsesWebSearchToolCallAction)
 	case r.RunsOpenAIModel() && r.WireRoute() == RouteResponses:
-		if tool == HostedToolFileSearch {
+		switch tool {
+		case HostedToolFileSearch:
 			return call.ResponsesFileSearchToolCall != nil && call.ResponsesFileSearchToolCall.Results != nil
+		case HostedToolWebSearch:
+			return item.ID != nil && openAIWebSearchCallID(*item.ID)
+		case HostedToolCodeInterpreter, HostedToolShell:
+			return true
 		}
-		return tool == HostedToolWebSearch && item.ID != nil && openAIWebSearchCallID(*item.ID)
 	}
 	return false
 }
 
 // ReadsHostedCallInput reports whether the deployment takes back a hosted call item as the client
 // sent it, so that the checks of the input's order skip a call that the deployment never gets.
-func (r *ResolvedRequest) ReadsHostedCallInput(raw json.RawMessage) bool {
+// shellCall marks a step of a hosted shell, whose output alone does not show where it ran.
+func (r *ResolvedRequest) ReadsHostedCallInput(raw json.RawMessage, shellCall bool) bool {
 	var item schemas.ResponsesMessage
-	return sonic.Unmarshal(raw, &item) == nil && item.Type != nil && r.readsHostedCall(&item)
+	if sonic.Unmarshal(raw, &item) != nil {
+		return false
+	}
+	if shellCall {
+		return r.readsHostedCall(&item, HostedToolShell)
+	}
+	tool, hosted := hostedCallTool(&item, nil)
+	return hosted && r.readsHostedCall(&item, tool)
 }
 
 // claudeSearchResults reports whether a web search holds Claude's results, each with its encrypted

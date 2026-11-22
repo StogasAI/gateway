@@ -63,7 +63,7 @@ func (GeminiAdapter) ValidateRawResponsesToolType(state *State, tool map[string]
 		}
 	}
 	// The catalog offers no hosted tool on this route.
-	if err := hostedToolOffered(state, string(toolType)); err != nil {
+	if err := hostedToolOffered(state, tool); err != nil {
 		return err
 	}
 	return invalidRequest("Only function and namespace tools are supported for Gemini on Google Cloud")

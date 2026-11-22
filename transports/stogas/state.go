@@ -122,6 +122,10 @@ type State struct {
 	toolCallPositions map[string]int
 	answeredCallIDs   []string
 
+	// responsesHostedShellCalls holds the call IDs of the reply's hosted shell calls, whose
+	// output OpenAI writes.
+	responsesHostedShellCalls map[string]bool
+
 	// chatFinishReason and chatRefusal describe the validated Chat choice, and
 	// chatOutput keeps streamed content for the structured output check up to
 	// its size bound; chatOutputLong records content past that bound.
@@ -752,7 +756,8 @@ func responsesEventHasOutput(response *schemas.BifrostResponsesStreamResponse) b
 		schemas.ResponsesStreamResponseTypeMCPCallArgumentsDelta,
 		schemas.ResponsesStreamResponseTypeCustomToolCallInputDelta,
 		schemas.ResponsesStreamResponseTypeShellCallCommandDelta,
-		schemas.ResponsesStreamResponseTypeApplyPatchCallOperationDiffDelta:
+		schemas.ResponsesStreamResponseTypeApplyPatchCallOperationDiffDelta,
+		schemas.ResponsesStreamResponseTypeCodeInterpreterCallCodeDelta:
 		return nonEmptyString(response.Delta)
 	case schemas.ResponsesStreamResponseTypeOutputTextDone,
 		schemas.ResponsesStreamResponseTypeReasoningSummaryTextDone,
@@ -769,6 +774,8 @@ func responsesEventHasOutput(response *schemas.BifrostResponsesStreamResponse) b
 		return nonEmptyString(response.Command)
 	case schemas.ResponsesStreamResponseTypeApplyPatchCallOperationDiffDone:
 		return nonEmptyString(response.Diff)
+	case schemas.ResponsesStreamResponseTypeCodeInterpreterCallCodeDone:
+		return nonEmptyString(response.Code)
 	case schemas.ResponsesStreamResponseTypeImageGenerationCallPartialImage:
 		return nonEmptyString(response.PartialImageB64)
 	case schemas.ResponsesStreamResponseTypeContentPartAdded,
@@ -787,6 +794,10 @@ func responsesEventHasOutput(response *schemas.BifrostResponsesStreamResponse) b
 		schemas.ResponsesStreamResponseTypeWebSearchCallResultsAdded,
 		schemas.ResponsesStreamResponseTypeWebSearchCallResultsCompleted:
 		return len(response.SearchResults) > 0 || len(response.Videos) > 0 || len(response.Citations) > 0
+	case schemas.ResponsesStreamResponseTypeShellCallOutputContentDelta:
+		return response.ShellOutputDelta != nil && (nonEmptyString(response.ShellOutputDelta.Stdout) || nonEmptyString(response.ShellOutputDelta.Stderr))
+	case schemas.ResponsesStreamResponseTypeShellCallOutputContentDone:
+		return responsesShellOutputHasText(response.Output)
 	default:
 		// Unknown and lifecycle-only events are not evidence that usable output
 		// reached the caller. New event types must opt in with a payload check.
@@ -807,7 +818,8 @@ func responsesEventHasToken(response *schemas.BifrostResponsesStreamResponse) bo
 		schemas.ResponsesStreamResponseTypeMCPCallArgumentsDelta,
 		schemas.ResponsesStreamResponseTypeCustomToolCallInputDelta,
 		schemas.ResponsesStreamResponseTypeShellCallCommandDelta,
-		schemas.ResponsesStreamResponseTypeApplyPatchCallOperationDiffDelta:
+		schemas.ResponsesStreamResponseTypeApplyPatchCallOperationDiffDelta,
+		schemas.ResponsesStreamResponseTypeCodeInterpreterCallCodeDelta:
 		return nonEmptyString(response.Delta)
 	case schemas.ResponsesStreamResponseTypeOutputTextDone,
 		schemas.ResponsesStreamResponseTypeReasoningSummaryTextDone,
@@ -824,6 +836,8 @@ func responsesEventHasToken(response *schemas.BifrostResponsesStreamResponse) bo
 		return nonEmptyString(response.Command)
 	case schemas.ResponsesStreamResponseTypeApplyPatchCallOperationDiffDone:
 		return nonEmptyString(response.Diff)
+	case schemas.ResponsesStreamResponseTypeCodeInterpreterCallCodeDone:
+		return nonEmptyString(response.Code)
 	case schemas.ResponsesStreamResponseTypeImageGenerationCallPartialImage:
 		return nonEmptyString(response.PartialImageB64)
 	case schemas.ResponsesStreamResponseTypeContentPartAdded,
@@ -875,7 +889,8 @@ func responsesMessageHasOutput(message *schemas.ResponsesMessage) bool {
 		return true
 	}
 	if tool.Output != nil {
-		if nonEmptyString(tool.Output.ResponsesToolCallOutputStr) || responsesComputerOutputHasOutput(tool.Output.ResponsesComputerToolCallOutput) {
+		if nonEmptyString(tool.Output.ResponsesToolCallOutputStr) || responsesComputerOutputHasOutput(tool.Output.ResponsesComputerToolCallOutput) ||
+			responsesShellOutputHasText(tool.Output.ResponsesShellCallOutput) {
 			return true
 		}
 		for index := range tool.Output.ResponsesFunctionToolCallOutputBlocks {
@@ -887,6 +902,8 @@ func responsesMessageHasOutput(message *schemas.ResponsesMessage) bool {
 	return tool.ResponsesImageGenerationCall != nil && tool.ResponsesImageGenerationCall.Result != "" ||
 		tool.ResponsesCustomToolCall != nil && tool.ResponsesCustomToolCall.Input != "" ||
 		responsesPatchHasText(tool.ResponsesApplyPatchCall) ||
+		tool.ResponsesCodeInterpreterToolCall != nil &&
+			(nonEmptyString(tool.ResponsesCodeInterpreterToolCall.Code) || len(tool.ResponsesCodeInterpreterToolCall.Outputs) > 0) ||
 		tool.ResponsesFileSearchToolCall != nil &&
 			(len(tool.ResponsesFileSearchToolCall.Queries) > 0 || len(tool.ResponsesFileSearchToolCall.Results) > 0) ||
 		tool.ResponsesAdvisorCall != nil &&
@@ -968,7 +985,18 @@ func responsesMessageHasToken(message *schemas.ResponsesMessage) bool {
 	return tool.ResponsesImageGenerationCall != nil && tool.ResponsesImageGenerationCall.Result != "" ||
 		tool.ResponsesCustomToolCall != nil && tool.ResponsesCustomToolCall.Input != "" ||
 		responsesPatchHasText(tool.ResponsesApplyPatchCall) ||
+		tool.ResponsesCodeInterpreterToolCall != nil && nonEmptyString(tool.ResponsesCodeInterpreterToolCall.Code) ||
 		tool.ResponsesFileSearchToolCall != nil && len(tool.ResponsesFileSearchToolCall.Queries) > 0
+}
+
+// responsesShellOutputHasText reports whether the commands of a hosted shell's call wrote anything.
+func responsesShellOutputHasText(output []schemas.ResponsesShellCallOutputContent) bool {
+	for _, content := range output {
+		if content.Stdout != "" || content.Stderr != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // responsesPatchHasText reports whether a patch call names a file yet.

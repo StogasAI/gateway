@@ -6,6 +6,7 @@ import (
 	"encoding/json/jsontext"
 	"errors"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/bytedance/sonic"
@@ -246,7 +247,7 @@ func validateOpenAIWireResponsesPolicy(state *State) error {
 	}
 	raw := state.Resolution.RawBody()
 	if err := validateResponsesInclude(raw["include"], "web_search_call.action.sources", "web_search_call.results",
-		"file_search_call.results", "message.output_text.logprobs", "reasoning.encrypted_content"); err != nil {
+		"file_search_call.results", "code_interpreter_call.outputs", "message.output_text.logprobs", "reasoning.encrypted_content"); err != nil {
 		return err
 	}
 	// OpenAI's Responses have no stop sequences, which decide where the reply ends, and Claude's
@@ -259,7 +260,7 @@ func validateOpenAIWireResponsesPolicy(state *State) error {
 	return validateResponsesToolPolicy(state, raw, func(tools []schemas.ResponsesTool) error {
 		if !responsesHasHostedTool(tools) {
 			if _, ok := raw["max_tool_calls"]; ok {
-				return invalidRequest("max_tool_calls is supported only for priced hosted Responses tools")
+				return invalidRequest("max_tool_calls needs a hosted tool whose calls it caps")
 			}
 		}
 		return nil
@@ -473,7 +474,7 @@ func (OpenAIAdapter) CalculateUpstreamCost(state *State) error {
 
 func (OpenAIAdapter) ValidateRawResponsesToolType(state *State, tool map[string]json.RawMessage) error {
 	rawType := rawString(tool["type"])
-	if err := hostedToolOffered(state, rawType); err != nil {
+	if err := hostedToolOffered(state, tool); err != nil {
 		return err
 	}
 	if rawType == "mcp" {
@@ -584,7 +585,8 @@ func validateOpenAIGuardrails(req openAIAdapterContext) error {
 
 func openAIResponsesToolTypeSupported(rawType string) bool {
 	switch strings.TrimSpace(rawType) {
-	case "function", "custom", "namespace", "mcp", "shell", "apply_patch", "computer", "tool_search", "file_search":
+	case "function", "custom", "namespace", "mcp", "shell", "apply_patch", "computer", "tool_search", "file_search",
+		"code_interpreter":
 		return true
 	default:
 		return openAIWebSearchToolType(rawType)
@@ -599,14 +601,14 @@ func openAIUnsupportedResponsesToolMessage(rawType string) string {
 		return "tools must declare a type"
 	case normalized == "local_shell":
 		return "local_shell is not supported because OpenAI no longer serves it; use shell with a local environment"
-	case normalized == "code_interpreter" || strings.HasPrefix(normalized, "code_execution"):
-		return "code execution tools are not supported"
+	case strings.HasPrefix(normalized, "code_execution"):
+		return rawType + " is Claude's tool; use code_interpreter"
 	case normalized == "computer_use_preview":
 		return "computer_use_preview is not supported because OpenAI retired the model that runs it; use the computer tool"
 	case normalized == "image_generation", normalized == "memory":
 		return rawType + " is not supported"
 	default:
-		return "Only function, custom, namespace, shell, apply_patch, computer, tool_search, file_search, remote MCP, and priced hosted web search tools are supported"
+		return "Only function, custom, namespace, shell, apply_patch, computer, tool_search, file_search, code_interpreter, remote MCP, and priced hosted web search tools are supported"
 	}
 }
 
@@ -624,6 +626,7 @@ func openAIHoldMeters(req openAIAdapterContext) []billing.MeterEstimate {
 	if req.Route == openAIAdapterRouteResponses {
 		meters = append(meters, openAIResponsesHostedToolHoldMeters(req)...)
 		meters = append(meters, openAIResponsesMCPHoldMeters(req)...)
+		meters = append(meters, openAIResponsesContainerHoldMeters(req)...)
 	}
 	if req.Route == openAIAdapterRouteChat {
 		meters = append(meters, openAIChatSearchModelHoldMeters(req)...)
@@ -706,6 +709,37 @@ func openAIResponsesHostedToolHoldMeters(req openAIAdapterContext) []billing.Met
 		meters = billing.AppendCallMeterCost(meters, req.Deployment.Pricing, meterKey, quantity, true)
 	}
 	return meters
+}
+
+// openAIResponsesContainerHoldMeters holds input for what code interpreter and a hosted shell add to
+// the model's context: each call's logs, or each command's output, whose size nothing bounds, so
+// the hold takes what a hosted call typically reads (hostedCallContentTokens), as for a web search.
+// max_tool_calls caps code interpreter with the other hosted tools, so the hold of a search or of
+// an MCP server that runs calls without approval already covers its calls. It caps no call of a
+// hosted shell (capture openai/container-tool-calls), whose hold covers
+// defaultResponsesHostedToolCalls. Settlement charges what OpenAI counts. OpenAI bills the
+// containers to the customer's account by the session, which no hold or settlement covers.
+func openAIResponsesContainerHoldMeters(req openAIAdapterContext) []billing.MeterEstimate {
+	if req.Route != openAIAdapterRouteResponses {
+		return nil
+	}
+	callable := catalog.EffectiveResponsesToolTypes(req.RawBody, req.ToolTypes)
+	reads := 0
+	if usesToolType(callable, string(schemas.ResponsesToolTypeShell)) && slices.ContainsFunc(req.RawTools, func(tool map[string]json.RawMessage) bool {
+		hosted, _ := catalog.HostedToolOf(tool)
+		return hosted == catalog.HostedToolShell
+	}) {
+		reads = defaultResponsesHostedToolCalls
+	}
+	if usesToolType(callable, string(schemas.ResponsesToolTypeCodeInterpreter)) &&
+		searchContentHoldTokensForKind(req, responsesSearchHoldKind(req)) == 0 &&
+		!responsesMCPServerUnattended(enabledMCPServers(req.RawBody, req.RawTools)) {
+		reads += responsesHostedToolHoldQuantity(req)
+	}
+	if reads == 0 {
+		return nil
+	}
+	return billing.AppendTokenMeterCost(nil, req.Deployment.Pricing, billing.MeterInputTokens, reads*hostedCallContentTokens, true, billing.TokenRateHighest)
 }
 
 // openAIResponsesHostedToolFinalMeters charges the hosted calls that ran: each web search, and
@@ -832,13 +866,9 @@ func validateTool(route openAIAdapterRoute, tool map[string]json.RawMessage) err
 			schemas.ResponsesToolTypeApplyPatch,
 			schemas.ResponsesToolTypeComputer,
 			schemas.ResponsesToolTypeToolSearch,
-			schemas.ResponsesToolTypeFileSearch:
-			return nil
-		case schemas.ResponsesToolTypeShell:
-			// Only the client's own shell: a hosted one starts a container that bills by the minute.
-			if shell := responsesTool.ResponsesToolShell; shell != nil && shell.Environment != nil && shell.Environment.Type != "local" {
-				return errOpenAIUnsupportedTool
-			}
+			schemas.ResponsesToolTypeFileSearch,
+			schemas.ResponsesToolTypeShell,
+			schemas.ResponsesToolTypeCodeInterpreter:
 			return nil
 		default:
 			return errOpenAIUnsupportedTool

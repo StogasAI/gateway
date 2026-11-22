@@ -43,21 +43,21 @@ func TestAccountOptionsSetFactsBeforeToolsJoin(t *testing.T) {
 	if got := grouped.AppliedOptions(held); !slices.Equal(got, []HeldOption{held[1], held[0]}) {
 		t.Fatalf("applied options %v, want the one stated option of the group", got)
 	}
-	alone := deployment.EffectiveDataHandling(held, nil, false)
+	alone := deployment.EffectiveDataHandling(held, nil, false, false)
 	if alone.StorageLocation != "none" || *alone.RetentionDays != 0 || !alone.ZeroDataRetention ||
 		!slices.Equal(alone.Certifications, []string{"soc2-type2", "hipaa-eligible", "hipaa"}) {
 		t.Fatalf("held options: %+v", alone)
 	}
 	// A tool joins after the options, so an option never hides what a tool keeps.
-	search := deployment.EffectiveDataHandling(held, []HostedTool{HostedToolWebSearch}, false)
+	search := deployment.EffectiveDataHandling(held, []HostedTool{HostedToolWebSearch}, false, false)
 	if *search.RetentionDays != 30 || search.ZeroDataRetention || !slices.Contains(search.Certifications, "hipaa") {
 		t.Fatalf("held options with web search: %+v", search)
 	}
 	// A tool that the agreement leaves out removes the entry that the grant needs.
-	if fetch := deployment.EffectiveDataHandling(held, []HostedTool{HostedToolWebFetch}, false); !slices.Equal(fetch.Certifications, []string{"soc2-type2"}) {
+	if fetch := deployment.EffectiveDataHandling(held, []HostedTool{HostedToolWebFetch}, false, false); !slices.Equal(fetch.Certifications, []string{"soc2-type2"}) {
 		t.Fatalf("held options with web fetch: %v", fetch.Certifications)
 	}
-	if got := deployment.EffectiveDataHandling(nil, nil, false); got.ZeroDataRetention || *got.RetentionDays != 30 || len(got.Certifications) != 2 {
+	if got := deployment.EffectiveDataHandling(nil, nil, false, false); got.ZeroDataRetention || *got.RetentionDays != 30 || len(got.Certifications) != 2 {
 		t.Fatalf("no options changed the facts: %+v", got)
 	}
 	if *deployment.DataHandling.RetentionDays != 30 || len(deployment.DataHandling.Certifications) != 2 {

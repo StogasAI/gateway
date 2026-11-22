@@ -1,0 +1,1095 @@
+{
+	"shows": "With store: false and no tool declared, OpenAI takes back a code interpreter call with or without its status, with an image that it output or none, and a hosted shell call and its output without their status. With the tool declared, a call of a deleted container sent back shows what OpenAI does with the container, and an inline skill under tool_choice none shows what the skill adds to the input.",
+	"recorded": "2026-11-22",
+	"exchanges": [
+		{
+			"name": "a run sent back without the tool",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 200,
+					"input": [
+						{
+							"role": "user",
+							"content": "Use Python to compute the sum of the squares of 1 to 2026, then tell me the result."
+						},
+						{
+							"id": "ci_01803bd57e0cc1c8016b026fd5082c87d28731e258a853283d",
+							"type": "code_interpreter_call",
+							"status": "completed",
+							"code": "sum(i*i for i in range(1, 2027))\n",
+							"container_id": "cntr_6b026fd45ed48191b6f00b6a128fbdd90bb0827da4db5ed9",
+							"outputs": [
+								{
+									"type": "logs",
+									"logs": "2774077201"
+								}
+							]
+						},
+						{
+							"id": "msg_01803bd57e0cc1c8016b026fd5db6087d2b21a0bae7af098c6",
+							"type": "message",
+							"status": "completed",
+							"role": "assistant",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"text": "The sum of the squares of the integers from 1 to 2026 is **2,774,077,201**."
+								}
+							]
+						},
+						{
+							"role": "user",
+							"content": "What is that result divided by 7?"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_01803bd57e0cc1c8016b0273d1fea487d282fbb2c14556353a",
+					"object": "response",
+					"created_at": 1795322834,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795322834,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 200,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "msg_01803bd57e0cc1c8016b0273d2add087d28ca8f473b3cd43c9",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "2,774,077,201 ÷ 7 = **396,296,743**."
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 108,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 24,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 132
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "a run sent back without its status",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 200,
+					"input": [
+						{
+							"role": "user",
+							"content": "Use Python to compute the sum of the squares of 1 to 2026, then tell me the result."
+						},
+						{
+							"id": "ci_01803bd57e0cc1c8016b026fd5082c87d28731e258a853283d",
+							"type": "code_interpreter_call",
+							"code": "sum(i*i for i in range(1, 2027))\n",
+							"container_id": "cntr_6b026fd45ed48191b6f00b6a128fbdd90bb0827da4db5ed9",
+							"outputs": [
+								{
+									"type": "logs",
+									"logs": "2774077201"
+								}
+							]
+						},
+						{
+							"id": "msg_01803bd57e0cc1c8016b026fd5db6087d2b21a0bae7af098c6",
+							"type": "message",
+							"status": "completed",
+							"role": "assistant",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"text": "The sum of the squares of the integers from 1 to 2026 is **2,774,077,201**."
+								}
+							]
+						},
+						{
+							"role": "user",
+							"content": "What is that result divided by 7?"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_01803bd57e0cc1c8016b0273d2fbc487d2a4bcadb7c5784a37",
+					"object": "response",
+					"created_at": 1795322835,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795322835,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 200,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "msg_01803bd57e0cc1c8016b0273d3784887d288e645bca00f2fae",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "2,774,077,201 ÷ 7 = **396,296,743**."
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 108,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 24,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 132
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "an image output sent back",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 200,
+					"input": [
+						{
+							"role": "user",
+							"content": "Use Python to plot a red disk."
+						},
+						{
+							"id": "ci_01803bd57e0cc1c8016b026fd5082c87d28731e258a853283d",
+							"type": "code_interpreter_call",
+							"status": "completed",
+							"code": "import matplotlib.pyplot as plt\nplt.imshow([[1]], cmap=\"Reds\")\nplt.show()\n",
+							"container_id": "cntr_6b026fd45ed48191b6f00b6a128fbdd90bb0827da4db5ed9",
+							"outputs": [
+								{
+									"type": "image",
+									"url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAyUlEQVR4nO2ZQRKEIAwE5/+fZo+7tadgkEmgpzxLt6OCotE8Gs2DgDs04A4NuEMD7tDA/wVR6CjXQJD7BRPZ0BdpyE+fc1AJ+oSDSqAnNFSLft7hNoEN9JMOqkg/46Ci9GGHSwQs9DEHBBo0YLx/Ag4I0AC3EA8xbyFeo0xkzMQsJc5ejSJQoIH238QnCLT/L7TZIU502b/REwTa7w+8p/GM4uI9soUOmfGzAkmN/Mgr8H/Pt4n7O+BoHgTcoQF3aMAdGnBHboBsPhOLC++0el++AAAAAElFTkSuQmCC"
+								}
+							]
+						},
+						{
+							"role": "user",
+							"content": "What shape and color did the plot show?"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_01803bd57e0cc1c8016b0273d3c86087d28a3382dcd6113242",
+					"object": "response",
+					"created_at": 1795322835,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795322836,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 200,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "msg_01803bd57e0cc1c8016b0273d4376087d299192933e932d1f4",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "The plot showed a red square, not a disk."
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 62,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 15,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 77
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "an image output left out",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 200,
+					"input": [
+						{
+							"role": "user",
+							"content": "Use Python to plot a red disk."
+						},
+						{
+							"id": "ci_01803bd57e0cc1c8016b026fd5082c87d28731e258a853283d",
+							"type": "code_interpreter_call",
+							"status": "completed",
+							"code": "import matplotlib.pyplot as plt\nplt.imshow([[1]], cmap=\"Reds\")\nplt.show()\n",
+							"container_id": "cntr_6b026fd45ed48191b6f00b6a128fbdd90bb0827da4db5ed9",
+							"outputs": null
+						},
+						{
+							"role": "user",
+							"content": "What shape and color did the plot show?"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_01803bd57e0cc1c8016b0273d4a00087d2a9fe7a075b2c927c",
+					"object": "response",
+					"created_at": 1795322836,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795322837,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 200,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "msg_01803bd57e0cc1c8016b0273d52a4087d2be0ca4e567e55ce3",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "The plot showed a red square, not a disk."
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 62,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 15,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 77
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "a run of a deleted container sent back",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 200,
+					"tools": [
+						{
+							"type": "code_interpreter",
+							"container": {
+								"type": "auto"
+							}
+						}
+					],
+					"tool_choice": "none",
+					"input": [
+						{
+							"role": "user",
+							"content": "Use Python to compute the sum of the squares of 1 to 2026, then tell me the result."
+						},
+						{
+							"id": "ci_01803bd57e0cc1c8016b026fd5082c87d28731e258a853283d",
+							"type": "code_interpreter_call",
+							"status": "completed",
+							"code": "sum(i*i for i in range(1, 2027))\n",
+							"container_id": "cntr_6b026fd45ed48191b6f00b6a128fbdd90bb0827da4db5ed9",
+							"outputs": [
+								{
+									"type": "logs",
+									"logs": "2774077201"
+								}
+							]
+						},
+						{
+							"id": "msg_01803bd57e0cc1c8016b026fd5db6087d2b21a0bae7af098c6",
+							"type": "message",
+							"status": "completed",
+							"role": "assistant",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"text": "The sum of the squares of the integers from 1 to 2026 is **2,774,077,201**."
+								}
+							]
+						},
+						{
+							"role": "user",
+							"content": "What is that result divided by 7?"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 404,
+				"body": {
+					"error": {
+						"message": "Container with id 'cntr_6b026fd45ed48191b6f00b6a128fbdd90bb0827da4db5ed9' not found.",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": null
+					}
+				}
+			}
+		},
+		{
+			"name": "a hosted run sent back without its status",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 200,
+					"input": [
+						{
+							"role": "user",
+							"content": "Run echo $((6*7)) in the shell, then tell me what it printed."
+						},
+						{
+							"id": "sh_0c093937b7776646016b027013de0c87d284095d839de3d15b",
+							"type": "shell_call",
+							"call_id": "call_OSGCSSeCsJXuE0voS10oVsOP",
+							"action": {
+								"commands": [
+									"echo $((6*7))"
+								],
+								"max_output_length": null,
+								"timeout_ms": null
+							},
+							"environment": {
+								"type": "container_reference",
+								"container_id": "cntr_6b02701320b08191bbc765d54fb3846a0d7af34a719edddb"
+							}
+						},
+						{
+							"id": "sho_0c093937b7776646016b027014296087d28ce4cafc7ee40d3a",
+							"type": "shell_call_output",
+							"call_id": "call_OSGCSSeCsJXuE0voS10oVsOP",
+							"max_output_length": null,
+							"output": [
+								{
+									"outcome": {
+										"type": "exit",
+										"exit_code": 0
+									},
+									"stderr": "",
+									"stdout": "42\n"
+								}
+							]
+						},
+						{
+							"id": "msg_0c093937b7776646016b0270146be487d2b14544df62aa9bc8",
+							"type": "message",
+							"status": "completed",
+							"role": "assistant",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"text": "It printed `42`."
+								}
+							]
+						},
+						{
+							"role": "user",
+							"content": "What number did it print, plus one?"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_0c093937b7776646016b0273d59dbc87d28b923846992451a5",
+					"object": "response",
+					"created_at": 1795322837,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795322838,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 200,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "msg_0c093937b7776646016b0273d6324487d2b63f7ad7dd99533e",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "43"
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 99,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 5,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 104
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "a hosted run of a deleted container sent back",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 200,
+					"tools": [
+						{
+							"type": "shell",
+							"environment": {
+								"type": "container_auto"
+							}
+						}
+					],
+					"tool_choice": "none",
+					"input": [
+						{
+							"role": "user",
+							"content": "Run echo $((6*7)) in the shell, then tell me what it printed."
+						},
+						{
+							"id": "sh_0c093937b7776646016b027013de0c87d284095d839de3d15b",
+							"type": "shell_call",
+							"call_id": "call_OSGCSSeCsJXuE0voS10oVsOP",
+							"action": {
+								"commands": [
+									"echo $((6*7))"
+								],
+								"max_output_length": null,
+								"timeout_ms": null
+							},
+							"environment": {
+								"type": "container_reference",
+								"container_id": "cntr_6b02701320b08191bbc765d54fb3846a0d7af34a719edddb"
+							}
+						},
+						{
+							"id": "sho_0c093937b7776646016b027014296087d28ce4cafc7ee40d3a",
+							"type": "shell_call_output",
+							"call_id": "call_OSGCSSeCsJXuE0voS10oVsOP",
+							"max_output_length": null,
+							"output": [
+								{
+									"outcome": {
+										"type": "exit",
+										"exit_code": 0
+									},
+									"stderr": "",
+									"stdout": "42\n"
+								}
+							]
+						},
+						{
+							"id": "msg_0c093937b7776646016b0270146be487d2b14544df62aa9bc8",
+							"type": "message",
+							"status": "completed",
+							"role": "assistant",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"text": "It printed `42`."
+								}
+							]
+						},
+						{
+							"role": "user",
+							"content": "What number did it print, plus one?"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 404,
+				"body": {
+					"error": {
+						"message": "Container with id 'cntr_6b02701320b08191bbc765d54fb3846a0d7af34a719edddb' not found.",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": null
+					}
+				}
+			}
+		},
+		{
+			"name": "an inline skill under tool_choice none",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 600,
+					"tools": [
+						{
+							"type": "shell",
+							"environment": {
+								"type": "container_auto",
+								"skills": [
+									{
+										"type": "inline",
+										"name": "zorbia-greeting",
+										"description": "How to greet someone in Zorbian.",
+										"source": {
+											"type": "base64",
+											"media_type": "application/zip",
+											"data": "UEsDBBQAAAAAAAAAAABnOsxgcAAAAHAAAAAYAAAAem9yYmlhLWdyZWV0aW5nL1NLSUxMLm1kLS0tCm5hbWU6IHpvcmJpYS1ncmVldGluZwpkZXNjcmlwdGlvbjogSG93IHRvIGdyZWV0IHNvbWVvbmUgaW4gWm9yYmlhbi4KLS0tCgpJbiBab3JiaWFuLCBoZWxsbyBpcyAicXVpbGxhLW1vciIuClBLAQIUABQAAAAAAAAAAABnOsxgcAAAAHAAAAAYAAAAAAAAAAAAAAAAAAAAAAB6b3JiaWEtZ3JlZXRpbmcvU0tJTEwubWRQSwUGAAAAAAEAAQBGAAAApgAAAAAA"
+										}
+									}
+								]
+							}
+						}
+					],
+					"tool_choice": "none",
+					"input": [
+						{
+							"role": "user",
+							"content": "Run echo $((6*7)) in the shell, then tell me what it printed."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_0ea1c9acbf2f3769016b0273d6b0c487d2a02865fe2f9077a3",
+					"object": "response",
+					"created_at": 1795322838,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795322839,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 600,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "msg_0ea1c9acbf2f3769016b0273d7789887d2842b4f7a9c4e30b9",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "I can’t run shell commands right now, but `echo $((6*7))` would print `42`."
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "none",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "shell",
+							"environment": {
+								"type": "container_reference",
+								"container_id": "cntr_6b0273d6cd388191b1091936055ccfae07435320a74d80eb"
+							}
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 1251,
+						"input_tokens_details": {
+							"cache_write_tokens": 1176,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 1176
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 28,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 1279
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		}
+	]
+}

@@ -32,6 +32,11 @@ const (
 	openAIShellToolTokens      = 237
 	openAIShellSkillsTokens    = 520
 	openAIApplyPatchToolTokens = 623
+	// A shell in a container adds 655 instead, and its first skill 571 with the skill's name and
+	// description; code interpreter adds 1,211. Both count under tool_choice none too, on gpt-6-luna
+	// (captures openai/hosted-shell, openai/container-replay and openai/code-interpreter).
+	openAIHostedShellToolTokens     = 655
+	openAICodeInterpreterToolTokens = 1211
 	// The computer tool adds 811 on gpt-5.6-luna and gpt-6.2-sol alike (capture openai/computer-use).
 	openAIComputerToolTokens = 811
 	// File search adds 1,483 on gpt-6-luna, also under tool_choice none, before any search
@@ -233,7 +238,7 @@ func collectMessageObject(raw json.RawMessage, stats *inputHoldStats) {
 	case "function_call", "function_call_output", "custom_tool_call", "custom_tool_call_output", "tool_call", "tool_result",
 		"shell_call", "shell_call_output", "apply_patch_call", "apply_patch_call_output", "computer_call", "computer_call_output",
 		"web_search_call", "web_fetch_call", "file_search_call", "tool_search_call", "tool_search_output",
-		"mcp_list_tools", "mcp_call", "mcp_approval_request", "mcp_approval_response":
+		"code_interpreter_call", "mcp_list_tools", "mcp_call", "mcp_approval_request", "mcp_approval_response":
 		stats.ToolEvents++
 	}
 	if rawToolCalls, ok := object["tool_calls"]; ok {
@@ -424,10 +429,15 @@ func toolPromptTokens(raw json.RawMessage) int {
 		return anthropicTextEditorToolTokens
 	case schemas.ResponsesToolTypeShell:
 		tokens := openAIShellToolTokens
+		if hosted, _ := HostedToolOf(tool); hosted == HostedToolShell {
+			tokens = openAIHostedShellToolTokens
+		}
 		if environment, err := rawjson.Object(tool["environment"]); err == nil && rawArrayLen(environment["skills"]) > 0 {
 			tokens += openAIShellSkillsTokens
 		}
 		return tokens
+	case schemas.ResponsesToolTypeCodeInterpreter:
+		return openAICodeInterpreterToolTokens
 	case schemas.ResponsesToolTypeApplyPatch:
 		return openAIApplyPatchToolTokens
 	case schemas.ResponsesToolTypeComputer:
@@ -467,6 +477,7 @@ func appendCompactJSONText(raw json.RawMessage, stats *inputHoldStats) {
 	if err := json.Unmarshal(raw, &value); err != nil {
 		return
 	}
+	dropSkillArchives(value)
 	// encoding/json sorts object keys. The reservation must not change when a
 	// client writes the same tool schema in a different key order.
 	encoded, err := json.Marshal(value)
@@ -474,6 +485,21 @@ func appendCompactJSONText(raw json.RawMessage, stats *inputHoldStats) {
 		return
 	}
 	appendText(string(encoded), stats)
+}
+
+// dropSkillArchives removes the archive of each inline skill of a hosted shell, which the model
+// reads only in the container.
+func dropSkillArchives(tool any) {
+	object, _ := tool.(map[string]any)
+	environment, _ := object["environment"].(map[string]any)
+	skills, _ := environment["skills"].([]any)
+	for _, skill := range skills {
+		if skill, ok := skill.(map[string]any); ok {
+			if source, ok := skill["source"].(map[string]any); ok {
+				delete(source, "data")
+			}
+		}
+	}
 }
 
 func appendStringValue(raw json.RawMessage, stats *inputHoldStats) bool {

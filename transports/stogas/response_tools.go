@@ -290,7 +290,7 @@ func sanitizeProviderResponsesEcho(state *State, response *schemas.BifrostRespon
 	response.TopLogProbs = trusted.TopLogProbs
 	response.TopP = trusted.TopP
 	response.ToolChoice = trusted.ToolChoice
-	response.Tools = redactResponsesMCPCredentials(trusted.Tools)
+	response.Tools = redactResponsesToolCredentials(trusted.Tools)
 	response.Truncation = trusted.Truncation
 	return nil
 }
@@ -436,6 +436,37 @@ func validateProviderResponsesStreamPayload(state *State, response *schemas.Bifr
 			!responsesStreamHasItemType(state, response, schemas.ResponsesMessageTypeFileSearchCall) ||
 			responsesStreamUnexpectedPayload(response, responsePayloadItemReference) ||
 			validateProviderResponsesHostedToolEvent(state, response) != nil {
+			return ErrProviderResponseMalformed
+		}
+		return nil
+	case schemas.ResponsesStreamResponseTypeCodeInterpreterCallInProgress,
+		schemas.ResponsesStreamResponseTypeCodeInterpreterCallInterpreting,
+		schemas.ResponsesStreamResponseTypeCodeInterpreterCallCompleted:
+		if !responsesStreamHasItemType(state, response, schemas.ResponsesMessageTypeCodeInterpreterCall) ||
+			responsesStreamUnexpectedPayload(response, responsePayloadItemReference) ||
+			validateProviderResponsesHostedToolEvent(state, response) != nil {
+			return ErrProviderResponseMalformed
+		}
+		return nil
+	case schemas.ResponsesStreamResponseTypeCodeInterpreterCallCodeDelta:
+		if response.Delta == nil || !responsesStreamHasItemType(state, response, schemas.ResponsesMessageTypeCodeInterpreterCall) ||
+			responsesStreamUnexpectedPayload(response, responsePayloadItemReference|responsePayloadDelta|responsePayloadObfuscation) ||
+			validateProviderResponsesToolValueEvent(state, response) != nil {
+			return ErrProviderResponseMalformed
+		}
+		return nil
+	case schemas.ResponsesStreamResponseTypeCodeInterpreterCallCodeDone:
+		if response.Code == nil || !responsesStreamHasItemType(state, response, schemas.ResponsesMessageTypeCodeInterpreterCall) ||
+			responsesStreamUnexpectedPayload(response, responsePayloadItemReference|responsePayloadCode) ||
+			validateProviderResponsesToolValueEvent(state, response) != nil {
+			return ErrProviderResponseMalformed
+		}
+		return nil
+	case schemas.ResponsesStreamResponseTypeShellCallOutputContentDelta,
+		schemas.ResponsesStreamResponseTypeShellCallOutputContentDone:
+		if !responsesStreamHasItemType(state, response, schemas.ResponsesMessageTypeShellCallOutput) ||
+			responsesStreamUnexpectedPayload(response, responsePayloadItemReference) ||
+			validateProviderResponsesShellOutputEvent(state, response) != nil {
 			return ErrProviderResponseMalformed
 		}
 		return nil
@@ -621,6 +652,11 @@ func providerResponsesToolItemValue(item *schemas.ResponsesMessage) (string, boo
 			return *patch.Operation.Diff, true
 		}
 		return "", true
+	case schemas.ResponsesMessageTypeCodeInterpreterCall:
+		if call := item.ResponsesToolMessage.ResponsesCodeInterpreterToolCall; call != nil && call.Code != nil {
+			return *call.Code, true
+		}
+		return "", true
 	default:
 		return "", false
 	}
@@ -702,8 +738,14 @@ func validateProviderResponsesTerminalItem(item *schemas.ResponsesMessage, befor
 			!validProviderText(item.ResponsesToolMessage.ResponsesCustomToolCall.Input, maxProviderResponseBodySize, true) {
 			return ErrProviderResponseMalformed
 		}
-	case schemas.ResponsesMessageTypeShellCall, schemas.ResponsesMessageTypeComputerCall:
+	case schemas.ResponsesMessageTypeShellCall, schemas.ResponsesMessageTypeShellCallOutput, schemas.ResponsesMessageTypeComputerCall:
 		if !stringInSet(*item.Status, "completed", "incomplete") {
+			return ErrProviderResponseMalformed
+		}
+	case schemas.ResponsesMessageTypeCodeInterpreterCall:
+		// max_tool_calls leaves a call that it stops with the status interpreting (capture
+		// openai/container-tool-calls).
+		if !stringInSet(*item.Status, "completed", "incomplete", "interpreting", "failed") {
 			return ErrProviderResponseMalformed
 		}
 	case schemas.ResponsesMessageTypeApplyPatchCall:
@@ -796,9 +838,11 @@ func validateProviderResponsesCompletedStreamItem(streamItem providerResponsesIt
 		}
 	} else if streamItem.value != nil {
 		value, ok := providerResponsesToolItemValue(finalItem)
-		// A patch without a diff, which deletes a file, streams none.
-		withoutDiff := streamItem.itemType == schemas.ResponsesMessageTypeApplyPatchCall && !streamItem.valueDone && streamItem.value.Len() == 0
-		if !ok || !streamItem.valueDone && !withoutDiff || value != streamItem.value.String() {
+		// A patch without a diff, which deletes a file, streams none, and neither does a code
+		// interpreter call without code.
+		withoutValue := (streamItem.itemType == schemas.ResponsesMessageTypeApplyPatchCall ||
+			streamItem.itemType == schemas.ResponsesMessageTypeCodeInterpreterCall) && !streamItem.valueDone && streamItem.value.Len() == 0
+		if !ok || !streamItem.valueDone && !withoutValue || value != streamItem.value.String() {
 			return ErrProviderResponseMalformed
 		}
 	}
@@ -1073,7 +1117,8 @@ func validateProviderResponsesItem(state *State, item *schemas.ResponsesMessage)
 		reasoningParts: make(map[int]*providerResponsesPart),
 	}
 	if item.Status != nil && !stringInSet(*item.Status, "in_progress", "completed", "incomplete", "failed") &&
-		!(*item.Type == schemas.ResponsesMessageTypeMCPCall && *item.Status == "calling") {
+		!(*item.Type == schemas.ResponsesMessageTypeMCPCall && *item.Status == "calling") &&
+		!(*item.Type == schemas.ResponsesMessageTypeCodeInterpreterCall && *item.Status == "interpreting") {
 		return providerResponsesItem{}, ErrProviderResponseMalformed
 	}
 	if item.Role != nil && *item.Role != schemas.ResponsesInputMessageRoleAssistant ||
@@ -1158,6 +1203,25 @@ func validateProviderResponsesItem(state *State, item *schemas.ResponsesMessage)
 		if err := validateAndRecordProviderResponsesToolCall(state, item, &observed, false); err != nil {
 			return providerResponsesItem{}, err
 		}
+	case schemas.ResponsesMessageTypeCodeInterpreterCall:
+		if item.Role != nil || item.Phase != nil || item.Content != nil || item.ResponsesReasoning != nil ||
+			!providerResponsesToolTypeAllowed(state, schemas.ResponsesToolTypeCodeInterpreter) || item.ResponsesToolMessage == nil ||
+			validateProviderResponsesToolMessage(state, item.ResponsesToolMessage, *item.Type) != nil {
+			return providerResponsesItem{}, ErrProviderResponseMalformed
+		}
+		observed.value = &bytes.Buffer{}
+		if err := validateAndRecordProviderResponsesToolCall(state, item, &observed, false); err != nil {
+			return providerResponsesItem{}, err
+		}
+	case schemas.ResponsesMessageTypeShellCallOutput:
+		// OpenAI writes the output of each call that a hosted shell runs, after the call.
+		if item.Role != nil || item.Phase != nil || item.Content != nil || item.ResponsesReasoning != nil ||
+			item.ResponsesToolMessage == nil || item.ResponsesToolMessage.CallID == nil || state == nil ||
+			!state.responsesHostedShellCalls[*item.ResponsesToolMessage.CallID] ||
+			validateProviderResponsesToolMessage(state, item.ResponsesToolMessage, *item.Type) != nil {
+			return providerResponsesItem{}, ErrProviderResponseMalformed
+		}
+		observed.callID = *item.ResponsesToolMessage.CallID
 	case schemas.ResponsesMessageTypeMCPListTools, schemas.ResponsesMessageTypeMCPCall, schemas.ResponsesMessageTypeMCPApprovalRequest:
 		if err := validateProviderResponsesMCPItem(state, item, &observed); err != nil {
 			return providerResponsesItem{}, err
@@ -1302,17 +1366,18 @@ func validateProviderResponsesToolMessage(state *State, tool *schemas.ResponsesT
 	if tool == nil {
 		return ErrProviderResponseMalformed
 	}
-	if tool.Execution != nil || tool.Output != nil || tool.Error != nil ||
+	shellOutput := itemType == schemas.ResponsesMessageTypeShellCallOutput
+	if tool.Execution != nil || tool.Output != nil && !shellOutput || tool.Error != nil ||
 		tool.ResponsesComputerToolCallOutput != nil || tool.ServerLabel != nil ||
 		tool.ResponsesImageGenerationCall != nil || tool.ResponsesMCPListTools != nil ||
 		tool.ResponsesMCPApprovalResponse != nil || tool.ResponsesAdvisorCall != nil ||
-		tool.ResponsesToolSearchCall != nil || tool.ResponsesCodeInterpreterToolCall != nil ||
-		tool.ResponsesCodeExecutionCall != nil {
+		tool.ResponsesToolSearchCall != nil || tool.ResponsesCodeExecutionCall != nil ||
+		tool.ResponsesCodeInterpreterToolCall != nil && itemType != schemas.ResponsesMessageTypeCodeInterpreterCall {
 		return ErrProviderResponseMalformed
 	}
 	shell, patch := itemType == schemas.ResponsesMessageTypeShellCall, itemType == schemas.ResponsesMessageTypeApplyPatchCall
-	if tool.ResponsesShellCall != nil && !shell || tool.ResponsesApplyPatchCall != nil && !patch ||
-		(tool.ItemCaller != nil || tool.CreatedBy != nil) && !shell && !patch ||
+	if tool.ResponsesShellCall != nil && !shell && !shellOutput || tool.ResponsesApplyPatchCall != nil && !patch ||
+		(tool.ItemCaller != nil || tool.CreatedBy != nil) && !shell && !shellOutput && !patch ||
 		tool.ResponsesComputerToolCall != nil && itemType != schemas.ResponsesMessageTypeComputerCall ||
 		tool.ResponsesFileSearchToolCall != nil && itemType != schemas.ResponsesMessageTypeFileSearchCall {
 		return ErrProviderResponseMalformed
@@ -1332,11 +1397,15 @@ func validateProviderResponsesToolMessage(state *State, tool *schemas.ResponsesT
 			}
 			break
 		}
-		// The client runs every command: a call that ran in a container would be a hosted shell,
-		// which the request cannot ask for.
-		if tool.Action == nil || tool.Action.ResponsesShellToolCallAction == nil ||
-			tool.ResponsesShellCall != nil && (tool.ResponsesShellCall.MaxOutputLength != nil ||
-				tool.ResponsesShellCall.Environment != nil && (tool.ResponsesShellCall.Environment.Type != "local" || tool.ResponsesShellCall.Environment.ContainerID != nil)) {
+		// The client runs the commands of a shell in a local environment, and OpenAI those of a
+		// hosted shell, in a container that the call names. Only a shell that the request lets the
+		// model call runs a call.
+		hosted := providerHostedShellCall(tool)
+		if tool.Action == nil || tool.Action.ResponsesShellToolCallAction == nil || state == nil ||
+			tool.ResponsesShellCall != nil && (tool.ResponsesShellCall.MaxOutputLength != nil || tool.ResponsesShellCall.Environment != nil && !hosted &&
+				(tool.ResponsesShellCall.Environment.Type != "local" || tool.ResponsesShellCall.Environment.ContainerID != nil)) ||
+			hosted && (!state.providerTools().hostedShell || !validProviderResponseID(*tool.ResponsesShellCall.Environment.ContainerID)) ||
+			!hosted && !state.providerTools().localShell {
 			return ErrProviderResponseMalformed
 		}
 		action := tool.Action.ResponsesShellToolCallAction
@@ -1348,6 +1417,22 @@ func validateProviderResponsesToolMessage(state *State, tool *schemas.ResponsesT
 			if !validProviderText(command, maxProviderResponseBodySize, true) {
 				return ErrProviderResponseMalformed
 			}
+		}
+	case schemas.ResponsesMessageTypeShellCallOutput:
+		if tool.Name != nil || tool.Namespace != nil || tool.Arguments != nil || tool.Action != nil || tool.Caller != nil ||
+			tool.ResponsesCustomToolCall != nil || tool.ResponsesWebFetchCall != nil ||
+			!validOptionalProviderText(tool.CreatedBy, maxProviderResponseIDBytes, false) ||
+			tool.ItemCaller != nil && tool.ItemCaller.Type != "direct" ||
+			tool.ResponsesShellCall != nil && (tool.ResponsesShellCall.Environment != nil ||
+				tool.ResponsesShellCall.MaxOutputLength != nil && *tool.ResponsesShellCall.MaxOutputLength < 0) ||
+			!validProviderShellOutput(tool.Output) {
+			return ErrProviderResponseMalformed
+		}
+	case schemas.ResponsesMessageTypeCodeInterpreterCall:
+		if tool.CallID != nil || tool.Name != nil || tool.Namespace != nil || tool.Arguments != nil || tool.Action != nil ||
+			tool.Caller != nil || tool.ResponsesCustomToolCall != nil || tool.ResponsesWebFetchCall != nil ||
+			!validProviderCodeInterpreterCall(tool.ResponsesCodeInterpreterToolCall) {
+			return ErrProviderResponseMalformed
 		}
 	case schemas.ResponsesMessageTypeComputerCall:
 		// The client runs every action, and OpenAI decides which exist. A call of the retired
@@ -1415,6 +1500,58 @@ func validateProviderResponsesToolMessage(state *State, tool *schemas.ResponsesT
 		return ErrProviderResponseMalformed
 	}
 	return nil
+}
+
+// providerHostedShellCall reports whether a shell call ran in a container, which OpenAI names by
+// reference.
+func providerHostedShellCall(tool *schemas.ResponsesToolMessage) bool {
+	return tool != nil && tool.ResponsesShellCall != nil && tool.ResponsesShellCall.Environment != nil &&
+		tool.ResponsesShellCall.Environment.Type == "container_reference" && tool.ResponsesShellCall.Environment.ContainerID != nil
+}
+
+// validProviderShellOutput checks what the commands of a hosted shell's call wrote: each command's
+// output and how it ended, which a stream starts without.
+func validProviderShellOutput(output *schemas.ResponsesToolMessageOutputStruct) bool {
+	return output == nil || output.ResponsesToolCallOutputStr == nil && output.ResponsesComputerToolCallOutput == nil &&
+		len(output.ResponsesFunctionToolCallOutputBlocks) == 0 && validProviderShellOutputContent(output.ResponsesShellCallOutput)
+}
+
+func validProviderShellOutputContent(output []schemas.ResponsesShellCallOutputContent) bool {
+	if len(output) > maxProviderResponseItems {
+		return false
+	}
+	for _, content := range output {
+		if !validProviderText(content.Stdout, maxProviderResponseBodySize, true) || !validProviderText(content.Stderr, maxProviderResponseBodySize, true) ||
+			!validProviderText(content.Outcome.Type, maxProviderResponseIDBytes, false) ||
+			!validOptionalProviderText(content.CreatedBy, maxProviderResponseIDBytes, false) {
+			return false
+		}
+	}
+	return true
+}
+
+// validProviderCodeInterpreterCall checks a call of code interpreter: the code that the model wrote,
+// the container that ran it and, where include asks for them, the logs and images that it output.
+func validProviderCodeInterpreterCall(call *schemas.ResponsesCodeInterpreterToolCall) bool {
+	if call == nil || !validOptionalProviderText(call.Code, maxProviderResponseBodySize, true) ||
+		!validProviderResponseID(call.ContainerID) || len(call.Outputs) > maxProviderResponseItems {
+		return false
+	}
+	for _, output := range call.Outputs {
+		switch {
+		case output.ResponsesCodeInterpreterOutputLogs != nil:
+			if !validProviderText(output.Logs, maxProviderResponseBodySize, true) {
+				return false
+			}
+		case output.ResponsesCodeInterpreterOutputImage != nil:
+			if !validProviderText(output.URL, maxProviderResponseBodySize, false) {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // validProviderFileSearch checks the queries of a file search and the results that include
@@ -1767,8 +1904,24 @@ func validateAndRecordProviderResponsesToolCall(state *State, item *schemas.Resp
 	if newCall {
 		state.responsesToolCalls++
 		switch *item.Type {
+		case schemas.ResponsesMessageTypeShellCall:
+			state.responsesDeclaredCalls++
+			if !providerHostedShellCall(item.ResponsesToolMessage) {
+				state.responsesClientCalls++
+				break
+			}
+			// OpenAI runs the calls of a hosted shell, and max_tool_calls caps none of them.
+			if state.responsesHostedShellCalls == nil {
+				state.responsesHostedShellCalls = make(map[string]bool)
+			}
+			state.responsesHostedShellCalls[observed.callID] = true
+		case schemas.ResponsesMessageTypeCodeInterpreterCall:
+			// max_tool_calls stops code interpreter's calls past it, which end interpreting (capture
+			// openai/container-tool-calls), and they cost nothing of their own, so no cap on hosted
+			// calls counts them.
+			state.responsesDeclaredCalls++
 		case schemas.ResponsesMessageTypeFunctionCall, schemas.ResponsesMessageTypeCustomToolCall,
-			schemas.ResponsesMessageTypeShellCall, schemas.ResponsesMessageTypeApplyPatchCall, schemas.ResponsesMessageTypeComputerCall:
+			schemas.ResponsesMessageTypeApplyPatchCall, schemas.ResponsesMessageTypeComputerCall:
 			state.responsesDeclaredCalls++
 			state.responsesClientCalls++
 		case schemas.ResponsesMessageTypeToolSearchCall:
@@ -1946,7 +2099,8 @@ func validateProviderResponsesToolValueEvent(state *State, response *schemas.Bif
 	switch response.Type {
 	case schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDelta,
 		schemas.ResponsesStreamResponseTypeCustomToolCallInputDelta,
-		schemas.ResponsesStreamResponseTypeApplyPatchCallOperationDiffDelta:
+		schemas.ResponsesStreamResponseTypeApplyPatchCallOperationDiffDelta,
+		schemas.ResponsesStreamResponseTypeCodeInterpreterCallCodeDelta:
 		if response.Delta == nil {
 			return ErrProviderResponseMalformed
 		}
@@ -1971,6 +2125,10 @@ func validateProviderResponsesToolValueEvent(state *State, response *schemas.Bif
 	case schemas.ResponsesStreamResponseTypeApplyPatchCallOperationDiffDone:
 		if response.Diff == nil || item.value.String() != *response.Diff ||
 			!validProviderText(*response.Diff, maxProviderResponseBodySize, true) {
+			return ErrProviderResponseMalformed
+		}
+	case schemas.ResponsesStreamResponseTypeCodeInterpreterCallCodeDone:
+		if response.Code == nil || item.value.String() != *response.Code {
 			return ErrProviderResponseMalformed
 		}
 	default:
@@ -2022,6 +2180,28 @@ func validateProviderResponsesShellCommandEvent(state *State, response *schemas.
 	return nil
 }
 
+// validateProviderResponsesShellOutputEvent checks what a command of a hosted shell's call wrote,
+// which OpenAI streams by command.
+func validateProviderResponsesShellOutputEvent(state *State, response *schemas.BifrostResponsesStreamResponse) error {
+	if response.CommandIndex == nil || *response.CommandIndex < 0 || *response.CommandIndex >= maxProviderResponseItems ||
+		response.Command != nil {
+		return ErrProviderResponseMalformed
+	}
+	if response.Type == schemas.ResponsesStreamResponseTypeShellCallOutputContentDelta {
+		delta := response.ShellOutputDelta
+		if delta == nil || response.Output != nil ||
+			delta.Stdout != nil && !validProviderText(*delta.Stdout, maxProviderResponseBodySize, true) ||
+			delta.Stderr != nil && !validProviderText(*delta.Stderr, maxProviderResponseBodySize, true) {
+			return ErrProviderResponseMalformed
+		}
+		return nil
+	}
+	if response.ShellOutputDelta != nil || !validProviderShellOutputContent(response.Output) {
+		return ErrProviderResponseMalformed
+	}
+	return nil
+}
+
 func validateProviderResponsesHostedToolEvent(state *State, response *schemas.BifrostResponsesStreamResponse) error {
 	if state == nil || response == nil || response.OutputIndex == nil {
 		return ErrProviderResponseMalformed
@@ -2064,6 +2244,23 @@ func validateProviderResponsesHostedToolEvent(state *State, response *schemas.Bi
 	case schemas.ResponsesStreamResponseTypeWebFetchCallCompleted,
 		schemas.ResponsesStreamResponseTypeFileSearchCallCompleted:
 		if item.stage != 2 {
+			return ErrProviderResponseMalformed
+		}
+		next = 3
+	// Code interpreter's events come in order, but none is required: a call that max_tool_calls
+	// stops ends while it is interpreting.
+	case schemas.ResponsesStreamResponseTypeCodeInterpreterCallInProgress:
+		if item.stage != 0 {
+			return ErrProviderResponseMalformed
+		}
+		next = 1
+	case schemas.ResponsesStreamResponseTypeCodeInterpreterCallInterpreting:
+		if item.stage > 1 {
+			return ErrProviderResponseMalformed
+		}
+		next = 2
+	case schemas.ResponsesStreamResponseTypeCodeInterpreterCallCompleted:
+		if item.stage > 2 {
 			return ErrProviderResponseMalformed
 		}
 		next = 3
@@ -2247,7 +2444,7 @@ func validateProviderResponsesAnnotation(state *State, annotation *schemas.Respo
 		annotation.URL != nil && !validProviderHTTPURL(*annotation.URL) {
 		return ErrProviderResponseMalformed
 	}
-	if annotation.ContainerID != nil || annotation.StartCharIndex != nil || annotation.EndCharIndex != nil ||
+	if annotation.StartCharIndex != nil || annotation.EndCharIndex != nil ||
 		annotation.StartPageNumber != nil || annotation.EndPageNumber != nil ||
 		annotation.StartBlockIndex != nil || annotation.EndBlockIndex != nil || annotation.Source != nil {
 		return ErrProviderResponseMalformed
@@ -2256,7 +2453,7 @@ func validateProviderResponsesAnnotation(state *State, annotation *schemas.Respo
 	case "url_citation":
 		if annotation.URL == nil || !providerResponsesToolTypeAllowed(state, schemas.ResponsesToolTypeWebSearch) ||
 			!providerResponsesURLAllowed(state, schemas.ResponsesToolTypeWebSearch, *annotation.URL) ||
-			annotation.FileID != nil || annotation.Filename != nil ||
+			annotation.FileID != nil || annotation.Filename != nil || annotation.ContainerID != nil ||
 			!validOptionalProviderText(annotation.Title, 64*1024, true) ||
 			!validOptionalProviderText(annotation.Text, 1024*1024, true) ||
 			!validOptionalProviderText(annotation.EncryptedIndex, 16*1024*1024, true) {
@@ -2266,14 +2463,29 @@ func validateProviderResponsesAnnotation(state *State, annotation *schemas.Respo
 		// A file search cites one of the files that it read at a place in the text.
 		if annotation.FileID == nil || annotation.Filename == nil || annotation.Index == nil ||
 			!providerResponsesToolTypeAllowed(state, schemas.ResponsesToolTypeFileSearch) ||
-			!validProviderText(*annotation.Filename, 64*1024, true) || annotation.URL != nil ||
+			!validProviderText(*annotation.Filename, 64*1024, true) || annotation.URL != nil || annotation.ContainerID != nil ||
 			annotation.Title != nil || annotation.Text != nil || annotation.StartIndex != nil || annotation.EncryptedIndex != nil {
+			return ErrProviderResponseMalformed
+		}
+	case "container_file_citation":
+		// Code that ran in a container cites a file there, at a place in the text or at its start.
+		if annotation.ContainerID == nil || annotation.FileID == nil || annotation.Filename == nil || annotation.StartIndex == nil ||
+			!providerContainerToolAllowed(state) ||
+			!validProviderText(*annotation.Filename, 64*1024, true) || annotation.URL != nil || annotation.Index != nil ||
+			annotation.Title != nil || annotation.Text != nil || annotation.EncryptedIndex != nil {
 			return ErrProviderResponseMalformed
 		}
 	default:
 		return ErrProviderResponseMalformed
 	}
 	return nil
+}
+
+// providerContainerToolAllowed reports whether the request lets the model run code in a container
+// that OpenAI hosts.
+func providerContainerToolAllowed(state *State) bool {
+	return providerResponsesToolTypeAllowed(state, schemas.ResponsesToolTypeCodeInterpreter) ||
+		providerResponsesToolTypeAllowed(state, schemas.ResponsesToolTypeShell) && state.providerTools().hostedShell
 }
 
 func orderedOptionalRange(start, end *int) bool {
@@ -2305,6 +2517,9 @@ type providerToolSet struct {
 	// toolSearch is where the request's tool search runs, server or client, when tool_choice leaves
 	// it callable.
 	toolSearch string
+	// hostedShell and localShell report whether tool_choice leaves a shell callable that runs in
+	// a container OpenAI hosts, or in the client's own environment.
+	hostedShell, localShell bool
 }
 
 // providerToolName names a declared tool. A tool in a namespace other than functions goes by its
@@ -2385,6 +2600,13 @@ func readProviderTools(resolution *catalog.ResolvedRequest) *providerToolSet {
 					if tools.toolSearch == "" {
 						tools.toolSearch = "server"
 					}
+				}
+				continue
+			case schemas.ResponsesToolTypeShell:
+				if tools.types[name.kind] {
+					hosted, _ := catalog.HostedToolOf(tool)
+					tools.hostedShell = tools.hostedShell || hosted == catalog.HostedToolShell
+					tools.localShell = tools.localShell || hosted != catalog.HostedToolShell
 				}
 				continue
 			}
