@@ -262,7 +262,7 @@ func TestSniffReadsOnlyTheStartOfAPayload(t *testing.T) {
 func TestChecksNameTheAttachmentAndSeeEveryPart(t *testing.T) {
 	body := `[{"role":"user","content":[{"type":"input_audio","input_audio":{"data":"` + encoded(wavBytes) + `","format":"wav"}},{"type":"image_url","image_url":{"url":"https://example.com/a.png"}},{"type":"file","file":{"file_id":"file-1"}},{"type":"file","file":{"file_data":"data:text/plain;base64,` + encoded(pdfBytes) + `"}}]}]`
 	var seen []string
-	_, err := Process(map[string]json.RawMessage{"messages": json.RawMessage(body)}, false, Options{Check: func(path string, mediaType MediaType) error {
+	_, err := Process(map[string]json.RawMessage{"messages": json.RawMessage(body)}, false, Options{Check: func(path, _ string, mediaType MediaType) error {
 		seen = append(seen, path+" "+mediaType.String())
 		return nil
 	}})
@@ -273,7 +273,7 @@ func TestChecksNameTheAttachmentAndSeeEveryPart(t *testing.T) {
 		t.Fatalf("checked %v", seen)
 	}
 	refused := errors.New("refused")
-	if _, err := Process(map[string]json.RawMessage{"messages": json.RawMessage(body)}, false, Options{Check: func(string, MediaType) error { return refused }}); !errors.Is(err, refused) {
+	if _, err := Process(map[string]json.RawMessage{"messages": json.RawMessage(body)}, false, Options{Check: func(string, string, MediaType) error { return refused }}); !errors.Is(err, refused) {
 		t.Fatalf("got %v", err)
 	}
 }
@@ -284,7 +284,7 @@ func TestComputerScreenshotsAreImages(t *testing.T) {
 	body := `[{"role":"user","content":"hi"},{"type":"computer_call","call_id":"c","actions":[{"type":"screenshot"}]},{"type":"computer_call_output","call_id":"c","output":{"type":"computer_screenshot","image_url":"data:image/png;base64,` + encoded(pngBytes) + `"}},{"type":"computer_call_output","call_id":"d","output":{"type":"computer_screenshot","file_id":"file-1"}}]`
 	var seen []string
 	fields := map[string]json.RawMessage{"input": json.RawMessage(body)}
-	stats, err := Process(fields, true, Options{Check: func(path string, mediaType MediaType) error {
+	stats, err := Process(fields, true, Options{Check: func(path, _ string, mediaType MediaType) error {
 		seen = append(seen, path+" "+mediaType.String())
 		return nil
 	}})
@@ -304,7 +304,7 @@ func TestComputerScreenshotsAreImages(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			body := `[{"type":"computer_call_output","call_id":"c","output":` + output + `}]`
-			_, err := Process(map[string]json.RawMessage{"input": json.RawMessage(body)}, true, Options{Check: func(string, MediaType) error { return nil }})
+			_, err := Process(map[string]json.RawMessage{"input": json.RawMessage(body)}, true, Options{Check: func(string, string, MediaType) error { return nil }})
 			var part *PartError
 			if !errors.As(err, &part) || part.Path != "input[0].output" {
 				t.Fatalf("got %v", err)
@@ -324,7 +324,7 @@ func TestProcessLeavesFilesOutsideUserMessagesToTheRequestChecks(t *testing.T) {
 		{"input", true, `{"type":"message","role":"developer","content":[{"type":"input_file","file_data":"data:text/plain;base64,aGk="}]}`},
 	} {
 		fields := map[string]json.RawMessage{tc.field: json.RawMessage("[" + tc.item + "]")}
-		stats, err := Process(fields, tc.responses, Options{Extract: families(filetype.Text), Check: func(string, MediaType) error {
+		stats, err := Process(fields, tc.responses, Options{Extract: families(filetype.Text), Check: func(string, string, MediaType) error {
 			t.Fatal("checked a file outside a user message")
 			return nil
 		}})
@@ -343,7 +343,7 @@ func TestToolFilesAreFiles(t *testing.T) {
 		`{"type":"image_generation","input_image_mask":{"file_id":"file-1"}},{"type":"code_interpreter","input_image_mask":{"file_id":"file-2"}}]`
 	var seen []string
 	fields := map[string]json.RawMessage{"input": json.RawMessage(`"hi"`), "tools": json.RawMessage(tools)}
-	stats, err := Process(fields, true, Options{Check: func(path string, mediaType MediaType) error {
+	stats, err := Process(fields, true, Options{Check: func(path, _ string, mediaType MediaType) error {
 		seen = append(seen, path+" "+mediaType.String())
 		return nil
 	}})
@@ -357,7 +357,7 @@ func TestToolFilesAreFiles(t *testing.T) {
 		t.Fatalf("stats %+v, tools %s", stats, fields["tools"])
 	}
 	_, err = Process(map[string]json.RawMessage{"tools": json.RawMessage(`[{"type":"image_generation","input_image_mask":{"image_url":"data:image/png;base64,aGVsbG8="}}]`)}, true,
-		Options{Check: func(string, MediaType) error { return nil }})
+		Options{Check: func(string, string, MediaType) error { return nil }})
 	var part *PartError
 	if !errors.As(err, &part) || part.Path != "tools[0].input_image_mask" {
 		t.Fatalf("text as a PNG mask got %v", err)

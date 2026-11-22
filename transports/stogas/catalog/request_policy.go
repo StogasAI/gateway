@@ -750,8 +750,8 @@ func (v *requestVariants) prepareBody(selection routingSelection, value RequestP
 		options.Text = func(text string) { fileTexts = append(fileTexts, text) }
 	}
 	if types := value.Config.MediaTypes(); types != nil {
-		options.Check = func(path string, mediaType inputfiles.MediaType) error {
-			return mediaTypeRefusal(types, path, mediaType, nil)
+		options.Check = func(path, url string, mediaType inputfiles.MediaType) error {
+			return mediaTypeRefusal(types, path, checkedMediaType(selection.provider, selection.deployment, url, mediaType), nil)
 		}
 	}
 	files, err := inputfiles.Process(fields, v.route == RouteResponses, options)

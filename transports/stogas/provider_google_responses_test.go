@@ -558,9 +558,10 @@ func TestMuseCallsToolsAsGoogleTookThem(t *testing.T) {
 
 // TestMuseTakesOnlyTheFilesThatTheModelReads replays the recorded files and images of each Muse
 // model on Agent Platform (capture google-cloud/responses-files). The gateway sends each that the
-// model read as Google took it, and an image URL that Google cannot fetch, whose refusal reaches
-// the client. It refuses before it holds funds each kind that Google refuses: a file ID, a text
-// file, audio and a PDF in a function output.
+// model read as Google took it. It cannot see what a URL holds, so it sends a URL that Google
+// cannot fetch or whose content the model does not read, and Google's refusal reaches the client.
+// It refuses before it holds funds each kind that Google refuses: a file ID, a text file, audio
+// and a PDF in a function output.
 func TestMuseTakesOnlyTheFilesThatTheModelReads(t *testing.T) {
 	catalogtest.UseFallback(t)
 	for name, recorded := range providerCapture(t, "google-cloud/responses-files") {
@@ -573,9 +574,9 @@ func TestMuseTakesOnlyTheFilesThatTheModelReads(t *testing.T) {
 					t.Fatalf("the model read it, and the gateway refused it: %v", refused)
 				}
 				museSendsAsTaken(t, recorded)
-			case strings.HasSuffix(name, " unreachable image url"):
+			case strings.HasSuffix(name, " url"):
 				museSendsAsTaken(t, recorded)
-				if status, message := museRefusal(t, recorded); status != "invalid_request" || !strings.Contains(message, "Cannot fetch content") {
+				if status, message := museRefusal(t, recorded); status != "invalid_request" || message == "" {
 					t.Fatalf("Google's refusal reaches the client as %s with %q", status, message)
 				}
 			case refused == nil:

@@ -399,6 +399,65 @@ func TestRoutingSkipsPairsWhosePolicyRefusesMediaTypes(t *testing.T) {
 	}
 }
 
+// Google fetches a URL for Gemini, which reads whatever the URL holds, whatever media type the
+// request names (capture google-cloud/generate-content-files). Routing therefore sends a URL only
+// to a deployment that reads audio and video, as the catalog prices them there, and a policy's
+// input.mediaTypes cannot check the URL's type.
+func TestGeminiTakesURLsOnlyWhereItsDeploymentReadsWhatTheyHold(t *testing.T) {
+	gemini := []string{"google-cloud-gemini-3.8-flash", "google-cloud-gemini-3.8-flash-eu"}
+	const (
+		image     = `{"type":"image_url","image_url":{"url":"https://example.com/a.png"}}`
+		inline    = `{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=="}}`
+		unread    = "messages[0].content[1] URLs are not supported by any deployment that this request can use; send the content inline"
+		unchecked = "messages[0].content[1] has no media type that input.mediaTypes can check; send it inline with its media type"
+	)
+	every := []string{"text", "image", "audio", "video"}
+	for _, tc := range []struct {
+		name, part, want, wantErr string
+		modalities                []string
+		input                     *policy.Input
+	}{
+		{name: "an image URL", part: image, modalities: every, want: gemini[0]},
+		{name: "a file URL", part: `{"type":"file","file":{"file_url":"https://example.com/a.pdf"}}`, modalities: every, want: gemini[0]},
+		{name: "a file URL with its media type", part: `{"type":"file","file":{"file_url":"https://example.com/a","file_type":"application/pdf"}}`, modalities: every, want: gemini[0]},
+		{name: "an image URL where Gemini reads no video", part: image, modalities: []string{"text", "image", "audio"}, wantErr: unread},
+		{name: "an image URL where Gemini reads no audio", part: image, modalities: []string{"text", "image", "video"}, wantErr: unread},
+		{name: "an image URL that a class allows", part: image, modalities: every, input: &policy.Input{MediaTypes: &policy.MediaTypes{Allow: []string{"image/*"}}}, wantErr: unchecked},
+		{name: "an image URL that a deny list of other classes leaves", part: image, modalities: every, input: &policy.Input{MediaTypes: &policy.MediaTypes{Deny: []string{"audio/*"}}}, wantErr: unchecked},
+		{name: "an inline image that a class allows", part: inline, modalities: every, input: &policy.Input{MediaTypes: &policy.MediaTypes{Allow: []string{"image/*"}}}, want: gemini[0]},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			snap := loadTestCatalog(t)
+			for _, id := range gemini {
+				deployment := snap.graph.Deployments[id]
+				for routeID, route := range deployment.Routes {
+					route.InputModalities = tc.modalities
+					deployment.Routes[routeID] = route
+				}
+			}
+			config := policyConfig(1)
+			config.Routing.Deployments = &policy.Lists{Allow: gemini}
+			config.Routing.Query = orderedQuery(t, "", gemini...)
+			config.Input = tc.input
+			resolved, err := ResolveRequest(RequestInput{
+				Body:   []byte(`{"model":"gemini-3.8-flash","messages":[{"role":"user","content":[{"type":"text","text":"read this"},` + tc.part + `]}]}`),
+				Method: "POST", Path: "/v1/chat/completions", Policy: config,
+				AvailableCredentials: map[string][]int{string(ProviderGoogleCloud): {0}},
+			})
+			if tc.wantErr != "" {
+				public := PublicError(err)
+				if public.StatusCode != 400 || public.Code != AttachmentUnsupported || public.Message != tc.wantErr {
+					t.Fatalf("want %q: %+v", tc.wantErr, public)
+				}
+				return
+			}
+			if err != nil || resolved.Deployment.ID != tc.want {
+				t.Fatalf("want %s: resolved=%v error=%v", tc.want, resolved, err)
+			}
+		})
+	}
+}
+
 // The screenshot of a computer_call_output is an image of the input: routing names it by the item's
 // output, skips a deployment that reads no images, and gives it a policy's checks of attachments.
 func TestRoutingReadsComputerScreenshotsAsImages(t *testing.T) {

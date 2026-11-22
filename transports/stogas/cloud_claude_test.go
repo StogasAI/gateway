@@ -737,7 +737,8 @@ func TestCloudClaudeAdapterRefusesWhatTheCloudLacks(t *testing.T) {
 		// Gemini on Google Cloud has no Files API either.
 		{"google-cloud-gemini-3.8-flash", "/v1/chat/completions", `"messages":[{"role":"user","content":[{"type":"text","text":"Summarize."},{"type":"file","file":{"file_id":"gs://bucket/doc.pdf"}}]}],`, "messages[0].content[1] file IDs are not supported by any deployment that this request can use"},
 		{"google-cloud-gemini-3.8-flash", "/v1/responses", `"input":[{"role":"user","content":[{"type":"input_file","file_id":"file_123"}]}],`, "input[0].content[0] file IDs are not supported by any deployment that this request can use"},
-		{"google-cloud-gemini-3.8-flash-eu", "/v1/chat/completions", `"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/a.png"}}]}],`, "messages[0].content[0] URLs are not supported by any deployment that this request can use; send the content inline"},
+		// Google fetches a URL for Gemini, on a deployment that reads audio and video.
+		{"google-cloud-gemini-3.8-flash-eu", "/v1/chat/completions", `"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/a.png"}}]}],`, ""},
 		{"aws-claude-fable-5-1-us", "/v1/responses", `"input":[{"role":"user","content":[{"type":"input_image","image_url":"https://example.com/a.png"}]}],`, "input[0].content[0] URLs are not supported by any deployment that this request can use; send the content inline"},
 		{"google-cloud-claude-fable-5-1-us", "/v1/chat/completions", `"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/a.png"}}]}],`, "messages[0].content[0] URLs are not supported by any deployment that this request can use; send the content inline"},
 		// Of file IDs and URL sources, Claude that Azure hosts lacks only file IDs, which need the

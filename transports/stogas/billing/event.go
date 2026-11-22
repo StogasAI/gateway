@@ -421,6 +421,10 @@ func NormalizeUpstreamStatus(bifrostErr *schemas.BifrostError) string {
 		return "provider_overloaded"
 	case identifiers.has("upstream_response_invalid", "upstream_execution_invalid", "upstream_protocol_error", "upstream_response_too_large"):
 		return "invalid_response"
+	// A message that names its refusal outranks the type that it shares with other refusals: Google
+	// sends FAILED_PRECONDITION for a URL that it cannot fetch as for a model that needs allowlisting.
+	case messageRefusal(bifrostErr) != "":
+		return messageRefusal(bifrostErr)
 	// AWS sends UnrecognizedClientException, as a 403, for an access key that no longer exists, and
 	// ExpiredTokenException for temporary credentials past their expiry.
 	case identifiers.has("authentication_error", "invalid_api_key", "unauthorized", "upstream_authentication_failed",
@@ -440,8 +444,6 @@ func NormalizeUpstreamStatus(bifrostErr *schemas.BifrostError) string {
 		"billing_not_active", "credit_balance_exhausted", "usage_limit_exceeded", "project_spend_limit_exceeded",
 		"organization_spend_limit_exceeded", "organization_usage_limit_exceeded"):
 		return "over_budget"
-	case messageRefusal(bifrostErr) != "":
-		return messageRefusal(bifrostErr)
 	// Bedrock sends ServiceQuotaExceededException, as a 400, for an account quota that a later
 	// request can pass.
 	case identifiers.has("rate_limit_error", "rate_limited", "too_many_requests", "upstream_rate_limit_error", "rate_limit_exceeded",
@@ -514,7 +516,10 @@ func NormalizeUpstreamStatus(bifrostErr *schemas.BifrostError) string {
 // expired container. OpenAI refuses it with a 404 that would otherwise read as a model that the
 // deployment does not serve: "Container with id 'cntr_…' not found.", "Vector store with id
 // ['vs_…'] not found." and "Item with id 'fs_…' not found. Items are not persisted when `store`
-// is set to false. …" (captures openai/code-interpreter and openai/file-search). These read as
+// is set to false. …" (captures openai/code-interpreter and openai/file-search). Nor can a pair
+// serve a URL that Google cannot fetch, which it refuses with "Cannot fetch content from the
+// provided URL." and a 404 for a missing page, a FAILED_PRECONDITION for a site that does not
+// answer, or an INVALID_ARGUMENT (capture google-cloud/generate-content-files). These read as
 // invalid requests.
 func messageRefusal(bifrostErr *schemas.BifrostError) string {
 	if bifrostErr.Error == nil || len(bifrostErr.Error.Message) > maxMessageRefusalBytes {
@@ -543,7 +548,8 @@ func messageRefusal(bifrostErr *schemas.BifrostError) string {
 	case strings.HasPrefix(message, "output blocked by content filtering policy"):
 		return "content_filter"
 	case (strings.HasPrefix(message, "container with id ") || strings.HasPrefix(message, "vector store with id ") ||
-		strings.HasPrefix(message, "item with id ")) && strings.Contains(message, " not found"):
+		strings.HasPrefix(message, "item with id ")) && strings.Contains(message, " not found"),
+		strings.HasPrefix(message, "cannot fetch content from the provided url"):
 		return "invalid_request"
 	}
 	return ""

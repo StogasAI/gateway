@@ -9,7 +9,11 @@
 routes:
   providerId: google-cloud
   interfaces: [chat_completions]
-  inputModalities: [text, image, audio]
+  # Gemini reads video only from a URL, which Google fetches. Gemini reads what a URL holds whatever
+  # media type the request names (capture google-cloud/generate-content-files), so the gateway sends
+  # a URL only to a deployment that takes audio and video, which the catalog's one input price must
+  # hold for.
+  inputModalities: [text, image, audio, video]
   # Core sends a tool result to Gemini as text, so the images and files of one are not carried.
   capabilities:
     streaming: true

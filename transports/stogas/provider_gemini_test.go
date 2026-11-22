@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -89,8 +90,9 @@ func geminiClientReply(t *testing.T, client string, recorded providerExchange) *
 	return reply
 }
 
-// geminiRecordedPart returns the first inline file of a recorded request, as a client's content
-// part: an image, a file or audio.
+// geminiRecordedPart returns the first file of a recorded request, inline or by URL, as a client's
+// content part: an image, a file or audio. Core sends an image URL with the type of its extension,
+// or JPEG, and a file URL with its file_type, or the type of its extension.
 func geminiRecordedPart(t *testing.T, recorded providerExchange) string {
 	t.Helper()
 	var request struct {
@@ -100,11 +102,26 @@ func geminiRecordedPart(t *testing.T, recorded providerExchange) string {
 					Data     string `json:"data"`
 					MimeType string `json:"mimeType"`
 				} `json:"inlineData"`
+				FileData struct {
+					FileURI  string `json:"fileUri"`
+					MimeType string `json:"mimeType"`
+				} `json:"fileData"`
 			} `json:"parts"`
 		} `json:"contents"`
 	}
 	if err := json.Unmarshal(recorded.Request.Body, &request); err != nil || len(request.Contents) == 0 || len(request.Contents[0].Parts) == 0 {
 		t.Fatalf("decode %s: %v", recorded.Name, err)
+	}
+	if linked := request.Contents[0].Parts[0].FileData; linked.FileURI != "" {
+		uri, _ := json.Marshal(linked.FileURI)
+		if strings.HasPrefix(linked.MimeType, "image/") {
+			return `{"type":"image_url","image_url":{"url":` + string(uri) + `}}`
+		}
+		fileType := ""
+		if path.Ext(linked.FileURI) == "" {
+			fileType = `,"file_type":"` + linked.MimeType + `"`
+		}
+		return `{"type":"file","file":{"file_url":` + string(uri) + fileType + `}}`
 	}
 	inline := request.Contents[0].Parts[0].InlineData
 	switch inline.MimeType {
@@ -141,7 +158,8 @@ func geminiRecordedText(t *testing.T, recorded providerExchange) string {
 // for Gemini on Google Cloud, and each body must equal a request that Agent Platform took in the
 // recordings. Gemini 3.8 Flash ignores temperature, top_p and top_k, and Agent Platform has no
 // field for an end user, store or metadata, so none of them reaches it. A final assistant message
-// stays, which Gemini 3.5 Flash continued.
+// stays, which Gemini 3.5 Flash continued. Google fetched each image and file URL, whatever it
+// held, such as an MP3 that the request calls an image.
 func TestGeminiSendsWhatGoogleTook(t *testing.T) {
 	catalogtest.UseFallback(t)
 	fields := providerCapture(t, "google-cloud/generate-content-request-fields")
@@ -155,6 +173,7 @@ func TestGeminiSendsWhatGoogleTook(t *testing.T) {
 		return `{"model":"google-cloud-gemini-3.8-flash","messages":[{"role":"user","content":[` + geminiRecordedPart(t, exchange(t, files, name)) +
 			`,{"type":"text","text":` + question + `}]}],"max_completion_tokens":2000,"reasoning_effort":"low"}`
 	}
+	linked := func(name string) string { return file(name, geminiRecordedText(t, exchange(t, files, name))) }
 	arithmetic := `"messages":[{"role":"user","content":"What is 17*23? Answer with the number only."}],"max_completion_tokens":4000`
 	for _, test := range []struct {
 		took   providerExchange
@@ -178,6 +197,13 @@ func TestGeminiSendsWhatGoogleTook(t *testing.T) {
 		{exchange(t, files, "pdf"), geminiChatPath, file("pdf", `"What is the code? Answer with it only."`)},
 		{exchange(t, files, "txt"), geminiChatPath, file("txt", `"What is the code? Answer with it only."`)},
 		{exchange(t, files, "wav"), geminiChatPath, file("wav", `"Describe this sound in a few words."`)},
+		{exchange(t, files, "image url"), geminiChatPath, linked("image url")},
+		{exchange(t, files, "image url on another host"), geminiChatPath, linked("image url on another host")},
+		{exchange(t, files, "web page called an image"), geminiChatPath, linked("web page called an image")},
+		{exchange(t, files, "mp3 called an image"), geminiChatPath, linked("mp3 called an image")},
+		{exchange(t, files, "mp3 url"), geminiChatPath, linked("mp3 url")},
+		{exchange(t, files, "pdf url"), geminiChatPath, linked("pdf url")},
+		{exchange(t, files, "pdf url without an extension"), geminiChatPath, linked("pdf url without an extension")},
 		{exchange(t, stream, "stream with thought summaries"), geminiChatPath,
 			`{"model":"google-cloud-gemini-3.8-flash",` + arithmetic + `,"reasoning_effort":"medium","stream":true,"stream_options":{"include_usage":true}}`},
 		{exchange(t, stream, "reply without thoughts"), geminiChatPath,

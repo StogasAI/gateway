@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -102,6 +103,11 @@ func TestFailureActionFor(t *testing.T) {
 		{name: "prompt longer than the deployment's window", failure: anthropicRefusal(http.StatusBadRequest, "prompt is too long: 215000 tokens > 200000 maximum"), want: nextPair},
 		{name: "body larger than the provider takes", failure: failure(http.StatusRequestEntityTooLarge, ""), want: nextPair},
 		{name: "image the provider cannot read", failure: failure(http.StatusBadRequest, "image_too_large"), want: nextPair},
+		// Google's refusals of a URL that it cannot fetch share their statuses with a deployment that is
+		// gone and a model that needs allowlisting (capture google-cloud/generate-content-files).
+		{name: "URL whose page Google cannot find", failure: googleRefusal(http.StatusNotFound, "NOT_FOUND", "Cannot fetch content from the provided URL. The URL could not be found. Please double-check the URL for any errors."), want: stopRun},
+		{name: "URL whose site does not answer Google", failure: googleRefusal(http.StatusBadRequest, "FAILED_PRECONDITION", "Cannot fetch content from the provided URL. The website is unavailable or did not respond. Please try again later or use a different URL."), want: stopRun},
+		{name: "model that Google allows only on request", failure: googleRefusal(http.StatusBadRequest, "FAILED_PRECONDITION", ""), want: nextPair},
 		{name: "content filter", failure: failure(http.StatusBadRequest, "content_filter"), want: stopRun},
 		{name: "cancelled", failure: cancelled, want: stopRun},
 		{name: "our failure", failure: ours, want: stopRun},
@@ -202,6 +208,12 @@ func anthropicRefusal(status int, message string) *schemas.BifrostError {
 		errorType = "rate_limit_error"
 	}
 	return &schemas.BifrostError{StatusCode: schemas.Ptr(status), Error: &schemas.ErrorField{Type: schemas.Ptr(errorType), Message: message}}
+}
+
+// googleRefusal is a refusal in Google's error format as core reads it: its status as the type and
+// its code as the code.
+func googleRefusal(status int, googleStatus, message string) *schemas.BifrostError {
+	return &schemas.BifrostError{StatusCode: schemas.Ptr(status), Error: &schemas.ErrorField{Type: schemas.Ptr(googleStatus), Code: schemas.Ptr(strconv.Itoa(status)), Message: message}}
 }
 
 func retryAfterContext(headers map[string]string) *schemas.BifrostContext {

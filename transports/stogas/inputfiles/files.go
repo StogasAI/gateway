@@ -61,9 +61,10 @@ type Options struct {
 	// Text receives the text of each text file that stays a file, which the provider reads as
 	// prompt text, so that the caller can count it.
 	Text func(text string)
-	// Check refuses an attachment at a path by its media type. Nil checks nothing, and leaves
-	// the content unsniffed.
-	Check func(path string, mediaType MediaType) error
+	// Check refuses an attachment at a path by its media type, given the attachment's URL, or ""
+	// for content that the request holds or a provider file. Nil checks nothing, and leaves the
+	// content unsniffed.
+	Check func(path, url string, mediaType MediaType) error
 	// Reserve admits the worst-case JSON expansion before decoding text or allocating its
 	// replacement containers.
 	Reserve func(int) error
@@ -494,7 +495,7 @@ func (p *processor) block(path string, block map[string]json.RawMessage, respons
 		if err != nil {
 			return nil, refuse(err.Error())
 		}
-		if err := p.Check(path, resolved); err != nil {
+		if err := p.Check(path, sourceURL, resolved); err != nil {
 			return nil, err
 		}
 	}

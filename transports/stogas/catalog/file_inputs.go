@@ -101,6 +101,7 @@ func attachmentError(provider schemas.ModelProvider, deployment Deployment, atta
 		}
 	}
 	claude := UsesClaudeWire(provider, deployment.ModelID)
+	gemini := deployment.RouteID == string(CoreProviderGoogleCloudGenerateContent)
 	// Chat Completions, which a bridged deployment gets, has no image file IDs or file URLs.
 	bridged := attachment.Responses && deployment.bridges(RouteResponses)
 	modality := ""
@@ -116,7 +117,7 @@ func attachmentError(provider schemas.ModelProvider, deployment Deployment, atta
 		if bridged && attachment.URL != "" {
 			return attachmentRefusal(attachment.Path, " file URLs are not supported by "+subject)
 		}
-		if err := documentError(claude, deployment.DocumentFormats, attachment, subject); err != nil {
+		if err := documentError(claude, gemini, deployment.DocumentFormats, attachment, subject); err != nil {
 			return err
 		}
 	}
@@ -130,12 +131,7 @@ func attachmentError(provider schemas.ModelProvider, deployment Deployment, atta
 	if attachment.ID != "" && (claude && deployment.Hosting != CompanyAnthropic || provider == ProviderGoogleCloud && !claude) {
 		return attachmentRefusal(attachment.Path, " file IDs are not supported by "+subject)
 	}
-	// A model that AWS or Google runs fetches no URL: Bedrock takes an image only inline or from S3
-	// (capture aws/chat-completions-files), and Agent Platform refuses an image URL for open models
-	// (capture google-cloud/chat-completions-files). Google fetches images and PDFs by URL for Meta's
-	// Muse models (capture google-cloud/responses-files).
-	if CloudRunsModel(provider, deployment) && deployment.RouteID != string(CoreProviderGoogleCloudMetaResponses) &&
-		attachment.URL != "" && !strings.HasPrefix(attachment.URL, "data:") {
+	if CloudRunsModel(provider, deployment) && !cloudFetchesURLs(deployment) && remoteURL(attachment.URL) {
 		return attachmentRefusal(attachment.Path, " URLs are not supported by "+subject+"; send the content inline")
 	}
 	// Bedrock's Chat Completions API reads a file's type from its filename alone, and refuses a file
@@ -147,12 +143,16 @@ func attachmentError(provider schemas.ModelProvider, deployment Deployment, atta
 	return nil
 }
 
-func documentError(claude bool, formats DocumentFormats, attachment Attachment, subject string) error {
+func documentError(claude, gemini bool, formats DocumentFormats, attachment Attachment, subject string) error {
 	path := attachment.Path
-	if attachment.URL != "" && !attachment.Responses && !claude {
+	// Core sends a file URL on Chat Completions to Claude as a URL source and to Gemini in fileData,
+	// and fetches it itself for OpenAI's format. Google refuses a file URL without a media type,
+	// which core reads from file_type or the URL's extension (capture
+	// google-cloud/generate-content-files).
+	if attachment.URL != "" && !attachment.Responses && !claude && !gemini {
 		return attachmentRefusal(path, " file URLs on Chat Completions are not supported by "+subject+"; send the file in file_data or use Responses")
 	}
-	if attachment.FileType != "" && !claude {
+	if attachment.FileType != "" && !claude && !(gemini && attachment.URL != "") {
 		return attachmentRefusal(path, " file_type is not supported by "+subject+"; name the media type in a base64 data URL")
 	}
 	if len(formats.MediaTypes) == 0 {
@@ -299,6 +299,41 @@ func CloudRunsModel(provider schemas.ModelProvider, deployment Deployment) bool 
 	return (provider == ProviderAWS || provider == ProviderGoogleCloud) && deployment.Hosting != CompanyAnthropic
 }
 
+// cloudFetchesURLs reports whether the cloud that runs the deployment's model fetches a URL in a
+// request. Bedrock takes an image only inline or from S3 (capture aws/chat-completions-files), and
+// Agent Platform refuses an image URL for open models (capture google-cloud/chat-completions-files).
+// Google fetches a URL for Meta's Muse models, which read only images and PDFs (capture
+// google-cloud/responses-files), and for Gemini, which reads whatever it fetched, audio and video
+// included (capture google-cloud/generate-content-files). So only a Gemini deployment that reads
+// audio and video takes a URL: the catalog lists them only where its input price holds for them.
+func cloudFetchesURLs(deployment Deployment) bool {
+	switch schemas.ModelProvider(deployment.RouteID) {
+	case CoreProviderGoogleCloudMetaResponses:
+		return true
+	case CoreProviderGoogleCloudGenerateContent:
+		return slices.Contains(deployment.InputModalities, "audio") && slices.Contains(deployment.InputModalities, "video")
+	}
+	return false
+}
+
+// remoteURL reports a URL that names content elsewhere, as a data URL does not.
+func remoteURL(url string) bool {
+	return url != "" && !strings.HasPrefix(url, "data:")
+}
+
+// checkedMediaType returns the media type that a policy's input.mediaTypes checks for an
+// attachment on the deployment: the type that the attachment shows, or none for a URL that the
+// cloud fetches. Google reads what it fetched by its content, whatever the part or a declared type
+// says: for Gemini, a web page that the request calls an image as text and an MP3 as audio, and for
+// Meta's Muse models a PDF at an image URL (captures google-cloud/generate-content-files and
+// google-cloud/responses-files).
+func checkedMediaType(provider schemas.ModelProvider, deployment Deployment, url string, shown inputfiles.MediaType) inputfiles.MediaType {
+	if remoteURL(url) && CloudRunsModel(provider, deployment) && cloudFetchesURLs(deployment) {
+		return inputfiles.MediaType{}
+	}
+	return shown
+}
+
 // mediaTypeRefusal refuses the attachment at path when the policy's input.mediaTypes refuse
 // its type, or cannot tell it, or nil.
 func mediaTypeRefusal(types *policy.MediaTypes, path string, mediaType inputfiles.MediaType, resolveErr error) error {
@@ -336,7 +371,8 @@ func newAttachmentPair(selection routingSelection, config *policy.Config) attach
 
 // typeRefusal reports why the pair's policy refuses an attachment's media type, or nil.
 func (p attachmentPair) typeRefusal(attachment Attachment) error {
-	return mediaTypeRefusal(p.mediaTypes, attachment.Path, attachment.mediaType, attachment.mediaTypeErr)
+	mediaType := checkedMediaType(p.selection.provider, p.selection.deployment, attachment.URL, attachment.mediaType)
+	return mediaTypeRefusal(p.mediaTypes, attachment.Path, mediaType, attachment.mediaTypeErr)
 }
 
 // refusal reports why the pair cannot read an attachment, as the preparation of the pair would
