@@ -501,9 +501,11 @@ func NormalizeUpstreamStatus(bifrostErr *schemas.BifrostError) string {
 //   - The account behind the key refuses, rather than the request: Anthropic's spend cap and the
 //     spend limits that an account's owner sets
 //     (https://platform.claude.com/docs/en/api/rate-limits#setting-your-own-spend-limit), a
-//     credit balance too low to start, and an inference_geo that the key's workspace does not
-//     allow (400 "inference_geo 'global' is not allowed for this workspace. Allowed values:
-//     ['us']"). They read as the account's quota and access errors.
+//     credit balance too low to start, an inference_geo that the key's workspace does not allow
+//     (400 "inference_geo 'global' is not allowed for this workspace. Allowed values:
+//     ['us']"), and Bedrock's 400 "Error 002: Access to Bedrock models is not allowed for this
+//     account" for an account that AWS blocked from every model. They read as the account's quota
+//     and access errors.
 //   - The prompt is longer than the deployment's context window, which another deployment of the
 //     model can have larger: Anthropic's 400 "prompt is too long: 215000 tokens > 200000
 //     maximum", also on Bedrock and Vertex, Bedrock's "Input is too long for requested model.",
@@ -531,6 +533,7 @@ func messageRefusal(bifrostErr *schemas.BifrostError) string {
 		strings.HasPrefix(message, "your credit balance is too low"):
 		return "over_budget"
 	case strings.HasPrefix(message, "inference_geo ") && strings.Contains(message, " is not allowed for this workspace"),
+		strings.Contains(message, "access to bedrock models is not allowed for this account"),
 		// OpenAI's restricted key that lacks a permission, as a 401, sometimes without missing_scope.
 		strings.HasPrefix(message, "you have insufficient permissions for this operation"):
 		return "permission_error"
