@@ -104,6 +104,14 @@ func TestDescribeReplacesOnlyInlineAttachments(t *testing.T) {
 			body:      `[{"role":"user","content":[{"type":"input_text","text":"hi"},{"type":"input_image","image_url":"data:image/jpeg;base64,aGVsbG8=","detail":"auto"},{"type":"input_file","file_data":"data:application/pdf;base64,aGVsbG8=","filename":"a.pdf"},{"type":"input_file","file_url":"https://example.com/a.pdf"}]},{"type":"function_call_output","call_id":"c","output":"data:image/png;base64,aGVsbG8="}]`,
 			want:      `[{"role":"user","content":[{"type":"input_text","text":"hi"},{"type":"input_image","image_url":{"media_type":"image/jpeg","size":5,` + digest + `},"detail":"auto"},{"type":"input_file","file_data":{"media_type":"application/pdf","size":5,` + digest + `},"filename":"a.pdf"},{"type":"input_file","file_url":"https://example.com/a.pdf"}]},{"type":"function_call_output","call_id":"c","output":"data:image/png;base64,aGVsbG8="}]`,
 		},
+		{
+			// A computer_call_output holds its screenshot as one object.
+			name:      "computer screenshots",
+			field:     "input",
+			responses: true,
+			body:      `[{"type":"computer_call_output","call_id":"a","output":{"type":"computer_screenshot","image_url":"data:image/png;base64,aGVsbG8=","detail":"original"}},{"type":"computer_call_output","call_id":"b","output":{"type":"computer_screenshot","image_url":"https://example.com/a.png"}},{"type":"computer_call_output","call_id":"c","output":{"type":"computer_screenshot","file_id":"file-1"}}]`,
+			want:      `[{"type":"computer_call_output","call_id":"a","output":{"type":"computer_screenshot","image_url":{"media_type":"image/png","size":5,` + digest + `},"detail":"original"}},{"type":"computer_call_output","call_id":"b","output":{"type":"computer_screenshot","image_url":"https://example.com/a.png"}},{"type":"computer_call_output","call_id":"c","output":{"type":"computer_screenshot","file_id":"file-1"}}]`,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fields := map[string]json.RawMessage{tc.field: json.RawMessage(tc.body), "model": json.RawMessage(`"m"`)}
@@ -267,6 +275,41 @@ func TestChecksNameTheAttachmentAndSeeEveryPart(t *testing.T) {
 	refused := errors.New("refused")
 	if _, err := Process(map[string]json.RawMessage{"messages": json.RawMessage(body)}, false, Options{Check: func(string, MediaType) error { return refused }}); !errors.Is(err, refused) {
 		t.Fatalf("got %v", err)
+	}
+}
+
+// A screenshot is an image like any other: its checks name it by the item's output, and it counts
+// as an opaque attachment, whose tokens the gateway cannot count.
+func TestComputerScreenshotsAreImages(t *testing.T) {
+	body := `[{"role":"user","content":"hi"},{"type":"computer_call","call_id":"c","actions":[{"type":"screenshot"}]},{"type":"computer_call_output","call_id":"c","output":{"type":"computer_screenshot","image_url":"data:image/png;base64,` + encoded(pngBytes) + `"}},{"type":"computer_call_output","call_id":"d","output":{"type":"computer_screenshot","file_id":"file-1"}}]`
+	var seen []string
+	fields := map[string]json.RawMessage{"input": json.RawMessage(body)}
+	stats, err := Process(fields, true, Options{Check: func(path string, mediaType MediaType) error {
+		seen = append(seen, path+" "+mediaType.String())
+		return nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(seen, []string{"input[2].output image/png", "input[3].output image/* of unknown type"}) {
+		t.Fatalf("checked %v", seen)
+	}
+	if stats.Count != 2 || stats.IDs != 1 || stats.InlineBytes != len(pngBytes) || stats.Opaque != "input[2].output" || string(fields["input"]) != body {
+		t.Fatalf("stats %+v, body %s", stats, fields["input"])
+	}
+	for name, output := range map[string]string{
+		"two sources":    `{"type":"computer_screenshot","image_url":"https://example.com/a.png","file_id":"file-1"}`,
+		"text as a PNG":  `{"type":"computer_screenshot","image_url":"data:image/png;base64,aGVsbG8="}`,
+		"invalid base64": `{"type":"computer_screenshot","image_url":"data:image/png;base64,@@@@"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := `[{"type":"computer_call_output","call_id":"c","output":` + output + `}]`
+			_, err := Process(map[string]json.RawMessage{"input": json.RawMessage(body)}, true, Options{Check: func(string, MediaType) error { return nil }})
+			var part *PartError
+			if !errors.As(err, &part) || part.Path != "input[0].output" {
+				t.Fatalf("got %v", err)
+			}
+		})
 	}
 }
 

@@ -399,6 +399,58 @@ func TestRoutingSkipsPairsWhosePolicyRefusesMediaTypes(t *testing.T) {
 	}
 }
 
+// The screenshot of a computer_call_output is an image of the input: routing names it by the item's
+// output, skips a deployment that reads no images, and gives it a policy's checks of attachments.
+func TestRoutingReadsComputerScreenshotsAsImages(t *testing.T) {
+	gpt := []string{"azure-gpt-5.6-sol", "openai-gpt-5.6-sol"}
+	const body = `{"model":"gpt-5.6-sol","input":[{"role":"user","content":"Click the button."},` +
+		`{"type":"computer_call","call_id":"call_1","actions":[{"type":"screenshot"}]},` +
+		`{"type":"computer_call_output","call_id":"call_1","output":{"type":"computer_screenshot","image_url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=="}}]}`
+	for _, tc := range []struct {
+		name, want, wantErr string
+		textOnly            []string
+		input               *policy.Input
+	}{
+		{name: "a deployment that reads images", want: gpt[0]},
+		{name: "a deployment without images", textOnly: gpt[:1], want: gpt[1]},
+		{name: "no deployment with images", textOnly: gpt,
+			wantErr: "input[2].output image input is not supported by any deployment that this request can use"},
+		{name: "a refused media type", input: &policy.Input{MediaTypes: &policy.MediaTypes{Deny: []string{"image/png"}}},
+			wantErr: "input[2].output is image/png, which input.mediaTypes refuses"},
+		{name: "input limited to ASCII", input: &policy.Input{ASCIIOnly: true},
+			wantErr: "input[2].output is an attachment, which input.asciiOnly cannot check"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			snap := loadTestCatalog(t)
+			for _, id := range tc.textOnly {
+				deployment := snap.graph.Deployments[id]
+				for routeID, route := range deployment.Routes {
+					route.InputModalities = []string{"text"}
+					deployment.Routes[routeID] = route
+				}
+			}
+			config := policyConfig(1)
+			config.Routing.Deployments = &policy.Lists{Allow: gpt}
+			config.Routing.Query = orderedQuery(t, "", gpt...)
+			config.Input = tc.input
+			resolved, err := ResolveRequest(RequestInput{Body: []byte(body), Method: "POST", Path: "/v1/responses", Policy: config})
+			if tc.wantErr != "" {
+				public := PublicError(err)
+				if public.StatusCode != 400 || public.Code != AttachmentUnsupported || public.Param != "input[2].output" || !strings.HasPrefix(public.Message, tc.wantErr) {
+					t.Fatalf("want %q: %+v", tc.wantErr, public)
+				}
+				return
+			}
+			if err != nil || resolved.Deployment.ID != tc.want {
+				t.Fatalf("want %s: resolved=%v error=%v", tc.want, resolved, err)
+			}
+			if estimate, _ := resolved.EstimatedInputTokens(); estimate != resolved.Deployment.MaxInputTokens {
+				t.Fatalf("a screenshot holds %d input tokens, want the whole input %d", estimate, resolved.Deployment.MaxInputTokens)
+			}
+		})
+	}
+}
+
 // Routing reads a data URL's header and the start of its payload, however the JSON escapes it,
 // so that it sniffs the bytes that the request's preparation sniffs.
 func TestStringHeadKeepsTheBytesThatSniffingReads(t *testing.T) {

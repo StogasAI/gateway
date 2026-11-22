@@ -870,7 +870,8 @@ func responsesMessageHasOutput(message *schemas.ResponsesMessage) bool {
 	if tool == nil {
 		return false
 	}
-	if nonEmptyString(tool.Name) || nonEmptyString(tool.Arguments) || responsesToolActionHasOutput(tool.Action) {
+	if nonEmptyString(tool.Name) || nonEmptyString(tool.Arguments) || responsesToolActionHasOutput(tool.Action) ||
+		tool.ResponsesComputerToolCall != nil && len(tool.ResponsesComputerToolCall.Actions) > 0 {
 		return true
 	}
 	if tool.Output != nil {
@@ -960,7 +961,8 @@ func responsesMessageHasToken(message *schemas.ResponsesMessage) bool {
 	if tool == nil {
 		return false
 	}
-	if nonEmptyString(tool.Name) || nonEmptyString(tool.Arguments) || responsesToolActionHasToken(tool.Action) {
+	if nonEmptyString(tool.Name) || nonEmptyString(tool.Arguments) || responsesToolActionHasToken(tool.Action) ||
+		tool.ResponsesComputerToolCall != nil && len(tool.ResponsesComputerToolCall.Actions) > 0 {
 		return true
 	}
 	return tool.ResponsesImageGenerationCall != nil && tool.ResponsesImageGenerationCall.Result != "" ||

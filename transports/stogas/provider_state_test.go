@@ -107,6 +107,11 @@ func TestContinuedResponsesAnswerCallsThatTheProviderHolds(t *testing.T) {
 		{"a tool result", `"previous_response_id":"resp_1","tools":[{"type":"function","name":"lookup"}],"input":[` + output + `]`, ""},
 		{"a tool result in a conversation", `"conversation":"conv_1","tools":[{"type":"function","name":"lookup"}],"input":[` + output + `]`, ""},
 		{"an approval", `"previous_response_id":"resp_1","tools":[` + mcpServerTool + `],"input":[` + approval + `]`, ""},
+		{"a screenshot", `"previous_response_id":"resp_1","tools":[{"type":"computer"}],"input":[{"type":"computer_call_output","call_id":"call_1",` +
+			`"output":{"type":"computer_screenshot","image_url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=="}}]`, ""},
+		{"a screenshot for a function call", `"previous_response_id":"resp_1","tools":[{"type":"function","name":"lookup"},{"type":"computer"}],"input":[` +
+			`{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"},{"type":"computer_call_output","call_id":"call_1",` +
+			`"output":{"type":"computer_screenshot","image_url":"https://example.com/screen.png"}}]`, "selects a different client tool type"},
 		{"a stateless tool result", `"tools":[{"type":"function","name":"lookup"}],"input":[` + output + `]`, "must match an earlier client tool call"},
 		{"a stateless approval", `"tools":[` + mcpServerTool + `],"input":[{"role":"user","content":"hi"},` + approval + `]`, "must answer an mcp_approval_request in the same input"},
 		{"a result of another kind", `"previous_response_id":"resp_1","tools":[{"type":"function","name":"lookup"},{"type":"custom","name":"edit"}],"input":[` +

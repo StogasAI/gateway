@@ -94,7 +94,7 @@ func Describe(fields map[string]json.RawMessage, responses bool) (map[string]jso
 			parent, key = "input_audio", "data"
 		case !responses && kind == "file":
 			parent, key = "file", "file_data"
-		case responses && kind == "input_image":
+		case responses && (kind == "input_image" || kind == "computer_screenshot"):
 			key = "image_url"
 		case responses && kind == "input_file":
 			key = "file_data"
@@ -143,27 +143,65 @@ func Describe(fields map[string]json.RawMessage, responses bool) (map[string]jso
 	return described, nil
 }
 
-// Parts names the member of a message or input item that holds the parts that can be attachments,
-// and whether they are a tool result's: the content of a user message, the content of a Chat
-// Completions tool message and the output of a Responses tool output. It reports false for any
+// ItemParts says where a message or input item holds the parts that can be attachments.
+type ItemParts struct {
+	// Key names the member that holds them.
+	Key string
+	// ToolResult says that they are a tool's result.
+	ToolResult bool
+	// Single says that the member holds one part, as the output of a computer_call_output holds its
+	// screenshot, rather than an array of parts.
+	Single bool
+}
+
+// Parts names the member of a message or input item that holds the parts that can be attachments:
+// the content of a user message, the content of a Chat Completions tool message, the output of a
+// Responses tool output and the screenshot of a computer_call_output. It reports false for any
 // other item, where the request checks refuse an attachment.
-func Parts(item map[string]json.RawMessage, responses bool) (key string, toolResult, ok bool) {
+func Parts(item map[string]json.RawMessage, responses bool) (ItemParts, bool) {
 	if responses {
 		switch stringField(item, "type") {
 		case "", "message":
-			return "content", false, stringField(item, "role") == "user"
+			return ItemParts{Key: "content"}, stringField(item, "role") == "user"
 		case "function_call_output", "custom_tool_call_output":
-			return "output", true, true
+			return ItemParts{Key: "output", ToolResult: true}, true
+		case "computer_call_output":
+			return ItemParts{Key: "output", Single: true}, true
 		}
-		return "", false, false
+		return ItemParts{}, false
 	}
 	switch stringField(item, "role") {
 	case "user":
-		return "content", false, true
+		return ItemParts{Key: "content"}, true
 	case "tool":
-		return "content", true, true
+		return ItemParts{Key: "content", ToolResult: true}, true
 	}
-	return "", false, false
+	return ItemParts{}, false
+}
+
+// Blocks returns the item's parts with the path of each under prefix, such as input[2]: the
+// elements of an array, input[2].output[0] and on, or the single part, input[2].output. It returns
+// none where the member holds no array, or no object for a single part.
+func (p ItemParts) Blocks(item map[string]json.RawMessage, prefix string) ([]json.RawMessage, []string, error) {
+	content := bytes.TrimSpace(item[p.Key])
+	if p.Single {
+		if len(content) == 0 || content[0] != '{' {
+			return nil, nil, nil
+		}
+		return []json.RawMessage{content}, []string{prefix + "." + p.Key}, nil
+	}
+	if len(content) == 0 || content[0] != '[' {
+		return nil, nil, nil
+	}
+	blocks, err := rawjson.Array(content)
+	if err != nil {
+		return nil, nil, err
+	}
+	paths := make([]string, len(blocks))
+	for j := range blocks {
+		paths[j] = fmt.Sprintf("%s.%s[%d]", prefix, p.Key, j)
+	}
+	return blocks, paths, nil
 }
 
 // replaceBlocks visits the parts of each user message and tool result and re-encodes only the
@@ -188,15 +226,11 @@ func replaceBlocks(fields map[string]json.RawMessage, responses bool, replace fu
 		if err != nil {
 			continue
 		}
-		key, _, ok := Parts(item, responses)
+		parts, ok := Parts(item, responses)
 		if !ok {
 			continue
 		}
-		content := bytes.TrimSpace(item[key])
-		if len(content) == 0 || content[0] != '[' {
-			continue
-		}
-		blocks, err := rawjson.Array(content)
+		blocks, paths, err := parts.Blocks(item, fmt.Sprintf("%s[%d]", field, i))
 		if err != nil {
 			return err
 		}
@@ -206,7 +240,7 @@ func replaceBlocks(fields map[string]json.RawMessage, responses bool, replace fu
 			if err != nil {
 				continue
 			}
-			replacement, err := replace(fmt.Sprintf("%s[%d].%s[%d]", field, i, key, j), block)
+			replacement, err := replace(paths[j], block)
 			if err != nil {
 				return err
 			}
@@ -215,7 +249,9 @@ func replaceBlocks(fields map[string]json.RawMessage, responses bool, replace fu
 			}
 		}
 		if itemChanged {
-			if item[key], err = sonic.Marshal(blocks); err != nil {
+			if parts.Single {
+				item[parts.Key] = blocks[0]
+			} else if item[parts.Key], err = sonic.Marshal(blocks); err != nil {
 				return err
 			}
 			if items[i], err = sonic.Marshal(item); err != nil {
@@ -262,7 +298,7 @@ func (p *processor) block(path string, block map[string]json.RawMessage, respons
 			return nil, refuse("image_url must be an object")
 		}
 		sourceURL, id = stringField(image, "url"), stringField(image, "file_id")
-	case responses && kind == "input_image":
+	case responses && (kind == "input_image" || kind == "computer_screenshot"):
 		sourceURL, id = stringField(block, "image_url"), stringField(block, "file_id")
 	case !responses && kind == "input_audio":
 		audio, err := rawjson.Object(block["input_audio"])

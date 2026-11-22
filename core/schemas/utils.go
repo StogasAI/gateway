@@ -1684,8 +1684,13 @@ func DeepCopyResponsesMessage(original ResponsesMessage) ResponsesMessage {
 		// Deep copy ResponsesComputerToolCall.
 		if original.ResponsesToolMessage.ResponsesComputerToolCall != nil {
 			copyToolCall := *original.ResponsesToolMessage.ResponsesComputerToolCall
-			if original.ResponsesToolMessage.ResponsesComputerToolCall.PendingSafetyChecks != nil {
-				copyToolCall.PendingSafetyChecks = append([]ResponsesComputerToolCallPendingSafetyCheck(nil), original.ResponsesToolMessage.ResponsesComputerToolCall.PendingSafetyChecks...)
+			if checks := original.ResponsesToolMessage.ResponsesComputerToolCall.PendingSafetyChecks; checks != nil {
+				copyToolCall.PendingSafetyChecks = make([]ResponsesComputerToolCallPendingSafetyCheck, len(checks))
+				for i, check := range checks {
+					copyToolCall.PendingSafetyChecks[i] = ResponsesComputerToolCallPendingSafetyCheck{
+						ID: check.ID, Code: cloneStringPtr(check.Code), Message: cloneStringPtr(check.Message),
+					}
+				}
 			}
 			if actions := original.ResponsesToolMessage.ResponsesComputerToolCall.Actions; actions != nil {
 				copyToolCall.Actions = make([]ResponsesComputerToolCallAction, len(actions))

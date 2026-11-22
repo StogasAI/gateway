@@ -2820,11 +2820,12 @@ type ResponsesComputerToolCall struct {
 	Actions             []ResponsesComputerToolCallAction             `json:"actions,omitempty"`
 }
 
-// ResponsesComputerToolCallPendingSafetyCheck represents a pending safety check
+// ResponsesComputerToolCallPendingSafetyCheck represents a pending safety check. OpenAI's API
+// reference makes its code and message optional.
 type ResponsesComputerToolCallPendingSafetyCheck struct {
-	ID      string `json:"id"`
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	ID      string  `json:"id"`
+	Code    *string `json:"code,omitempty"`
+	Message *string `json:"message,omitempty"`
 }
 
 // ResponsesComputerToolCallAction represents the different types of computer actions
@@ -2856,6 +2857,9 @@ type ResponsesComputerToolCallOutputData struct {
 	Type     string  `json:"type"` // always "computer_screenshot"
 	FileID   *string `json:"file_id,omitempty"`
 	ImageURL *string `json:"image_url,omitempty"`
+	// Detail is the image detail, which OpenAI's computer use guide sends as "original" and its API
+	// takes, although its API reference leaves the field out.
+	Detail *string `json:"detail,omitempty"`
 }
 
 // ResponsesComputerToolCallAcknowledgedSafetyCheck represents a safety check that has been acknowledged by the developer

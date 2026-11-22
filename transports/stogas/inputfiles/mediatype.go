@@ -74,7 +74,7 @@ func sniff(data []byte) string {
 func ResolveMediaType(kind, declared, payload string) (MediaType, error) {
 	class := ""
 	switch kind {
-	case "image_url", "input_image":
+	case "image_url", "input_image", "computer_screenshot":
 		class = "image"
 	case "input_audio":
 		class = "audio"

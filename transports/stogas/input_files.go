@@ -34,6 +34,10 @@ func validateNativeAttachment(state *State, block map[string]json.RawMessage, pa
 		if err := rejectUnsupportedInputKeys(block, path, "type", "image_url", "file_id", "detail", "cache_control", "prompt_cache_breakpoint"); err != nil {
 			return err
 		}
+	case "computer_screenshot":
+		if err := rejectUnsupportedInputKeys(block, path, "type", "image_url", "file_id", "detail"); err != nil {
+			return err
+		}
 	case "input_audio":
 		if err := rejectUnsupportedInputKeys(block, path, "type", "input_audio", "prompt_cache_breakpoint"); err != nil {
 			return err
@@ -84,7 +88,7 @@ func validateNativeAttachment(state *State, block map[string]json.RawMessage, pa
 	switch kind {
 	case "image_url":
 		sourceURL = values["url"]
-	case "input_image":
+	case "input_image", "computer_screenshot":
 		sourceURL, id = values["image_url"], values["file_id"]
 	case "input_audio":
 		data = values["data"]

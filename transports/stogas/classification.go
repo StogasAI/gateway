@@ -75,7 +75,8 @@ func (s *State) classifyResponsesOutput(response *schemas.BifrostResponsesRespon
 }
 
 // classifyResponsesStream reads the deltas of a stream, which validation holds to every text of
-// its items but a patch's path, which arrives with the call.
+// its items but a patch's path, which arrives with the call, and the text that a computer call
+// types, which arrives when the call ends.
 func (s *State) classifyResponsesStream(event *schemas.BifrostResponsesStreamResponse) {
 	language, hidden := s.replyClassifiers()
 	if !language && !hidden || event == nil || event.OutputIndex == nil {
@@ -93,9 +94,18 @@ func (s *State) classifyResponsesStream(event *schemas.BifrostResponsesStreamRes
 		s.reply.read(source, stringValue(event.Delta), reply && language, hidden)
 		return
 	}
-	if item := event.Item; event.Type == schemas.ResponsesStreamResponseTypeOutputItemAdded && item != nil && item.ResponsesToolMessage != nil {
+	item := event.Item
+	if item == nil || item.Type == nil || item.ResponsesToolMessage == nil {
+		return
+	}
+	switch {
+	case event.Type == schemas.ResponsesStreamResponseTypeOutputItemAdded:
 		if call := item.ResponsesApplyPatchCall; call != nil && call.Operation != nil {
 			s.reply.read(textSource{kind: responsesPath, item: index}, call.Operation.Path, false, hidden)
+		}
+	case event.Type == schemas.ResponsesStreamResponseTypeOutputItemDone && *item.Type == schemas.ResponsesMessageTypeComputerCall:
+		for i, action := range providerComputerActions(item.ResponsesToolMessage) {
+			s.reply.read(textSource{kind: responsesValue, item: index, part: i}, stringValue(action.Text), false, hidden)
 		}
 	}
 }

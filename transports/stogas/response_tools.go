@@ -616,6 +616,21 @@ func providerResponsesToolItemValue(item *schemas.ResponsesMessage) (string, boo
 	}
 }
 
+// providerComputerActions returns the actions of a computer call: its list, or the one action of a
+// call of the retired preview.
+func providerComputerActions(tool *schemas.ResponsesToolMessage) []schemas.ResponsesComputerToolCallAction {
+	if tool == nil {
+		return nil
+	}
+	if tool.ResponsesComputerToolCall != nil && len(tool.ResponsesComputerToolCall.Actions) > 0 {
+		return tool.ResponsesComputerToolCall.Actions
+	}
+	if tool.Action != nil && tool.Action.ResponsesComputerToolCallAction != nil {
+		return []schemas.ResponsesComputerToolCallAction{*tool.Action.ResponsesComputerToolCallAction}
+	}
+	return nil
+}
+
 // providerShellCommands returns the commands of a shell call.
 func providerShellCommands(item *schemas.ResponsesMessage) []string {
 	if item == nil || item.ResponsesToolMessage == nil || item.ResponsesToolMessage.Action == nil ||
@@ -677,7 +692,7 @@ func validateProviderResponsesTerminalItem(item *schemas.ResponsesMessage, befor
 			!validProviderText(item.ResponsesToolMessage.ResponsesCustomToolCall.Input, maxProviderResponseBodySize, true) {
 			return ErrProviderResponseMalformed
 		}
-	case schemas.ResponsesMessageTypeShellCall:
+	case schemas.ResponsesMessageTypeShellCall, schemas.ResponsesMessageTypeComputerCall:
 		if !stringInSet(*item.Status, "completed", "incomplete") {
 			return ErrProviderResponseMalformed
 		}
@@ -1095,11 +1110,14 @@ func validateProviderResponsesItem(state *State, item *schemas.ResponsesMessage)
 		if err := validateAndRecordProviderResponsesToolCall(state, item, &observed, true); err != nil {
 			return providerResponsesItem{}, err
 		}
-	case schemas.ResponsesMessageTypeShellCall, schemas.ResponsesMessageTypeApplyPatchCall:
+	case schemas.ResponsesMessageTypeShellCall, schemas.ResponsesMessageTypeApplyPatchCall, schemas.ResponsesMessageTypeComputerCall:
 		kind := schemas.ResponsesToolTypeShell
-		if *item.Type == schemas.ResponsesMessageTypeApplyPatchCall {
+		switch *item.Type {
+		case schemas.ResponsesMessageTypeApplyPatchCall:
 			kind = schemas.ResponsesToolTypeApplyPatch
 			observed.value = &bytes.Buffer{}
+		case schemas.ResponsesMessageTypeComputerCall:
+			kind = schemas.ResponsesToolTypeComputer
 		}
 		if item.Role != nil || item.Phase != nil || item.Content != nil || item.ResponsesReasoning != nil ||
 			!providerResponsesToolTypeAllowed(state, kind) || item.ResponsesToolMessage == nil ||
@@ -1271,8 +1289,7 @@ func validateProviderResponsesToolMessage(state *State, tool *schemas.ResponsesT
 	if tool == nil {
 		return ErrProviderResponseMalformed
 	}
-	if tool.Execution != nil || tool.Output != nil || tool.Error != nil ||
-		tool.ResponsesFileSearchToolCall != nil || tool.ResponsesComputerToolCall != nil ||
+	if tool.Execution != nil || tool.Output != nil || tool.Error != nil || tool.ResponsesFileSearchToolCall != nil ||
 		tool.ResponsesComputerToolCallOutput != nil || tool.ServerLabel != nil ||
 		tool.ResponsesImageGenerationCall != nil || tool.ResponsesMCPListTools != nil ||
 		tool.ResponsesMCPApprovalResponse != nil || tool.ResponsesAdvisorCall != nil ||
@@ -1282,7 +1299,8 @@ func validateProviderResponsesToolMessage(state *State, tool *schemas.ResponsesT
 	}
 	shell, patch := itemType == schemas.ResponsesMessageTypeShellCall, itemType == schemas.ResponsesMessageTypeApplyPatchCall
 	if tool.ResponsesShellCall != nil && !shell || tool.ResponsesApplyPatchCall != nil && !patch ||
-		(tool.ItemCaller != nil || tool.CreatedBy != nil) && !shell && !patch {
+		(tool.ItemCaller != nil || tool.CreatedBy != nil) && !shell && !patch ||
+		tool.ResponsesComputerToolCall != nil && itemType != schemas.ResponsesMessageTypeComputerCall {
 		return ErrProviderResponseMalformed
 	}
 
@@ -1314,6 +1332,40 @@ func validateProviderResponsesToolMessage(state *State, tool *schemas.ResponsesT
 		}
 		for _, command := range action.Commands {
 			if !validProviderText(command, maxProviderResponseBodySize, true) {
+				return ErrProviderResponseMalformed
+			}
+		}
+	case schemas.ResponsesMessageTypeComputerCall:
+		// The client runs every action, and OpenAI decides which exist. A call of the retired
+		// preview holds one action.
+		if tool.CallID == nil || tool.Name != nil || tool.Namespace != nil || tool.Arguments != nil || tool.Caller != nil ||
+			tool.ResponsesCustomToolCall != nil || tool.ResponsesWebFetchCall != nil ||
+			tool.Action != nil && tool.Action.ResponsesComputerToolCallAction == nil {
+			return ErrProviderResponseMalformed
+		}
+		actions := providerComputerActions(tool)
+		var checks []schemas.ResponsesComputerToolCallPendingSafetyCheck
+		if tool.ResponsesComputerToolCall != nil {
+			checks = tool.ResponsesComputerToolCall.PendingSafetyChecks
+		}
+		if len(actions) > maxProviderResponseItems || len(checks) > maxProviderResponseItems {
+			return ErrProviderResponseMalformed
+		}
+		for _, action := range actions {
+			if !validProviderText(action.Type, maxProviderResponseIDBytes, false) ||
+				!validOptionalProviderText(action.Button, maxProviderResponseIDBytes, false) ||
+				!validOptionalProviderText(action.Text, maxProviderResponseBodySize, true) || len(action.Keys) > maxProviderResponseItems {
+				return ErrProviderResponseMalformed
+			}
+			for _, key := range action.Keys {
+				if !validProviderText(key, maxProviderResponseIDBytes, false) {
+					return ErrProviderResponseMalformed
+				}
+			}
+		}
+		for _, check := range checks {
+			if !validProviderText(check.ID, maxProviderResponseIDBytes, false) || !validOptionalProviderText(check.Code, maxProviderResponseIDBytes, true) ||
+				!validOptionalProviderText(check.Message, maxProviderResponseBodySize, true) {
 				return ErrProviderResponseMalformed
 			}
 		}
@@ -1658,7 +1710,7 @@ func validateAndRecordProviderResponsesToolCall(state *State, item *schemas.Resp
 		state.responsesToolCalls++
 		switch *item.Type {
 		case schemas.ResponsesMessageTypeFunctionCall, schemas.ResponsesMessageTypeCustomToolCall,
-			schemas.ResponsesMessageTypeShellCall, schemas.ResponsesMessageTypeApplyPatchCall:
+			schemas.ResponsesMessageTypeShellCall, schemas.ResponsesMessageTypeApplyPatchCall, schemas.ResponsesMessageTypeComputerCall:
 			state.responsesDeclaredCalls++
 			state.responsesClientCalls++
 		case schemas.ResponsesMessageTypeToolSearchCall:

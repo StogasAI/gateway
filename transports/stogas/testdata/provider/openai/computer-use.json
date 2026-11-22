@@ -1,0 +1,1685 @@
+{
+	"shows": "With store: false, OpenAI's computer tool returns a computer_call with a list of actions, such as typing text, takes the call back with a computer_call_output screenshot, with or without detail original and with acknowledged_safety_checks null, and goes on, streams the call as a whole item, takes tool_choice {type: computer}, and adds the same input tokens on GPT-5.6 Luna and GPT-6.2 Sol. It refuses a screenshot with an empty image URL, and the preview tool needs its own model.",
+	"recorded": "2026-11-22",
+	"exchanges": [
+		{
+			"name": "a call",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-5.6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 400,
+					"tools": [
+						{
+							"type": "computer"
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Take a screenshot of the screen, then click the red disk on it."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_07e42af2bdf480ec016b02420b158c87d1b4ba311422bf1855",
+					"object": "response",
+					"created_at": 1795310091,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795310092,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 400,
+					"max_tool_calls": null,
+					"model": "gpt-5.6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "cu_07e42af2bdf480ec016b02420c0f9487d1a228c8bb8d367cfe",
+							"type": "computer_call",
+							"status": "completed",
+							"actions": [
+								{
+									"type": "screenshot"
+								}
+							],
+							"call_id": "call_hfrYLbSTkZOlzRD9kTn0ynQD"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "computer"
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 832,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 15,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 847
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "without the tool",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-5.6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 400,
+					"input": [
+						{
+							"role": "user",
+							"content": "Take a screenshot of the screen, then click the red disk on it."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795310093,
+					"created_at": 1795310092,
+					"error": null,
+					"frequency_penalty": 0,
+					"id": "resp_06f6eb45e2079100016b02420c661c87d1948d84f61f287fb4",
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 400,
+					"max_tool_calls": null,
+					"model": "gpt-5.6-luna",
+					"moderation": null,
+					"object": "response",
+					"output": [
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "I’m unable to access or interact with your screen in this chat.",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_06f6eb45e2079100016b02420d2b0887d198ca9380ad23297e",
+							"phase": "final_answer",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"status": "completed",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 21,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 24,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 45
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "a screenshot returned",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-5.6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 400,
+					"tools": [
+						{
+							"type": "computer"
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Take a screenshot of the screen, then click the red disk on it."
+						},
+						{
+							"id": "cu_07e42af2bdf480ec016b02420c0f9487d1a228c8bb8d367cfe",
+							"type": "computer_call",
+							"status": "completed",
+							"actions": [
+								{
+									"type": "screenshot"
+								}
+							],
+							"call_id": "call_hfrYLbSTkZOlzRD9kTn0ynQD"
+						},
+						{
+							"type": "computer_call_output",
+							"call_id": "call_hfrYLbSTkZOlzRD9kTn0ynQD",
+							"output": {
+								"type": "computer_screenshot",
+								"image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAyUlEQVR4nO2ZQRKEIAwE5/+fZo+7tadgkEmgpzxLt6OCotE8Gs2DgDs04A4NuEMD7tDA/wVR6CjXQJD7BRPZ0BdpyE+fc1AJ+oSDSqAnNFSLft7hNoEN9JMOqkg/46Ci9GGHSwQs9DEHBBo0YLx/Ag4I0AC3EA8xbyFeo0xkzMQsJc5ejSJQoIH238QnCLT/L7TZIU502b/REwTa7w+8p/GM4uI9soUOmfGzAkmN/Mgr8H/Pt4n7O+BoHgTcoQF3aMAdGnBHboBsPhOLC++0el++AAAAAElFTkSuQmCC"
+							}
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_07e42af2bdf480ec016b02420dd02087d1b6ce60eae705b989",
+					"object": "response",
+					"created_at": 1795310093,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795310095,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 400,
+					"max_tool_calls": null,
+					"model": "gpt-5.6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "cu_07e42af2bdf480ec016b02420ed43087d194cd2cbe5a688447",
+							"type": "computer_call",
+							"status": "completed",
+							"actions": [
+								{
+									"type": "screenshot"
+								}
+							],
+							"call_id": "call_F8leeWNxFpbs6l65dtGAvjqS"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "computer"
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 853,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 18,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 871
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "a screenshot at original detail",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-5.6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 400,
+					"tools": [
+						{
+							"type": "computer"
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Take a screenshot of the screen, then click the red disk on it."
+						},
+						{
+							"id": "cu_07e42af2bdf480ec016b02420c0f9487d1a228c8bb8d367cfe",
+							"type": "computer_call",
+							"status": "completed",
+							"actions": [
+								{
+									"type": "screenshot"
+								}
+							],
+							"call_id": "call_hfrYLbSTkZOlzRD9kTn0ynQD"
+						},
+						{
+							"type": "computer_call_output",
+							"call_id": "call_hfrYLbSTkZOlzRD9kTn0ynQD",
+							"output": {
+								"type": "computer_screenshot",
+								"image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAyUlEQVR4nO2ZQRKEIAwE5/+fZo+7tadgkEmgpzxLt6OCotE8Gs2DgDs04A4NuEMD7tDA/wVR6CjXQJD7BRPZ0BdpyE+fc1AJ+oSDSqAnNFSLft7hNoEN9JMOqkg/46Ci9GGHSwQs9DEHBBo0YLx/Ag4I0AC3EA8xbyFeo0xkzMQsJc5ejSJQoIH238QnCLT/L7TZIU502b/REwTa7w+8p/GM4uI9soUOmfGzAkmN/Mgr8H/Pt4n7O+BoHgTcoQF3aMAdGnBHboBsPhOLC++0el++AAAAAElFTkSuQmCC",
+								"detail": "original"
+							}
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_07e42af2bdf480ec016b02420f6a9c87d19ae04771f0a5b7dd",
+					"object": "response",
+					"created_at": 1795310095,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795310096,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 400,
+					"max_tool_calls": null,
+					"model": "gpt-5.6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "cu_07e42af2bdf480ec016b0242106ca087d1b017dde592ae2cf6",
+							"type": "computer_call",
+							"status": "completed",
+							"actions": [
+								{
+									"type": "screenshot"
+								}
+							],
+							"call_id": "call_YTrsPveym70fqInfSIjNKIII"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "computer"
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 853,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 15,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 868
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "a screenshot without safety checks",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-5.6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 400,
+					"tools": [
+						{
+							"type": "computer"
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Take a screenshot of the screen, then click the red disk on it."
+						},
+						{
+							"id": "cu_07e42af2bdf480ec016b02420c0f9487d1a228c8bb8d367cfe",
+							"type": "computer_call",
+							"status": "completed",
+							"actions": [
+								{
+									"type": "screenshot"
+								}
+							],
+							"call_id": "call_hfrYLbSTkZOlzRD9kTn0ynQD"
+						},
+						{
+							"type": "computer_call_output",
+							"call_id": "call_hfrYLbSTkZOlzRD9kTn0ynQD",
+							"output": {
+								"type": "computer_screenshot",
+								"image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAyUlEQVR4nO2ZQRKEIAwE5/+fZo+7tadgkEmgpzxLt6OCotE8Gs2DgDs04A4NuEMD7tDA/wVR6CjXQJD7BRPZ0BdpyE+fc1AJ+oSDSqAnNFSLft7hNoEN9JMOqkg/46Ci9GGHSwQs9DEHBBo0YLx/Ag4I0AC3EA8xbyFeo0xkzMQsJc5ejSJQoIH238QnCLT/L7TZIU502b/REwTa7w+8p/GM4uI9soUOmfGzAkmN/Mgr8H/Pt4n7O+BoHgTcoQF3aMAdGnBHboBsPhOLC++0el++AAAAAElFTkSuQmCC"
+							},
+							"acknowledged_safety_checks": null
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_07e42af2bdf480ec016b024210df4487d1b71339e1e6519c84",
+					"object": "response",
+					"created_at": 1795310096,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795310097,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 400,
+					"max_tool_calls": null,
+					"model": "gpt-5.6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "cu_07e42af2bdf480ec016b024211d19087d18b554ddd73a08641",
+							"type": "computer_call",
+							"status": "completed",
+							"actions": [
+								{
+									"type": "screenshot"
+								}
+							],
+							"call_id": "call_06GaQMQ5iGx5xdl765iC9Yw7"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "computer"
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 853,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 18,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 871
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "an empty screenshot",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-5.6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 400,
+					"tools": [
+						{
+							"type": "computer"
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Take a screenshot of the screen, then click the red disk on it."
+						},
+						{
+							"id": "cu_07e42af2bdf480ec016b02420c0f9487d1a228c8bb8d367cfe",
+							"type": "computer_call",
+							"status": "completed",
+							"actions": [
+								{
+									"type": "screenshot"
+								}
+							],
+							"call_id": "call_hfrYLbSTkZOlzRD9kTn0ynQD"
+						},
+						{
+							"type": "computer_call_output",
+							"call_id": "call_hfrYLbSTkZOlzRD9kTn0ynQD",
+							"output": {
+								"type": "computer_screenshot",
+								"image_url": ""
+							}
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Invalid 'input[2].output.image_url'. Expected a valid URL, but got a value with an invalid format.",
+						"type": "invalid_request_error",
+						"param": "input[2].output.image_url",
+						"code": "invalid_value"
+					}
+				}
+			}
+		},
+		{
+			"name": "a typed text",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-5.6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 400,
+					"tools": [
+						{
+							"type": "computer"
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "The text box on the screen has focus. Type the word hello into it."
+						},
+						{
+							"id": "cu_07e42af2bdf480ec016b02420c0f9487d1a228c8bb8d367cfe",
+							"type": "computer_call",
+							"status": "completed",
+							"actions": [
+								{
+									"type": "screenshot"
+								}
+							],
+							"call_id": "call_hfrYLbSTkZOlzRD9kTn0ynQD"
+						},
+						{
+							"type": "computer_call_output",
+							"call_id": "call_hfrYLbSTkZOlzRD9kTn0ynQD",
+							"output": {
+								"type": "computer_screenshot",
+								"image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAX0lEQVR4nO3RAQkAAAjAMPuX1hhD+Bqczz43+1wBWge0Dmgd0DqgdUDrgNYBrQNaB7QOaB3QOqB1QOuA1gGtA1oHtA5oHdA6oHVA64DWAa0DWge0Dmgd0DqgdUDrwGIHylPSwu0dqWUAAAAASUVORK5CYII="
+							}
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_07e42af2bdf480ec016b024212304c87d1a75eca8f536a6739",
+					"object": "response",
+					"created_at": 1795310098,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795310099,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 400,
+					"max_tool_calls": null,
+					"model": "gpt-5.6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "cu_07e42af2bdf480ec016b0242131ecc87d199633e70c96fb1a2",
+							"type": "computer_call",
+							"status": "completed",
+							"actions": [
+								{
+									"type": "type",
+									"text": "hello"
+								}
+							],
+							"call_id": "call_rJ15ZeZBJrprLXN4Sgbqxji1"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "computer"
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 854,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 23,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 877
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "a call on GPT-6.2 Sol",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6.2-sol",
+					"store": false,
+					"reasoning": {
+						"effort": "low"
+					},
+					"max_output_tokens": 400,
+					"tools": [
+						{
+							"type": "computer"
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Take a screenshot of the screen, then click the red disk on it."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_0f9f56743b1431df016b02421399b887d18c70222c09af2cfb",
+					"object": "response",
+					"created_at": 1795310099,
+					"status": "completed",
+					"access_programs": {
+						"cyber": "standard"
+					},
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795310101,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 400,
+					"max_tool_calls": null,
+					"model": "gpt-6.2-sol",
+					"moderation": null,
+					"output": [
+						{
+							"id": "cu_0f9f56743b1431df016b024214a7f887d1bc0dadfcf24c335e",
+							"type": "computer_call",
+							"status": "completed",
+							"actions": [
+								{
+									"type": "screenshot"
+								}
+							],
+							"call_id": "call_3w27uVWpgKjGxV1jOVJALeND"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "low",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "computer"
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 1,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 832,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 20,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 852
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "without the tool on GPT-6.2 Sol",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6.2-sol",
+					"store": false,
+					"reasoning": {
+						"effort": "low"
+					},
+					"max_output_tokens": 400,
+					"input": [
+						{
+							"role": "user",
+							"content": "Take a screenshot of the screen, then click the red disk on it."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"access_programs": {
+						"cyber": "standard"
+					},
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795310102,
+					"created_at": 1795310101,
+					"error": null,
+					"frequency_penalty": 0,
+					"id": "resp_063b51e0e504d26e016b024215956487d18a1f08606fc844ac",
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 400,
+					"max_tool_calls": null,
+					"model": "gpt-6.2-sol",
+					"moderation": null,
+					"object": "response",
+					"output": [
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "I can’t take a screenshot or click your screen from here. If you upload a screenshot, I can point out where to click.",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_063b51e0e504d26e016b0242167e0487d1b834bc3fdfc93afb",
+							"phase": "final_answer",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "low",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"status": "completed",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [],
+					"top_logprobs": 0,
+					"top_p": 1,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 21,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 31,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 52
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "a streamed call",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-5.6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 400,
+					"tools": [
+						{
+							"type": "computer"
+						}
+					],
+					"stream": true,
+					"input": [
+						{
+							"role": "user",
+							"content": "Take a screenshot of the screen, then click the red disk on it."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"events": [
+					{
+						"type": "response.created",
+						"response": {
+							"id": "resp_0efcc6d47ff8d144016b024217253087d1a5e277b38fd34761",
+							"object": "response",
+							"created_at": 1795310103,
+							"status": "in_progress",
+							"access_programs": null,
+							"background": false,
+							"completed_at": null,
+							"error": null,
+							"frequency_penalty": 0,
+							"image": {
+								"context_compression": "disabled"
+							},
+							"incomplete_details": null,
+							"input_transformations": [],
+							"instructions": null,
+							"max_output_tokens": 400,
+							"max_tool_calls": null,
+							"model": "gpt-5.6-luna",
+							"moderation": null,
+							"output": [],
+							"parallel_tool_calls": true,
+							"presence_penalty": 0,
+							"previous_response_id": null,
+							"prompt_cache_key": null,
+							"prompt_cache_retention": "24h",
+							"reasoning": {
+								"context": "all_turns",
+								"effort": "none",
+								"mode": "standard",
+								"summary": null
+							},
+							"safety_identifier": null,
+							"service_tier": "auto",
+							"store": false,
+							"temperature": 1,
+							"text": {
+								"format": {
+									"type": "text"
+								},
+								"verbosity": "medium"
+							},
+							"tool_choice": "auto",
+							"tool_usage": {
+								"image_gen": {
+									"input_tokens": 0,
+									"input_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"output_tokens": 0,
+									"output_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"total_tokens": 0
+								},
+								"web_search": {
+									"num_requests": 0
+								}
+							},
+							"tools": [
+								{
+									"type": "computer"
+								}
+							],
+							"top_logprobs": 0,
+							"top_p": 0.98,
+							"truncation": "disabled",
+							"usage": null,
+							"user": null,
+							"metadata": {}
+						},
+						"sequence_number": 0
+					},
+					{
+						"type": "response.in_progress",
+						"response": {
+							"id": "resp_0efcc6d47ff8d144016b024217253087d1a5e277b38fd34761",
+							"object": "response",
+							"created_at": 1795310103,
+							"status": "in_progress",
+							"access_programs": null,
+							"background": false,
+							"completed_at": null,
+							"error": null,
+							"frequency_penalty": 0,
+							"image": {
+								"context_compression": "disabled"
+							},
+							"incomplete_details": null,
+							"input_transformations": [],
+							"instructions": null,
+							"max_output_tokens": 400,
+							"max_tool_calls": null,
+							"model": "gpt-5.6-luna",
+							"moderation": null,
+							"output": [],
+							"parallel_tool_calls": true,
+							"presence_penalty": 0,
+							"previous_response_id": null,
+							"prompt_cache_key": null,
+							"prompt_cache_retention": "24h",
+							"reasoning": {
+								"context": "all_turns",
+								"effort": "none",
+								"mode": "standard",
+								"summary": null
+							},
+							"safety_identifier": null,
+							"service_tier": "auto",
+							"store": false,
+							"temperature": 1,
+							"text": {
+								"format": {
+									"type": "text"
+								},
+								"verbosity": "medium"
+							},
+							"tool_choice": "auto",
+							"tool_usage": {
+								"image_gen": {
+									"input_tokens": 0,
+									"input_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"output_tokens": 0,
+									"output_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"total_tokens": 0
+								},
+								"web_search": {
+									"num_requests": 0
+								}
+							},
+							"tools": [
+								{
+									"type": "computer"
+								}
+							],
+							"top_logprobs": 0,
+							"top_p": 0.98,
+							"truncation": "disabled",
+							"usage": null,
+							"user": null,
+							"metadata": {}
+						},
+						"sequence_number": 1
+					},
+					{
+						"type": "response.output_item.added",
+						"item": {
+							"id": "cu_0efcc6d47ff8d144016b024217cf9487d182078683e2edcfe3",
+							"type": "computer_call",
+							"status": "in_progress",
+							"call_id": "call_pkOKPVWd2eey1vxqNozBC53Y"
+						},
+						"output_index": 0,
+						"sequence_number": 2
+					},
+					{
+						"type": "response.output_item.done",
+						"item": {
+							"id": "cu_0efcc6d47ff8d144016b024217cf9487d182078683e2edcfe3",
+							"type": "computer_call",
+							"status": "completed",
+							"actions": [
+								{
+									"type": "screenshot"
+								}
+							],
+							"call_id": "call_pkOKPVWd2eey1vxqNozBC53Y"
+						},
+						"output_index": 0,
+						"sequence_number": 3
+					},
+					{
+						"type": "response.completed",
+						"response": {
+							"id": "resp_0efcc6d47ff8d144016b024217253087d1a5e277b38fd34761",
+							"object": "response",
+							"created_at": 1795310103,
+							"status": "completed",
+							"access_programs": null,
+							"background": false,
+							"completed_at": 1795310103,
+							"error": null,
+							"frequency_penalty": 0,
+							"image": {
+								"context_compression": "disabled"
+							},
+							"incomplete_details": null,
+							"input_transformations": [],
+							"instructions": null,
+							"max_output_tokens": 400,
+							"max_tool_calls": null,
+							"model": "gpt-5.6-luna",
+							"moderation": null,
+							"output": [
+								{
+									"id": "cu_0efcc6d47ff8d144016b024217cf9487d182078683e2edcfe3",
+									"type": "computer_call",
+									"status": "completed",
+									"actions": [
+										{
+											"type": "screenshot"
+										}
+									],
+									"call_id": "call_pkOKPVWd2eey1vxqNozBC53Y"
+								}
+							],
+							"parallel_tool_calls": true,
+							"presence_penalty": 0,
+							"previous_response_id": null,
+							"prompt_cache_key": null,
+							"prompt_cache_retention": "24h",
+							"reasoning": {
+								"context": "all_turns",
+								"effort": "none",
+								"mode": "standard",
+								"summary": null
+							},
+							"safety_identifier": null,
+							"service_tier": "default",
+							"store": false,
+							"temperature": 1,
+							"text": {
+								"format": {
+									"type": "text"
+								},
+								"verbosity": "medium"
+							},
+							"tool_choice": "auto",
+							"tool_usage": {
+								"image_gen": {
+									"input_tokens": 0,
+									"input_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"output_tokens": 0,
+									"output_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"total_tokens": 0
+								},
+								"web_search": {
+									"num_requests": 0
+								}
+							},
+							"tools": [
+								{
+									"type": "computer"
+								}
+							],
+							"top_logprobs": 0,
+							"top_p": 0.98,
+							"truncation": "disabled",
+							"usage": {
+								"input_tokens": 832,
+								"input_tokens_details": {
+									"cache_write_tokens": 0,
+									"cache_write_tokens_details": {
+										"ttl_12h_tokens": 0,
+										"ttl_30m_tokens": 0
+									},
+									"cached_tokens": 0
+								},
+								"output_tokens": 15,
+								"output_tokens_details": {
+									"reasoning_tokens": 0
+								},
+								"total_tokens": 847
+							},
+							"user": null,
+							"metadata": {}
+						},
+						"sequence_number": 4
+					}
+				]
+			}
+		},
+		{
+			"name": "a forced call",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-5.6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 400,
+					"tools": [
+						{
+							"type": "computer"
+						}
+					],
+					"tool_choice": {
+						"type": "computer"
+					},
+					"input": [
+						{
+							"role": "user",
+							"content": "Look at the screen."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_015ffb10874f5802016b0242181e5c87d1be244c25e626f61d",
+					"object": "response",
+					"created_at": 1795310104,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795310104,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 400,
+					"max_tool_calls": null,
+					"model": "gpt-5.6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "cu_015ffb10874f5802016b024218a24487d183efa2d7bfee40cc",
+							"type": "computer_call",
+							"status": "completed",
+							"actions": [
+								{
+									"type": "screenshot"
+								}
+							],
+							"call_id": "call_5r5t9JXVepKI6Xa5vI3kevCw"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": {
+						"type": "computer"
+					},
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "computer"
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 822,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 15,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 837
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "the preview tool",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-5.6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 400,
+					"tools": [
+						{
+							"type": "computer_use_preview",
+							"display_width": 1024,
+							"display_height": 768,
+							"environment": "browser"
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Take a screenshot of the screen, then click the red disk on it."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Tool 'computer_use_preview' is not supported with gpt-5.6-luna.",
+						"type": "invalid_request_error",
+						"param": "tools",
+						"code": null
+					}
+				}
+			}
+		}
+	]
+}

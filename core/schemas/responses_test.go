@@ -1219,7 +1219,7 @@ func TestDeepCopyResponsesMessagePreservesExtendedFields(t *testing.T) {
 		ResponsesToolMessage: &ResponsesToolMessage{
 			Action: &ResponsesToolMessageActionStruct{ResponsesToolCallActionStr: Ptr("generate")},
 			ResponsesComputerToolCall: &ResponsesComputerToolCall{PendingSafetyChecks: []ResponsesComputerToolCallPendingSafetyCheck{{
-				ID: "check_1", Code: "confirm", Message: "confirm action",
+				ID: "check_1", Code: Ptr("confirm"), Message: Ptr("confirm action"),
 			}}},
 			ResponsesComputerToolCallOutput: &ResponsesComputerToolCallOutput{AcknowledgedSafetyChecks: []ResponsesComputerToolCallAcknowledgedSafetyCheck{{
 				ID: "check_1", Code: Ptr("confirm"), Message: Ptr("approved"),

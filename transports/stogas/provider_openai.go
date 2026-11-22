@@ -546,7 +546,7 @@ func validateOpenAIGuardrails(req openAIAdapterContext) error {
 
 func openAIResponsesToolTypeSupported(rawType string) bool {
 	switch strings.TrimSpace(rawType) {
-	case "function", "custom", "namespace", "mcp", "shell", "apply_patch", "tool_search":
+	case "function", "custom", "namespace", "mcp", "shell", "apply_patch", "computer", "tool_search":
 		return true
 	default:
 		return openAIWebSearchToolType(rawType)
@@ -563,12 +563,12 @@ func openAIUnsupportedResponsesToolMessage(rawType string) string {
 		return "local_shell is not supported because OpenAI no longer serves it; use shell with a local environment"
 	case normalized == "code_interpreter" || strings.HasPrefix(normalized, "code_execution"):
 		return "code execution tools are not supported"
-	case strings.HasPrefix(normalized, "computer"):
-		return "computer tools are not supported"
+	case normalized == "computer_use_preview":
+		return "computer_use_preview is not supported because OpenAI retired the model that runs it; use the computer tool"
 	case strings.HasPrefix(normalized, "file_search"), normalized == "image_generation", normalized == "memory":
 		return rawType + " is not supported"
 	default:
-		return "Only function, custom, namespace, shell, apply_patch, tool_search, remote MCP, and priced hosted web search tools are supported"
+		return "Only function, custom, namespace, shell, apply_patch, computer, tool_search, remote MCP, and priced hosted web search tools are supported"
 	}
 }
 
@@ -789,6 +789,7 @@ func validateTool(route openAIAdapterRoute, tool map[string]json.RawMessage) err
 			schemas.ResponsesToolTypeWebSearchPreview,
 			schemas.ResponsesToolTypeMCP,
 			schemas.ResponsesToolTypeApplyPatch,
+			schemas.ResponsesToolTypeComputer,
 			schemas.ResponsesToolTypeToolSearch:
 			return nil
 		case schemas.ResponsesToolTypeShell:

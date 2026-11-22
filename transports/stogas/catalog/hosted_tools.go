@@ -386,6 +386,10 @@ func CanonicalResponsesToolType(rawType string) schemas.ResponsesToolType {
 		return schemas.ResponsesToolTypeWebFetch
 	case strings.HasPrefix(string(toolType), "code_execution"):
 		return schemas.ResponsesToolTypeCodeInterpreter
+	// OpenAI's computer tool is computer, and Anthropic's dated computer tools read as OpenAI's
+	// retired preview.
+	case toolType == schemas.ResponsesToolTypeComputer:
+		return toolType
 	case strings.HasPrefix(string(toolType), "computer") && toolType != schemas.ResponsesToolTypeComputerUsePreview:
 		return schemas.ResponsesToolTypeComputerUsePreview
 	default:

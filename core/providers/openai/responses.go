@@ -795,12 +795,14 @@ func ToOpenAIResponsesRequest(ctx *schemas.BifrostContext, bifrostReq *schemas.B
 		}
 
 		// Gemini streaming sets status on all item types, but OpenAI rejects status on input.
-		// Strip it, with four exceptions. message is a value copy, so the caller's input is
+		// Strip it, with five exceptions. message is a value copy, so the caller's input is
 		// untouched.
 		switch {
 		case message.Type != nil && (*message.Type == schemas.ResponsesMessageTypeApplyPatchCall ||
 			*message.Type == schemas.ResponsesMessageTypeApplyPatchCallOutput):
 			// OpenAI requires status here, and it carries whether the patch failed.
+		case message.Type != nil && *message.Type == schemas.ResponsesMessageTypeComputerCall:
+			// OpenAI's API reference requires status on a computer call, which only OpenAI writes.
 		case message.Type != nil && *message.Type == schemas.ResponsesMessageTypeFunctionCallOutput &&
 			message.Status != nil && *message.Status == "incomplete":
 			// "incomplete" on a function_call_output is the only marker a failed tool

@@ -405,10 +405,10 @@ func parseResponsesTools(state *State, raw json.RawMessage) ([]schemas.Responses
 		case schemas.ResponsesToolTypeFunction, schemas.ResponsesToolTypeCustom, schemas.ResponsesToolTypeNamespace:
 		case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview, schemas.ResponsesToolTypeWebFetch:
 		case schemas.ResponsesToolTypeMCP, schemas.ResponsesToolTypeToolSearch:
-		case schemas.ResponsesToolTypeShell, schemas.ResponsesToolTypeApplyPatch:
+		case schemas.ResponsesToolTypeShell, schemas.ResponsesToolTypeApplyPatch, schemas.ResponsesToolTypeComputer:
 		case catalog.AnthropicBashToolType, catalog.AnthropicTextEditorToolType:
 		default:
-			return nil, invalidRequest("Only function, custom, namespace, shell, apply_patch, tool_search, web_fetch, and priced hosted web search tools are supported")
+			return nil, invalidRequest("Only function, custom, namespace, shell, apply_patch, computer, tool_search, web_fetch, and priced hosted web search tools are supported")
 		}
 	}
 	return tools, nil
@@ -460,7 +460,7 @@ func validateRawResponsesToolShape(state *State, tool map[string]json.RawMessage
 		return toolType, server.label, err
 	case schemas.ResponsesToolTypeShell:
 		return toolType, "", validateResponsesShellTool(tool, path)
-	case schemas.ResponsesToolTypeApplyPatch:
+	case schemas.ResponsesToolTypeApplyPatch, schemas.ResponsesToolTypeComputer:
 		return toolType, "", rejectUnsupportedResponsesToolKeys(tool, path, "type")
 	default:
 		return toolType, "", nil
@@ -488,9 +488,10 @@ func validateAnthropicClientTool(tool map[string]json.RawMessage, path, name str
 	return validateResponsesToolCacheControl(tool["cache_control"], path+".cache_control")
 }
 
-// responsesLocalToolsSupported reports whether the deployment takes OpenAI's shell and apply_patch
-// tools. The client runs both, they cost only their tokens, and their calls and results replay in
-// input without stored state (live, November 12, 2026). Azure's are unreviewed.
+// responsesLocalToolsSupported reports whether the deployment takes OpenAI's shell, apply_patch and
+// computer tools. The client runs each, they cost only their tokens, and their calls and results
+// replay in input without stored state (live, November 12, 2026, and capture openai/computer-use).
+// Azure's are unreviewed.
 func responsesLocalToolsSupported(state *State) bool {
 	return state != nil && state.Resolution != nil && state.Resolution.Route == catalog.RouteResponses &&
 		state.Resolution.Provider == schemas.OpenAI
@@ -1135,7 +1136,7 @@ func validateResponsesToolChoice(state *State, raw json.RawMessage, tools []sche
 		return nil
 	case schemas.ResponsesToolTypeMCP:
 		return validateResponsesMCPToolSelector(choice, "tool_choice", tools)
-	case schemas.ResponsesToolTypeShell, schemas.ResponsesToolTypeApplyPatch:
+	case schemas.ResponsesToolTypeShell, schemas.ResponsesToolTypeApplyPatch, schemas.ResponsesToolTypeComputer:
 		if err := rejectUnsupportedResponsesToolKeys(choice, "tool_choice", "type"); err != nil {
 			return err
 		}
@@ -1226,7 +1227,7 @@ func validateResponsesAllowedToolChoice(state *State, raw json.RawMessage, tools
 				return invalidRequest(path + " duplicates another allowed tool")
 			}
 			seen[identity] = true
-		case schemas.ResponsesToolTypeShell, schemas.ResponsesToolTypeApplyPatch:
+		case schemas.ResponsesToolTypeShell, schemas.ResponsesToolTypeApplyPatch, schemas.ResponsesToolTypeComputer:
 			if err := rejectUnsupportedResponsesToolKeys(allowed, path, "type"); err != nil {
 				return err
 			}
@@ -1297,7 +1298,7 @@ func validateResponsesToolSelectorType(state *State, rawType string) (schemas.Re
 		if rawType == "mcp" && responsesMCPSupported(state) {
 			return toolType, nil
 		}
-	case schemas.ResponsesToolTypeShell, schemas.ResponsesToolTypeApplyPatch:
+	case schemas.ResponsesToolTypeShell, schemas.ResponsesToolTypeApplyPatch, schemas.ResponsesToolTypeComputer:
 		if responsesLocalToolsSupported(state) {
 			return toolType, nil
 		}
@@ -1434,7 +1435,7 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 			switch itemType {
 			case "function_call", "function_call_output", "custom_tool_call", "custom_tool_call_output",
 				"shell_call", "shell_call_output", "apply_patch_call", "apply_patch_call_output",
-				"tool_search_call", "tool_search_output":
+				"computer_call", "computer_call_output", "tool_search_call", "tool_search_output":
 			// Reasoning, MCP and hosted tool items are the provider's own steps, which a response can
 			// interleave with client calls, as Claude does with a progress update before each call.
 			case "reasoning", "mcp_list_tools", "mcp_call", "mcp_approval_request", "mcp_approval_response",
@@ -1497,6 +1498,22 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 				return invalidRequest(itemType + " input items are supported only for OpenAI deployments")
 			}
 			if err := validateResponsesLocalToolOutputInput(item, path, itemType, &validation); err != nil {
+				return err
+			}
+			turn.result(rawString(item["call_id"]))
+		case "computer_call":
+			if !responsesLocalToolsSupported(state) {
+				return invalidRequest(itemType + " input items are supported only for OpenAI deployments")
+			}
+			if err := validateResponsesComputerCallInput(item, path, &validation); err != nil {
+				return err
+			}
+			turn.call()
+		case "computer_call_output":
+			if !responsesLocalToolsSupported(state) {
+				return invalidRequest(itemType + " input items are supported only for OpenAI deployments")
+			}
+			if err := validateResponsesComputerOutputInput(state, item, path, &validation); err != nil {
 				return err
 			}
 			turn.result(rawString(item["call_id"]))
@@ -2095,6 +2112,118 @@ func validateResponsesLocalToolOutputInput(item map[string]json.RawMessage, path
 		if raw, ok := item["max_output_length"]; ok {
 			if value, ok := rawIntegerValue(raw); !ok || value < 0 {
 				return invalidRequest(path + ".max_output_length must be a non-negative integer")
+			}
+		}
+	}
+	return nil
+}
+
+// validateResponsesComputerCallInput checks a replayed computer_call. OpenAI decides which actions
+// exist and what each holds. A call of the retired preview holds one action, which core replays
+// as the list that the computer tool takes.
+func validateResponsesComputerCallInput(item map[string]json.RawMessage, path string, validation *responsesInputValidation) error {
+	if err := rejectUnsupportedInputKeys(item, path, "type", "id", "status", "call_id", "actions", "action", "pending_safety_checks"); err != nil {
+		return err
+	}
+	if err := validateResponsesInputItemIdentity(item, path); err != nil {
+		return err
+	}
+	callID, err := requiredInputString(item, "call_id", path, false)
+	if err != nil {
+		return err
+	}
+	if len(callID) > 64 {
+		return invalidRequest(path + ".call_id must contain at most 64 bytes")
+	}
+	if _, exists := validation.calls[callID]; exists {
+		return invalidRequest(path + ".call_id duplicates another client tool call")
+	}
+	var actions []map[string]json.RawMessage
+	if raw, ok := item["actions"]; ok && sonic.Unmarshal(raw, &actions) != nil {
+		return invalidRequest(path + ".actions must be an array of objects")
+	}
+	for index, action := range actions {
+		if err := validateResponsesComputerAction(action, fmt.Sprintf("%s.actions[%d]", path, index)); err != nil {
+			return err
+		}
+	}
+	if raw := item["action"]; rawJSONValueSet(raw) {
+		action, ok := rawObject(raw)
+		if !ok || action == nil {
+			return invalidRequest(path + ".action must be an object")
+		}
+		if err := validateResponsesComputerAction(action, path+".action"); err != nil {
+			return err
+		}
+	}
+	if err := validateResponsesSafetyChecks(item["pending_safety_checks"], path+".pending_safety_checks"); err != nil {
+		return err
+	}
+	validation.calls[callID] = "computer"
+	validation.pendingCalls++
+	return nil
+}
+
+func validateResponsesComputerAction(action map[string]json.RawMessage, path string) error {
+	if action == nil {
+		return invalidRequest(path + " must be an object")
+	}
+	_, err := requiredInputString(action, "type", path, false)
+	return err
+}
+
+// validateResponsesComputerOutputInput checks the client's answer to a computer_call: a screenshot,
+// which gets the checks of an image in a user message.
+func validateResponsesComputerOutputInput(state *State, item map[string]json.RawMessage, path string, validation *responsesInputValidation) error {
+	if err := rejectUnsupportedInputKeys(item, path, "type", "id", "status", "call_id", "output", "acknowledged_safety_checks"); err != nil {
+		return err
+	}
+	if err := validateResponsesInputItemIdentity(item, path); err != nil {
+		return err
+	}
+	callID, err := requiredInputString(item, "call_id", path, false)
+	if err != nil {
+		return err
+	}
+	if err := validation.output(callID, "computer", path); err != nil {
+		return err
+	}
+	screenshot, ok := rawObject(item["output"])
+	if !ok || screenshot == nil || rawString(screenshot["type"]) != "computer_screenshot" {
+		return invalidRequest(path + ".output must be a computer_screenshot")
+	}
+	if err := validateNativeAttachment(state, screenshot, path+".output", true); err != nil {
+		return err
+	}
+	return validateResponsesSafetyChecks(item["acknowledged_safety_checks"], path+".acknowledged_safety_checks")
+}
+
+// validateResponsesSafetyChecks checks the safety checks of a computer call, which OpenAI raises
+// and the client acknowledges in its answer by repeating them.
+func validateResponsesSafetyChecks(raw json.RawMessage, path string) error {
+	if !rawJSONValueSet(raw) {
+		return nil
+	}
+	var checks []map[string]json.RawMessage
+	if sonic.Unmarshal(raw, &checks) != nil {
+		return invalidRequest(path + " must be an array of objects")
+	}
+	for index, check := range checks {
+		checkPath := fmt.Sprintf("%s[%d]", path, index)
+		if check == nil {
+			return invalidRequest(checkPath + " must be an object")
+		}
+		if err := rejectUnsupportedInputKeys(check, checkPath, "id", "code", "message"); err != nil {
+			return err
+		}
+		if _, err := requiredInputString(check, "id", checkPath, false); err != nil {
+			return err
+		}
+		for _, key := range []string{"code", "message"} {
+			if value := check[key]; rawJSONValueSet(value) {
+				if _, ok := rawStringValue(value); !ok {
+					return invalidRequest(checkPath + "." + key + " must be a string")
+				}
 			}
 		}
 	}

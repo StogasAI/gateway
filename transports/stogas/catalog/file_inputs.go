@@ -50,7 +50,8 @@ func validateDocumentFormats(value DocumentFormats) error {
 type Attachment struct {
 	// Path names the part in errors, such as messages[0].content[1] or input[2].output[0].
 	Path string
-	// Kind is the part's type: image_url, input_image, input_audio, file or input_file.
+	// Kind is the part's type: image_url, input_image, computer_screenshot, input_audio, file or
+	// input_file.
 	Kind      string
 	Responses bool
 	// ToolResult says that the part is in a tool result, which only some deployments read images
@@ -103,9 +104,9 @@ func attachmentError(provider schemas.ModelProvider, deployment Deployment, atta
 	bridged := attachment.Responses && deployment.bridges(RouteResponses)
 	modality := ""
 	switch attachment.Kind {
-	case "image_url", "input_image":
+	case "image_url", "input_image", "computer_screenshot":
 		modality = "image"
-		if attachment.Kind == "input_image" && attachment.ID != "" && (claude || bridged) {
+		if attachment.Kind != "image_url" && attachment.ID != "" && (claude || bridged) {
 			return attachmentRefusal(attachment.Path, " image file IDs are not supported by "+subject)
 		}
 	case "input_audio":
@@ -462,15 +463,11 @@ func requestAttachments(raw map[string]json.RawMessage, route Route) []Attachmen
 		if err != nil {
 			continue
 		}
-		key, toolResult, ok := inputfiles.Parts(item, responses)
+		parts, ok := inputfiles.Parts(item, responses)
 		if !ok {
 			continue
 		}
-		content := bytes.TrimSpace(item[key])
-		if len(content) == 0 || content[0] != '[' {
-			continue
-		}
-		blocks, err := rawjson.Array(content)
+		blocks, paths, err := parts.Blocks(item, fmt.Sprintf("%s[%d]", field, i))
 		if err != nil {
 			continue
 		}
@@ -479,8 +476,8 @@ func requestAttachments(raw map[string]json.RawMessage, route Route) []Attachmen
 			if err != nil {
 				continue
 			}
-			if attachment, ok := readAttachment(block, fmt.Sprintf("%s[%d].%s[%d]", field, i, key, j), responses); ok {
-				attachment.ToolResult = toolResult
+			if attachment, ok := readAttachment(block, paths[j], responses); ok {
+				attachment.ToolResult = parts.ToolResult
 				attachments = append(attachments, attachment)
 			}
 		}
@@ -492,7 +489,7 @@ func requestAttachments(raw map[string]json.RawMessage, route Route) []Attachmen
 // request with text only reads no message. A name spelled with escapes misses, and its
 // deployment's checks still run.
 func attachmentNamed(messages []byte) bool {
-	for _, name := range []string{`"image_url"`, `"input_image"`, `"input_audio"`, `"file"`, `"input_file"`} {
+	for _, name := range []string{`"image_url"`, `"input_image"`, `"computer_screenshot"`, `"input_audio"`, `"file"`, `"input_file"`} {
 		if bytes.Contains(messages, []byte(name)) {
 			return true
 		}
@@ -509,7 +506,7 @@ func readAttachment(block map[string]json.RawMessage, path string, responses boo
 	switch {
 	case !responses && attachment.Kind == "image_url":
 		holderKey, urlKey = "image_url", "url"
-	case responses && attachment.Kind == "input_image":
+	case responses && (attachment.Kind == "input_image" || attachment.Kind == "computer_screenshot"):
 		urlKey, idKey = "image_url", "file_id"
 	case !responses && attachment.Kind == "input_audio":
 		holderKey, dataKey, formatKey = "input_audio", "data", "format"

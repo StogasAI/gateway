@@ -28,7 +28,8 @@ func stringValue(text *string) string {
 }
 
 // textSource names one text of a response, which its pieces continue: the content, a refusal or
-// a tool call of a Chat choice, or a part, a tool value or a patch's path of a Responses item.
+// a tool call of a Chat choice, or a part, a tool value, a patch's path or the text that a computer
+// action types of a Responses item.
 type textSource struct {
 	kind       textSourceKind
 	item, part int
@@ -113,6 +114,10 @@ func responsesItemOutputText(index int, item *schemas.ResponsesMessage, visit fu
 		if call := tool.ResponsesApplyPatchCall; call != nil && call.Operation != nil {
 			visit(textSource{kind: responsesPath, item: index}, call.Operation.Path, false)
 			visit(source, stringValue(call.Operation.Diff), false)
+		}
+	case schemas.ResponsesMessageTypeComputerCall:
+		for i, action := range providerComputerActions(tool) {
+			visit(textSource{kind: responsesValue, item: index, part: i}, stringValue(action.Text), false)
 		}
 	}
 }

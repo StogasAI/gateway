@@ -28,11 +28,11 @@ func requestCapabilities(raw map[string]json.RawMessage, route Route, shared Cap
 			return required, ErrInvalidJSON
 		}
 		for _, tool := range tools {
-			// A namespace holds function and custom tools, and the model calls shell and
-			// apply_patch as it calls a function.
+			// A namespace holds function and custom tools, and the model calls shell, apply_patch
+			// and computer as it calls a function.
 			switch CanonicalResponsesToolType(tool.Type) {
 			case schemas.ResponsesToolTypeFunction, schemas.ResponsesToolTypeCustom, schemas.ResponsesToolTypeNamespace,
-				schemas.ResponsesToolTypeShell, schemas.ResponsesToolTypeApplyPatch:
+				schemas.ResponsesToolTypeShell, schemas.ResponsesToolTypeApplyPatch, schemas.ResponsesToolTypeComputer:
 				required.FunctionCalling = true
 			}
 		}

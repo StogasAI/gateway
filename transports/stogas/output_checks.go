@@ -288,7 +288,8 @@ func (s *State) checkResponsesOutputs(checker *outputChecker, checks *outputChec
 			if tool := item.ResponsesToolMessage; tool != nil && tool.Name != nil && tool.Arguments != nil {
 				checks.addToolCall(checker.toolCall(providerCallNamespace(tool), *tool.Name, []byte(*tool.Arguments)))
 			}
-		case schemas.ResponsesMessageTypeCustomToolCall, schemas.ResponsesMessageTypeShellCall, schemas.ResponsesMessageTypeApplyPatchCall:
+		case schemas.ResponsesMessageTypeCustomToolCall, schemas.ResponsesMessageTypeShellCall, schemas.ResponsesMessageTypeApplyPatchCall,
+			schemas.ResponsesMessageTypeComputerCall:
 			toolCalls = true
 		case schemas.ResponsesMessageTypeMessage:
 			if !format.json || item.Content == nil {
