@@ -304,7 +304,7 @@ func TestComputerRequestChecks(t *testing.T) {
 		{"the retired preview tool", request(`{"type":"computer_use_preview","display_width":1024,"display_height":768,"environment":"browser"}`, ""),
 			"computer_use_preview is not supported because OpenAI retired the model that runs it; use the computer tool"},
 		{"Anthropic's computer tool", request(`{"type":"computer_20251124","name":"computer","display_width_px":1024,"display_height_px":768}`, ""),
-			"Only function, custom, namespace, shell, apply_patch, computer, tool_search, remote MCP, and priced hosted web search tools are supported"},
+			"Only function, custom, namespace, shell, apply_patch, computer, tool_search, file_search, remote MCP, and priced hosted web search tools are supported"},
 		{"the computer tool on Azure", model(request(`{"type":"computer"}`, ""), "azure-gpt-5.5-2026-04-23"),
 			"Only function, custom, and namespace tools are supported for Azure deployments"},
 		{"the computer tool on Claude", model(request(`{"type":"computer"}`, ""), "anthropic-claude-sonnet-4-6"), "computer tools are not supported"},

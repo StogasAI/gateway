@@ -34,6 +34,9 @@ const (
 	openAIApplyPatchToolTokens = 623
 	// The computer tool adds 811 on gpt-5.6-luna and gpt-6.2-sol alike (capture openai/computer-use).
 	openAIComputerToolTokens = 811
+	// File search adds 1,483 on gpt-6-luna, also under tool_choice none, before any search
+	// (capture openai/file-search).
+	openAIFileSearchToolTokens = 1483
 
 	// Anthropic documents what its bash and text editor tools add to the input: 325 and 974
 	// tokens on Claude Opus 4.7 and later, and less on earlier models. No live count confirms them.
@@ -229,7 +232,7 @@ func collectMessageObject(raw json.RawMessage, stats *inputHoldStats) {
 	switch itemType {
 	case "function_call", "function_call_output", "custom_tool_call", "custom_tool_call_output", "tool_call", "tool_result",
 		"shell_call", "shell_call_output", "apply_patch_call", "apply_patch_call_output", "computer_call", "computer_call_output",
-		"web_search_call", "web_fetch_call", "tool_search_call", "tool_search_output",
+		"web_search_call", "web_fetch_call", "file_search_call", "tool_search_call", "tool_search_output",
 		"mcp_list_tools", "mcp_call", "mcp_approval_request", "mcp_approval_response":
 		stats.ToolEvents++
 	}
@@ -429,6 +432,8 @@ func toolPromptTokens(raw json.RawMessage) int {
 		return openAIApplyPatchToolTokens
 	case schemas.ResponsesToolTypeComputer:
 		return openAIComputerToolTokens
+	case schemas.ResponsesToolTypeFileSearch:
+		return openAIFileSearchToolTokens
 	}
 	return 0
 }

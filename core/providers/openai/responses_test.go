@@ -3169,6 +3169,25 @@ func TestToOpenAIResponsesRequest_StripsGeminiResidueFromResponsesInput(t *testi
 			origMutable: true,
 		},
 		{
+			// OpenAI's API reference requires status on a replayed file_search_call, and the
+			// replay that capture openai/file-search records sends it with the "fs_" id.
+			name: "file_search_call keeps id and status",
+			input: schemas.ResponsesMessage{
+				Type:   schemas.Ptr(schemas.ResponsesMessageTypeFileSearchCall),
+				ID:     schemas.Ptr("fs_replay_probe"),
+				Status: schemas.Ptr("completed"),
+				ResponsesToolMessage: &schemas.ResponsesToolMessage{
+					ResponsesFileSearchToolCall: &schemas.ResponsesFileSearchToolCall{Queries: []string{"capital of Zorbia"}},
+				},
+			},
+			wantWire: func(t *testing.T, item map[string]json.RawMessage) {
+				if string(item["id"]) != `"fs_replay_probe"` || string(item["status"]) != `"completed"` {
+					t.Errorf("id %s and status %s, want fs_replay_probe and completed", item["id"], item["status"])
+				}
+			},
+			origMutable: true,
+		},
+		{
 			// Gemini synthesizes "ws_<n>" for an ID-less search call and marks it completed.
 			// OpenAI does not know that id and answers 400 "Item with id ... not found".
 			name: "gemini synthetic ws_<n> web_search_call stripped",

@@ -116,6 +116,12 @@ func heldInputTokens(t *testing.T, body string) (int64, *State) {
 	if err := state.Adapter.ValidateRequest(state); err != nil {
 		t.Fatal(err)
 	}
+	return heldInputTokensOf(t, state), state
+}
+
+// heldInputTokensOf sums the input tokens of every hold meter of a checked request, at any rate.
+func heldInputTokensOf(t *testing.T, state *State) int64 {
+	t.Helper()
 	if err := state.Adapter.SanitizeRequest(state); err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +139,7 @@ func heldInputTokens(t *testing.T, body string) (int64, *State) {
 		}
 		total.Add(total, quantity)
 	}
-	return total.Int64(), state
+	return total.Int64()
 }
 
 // The hold takes one typical hosted call's content for each tool list that OpenAI fetches and

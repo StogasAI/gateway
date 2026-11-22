@@ -1032,7 +1032,7 @@ func TestResponsesToolFileSearchFilter_MarshalJSON_Deterministic(t *testing.T) {
 			Type: "eq",
 			ResponsesToolFileSearchComparisonFilter: &ResponsesToolFileSearchComparisonFilter{
 				Key:   "status",
-				Value: "active",
+				Value: json.RawMessage(`"active"`),
 			},
 		},
 		{
@@ -1043,7 +1043,7 @@ func TestResponsesToolFileSearchFilter_MarshalJSON_Deterministic(t *testing.T) {
 						Type: "eq",
 						ResponsesToolFileSearchComparisonFilter: &ResponsesToolFileSearchComparisonFilter{
 							Key:   "type",
-							Value: "document",
+							Value: json.RawMessage(`"document"`),
 						},
 					},
 				},
@@ -1063,6 +1063,38 @@ func TestResponsesToolFileSearchFilter_MarshalJSON_Deterministic(t *testing.T) {
 					"iteration %d: marshal produced different bytes", i)
 			}
 		})
+	}
+}
+
+// TestResponsesToolFileSearchRoundTrip checks that a file search tool reaches the provider as the
+// client sent it: a comparison filter without a type, an operator that core does not list, an
+// integer that a float64 would round, and hybrid search weights that the client left out.
+func TestResponsesToolFileSearchRoundTrip(t *testing.T) {
+	for _, tool := range []string{
+		`{"type":"file_search","vector_store_ids":["vs_1"],"filters":{"key":"tenant","value":9007199254740993}}`,
+		`{"type":"file_search","vector_store_ids":["vs_1"],"filters":{"type":"or","filters":[{"type":"in","key":"id","value":[1,"b"]},{"type":"contains","key":"tags","value":"x"}]}}`,
+		`{"type":"file_search","vector_store_ids":["vs_1"],"max_num_results":2,"ranking_options":{"ranker":"auto","hybrid_search":{"embedding_weight":0.7}}}`,
+	} {
+		var parsed ResponsesTool
+		require.NoError(t, Unmarshal([]byte(tool), &parsed))
+		marshaled, err := Marshal(parsed)
+		require.NoError(t, err)
+		assert.JSONEq(t, tool, string(marshaled))
+	}
+}
+
+// TestResponsesFileSearchCallResultsRoundTrip checks that a file search call keeps null results
+// apart from an empty list.
+func TestResponsesFileSearchCallResultsRoundTrip(t *testing.T) {
+	for _, item := range []string{
+		`{"id":"fs_1","type":"file_search_call","status":"completed","queries":["q"],"results":null}`,
+		`{"id":"fs_1","type":"file_search_call","status":"completed","queries":["q"],"results":[]}`,
+	} {
+		var parsed ResponsesMessage
+		require.NoError(t, Unmarshal([]byte(item), &parsed))
+		marshaled, err := Marshal(parsed)
+		require.NoError(t, err)
+		assert.JSONEq(t, item, string(marshaled))
 	}
 }
 

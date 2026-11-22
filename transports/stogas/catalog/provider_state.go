@@ -5,23 +5,25 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/transports/stogas/rawjson"
 )
 
 // ProviderState is what a request keeps or reads in its provider account through OpenAI's API: a
-// reply that the provider stores (store), a stored reply that it continues (previous_response_id)
-// or a conversation that it adds to (conversation). Each lives in one account, so only a
-// customer's own credential serves such a request, never Stogas's, and only on the provider's own
-// API, which no translation carries.
+// reply that the provider stores (store), a stored reply that it continues (previous_response_id),
+// a conversation that it adds to (conversation), or the vector stores that file search searches.
+// Each lives in one account, so only a customer's own credential serves such a request, never
+// Stogas's, and only on the provider's own API, which no translation carries.
 //
 // OpenAI's prompt templates (prompt) stay refused: a template can hold instructions, tools and
 // output settings that the gateway never sees, so policies on tools and the checks of the reply
 // could not hold.
 type ProviderState struct {
 	// Fields lists the fields that keep or read provider state, in wire order: store where the
-	// provider gets store: true, and each of previous_response_id and conversation that the
-	// request sends.
+	// provider gets store: true, each of previous_response_id and conversation that the request
+	// sends, and vector_store_ids where a file search reads vector stores.
 	Fields []string
 	// Store is the store value that the provider gets: the client's, or, where the client sends
 	// none, true for a request that continues a stored reply or a conversation, as OpenAI's own
@@ -32,9 +34,14 @@ type ProviderState struct {
 	// Keeps reports whether the provider keeps the request's content after the call: it stores
 	// the reply, or adds the turn to a conversation.
 	Keeps bool
-	// Held names the first field whose content the provider holds and the gateway never reads:
-	// previous_response_id or conversation. It names an object in one account.
+	// Held names the first field whose earlier conversation the provider holds and the gateway
+	// never reads: previous_response_id or conversation. Its size is unknown, and it can hold the
+	// calls that the input answers.
 	Held string
+	// Reads is the path of the first field that names content in one account, which the model
+	// reads and no input check can: Held, or a file search's vector stores, such as
+	// tools[0].vector_store_ids.
+	Reads string
 }
 
 // readProviderState reads what a request keeps or reads at its provider, after planning has
@@ -58,15 +65,31 @@ func readProviderState(route Route, raw map[string]json.RawMessage) ProviderStat
 	}
 	state.Fields = append(state.Fields, held...)
 	if len(held) > 0 {
-		state.Held = held[0]
+		state.Held, state.Reads = held[0], held[0]
+	}
+	if route != RouteResponses {
+		return state
+	}
+	tools, _ := rawjson.Array(raw["tools"])
+	for index, rawTool := range tools {
+		tool, err := rawjson.Object(rawTool)
+		if err != nil || CanonicalResponsesToolType(rawStringValue(tool["type"])) != schemas.ResponsesToolTypeFileSearch {
+			continue
+		}
+		if !slices.Contains(state.Fields, "vector_store_ids") {
+			state.Fields = append(state.Fields, "vector_store_ids")
+		}
+		if state.Reads == "" {
+			state.Reads = fmt.Sprintf("tools[%d].vector_store_ids", index)
+		}
 	}
 	return state
 }
 
-// field names the field that a refusal names: the held one, or store.
+// field names the field that a refusal names: the content that the request reads, or store.
 func (s ProviderState) field() string {
-	if s.Held != "" {
-		return s.Held
+	if s.Reads != "" {
+		return s.Reads
 	}
 	return "store"
 }
@@ -109,8 +132,11 @@ const ProviderStateUnsupported = "provider_state_unsupported"
 // providerStateRefusal refuses field for reason and says how the request does without it.
 func providerStateRefusal(field, reason string) APIError {
 	fix := "Send the whole conversation in input."
-	if field == "store" {
+	switch {
+	case field == "store":
 		fix = "Omit store or set it to false."
+	case strings.HasPrefix(field, "tools["):
+		fix = "Remove the tool."
 	}
 	return APIError{StatusCode: http.StatusBadRequest, Code: ProviderStateUnsupported, Type: ErrorTypeInvalidRequest, Param: field, Message: reason + " " + fix}
 }

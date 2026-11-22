@@ -30,6 +30,7 @@ type Signals interface {
 
 type SearchUsageSignals interface {
 	WebSearchCalls() int
+	FileSearchCalls() int
 }
 
 type StandardSignals struct {
@@ -43,14 +44,17 @@ type StandardSignals struct {
 	// OpenAI's 12-hour writes. Its 30-minute writes take the default CacheWrite.
 	CacheWrite12h int
 	WebSearch     int
-	inputKnown    bool
-	outputKnown   bool
+	// FileSearch counts OpenAI's file searches that completed, each once by its item ID.
+	FileSearch  int
+	inputKnown  bool
+	outputKnown bool
 	// reasoningKnown is true once the provider reports how many completion tokens were
 	// reasoning, 0 included. Providers that fold reasoning into completion tokens leave it false.
 	reasoningKnown bool
 
-	webSearchCallIDs map[string]struct{}
-	webSearchEvents  map[string]struct{}
+	webSearchCallIDs  map[string]struct{}
+	webSearchEvents   map[string]struct{}
+	fileSearchCallIDs map[string]struct{}
 }
 
 func hasMeasuredUsage(signals Signals) bool {
@@ -323,6 +327,13 @@ func (s *StandardSignals) WebSearchCalls() int {
 		return 0
 	}
 	return s.WebSearch
+}
+
+func (s *StandardSignals) FileSearchCalls() int {
+	if s == nil {
+		return 0
+	}
+	return s.FileSearch
 }
 
 func signalsFromUsage(usage *schemas.BifrostLLMUsage) *StandardSignals {
@@ -707,6 +718,22 @@ func observeWebSearchEvent(state *State, eventKey string, callID string) {
 		signals.webSearchEvents[eventKey] = struct{}{}
 	}
 	observeWebSearchCall(state, callID)
+}
+
+// observeFileSearchCall counts a file search that completed, once by its item ID.
+func observeFileSearchCall(state *State, id string) {
+	if state == nil || id == "" {
+		return
+	}
+	signals := standardSignals(state)
+	if _, ok := signals.fileSearchCallIDs[id]; ok {
+		return
+	}
+	if signals.fileSearchCallIDs == nil {
+		signals.fileSearchCallIDs = map[string]struct{}{}
+	}
+	signals.fileSearchCallIDs[id] = struct{}{}
+	signals.FileSearch = len(signals.fileSearchCallIDs)
 }
 
 func standardSignals(state *State) *StandardSignals {

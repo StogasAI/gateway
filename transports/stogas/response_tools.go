@@ -429,6 +429,16 @@ func validateProviderResponsesStreamPayload(state *State, response *schemas.Bifr
 			return ErrProviderResponseMalformed
 		}
 		return nil
+	case schemas.ResponsesStreamResponseTypeFileSearchCallInProgress,
+		schemas.ResponsesStreamResponseTypeFileSearchCallSearching,
+		schemas.ResponsesStreamResponseTypeFileSearchCallCompleted:
+		if !providerResponsesToolTypeAllowed(state, schemas.ResponsesToolTypeFileSearch) ||
+			!responsesStreamHasItemType(state, response, schemas.ResponsesMessageTypeFileSearchCall) ||
+			responsesStreamUnexpectedPayload(response, responsePayloadItemReference) ||
+			validateProviderResponsesHostedToolEvent(state, response) != nil {
+			return ErrProviderResponseMalformed
+		}
+		return nil
 	case schemas.ResponsesStreamResponseTypeMCPListToolsInProgress,
 		schemas.ResponsesStreamResponseTypeMCPListToolsCompleted,
 		schemas.ResponsesStreamResponseTypeMCPListToolsFailed:
@@ -708,6 +718,11 @@ func validateProviderResponsesTerminalItem(item *schemas.ResponsesMessage, befor
 		}
 		search := item.ResponsesToolMessage.Action.ResponsesWebSearchToolCallAction
 		if search.Type == "search" && search.Query == nil && len(search.Queries) == 0 {
+			return ErrProviderResponseMalformed
+		}
+	case schemas.ResponsesMessageTypeFileSearchCall:
+		if !stringInSet(*item.Status, "completed", "incomplete", "failed") || item.ResponsesToolMessage == nil ||
+			item.ResponsesToolMessage.ResponsesFileSearchToolCall == nil {
 			return ErrProviderResponseMalformed
 		}
 	case schemas.ResponsesMessageTypeWebFetchCall:
@@ -1127,18 +1142,16 @@ func validateProviderResponsesItem(state *State, item *schemas.ResponsesMessage)
 		if err := validateAndRecordProviderResponsesToolCall(state, item, &observed, true); err != nil {
 			return providerResponsesItem{}, err
 		}
-	case schemas.ResponsesMessageTypeWebSearchCall:
-		if item.Role != nil || item.Phase != nil || item.Content != nil || item.ResponsesReasoning != nil ||
-			!providerResponsesToolTypeAllowed(state, schemas.ResponsesToolTypeWebSearch) || item.ResponsesToolMessage == nil ||
-			validateProviderResponsesToolMessage(state, item.ResponsesToolMessage, *item.Type) != nil {
-			return providerResponsesItem{}, ErrProviderResponseMalformed
+	case schemas.ResponsesMessageTypeWebSearchCall, schemas.ResponsesMessageTypeWebFetchCall, schemas.ResponsesMessageTypeFileSearchCall:
+		kind := schemas.ResponsesToolTypeWebSearch
+		switch *item.Type {
+		case schemas.ResponsesMessageTypeWebFetchCall:
+			kind = schemas.ResponsesToolTypeWebFetch
+		case schemas.ResponsesMessageTypeFileSearchCall:
+			kind = schemas.ResponsesToolTypeFileSearch
 		}
-		if err := validateAndRecordProviderResponsesToolCall(state, item, &observed, false); err != nil {
-			return providerResponsesItem{}, err
-		}
-	case schemas.ResponsesMessageTypeWebFetchCall:
 		if item.Role != nil || item.Phase != nil || item.Content != nil || item.ResponsesReasoning != nil ||
-			!providerResponsesToolTypeAllowed(state, schemas.ResponsesToolTypeWebFetch) || item.ResponsesToolMessage == nil ||
+			!providerResponsesToolTypeAllowed(state, kind) || item.ResponsesToolMessage == nil ||
 			validateProviderResponsesToolMessage(state, item.ResponsesToolMessage, *item.Type) != nil {
 			return providerResponsesItem{}, ErrProviderResponseMalformed
 		}
@@ -1289,7 +1302,7 @@ func validateProviderResponsesToolMessage(state *State, tool *schemas.ResponsesT
 	if tool == nil {
 		return ErrProviderResponseMalformed
 	}
-	if tool.Execution != nil || tool.Output != nil || tool.Error != nil || tool.ResponsesFileSearchToolCall != nil ||
+	if tool.Execution != nil || tool.Output != nil || tool.Error != nil ||
 		tool.ResponsesComputerToolCallOutput != nil || tool.ServerLabel != nil ||
 		tool.ResponsesImageGenerationCall != nil || tool.ResponsesMCPListTools != nil ||
 		tool.ResponsesMCPApprovalResponse != nil || tool.ResponsesAdvisorCall != nil ||
@@ -1300,7 +1313,8 @@ func validateProviderResponsesToolMessage(state *State, tool *schemas.ResponsesT
 	shell, patch := itemType == schemas.ResponsesMessageTypeShellCall, itemType == schemas.ResponsesMessageTypeApplyPatchCall
 	if tool.ResponsesShellCall != nil && !shell || tool.ResponsesApplyPatchCall != nil && !patch ||
 		(tool.ItemCaller != nil || tool.CreatedBy != nil) && !shell && !patch ||
-		tool.ResponsesComputerToolCall != nil && itemType != schemas.ResponsesMessageTypeComputerCall {
+		tool.ResponsesComputerToolCall != nil && itemType != schemas.ResponsesMessageTypeComputerCall ||
+		tool.ResponsesFileSearchToolCall != nil && itemType != schemas.ResponsesMessageTypeFileSearchCall {
 		return ErrProviderResponseMalformed
 	}
 
@@ -1391,10 +1405,39 @@ func validateProviderResponsesToolMessage(state *State, tool *schemas.ResponsesT
 			!validProviderWebFetchResult(state, tool.ResponsesWebFetchCall) {
 			return ErrProviderResponseMalformed
 		}
+	case schemas.ResponsesMessageTypeFileSearchCall:
+		if tool.CallID != nil || tool.Name != nil || tool.Namespace != nil || tool.Arguments != nil || tool.Action != nil ||
+			tool.Caller != nil || tool.ResponsesCustomToolCall != nil || tool.ResponsesWebFetchCall != nil ||
+			!validProviderFileSearch(tool.ResponsesFileSearchToolCall) {
+			return ErrProviderResponseMalformed
+		}
 	default:
 		return ErrProviderResponseMalformed
 	}
 	return nil
+}
+
+// validProviderFileSearch checks the queries of a file search and the results that include
+// file_search_call.results returns: text from the files of the customer's vector stores, with
+// each file's ID, name, score and attributes.
+func validProviderFileSearch(search *schemas.ResponsesFileSearchToolCall) bool {
+	if search == nil || len(search.Queries) > maxProviderResponseItems || len(search.Results) > maxProviderResponseItems {
+		return false
+	}
+	for _, query := range search.Queries {
+		if !validProviderText(query, 64*1024, false) {
+			return false
+		}
+	}
+	for _, result := range search.Results {
+		if result.FileID != nil && !validProviderResponseID(*result.FileID) ||
+			!validOptionalProviderText(result.Filename, 64*1024, true) ||
+			!validOptionalProviderText(result.Text, maxProviderResponseBodySize, true) ||
+			result.Attributes != nil && len(*result.Attributes) > maxProviderResponseItems {
+			return false
+		}
+	}
+	return true
 }
 
 // validProviderPatchOperation checks the file instruction of a patch call. OpenAI decides which
@@ -1506,7 +1549,8 @@ func validProviderWebFetchResult(state *State, result *schemas.ResponsesWebFetch
 }
 
 // Calls of hosted tools come back in the shape that replies return them: a web search with its
-// action and, from Claude, its results, or Claude's web fetch with the page that it got.
+// action and, from Claude, its results, Claude's web fetch with the page that it got, or OpenAI's
+// file search with its queries and, when include asked for them, its results.
 var (
 	webSearchCallShape = inputShape{"type": inputText, "id": inputText, "status": inputText, "call_id": inputText,
 		"tool_caller": inputShape{"type": inputText}, "action": inputShape{"type": inputText, "query": inputText,
@@ -1517,12 +1561,26 @@ var (
 		"web_fetch_result_type": inputText, "web_fetch_result_url": inputText, "web_fetch_retrieved_at": inputText,
 		"web_fetch_error_code": inputText, "web_fetch_document": inputShape{"type": inputText, "title": inputText,
 			"source": inputShape{"type": inputText, "media_type": inputText, "data": inputText}}}
+	fileSearchCallShape = inputShape{"type": inputText, "id": inputText, "status": inputText, "queries": inputTexts,
+		"results": inputObjects{"file_id": inputText, "filename": inputText, "text": inputText, "score": inputNumber,
+			"attributes": inputScalars}}
 )
 
 // validateResponsesHostedCallInput checks a call of a hosted tool that a reply returned. The checks
 // are the same on every deployment, and each deployment gets only the calls that it reads
 // (catalog.ResolvedRequest.KeepReadableHistory).
 func validateResponsesHostedCallInput(item map[string]json.RawMessage, path, itemType string) error {
+	if itemType == "file_search_call" {
+		// Core sends null queries for an item that leaves them out, so an item holds them, as
+		// replies return them.
+		if err := checkInputShape(item, path, fileSearchCallShape); err != nil {
+			return err
+		}
+		if !rawJSONValueSet(item["queries"]) {
+			return invalidRequest(path + ".queries must be an array of strings")
+		}
+		return nil
+	}
 	shape := webSearchCallShape
 	if itemType == "web_fetch_call" {
 		shape = webFetchCallShape
@@ -1719,7 +1777,8 @@ func validateAndRecordProviderResponsesToolCall(state *State, item *schemas.Resp
 			if observed.execution == schemas.ToolSearchExecutionClient {
 				state.responsesClientCalls++
 			}
-		case schemas.ResponsesMessageTypeWebSearchCall, schemas.ResponsesMessageTypeWebFetchCall, schemas.ResponsesMessageTypeMCPCall:
+		case schemas.ResponsesMessageTypeWebSearchCall, schemas.ResponsesMessageTypeWebFetchCall, schemas.ResponsesMessageTypeMCPCall,
+			schemas.ResponsesMessageTypeFileSearchCall:
 			state.responsesDeclaredCalls++
 			state.responsesHostedCalls++
 			if cap, supplied := responsesExplicitMaxToolCalls(state); supplied && !responsesUsesAnthropicWire(state) && state.responsesHostedCalls > cap {
@@ -1974,13 +2033,15 @@ func validateProviderResponsesHostedToolEvent(state *State, response *schemas.Bi
 	next := item.stage
 	switch response.Type {
 	case schemas.ResponsesStreamResponseTypeWebSearchCallInProgress,
-		schemas.ResponsesStreamResponseTypeWebFetchCallInProgress:
+		schemas.ResponsesStreamResponseTypeWebFetchCallInProgress,
+		schemas.ResponsesStreamResponseTypeFileSearchCallInProgress:
 		if item.stage != 0 {
 			return ErrProviderResponseMalformed
 		}
 		next = 1
 	case schemas.ResponsesStreamResponseTypeWebSearchCallSearching,
-		schemas.ResponsesStreamResponseTypeWebFetchCallFetching:
+		schemas.ResponsesStreamResponseTypeWebFetchCallFetching,
+		schemas.ResponsesStreamResponseTypeFileSearchCallSearching:
 		if item.stage != 1 {
 			return ErrProviderResponseMalformed
 		}
@@ -2000,7 +2061,8 @@ func validateProviderResponsesHostedToolEvent(state *State, response *schemas.Bi
 			return ErrProviderResponseMalformed
 		}
 		next = 5
-	case schemas.ResponsesStreamResponseTypeWebFetchCallCompleted:
+	case schemas.ResponsesStreamResponseTypeWebFetchCallCompleted,
+		schemas.ResponsesStreamResponseTypeFileSearchCallCompleted:
 		if item.stage != 2 {
 			return ErrProviderResponseMalformed
 		}
@@ -2185,16 +2247,30 @@ func validateProviderResponsesAnnotation(state *State, annotation *schemas.Respo
 		annotation.URL != nil && !validProviderHTTPURL(*annotation.URL) {
 		return ErrProviderResponseMalformed
 	}
-	if annotation.Type != "url_citation" || annotation.URL == nil ||
-		!providerResponsesToolTypeAllowed(state, schemas.ResponsesToolTypeWebSearch) ||
-		!providerResponsesURLAllowed(state, schemas.ResponsesToolTypeWebSearch, *annotation.URL) ||
-		annotation.FileID != nil || annotation.Filename != nil || annotation.ContainerID != nil ||
-		annotation.StartCharIndex != nil || annotation.EndCharIndex != nil ||
+	if annotation.ContainerID != nil || annotation.StartCharIndex != nil || annotation.EndCharIndex != nil ||
 		annotation.StartPageNumber != nil || annotation.EndPageNumber != nil ||
-		annotation.StartBlockIndex != nil || annotation.EndBlockIndex != nil || annotation.Source != nil ||
-		!validOptionalProviderText(annotation.Title, 64*1024, true) ||
-		!validOptionalProviderText(annotation.Text, 1024*1024, true) ||
-		!validOptionalProviderText(annotation.EncryptedIndex, 16*1024*1024, true) {
+		annotation.StartBlockIndex != nil || annotation.EndBlockIndex != nil || annotation.Source != nil {
+		return ErrProviderResponseMalformed
+	}
+	switch annotation.Type {
+	case "url_citation":
+		if annotation.URL == nil || !providerResponsesToolTypeAllowed(state, schemas.ResponsesToolTypeWebSearch) ||
+			!providerResponsesURLAllowed(state, schemas.ResponsesToolTypeWebSearch, *annotation.URL) ||
+			annotation.FileID != nil || annotation.Filename != nil ||
+			!validOptionalProviderText(annotation.Title, 64*1024, true) ||
+			!validOptionalProviderText(annotation.Text, 1024*1024, true) ||
+			!validOptionalProviderText(annotation.EncryptedIndex, 16*1024*1024, true) {
+			return ErrProviderResponseMalformed
+		}
+	case "file_citation":
+		// A file search cites one of the files that it read at a place in the text.
+		if annotation.FileID == nil || annotation.Filename == nil || annotation.Index == nil ||
+			!providerResponsesToolTypeAllowed(state, schemas.ResponsesToolTypeFileSearch) ||
+			!validProviderText(*annotation.Filename, 64*1024, true) || annotation.URL != nil ||
+			annotation.Title != nil || annotation.Text != nil || annotation.StartIndex != nil || annotation.EncryptedIndex != nil {
+			return ErrProviderResponseMalformed
+		}
+	default:
 		return ErrProviderResponseMalformed
 	}
 	return nil

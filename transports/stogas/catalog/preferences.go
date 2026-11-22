@@ -526,12 +526,17 @@ func (r *ResolvedRequest) carriedResponsesItem(item schemas.ResponsesMessage, cl
 
 // carriedResponsesBlocks returns content blocks as the deployment gets them and whether they
 // differ: with OpenAI's prompt cache breakpoints as the deployment takes them (carriedBreakpoint),
-// and where refusals become text (refusalAsText) without the log probabilities of an earlier reply
-// and with an earlier refusal as the text that the assistant wrote.
+// with file citations only for OpenAI's own Responses API, the only one that takes back a citation
+// of a file that its account searched, and where refusals become text (refusalAsText) without the
+// log probabilities of an earlier reply and with an earlier refusal as the text that the
+// assistant wrote.
 func (r *ResolvedRequest) carriedResponsesBlocks(blocks []schemas.ResponsesMessageContentBlock, asText bool) ([]schemas.ResponsesMessageContentBlock, bool) {
+	dropFileCitations := !r.takesResponsesControls()
 	differs := func(block schemas.ResponsesMessageContentBlock) bool {
-		return r.breakpointDiffers(block.PromptCacheBreakpoint) || asText && (block.Type == schemas.ResponsesOutputMessageContentTypeRefusal ||
-			block.ResponsesOutputMessageContentText != nil && len(block.ResponsesOutputMessageContentText.LogProbs) > 0)
+		text := block.ResponsesOutputMessageContentText
+		return r.breakpointDiffers(block.PromptCacheBreakpoint) ||
+			dropFileCitations && text != nil && slices.ContainsFunc(text.Annotations, isFileCitation) ||
+			asText && (block.Type == schemas.ResponsesOutputMessageContentTypeRefusal || text != nil && len(text.LogProbs) > 0)
 	}
 	if !slices.ContainsFunc(blocks, differs) {
 		return blocks, false
@@ -540,6 +545,11 @@ func (r *ResolvedRequest) carriedResponsesBlocks(blocks []schemas.ResponsesMessa
 	for index := range blocks {
 		block := &blocks[index]
 		block.PromptCacheBreakpoint = r.carriedBreakpoint(block.PromptCacheBreakpoint)
+		if text := block.ResponsesOutputMessageContentText; dropFileCitations && text != nil && slices.ContainsFunc(text.Annotations, isFileCitation) {
+			without := *text
+			without.Annotations = slices.DeleteFunc(slices.Clone(text.Annotations), isFileCitation)
+			block.ResponsesOutputMessageContentText = &without
+		}
 		if !asText {
 			continue
 		}
@@ -553,6 +563,10 @@ func (r *ResolvedRequest) carriedResponsesBlocks(blocks []schemas.ResponsesMessa
 		}
 	}
 	return blocks, true
+}
+
+func isFileCitation(annotation schemas.ResponsesOutputMessageContentTextAnnotation) bool {
+	return annotation.Type == "file_citation"
 }
 
 // claudeToolCallID returns the ID under which Claude takes a tool call whose ID holds characters

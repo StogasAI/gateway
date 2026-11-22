@@ -80,7 +80,7 @@ type policyRequestData struct {
 	// conversation.
 	Store bool `json:"store"`
 	// StoredInput reports whether the model reads input that the provider holds and the gateway
-	// never sees: previous_response_id or conversation.
+	// never sees: previous_response_id, conversation or a file search's vector stores.
 	StoredInput bool `json:"storedInput"`
 	// SystemMessages reads the request's messages only when a policy asks.
 	SystemMessages func() bool `json:"systemMessages"`
@@ -585,7 +585,7 @@ func receivingCompanies(provider, hosting string, sharedWith []string) []string 
 func (r *ResolvedRequest) policyRequestData(hostedTools []string) policyRequestData {
 	data := policyRequestData{
 		BodyBytes: r.policyBodyBytes, HostedTools: hostedTools, Interface: r.Route.Interface(), Model: r.policyModel,
-		Store: r.providerState.Keeps, StoredInput: r.providerState.Held != "",
+		Store: r.providerState.Keeps, StoredInput: r.providerState.Reads != "",
 	}
 	if facts := r.policyFacts; facts != nil {
 		data.ClientTools, data.MCPServers, data.MCPTools, data.SystemMessages = facts.clientTools, facts.mcpServers, facts.mcpTools, facts.systemMessages

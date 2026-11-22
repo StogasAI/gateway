@@ -72,6 +72,10 @@ type inputKind uint8
 const (
 	inputText inputKind = iota + 1
 	inputTexts
+	// inputNumber is a number, such as a search result's score.
+	inputNumber
+	// inputScalars is an object of strings, numbers and booleans, such as a file's attributes.
+	inputScalars
 )
 
 // checkInputShape refuses a key that the shape does not list and a value of another kind. A null
@@ -84,12 +88,8 @@ func checkInputShape(object map[string]json.RawMessage, path string, shape input
 		field := path + "." + key
 		switch kind := shape[key].(type) {
 		case inputKind:
-			if _, ok := rawStringValue(raw); kind == inputText && !ok {
-				return invalidRequest(field + " must be a string")
-			}
-			var values []string
-			if kind == inputTexts && sonic.Unmarshal(raw, &values) != nil {
-				return invalidRequest(field + " must be an array of strings")
+			if err := checkInputKind(raw, field, kind); err != nil {
+				return err
 			}
 		case inputShape:
 			nested, ok := rawObject(raw)
@@ -116,6 +116,42 @@ func checkInputShape(object map[string]json.RawMessage, path string, shape input
 			}
 		default:
 			return invalidRequest(field + " is not supported")
+		}
+	}
+	return nil
+}
+
+func checkInputKind(raw json.RawMessage, field string, kind inputKind) error {
+	switch kind {
+	case inputText:
+		if _, ok := rawStringValue(raw); !ok {
+			return invalidRequest(field + " must be a string")
+		}
+	case inputTexts:
+		var values []string
+		if sonic.Unmarshal(raw, &values) != nil {
+			return invalidRequest(field + " must be an array of strings")
+		}
+	case inputNumber:
+		var value float64
+		if sonic.Unmarshal(raw, &value) != nil {
+			return invalidRequest(field + " must be a number")
+		}
+	case inputScalars:
+		object, ok := rawObject(raw)
+		if !ok {
+			return invalidRequest(field + " must be an object")
+		}
+		for key, value := range object {
+			var scalar any
+			if sonic.Unmarshal(value, &scalar) != nil {
+				return invalidRequest(field + "." + key + " must be a string, number or boolean")
+			}
+			switch scalar.(type) {
+			case string, float64, bool:
+			default:
+				return invalidRequest(field + "." + key + " must be a string, number or boolean")
+			}
 		}
 	}
 	return nil

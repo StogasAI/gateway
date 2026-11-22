@@ -137,6 +137,17 @@ func TestHostedCallsTakeTheirPlaceInTurns(t *testing.T) {
 	if err := validateResolvedResponses(t, afterSearch); err != nil {
 		t.Fatalf("system message after a server tool result: %v", err)
 	}
+	// A call that Claude does not read never reaches it, so a system message after the call
+	// follows the assistant's message, where Claude takes none.
+	for _, call := range []string{openAISearchCall, `{"type":"file_search_call","id":"fs_1","status":"completed","queries":["gateway"]}`} {
+		afterDroppedCall := `{"model":"anthropic-claude-opus-4-8","input":[{"role":"user","content":"Search."},` +
+			`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Found it.","annotations":[]}]},` + call +
+			`,{"role":"developer","content":"Cite every source."}]}`
+		if err := validateResolvedResponses(t, afterDroppedCall); err == nil ||
+			!strings.Contains(err.Error(), "input[3].role must immediately follow a user message or tool result") {
+			t.Fatalf("system message after %s: %v", call, err)
+		}
+	}
 }
 
 // Redaction leaves Claude's encrypted search results as Claude returned them, since Claude refuses

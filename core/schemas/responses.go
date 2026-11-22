@@ -2803,7 +2803,7 @@ func (e *ResponsesToolMessageError) Text() string {
 
 type ResponsesFileSearchToolCall struct {
 	Queries []string                            `json:"queries"`
-	Results []ResponsesFileSearchToolCallResult `json:"results,omitempty"`
+	Results []ResponsesFileSearchToolCallResult `json:"results"` // null without include; an empty list stays a list
 }
 
 type ResponsesFileSearchToolCallResult struct {
@@ -4034,21 +4034,14 @@ func (f *ResponsesToolFileSearchFilter) MarshalJSON() ([]byte, error) {
 	data := []byte(`{}`)
 	var err error
 
-	if data, err = sjson.SetBytes(data, "type", f.Type); err != nil {
-		return nil, err
+	// A comparison filter without a type keeps the provider's default.
+	if f.Type != "" {
+		if data, err = sjson.SetBytes(data, "type", f.Type); err != nil {
+			return nil, err
+		}
 	}
 
 	switch f.Type {
-	case "eq", "ne", "gt", "gte", "lt", "lte", "in", "nin":
-		if f.ResponsesToolFileSearchComparisonFilter == nil {
-			return nil, fmt.Errorf("comparison filter is nil but type is %s", f.Type)
-		}
-		if data, err = sjson.SetBytes(data, "key", f.ResponsesToolFileSearchComparisonFilter.Key); err != nil {
-			return nil, err
-		}
-		if data, err = sjson.SetBytes(data, "value", f.ResponsesToolFileSearchComparisonFilter.Value); err != nil {
-			return nil, err
-		}
 	case "and", "or":
 		if f.ResponsesToolFileSearchCompoundFilter == nil {
 			return nil, fmt.Errorf("compound filter is nil but type is %s", f.Type)
@@ -4061,7 +4054,16 @@ func (f *ResponsesToolFileSearchFilter) MarshalJSON() ([]byte, error) {
 			return nil, err
 		}
 	default:
-		return nil, fmt.Errorf("unknown filter type: %s", f.Type)
+		// Every other type compares a key with a value, as the provider's operators do.
+		if f.ResponsesToolFileSearchComparisonFilter == nil {
+			return nil, fmt.Errorf("comparison filter is nil but type is %s", f.Type)
+		}
+		if data, err = sjson.SetBytes(data, "key", f.ResponsesToolFileSearchComparisonFilter.Key); err != nil {
+			return nil, err
+		}
+		if data, err = sjson.SetRawBytes(data, "value", f.ResponsesToolFileSearchComparisonFilter.Value); err != nil {
+			return nil, err
+		}
 	}
 
 	return data, nil
@@ -4075,39 +4077,18 @@ func (f *ResponsesToolFileSearchFilter) UnmarshalJSON(data []byte) error {
 		return fmt.Errorf("failed to unmarshal filter JSON: %w", err)
 	}
 
-	// Extract the type field
-	typeValue, ok := raw["type"]
-	if !ok {
-		return fmt.Errorf("missing required 'type' field in filter")
-	}
-
-	typeStr, ok := typeValue.(string)
-	if !ok {
-		return fmt.Errorf("'type' field must be a string, got %T", typeValue)
+	// Extract the type field. A comparison filter may leave it out for the provider's default.
+	typeStr := ""
+	if typeValue, ok := raw["type"]; ok {
+		if typeStr, ok = typeValue.(string); !ok {
+			return fmt.Errorf("'type' field must be a string, got %T", typeValue)
+		}
 	}
 
 	f.Type = typeStr
 
 	// Initialize the appropriate embedded struct based on type
 	switch typeStr {
-	case "eq", "ne", "gt", "gte", "lt", "lte", "in", "nin":
-		// This is a comparison filter
-		f.ResponsesToolFileSearchComparisonFilter = &ResponsesToolFileSearchComparisonFilter{}
-		f.ResponsesToolFileSearchCompoundFilter = nil
-
-		// Unmarshal into the comparison filter
-		if err := Unmarshal(data, f.ResponsesToolFileSearchComparisonFilter); err != nil {
-			return fmt.Errorf("failed to unmarshal comparison filter: %w", err)
-		}
-
-		// Validate required fields
-		if f.ResponsesToolFileSearchComparisonFilter.Key == "" {
-			return fmt.Errorf("comparison filter missing required 'key' field")
-		}
-		if f.ResponsesToolFileSearchComparisonFilter.Value == nil {
-			return fmt.Errorf("comparison filter missing required 'value' field")
-		}
-
 	case "and", "or":
 		// This is a compound filter
 		f.ResponsesToolFileSearchCompoundFilter = &ResponsesToolFileSearchCompoundFilter{}
@@ -4127,7 +4108,22 @@ func (f *ResponsesToolFileSearchFilter) UnmarshalJSON(data []byte) error {
 		}
 
 	default:
-		return fmt.Errorf("unknown filter type: %s (supported types: eq, ne, gt, gte, lt, lte, in, nin, and, or)", typeStr)
+		// This is a comparison filter
+		f.ResponsesToolFileSearchComparisonFilter = &ResponsesToolFileSearchComparisonFilter{}
+		f.ResponsesToolFileSearchCompoundFilter = nil
+
+		// Unmarshal into the comparison filter
+		if err := Unmarshal(data, f.ResponsesToolFileSearchComparisonFilter); err != nil {
+			return fmt.Errorf("failed to unmarshal comparison filter: %w", err)
+		}
+
+		// Validate required fields
+		if f.ResponsesToolFileSearchComparisonFilter.Key == "" {
+			return fmt.Errorf("comparison filter missing required 'key' field")
+		}
+		if value := f.ResponsesToolFileSearchComparisonFilter.Value; len(value) == 0 || string(value) == "null" {
+			return fmt.Errorf("comparison filter missing required 'value' field")
+		}
 	}
 
 	return nil
@@ -4135,9 +4131,9 @@ func (f *ResponsesToolFileSearchFilter) UnmarshalJSON(data []byte) error {
 
 // ResponsesToolFileSearchComparisonFilter represents a file search comparison filter
 type ResponsesToolFileSearchComparisonFilter struct {
-	Key   string      `json:"key"`   // The key to compare against the value
-	Type  string      `json:"type"`  //
-	Value interface{} `json:"value"` // The value to compare (string, number, boolean, or an array for in/nin)
+	Key   string          `json:"key"`   // The key to compare against the value
+	Type  string          `json:"type"`  //
+	Value json.RawMessage `json:"value"` // The value to compare (string, number, boolean, or an array for in/nin), kept exact
 }
 
 // ResponsesToolFileSearchCompoundFilter represents a file search compound filter
@@ -4147,8 +4143,16 @@ type ResponsesToolFileSearchCompoundFilter struct {
 
 // ResponsesToolFileSearchRankingOptions represents a file search ranking options
 type ResponsesToolFileSearchRankingOptions struct {
-	Ranker         *string  `json:"ranker,omitempty"`          // The ranker to use
-	ScoreThreshold *float64 `json:"score_threshold,omitempty"` // Score threshold (0-1)
+	Ranker         *string                               `json:"ranker,omitempty"`          // The ranker to use
+	ScoreThreshold *float64                              `json:"score_threshold,omitempty"` // Score threshold (0-1)
+	HybridSearch   *ResponsesToolFileSearchHybridOptions `json:"hybrid_search,omitempty"`   // Weights of embedding and keyword matches
+}
+
+// ResponsesToolFileSearchHybridOptions weighs embedding matches against keyword matches in a
+// hybrid file search.
+type ResponsesToolFileSearchHybridOptions struct {
+	EmbeddingWeight *float64 `json:"embedding_weight,omitempty"`
+	TextWeight      *float64 `json:"text_weight,omitempty"`
 }
 
 // ResponsesToolComputerUsePreview represents a tool computer use preview
@@ -4606,6 +4610,7 @@ const (
 	ResponsesStreamResponseTypeFunctionCallArgumentsDone      ResponsesStreamResponseType = "response.function_call_arguments.done"
 	ResponsesStreamResponseTypeFileSearchCallInProgress       ResponsesStreamResponseType = "response.file_search_call.in_progress"
 	ResponsesStreamResponseTypeFileSearchCallSearching        ResponsesStreamResponseType = "response.file_search_call.searching"
+	ResponsesStreamResponseTypeFileSearchCallCompleted        ResponsesStreamResponseType = "response.file_search_call.completed"
 	ResponsesStreamResponseTypeFileSearchCallResultsAdded     ResponsesStreamResponseType = "response.file_search_call.results.added"
 	ResponsesStreamResponseTypeFileSearchCallResultsCompleted ResponsesStreamResponseType = "response.file_search_call.results.completed"
 	ResponsesStreamResponseTypeWebSearchCallInProgress        ResponsesStreamResponseType = "response.web_search_call.in_progress"

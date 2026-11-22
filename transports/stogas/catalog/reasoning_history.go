@@ -489,7 +489,8 @@ func (r *ResolvedRequest) readableResponsesInput(input []schemas.ResponsesMessag
 // the summary of an item with encrypted content as the client sent it, so it must not reach a
 // provider.
 func (r *ResolvedRequest) readableResponsesItem(item schemas.ResponsesMessage) (schemas.ResponsesMessage, bool, bool) {
-	if item.Type != nil && (*item.Type == schemas.ResponsesMessageTypeWebSearchCall || *item.Type == schemas.ResponsesMessageTypeWebFetchCall) {
+	if item.Type != nil && (*item.Type == schemas.ResponsesMessageTypeWebSearchCall || *item.Type == schemas.ResponsesMessageTypeWebFetchCall ||
+		*item.Type == schemas.ResponsesMessageTypeFileSearchCall) {
 		keep := r.readsHostedCall(&item)
 		return item, keep, !keep
 	}

@@ -164,7 +164,7 @@ var fieldDomains = map[string]fieldDomain{
 	"route.interfaces":                  interfaces,
 	"provider.id":                       catalogID,
 	"provider.headquarteredCountry":     country,
-	"request.hostedTools":               oneOf("web_search", "web_fetch", "mcp"),
+	"request.hostedTools":               oneOf("web_search", "web_fetch", "mcp", "file_search"),
 	"credential.accountOptions":         catalogID,
 	"credential.declaredAccountOptions": catalogID,
 	"credential.kind":                   oneOf("managed", "stored", "encrypted"),

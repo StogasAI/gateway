@@ -302,8 +302,8 @@ func responsesMCPServerUnattended(servers []mcpServer) bool {
 // Settlement charges what the provider counts, so a larger result is billed and only the
 // reservation is smaller. A server that asks for approval runs the calls that the input approves.
 // One that does not can run calls up to max_tool_calls, which counts MCP calls (capture
-// openai/mcp-max-tool-calls) and which all hosted tools share, so the web search hold already
-// covers them when the request also searches.
+// openai/mcp-max-tool-calls) and which all hosted tools share, so the search hold already covers
+// them when the request also searches the web or files.
 func openAIResponsesMCPHoldMeters(req openAIAdapterContext) []billing.MeterEstimate {
 	if req.Route != openAIAdapterRouteResponses {
 		return nil
@@ -318,7 +318,7 @@ func openAIResponsesMCPHoldMeters(req openAIAdapterContext) []billing.MeterEstim
 			reads++
 		}
 	}
-	if responsesMCPServerUnattended(servers) && webSearchContentHoldTokensForKind(req, responsesSearchHoldKind(req)) == 0 {
+	if responsesMCPServerUnattended(servers) && searchContentHoldTokensForKind(req, responsesSearchHoldKind(req)) == 0 {
 		reads += responsesHostedToolHoldQuantity(req)
 	}
 	if reads == 0 {

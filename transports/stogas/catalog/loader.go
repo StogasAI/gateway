@@ -103,6 +103,7 @@ const (
 	meterOpenAIResponsesWebSearchCalls                    = "openai_responses_web_search_calls"
 	meterOpenAIResponsesWebSearchPreviewCalls             = "openai_responses_web_search_preview_calls"
 	meterOpenAIResponsesWebSearchPreviewNonReasoningCalls = "openai_responses_web_search_preview_non_reasoning_calls"
+	meterOpenAIResponsesFileSearchCalls                   = "openai_responses_file_search_calls"
 	ratePerThousandSearchContextHighCalls                 = "per_1k_search_context_high_calls"
 	ratePerThousandSearchContextLowCalls                  = "per_1k_search_context_low_calls"
 	ratePerThousandSearchContextMediumCalls               = "per_1k_search_context_medium_calls"
@@ -125,6 +126,7 @@ var callPricingMeters = map[string]bool{
 	meterOpenAIResponsesWebSearchCalls:                    true,
 	meterOpenAIResponsesWebSearchPreviewCalls:             true,
 	meterOpenAIResponsesWebSearchPreviewNonReasoningCalls: true,
+	meterOpenAIResponsesFileSearchCalls:                   true,
 }
 
 // The fallback is a build's root and every part that it names.

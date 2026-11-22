@@ -185,7 +185,8 @@ type RequestSettings struct {
 	// for, because the request marked nothing to cache.
 	PromptCaching string `json:"prompt_caching,omitempty"`
 	// ProviderState names the fields that kept or read state in the customer's provider account:
-	// store when the provider got store: true, previous_response_id and conversation.
+	// store when the provider got store: true, previous_response_id, conversation, and
+	// vector_store_ids when a file search read vector stores.
 	ProviderState []string `json:"provider_state,omitempty"`
 }
 

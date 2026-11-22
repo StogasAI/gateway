@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/bytedance/sonic"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/rawjson"
 )
@@ -19,13 +20,14 @@ import (
 type HostedTool string
 
 const (
-	HostedToolWebSearch HostedTool = "web_search"
-	HostedToolWebFetch  HostedTool = "web_fetch"
-	HostedToolMCP       HostedTool = "mcp"
+	HostedToolWebSearch  HostedTool = "web_search"
+	HostedToolWebFetch   HostedTool = "web_fetch"
+	HostedToolMCP        HostedTool = "mcp"
+	HostedToolFileSearch HostedTool = "file_search"
 )
 
 // HostedTools lists every hosted tool in canonical order.
-var HostedTools = []HostedTool{HostedToolWebSearch, HostedToolWebFetch, HostedToolMCP}
+var HostedTools = []HostedTool{HostedToolWebSearch, HostedToolWebFetch, HostedToolMCP, HostedToolFileSearch}
 
 func hostedToolRank(tool HostedTool) int { return slices.Index(HostedTools, tool) }
 
@@ -158,8 +160,9 @@ func isTrue(value *bool) bool  { return value != nil && *value }
 func isFalse(value *bool) bool { return value != nil && !*value }
 
 // validateHostedTools checks a deployment's tools on one route: each is known and sets only facts
-// that it can make worse, web search prices exactly the call meters of its wire, so no search bills
-// at zero, and nothing else prices them. validateLocations checks the tools' locations.
+// that it can make worse, web search and file search price exactly the call meters of their wire,
+// so no call bills at zero, and nothing else prices them. validateLocations checks the tools'
+// locations.
 func validateHostedTools(owner string, claudeWire bool, tools map[HostedTool]HostedToolOffer, deployment Pricing) error {
 	required, foreign := webSearchMeters(claudeWire)
 	for tool, offer := range tools {
@@ -175,22 +178,29 @@ func validateHostedTools(owner string, claudeWire bool, tools map[HostedTool]Hos
 			isTrue(effect.TEE) || isTrue(effect.TEEVerified) {
 			return fmt.Errorf("%s has %s data handling that would improve the deployment's", owner, tool)
 		}
-		meters := 0
-		if tool == HostedToolWebSearch {
-			meters = len(required)
-			for _, meter := range required {
-				if len(offer.Pricing[meter]) == 0 {
-					return fmt.Errorf("%s offers web search without a price for %s", owner, meter)
-				}
+		var meters []string
+		switch tool {
+		case HostedToolWebSearch:
+			meters = required
+		case HostedToolFileSearch:
+			// Only OpenAI's own Responses API runs file search.
+			if claudeWire {
+				return fmt.Errorf("%s offers file search on Claude's wire, which has none", owner)
+			}
+			meters = []string{meterOpenAIResponsesFileSearchCalls}
+		}
+		for _, meter := range meters {
+			if len(offer.Pricing[meter]) == 0 {
+				return fmt.Errorf("%s offers %s without a price for %s", owner, tool, meter)
 			}
 		}
-		if len(offer.Pricing) != meters {
+		if len(offer.Pricing) != len(meters) {
 			return fmt.Errorf("%s prices %s on a meter that it does not bill", owner, tool)
 		}
 	}
-	for _, meter := range slices.Concat(required, foreign) {
+	for _, meter := range slices.Concat(required, foreign, []string{meterOpenAIResponsesFileSearchCalls}) {
 		if len(deployment[meter]) > 0 {
-			return fmt.Errorf("%s prices %s, which only web search on its wire charges", owner, meter)
+			return fmt.Errorf("%s prices %s, which only a hosted tool on its wire charges", owner, meter)
 		}
 	}
 	return nil
@@ -291,20 +301,28 @@ func hostedToolForType(kind string) (HostedTool, bool) {
 		return HostedToolWebFetch, true
 	case schemas.ResponsesToolTypeMCP:
 		return HostedToolMCP, true
+	case schemas.ResponsesToolTypeFileSearch:
+		return HostedToolFileSearch, true
 	}
 	return "", false
 }
 
 // readsHostedCall reports whether the deployment takes back an earlier call of a hosted tool. Only
 // a route that runs the tool takes its calls, and only in the form that its provider reads: OpenAI
-// takes web searches with their IDs (openAIWebSearchCallID), and Claude takes web searches with the
-// encrypted content of every result and web fetches with what they got. Codex keeps only a
-// search's query, so Claude does not read a search that Codex sends back. The calls that the
-// deployment does not read go, as reasoning that it does not read goes.
+// takes web searches with their IDs (openAIWebSearchCallID) and file searches with their results,
+// and Claude takes web searches with the encrypted content of every result and web fetches with
+// what they got. Codex keeps only a search's query, so Claude does not read a search that Codex
+// sends back. A file search without its results names a stored reply's search, whose results OpenAI
+// would read where no input check can, and which it refuses when the reply was not stored (capture
+// openai/file-search). The calls that the deployment does not read go, as reasoning that it does
+// not read goes.
 func (r *ResolvedRequest) readsHostedCall(item *schemas.ResponsesMessage) bool {
 	tool := HostedToolWebSearch
-	if *item.Type == schemas.ResponsesMessageTypeWebFetchCall {
+	switch *item.Type {
+	case schemas.ResponsesMessageTypeWebFetchCall:
 		tool = HostedToolWebFetch
+	case schemas.ResponsesMessageTypeFileSearchCall:
+		tool = HostedToolFileSearch
 	}
 	call := item.ResponsesToolMessage
 	if _, runs := r.Deployment.HostedTools[tool]; !runs || call == nil {
@@ -317,9 +335,19 @@ func (r *ResolvedRequest) readsHostedCall(item *schemas.ResponsesMessage) bool {
 		}
 		return call.Action != nil && claudeSearchResults(call.Action.ResponsesWebSearchToolCallAction)
 	case r.RunsOpenAIModel() && r.WireRoute() == RouteResponses:
+		if tool == HostedToolFileSearch {
+			return call.ResponsesFileSearchToolCall != nil && call.ResponsesFileSearchToolCall.Results != nil
+		}
 		return tool == HostedToolWebSearch && item.ID != nil && openAIWebSearchCallID(*item.ID)
 	}
 	return false
+}
+
+// ReadsHostedCallInput reports whether the deployment takes back a hosted call item as the client
+// sent it, so that the checks of the input's order skip a call that the deployment never gets.
+func (r *ResolvedRequest) ReadsHostedCallInput(raw json.RawMessage) bool {
+	var item schemas.ResponsesMessage
+	return sonic.Unmarshal(raw, &item) == nil && item.Type != nil && r.readsHostedCall(&item)
 }
 
 // claudeSearchResults reports whether a web search holds Claude's results, each with its encrypted

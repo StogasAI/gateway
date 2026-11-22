@@ -577,6 +577,17 @@ func actualWebSearchCalls(state *State) int {
 	return signals.WebSearchCalls()
 }
 
+func actualFileSearchCalls(state *State) int {
+	if state == nil || state.Signals == nil {
+		return 0
+	}
+	signals, ok := state.Signals.(SearchUsageSignals)
+	if !ok {
+		return 0
+	}
+	return signals.FileSearchCalls()
+}
+
 // The hosted tool call cap that the caller supplied, if any, which the hold covers. Without one
 // the hold covers defaultResponsesHostedToolCalls and the provider receives no cap.
 func responsesExplicitMaxToolCalls(state *State) (int, bool) {

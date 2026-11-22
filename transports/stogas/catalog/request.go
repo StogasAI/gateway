@@ -1125,6 +1125,16 @@ func planRoutes(input RequestInput, route Route, rawData map[string]json.RawMess
 	if err != nil {
 		return nil, err
 	}
+	// A hosted tool that only some providers run decides before the provider state that it reads,
+	// such as file search's vector stores, so that a refusal names the tool.
+	tools := readRequestTools(route, rawData)
+	if input.tools != nil {
+		tools = *input.tools
+	}
+	selections, withoutTools, err := filterHostedTools(selections, tools.hosted.listed, input.trace)
+	if err != nil {
+		return nil, err
+	}
 	providerState := readProviderState(route, rawData)
 	selections, withoutState, err := filterProviderState(selections, providerState, route)
 	if err != nil {
@@ -1134,19 +1144,11 @@ func planRoutes(input RequestInput, route Route, rawData map[string]json.RawMess
 	if err != nil {
 		return nil, err
 	}
-	tools := readRequestTools(route, rawData)
-	if input.tools != nil {
-		tools = *input.tools
-	}
-	selections, withoutTools, err := filterHostedTools(selections, tools.hosted.listed, input.trace)
-	if err != nil {
-		return nil, err
-	}
 	variants := &requestVariants{
 		base: RequestPolicy{Config: input.Policy, RedactionPolicy: input.RedactionPolicy, LoadRedactionPolicy: input.LoadRedactionPolicy},
 		load: input.CredentialPolicy, requestPolicy: requestPolicy, fields: rawData, route: route, selections: selections, reserveBody: input.ReserveBody, inputBytes: len(input.Body),
 		attachments: requestAttachments(rawData, route), hostedTools: tools.hosted.enabled, facts: tools.facts, providerState: providerState,
-		ruledOut: slices.Concat(withoutState, ruledOut, withoutTools),
+		ruledOut: slices.Concat(withoutTools, withoutState, ruledOut),
 	}
 	return planRequest(input, route, requested, providerPreference, variants)
 }

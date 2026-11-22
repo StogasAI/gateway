@@ -373,7 +373,7 @@ func parseResponsesTools(state *State, raw json.RawMessage) ([]schemas.Responses
 				seenNames[memberName] = true
 			}
 		case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview, schemas.ResponsesToolTypeWebFetch,
-			schemas.ResponsesToolTypeToolSearch:
+			schemas.ResponsesToolTypeToolSearch, schemas.ResponsesToolTypeFileSearch:
 			if seenHostedTypes[toolType] {
 				return nil, invalidRequest(fmt.Sprintf("tools[%d].type duplicates another %s tool", index, toolType))
 			}
@@ -404,11 +404,11 @@ func parseResponsesTools(state *State, raw json.RawMessage) ([]schemas.Responses
 		switch tool.Type {
 		case schemas.ResponsesToolTypeFunction, schemas.ResponsesToolTypeCustom, schemas.ResponsesToolTypeNamespace:
 		case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview, schemas.ResponsesToolTypeWebFetch:
-		case schemas.ResponsesToolTypeMCP, schemas.ResponsesToolTypeToolSearch:
+		case schemas.ResponsesToolTypeMCP, schemas.ResponsesToolTypeToolSearch, schemas.ResponsesToolTypeFileSearch:
 		case schemas.ResponsesToolTypeShell, schemas.ResponsesToolTypeApplyPatch, schemas.ResponsesToolTypeComputer:
 		case catalog.AnthropicBashToolType, catalog.AnthropicTextEditorToolType:
 		default:
-			return nil, invalidRequest("Only function, custom, namespace, shell, apply_patch, computer, tool_search, web_fetch, and priced hosted web search tools are supported")
+			return nil, invalidRequest("Only function, custom, namespace, shell, apply_patch, computer, tool_search, file_search, web_fetch, and priced hosted web search tools are supported")
 		}
 	}
 	return tools, nil
@@ -455,6 +455,8 @@ func validateRawResponsesToolShape(state *State, tool map[string]json.RawMessage
 		return toolType, "", validateResponsesWebSearchTool(state, tool, path, toolType)
 	case schemas.ResponsesToolTypeWebFetch:
 		return toolType, "", validateResponsesWebFetchTool(state, tool, path)
+	case schemas.ResponsesToolTypeFileSearch:
+		return toolType, "", validateResponsesFileSearchTool(tool, path)
 	case schemas.ResponsesToolTypeMCP:
 		server, err := validateResponsesMCPTool(tool, path)
 		return toolType, server.label, err
@@ -814,6 +816,54 @@ func validateResponsesWebFetchTool(state *State, tool map[string]json.RawMessage
 	return validateResponsesToolCacheControl(tool["cache_control"], path+".cache_control")
 }
 
+// validateResponsesFileSearchTool refuses what core would drop from a file_search tool on its way to
+// OpenAI: a key that core's type does not hold, at any depth, and a filter type that is empty.
+// Core's parse refuses values of the wrong kind and filters without their parts, and OpenAI checks
+// the values themselves, such as whether the vector stores are in the account and which rankers
+// and filter operators exist.
+func validateResponsesFileSearchTool(tool map[string]json.RawMessage, path string) error {
+	if err := rejectUnsupportedResponsesToolKeys(tool, path, "type", "vector_store_ids", "max_num_results", "ranking_options", "filters"); err != nil {
+		return err
+	}
+	if options, _ := rawObject(tool["ranking_options"]); options != nil {
+		if err := rejectUnsupportedResponsesToolKeys(options, path+".ranking_options", "ranker", "score_threshold", "hybrid_search"); err != nil {
+			return err
+		}
+		if hybrid, _ := rawObject(options["hybrid_search"]); hybrid != nil {
+			if err := rejectUnsupportedResponsesToolKeys(hybrid, path+".ranking_options.hybrid_search", "embedding_weight", "text_weight"); err != nil {
+				return err
+			}
+		}
+	}
+	return validateFileSearchFilter(tool["filters"], path+".filters")
+}
+
+// validateFileSearchFilter refuses what core would drop from a filter: and and or hold only their
+// type and filters, and a comparison only its type, key and value. A comparison may leave out its
+// type for OpenAI's default, which core would also send for an empty type.
+func validateFileSearchFilter(raw json.RawMessage, path string) error {
+	filter, _ := rawObject(raw)
+	if filter == nil {
+		return nil
+	}
+	switch kind, _ := rawStringValue(filter["type"]); {
+	case kind == "and" || kind == "or":
+		if err := rejectUnsupportedResponsesToolKeys(filter, path, "type", "filters"); err != nil {
+			return err
+		}
+		filters, _ := rawjson.Array(filter["filters"])
+		for index, nested := range filters {
+			if err := validateFileSearchFilter(nested, fmt.Sprintf("%s.filters[%d]", path, index)); err != nil {
+				return err
+			}
+		}
+		return nil
+	case kind == "" && filter["type"] != nil:
+		return invalidRequest(path + ".type must not be empty")
+	}
+	return rejectUnsupportedResponsesToolKeys(filter, path, "type", "key", "value")
+}
+
 func validateResponsesToolDescription(raw json.RawMessage, path string) error {
 	if len(raw) == 0 {
 		return nil
@@ -1021,7 +1071,7 @@ func responsesHasHostedTool(tools []schemas.ResponsesTool) bool {
 	for _, tool := range tools {
 		switch tool.Type {
 		case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview, schemas.ResponsesToolTypeWebFetch,
-			schemas.ResponsesToolTypeMCP:
+			schemas.ResponsesToolTypeMCP, schemas.ResponsesToolTypeFileSearch:
 			return true
 		}
 	}
@@ -1056,7 +1106,7 @@ func responsesHostedToolChoiceAllowsCalls(raw map[string]json.RawMessage) bool {
 		for _, tool := range allowed {
 			switch catalog.CanonicalResponsesToolType(rawString(tool["type"])) {
 			case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview, schemas.ResponsesToolTypeWebFetch,
-				schemas.ResponsesToolTypeMCP:
+				schemas.ResponsesToolTypeMCP, schemas.ResponsesToolTypeFileSearch:
 				return true
 			}
 		}
@@ -1064,7 +1114,7 @@ func responsesHostedToolChoiceAllowsCalls(raw map[string]json.RawMessage) bool {
 	}
 	switch catalog.CanonicalResponsesToolType(rawString(choice["type"])) {
 	case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview, schemas.ResponsesToolTypeWebFetch,
-		schemas.ResponsesToolTypeMCP:
+		schemas.ResponsesToolTypeMCP, schemas.ResponsesToolTypeFileSearch:
 		return true
 	default:
 		return false
@@ -1136,7 +1186,8 @@ func validateResponsesToolChoice(state *State, raw json.RawMessage, tools []sche
 		return nil
 	case schemas.ResponsesToolTypeMCP:
 		return validateResponsesMCPToolSelector(choice, "tool_choice", tools)
-	case schemas.ResponsesToolTypeShell, schemas.ResponsesToolTypeApplyPatch, schemas.ResponsesToolTypeComputer:
+	case schemas.ResponsesToolTypeShell, schemas.ResponsesToolTypeApplyPatch, schemas.ResponsesToolTypeComputer,
+		schemas.ResponsesToolTypeFileSearch:
 		if err := rejectUnsupportedResponsesToolKeys(choice, "tool_choice", "type"); err != nil {
 			return err
 		}
@@ -1227,7 +1278,8 @@ func validateResponsesAllowedToolChoice(state *State, raw json.RawMessage, tools
 				return invalidRequest(path + " duplicates another allowed tool")
 			}
 			seen[identity] = true
-		case schemas.ResponsesToolTypeShell, schemas.ResponsesToolTypeApplyPatch, schemas.ResponsesToolTypeComputer:
+		case schemas.ResponsesToolTypeShell, schemas.ResponsesToolTypeApplyPatch, schemas.ResponsesToolTypeComputer,
+			schemas.ResponsesToolTypeFileSearch:
 			if err := rejectUnsupportedResponsesToolKeys(allowed, path, "type"); err != nil {
 				return err
 			}
@@ -1300,6 +1352,10 @@ func validateResponsesToolSelectorType(state *State, rawType string) (schemas.Re
 		}
 	case schemas.ResponsesToolTypeShell, schemas.ResponsesToolTypeApplyPatch, schemas.ResponsesToolTypeComputer:
 		if responsesLocalToolsSupported(state) {
+			return toolType, nil
+		}
+	case schemas.ResponsesToolTypeFileSearch:
+		if rawType == "file_search" && state != nil && state.Resolution != nil && state.Resolution.Provider == schemas.OpenAI {
 			return toolType, nil
 		}
 	}
@@ -1439,7 +1495,7 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 			// Reasoning, MCP and hosted tool items are the provider's own steps, which a response can
 			// interleave with client calls, as Claude does with a progress update before each call.
 			case "reasoning", "mcp_list_tools", "mcp_call", "mcp_approval_request", "mcp_approval_response",
-				"web_search_call", "web_fetch_call":
+				"web_search_call", "web_fetch_call", "file_search_call":
 			default:
 				return invalidRequest(path + " must resolve the preceding client tool calls before adding another input item")
 			}
@@ -1536,7 +1592,7 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 			} else {
 				turn.call()
 			}
-		case "web_search_call", "web_fetch_call":
+		case "web_search_call", "web_fetch_call", "file_search_call":
 			if err := validateResponsesHostedCallInput(item, path, itemType); err != nil {
 				return err
 			}
@@ -1567,7 +1623,12 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 			switch {
 			case isSystemMessage:
 				side = placementSystem
-			case itemType == "web_search_call", itemType == "web_fetch_call":
+			case itemType == "web_search_call", itemType == "web_fetch_call", itemType == "file_search_call":
+				// A call that the deployment does not read never reaches it, so it takes no place
+				// in the turns that the deployment gets.
+				if !state.Resolution.ReadsHostedCallInput(itemRaw) {
+					continue
+				}
 				side = placementServerResult
 			case itemType == "function_call", itemType == "reasoning", role == "assistant":
 				side = placementAssistant
@@ -1734,6 +1795,12 @@ func validateResponsesOutputAnnotations(state *State, raw json.RawMessage, path 
 	}
 	for index, annotation := range annotations {
 		annotationPath := fmt.Sprintf("%s[%d]", path, index)
+		if rawString(annotation["type"]) == "file_citation" {
+			if err := validateResponsesFileCitation(annotation, annotationPath); err != nil {
+				return err
+			}
+			continue
+		}
 		allowed := []string{"type", "start_index", "end_index", "title", "url"}
 		if responsesUsesAnthropicWire(state) {
 			allowed = append(allowed, "text", "encrypted_index")
@@ -1742,7 +1809,7 @@ func validateResponsesOutputAnnotations(state *State, raw json.RawMessage, path 
 			return err
 		}
 		if rawString(annotation["type"]) != "url_citation" {
-			return invalidRequest(annotationPath + ".type must be url_citation")
+			return invalidRequest(annotationPath + ".type must be url_citation or file_citation")
 		}
 		start, startExists, startErr := rawInteger(annotation["start_index"], annotationPath+".start_index")
 		if startErr != nil || !startExists || start < 0 {
@@ -1765,6 +1832,24 @@ func validateResponsesOutputAnnotations(state *State, raw json.RawMessage, path 
 				}
 			}
 		}
+	}
+	return nil
+}
+
+// validateResponsesFileCitation checks a citation of a searched file as the gateway's replies give
+// it: a file ID, a file name that may be empty and a place in the text.
+func validateResponsesFileCitation(annotation map[string]json.RawMessage, path string) error {
+	if err := rejectUnsupportedInputKeys(annotation, path, "type", "file_id", "filename", "index"); err != nil {
+		return err
+	}
+	if _, err := requiredInputString(annotation, "file_id", path, false); err != nil {
+		return err
+	}
+	if _, err := requiredInputString(annotation, "filename", path, true); err != nil {
+		return err
+	}
+	if index, exists, err := rawInteger(annotation["index"], path+".index"); err != nil || !exists || index < 0 {
+		return invalidRequest(path + ".index must be a non-negative integer")
 	}
 	return nil
 }

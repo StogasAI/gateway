@@ -1,0 +1,1973 @@
+{
+	"shows": "With store: false, OpenAI's file search returns a file_search_call with its queries and, with include file_search_call.results, each result's file, text, score and attributes, cites files in the message, streams in_progress, searching and completed events, takes the call back in input only with its results, takes tool_choice {type: file_search}, ranking options with hybrid search and attribute filters, and refuses a vector store that the account does not hold. The requests without the tool and under tool_choice none show what a search and the declaration alone add to the input.",
+	"recorded": "2026-11-22",
+	"exchanges": [
+		{
+			"name": "a search",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 300,
+					"tools": [
+						{
+							"type": "file_search",
+							"vector_store_ids": [
+								"vs_6b025bc5b5f88191a233895c6ebb442f"
+							],
+							"max_num_results": 2
+						}
+					],
+					"tool_choice": "required",
+					"include": [
+						"file_search_call.results"
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Search the files: what is the capital of Zorbia?"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_09ec32e5332f10c8016b025bccfff487d19c8610b0b537b171",
+					"object": "response",
+					"created_at": 1795316685,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795316687,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 300,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "fs_09ec32e5332f10c8016b025bcdb1b487d1a96c414712980ce6",
+							"type": "file_search_call",
+							"status": "completed",
+							"queries": [
+								"What is the capital of Zorbia?",
+								"Zorbia capital city"
+							],
+							"results": [
+								{
+									"attributes": {
+										"topic": "zorbia"
+									},
+									"file_id": "file-PjnrZaiRqRTaZFV18S1DLC",
+									"filename": "zorbia.txt",
+									"score": 0.9867,
+									"text": "Zorbia is a country that exists only in this file. The capital of Zorbia is Quillmont. Zorbia's national animal is the striped tapir, and its currency is the zorbian crown.",
+									"vector_store_id": ""
+								}
+							]
+						},
+						{
+							"id": "msg_09ec32e5332f10c8016b025bcf4cec87d19eed3116dcacdf57",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [
+										{
+											"type": "file_citation",
+											"file_id": "file-PjnrZaiRqRTaZFV18S1DLC",
+											"filename": "zorbia.txt",
+											"index": 36
+										}
+									],
+									"logprobs": [],
+									"text": "The capital of Zorbia is Quillmont. "
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "required",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "file_search",
+							"filters": null,
+							"max_num_results": 2,
+							"ranking_options": {
+								"ranker": "auto",
+								"score_threshold": 0
+							},
+							"vector_store_ids": [
+								"vs_6b025bc5b5f88191a233895c6ebb442f"
+							]
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 2068,
+						"input_tokens_details": {
+							"cache_write_tokens": 1350,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 1350
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 60,
+						"output_tokens_details": {
+							"reasoning_tokens": 30
+						},
+						"total_tokens": 2128
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "without the tool",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 300,
+					"input": [
+						{
+							"role": "user",
+							"content": "Search the files: what is the capital of Zorbia?"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795316689,
+					"created_at": 1795316688,
+					"error": null,
+					"frequency_penalty": 0,
+					"id": "resp_08b411bec79d33c4016b025bd0110c87d190376e79d23cfc25",
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 300,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"object": "response",
+					"output": [
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "I can’t search any files here, and I don’t have enough information to identify a capital of Zorbia.",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_08b411bec79d33c4016b025bd0b7e087d1b0afd3ed87baf466",
+							"phase": "final_answer",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"status": "completed",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 19,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 0
+						},
+						"output_tokens": 28,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 47
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "the tool under tool_choice none",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 300,
+					"tools": [
+						{
+							"type": "file_search",
+							"vector_store_ids": [
+								"vs_6b025bc5b5f88191a233895c6ebb442f"
+							],
+							"max_num_results": 2
+						}
+					],
+					"tool_choice": "none",
+					"input": [
+						{
+							"role": "user",
+							"content": "Search the files: what is the capital of Zorbia?"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_0233458ac6b16a7b016b025bd1702087d183f54fb6a3d5f265",
+					"object": "response",
+					"created_at": 1795316689,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795316690,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 300,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "msg_0233458ac6b16a7b016b025bd2226c87d19860394a9ad831f6",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [],
+									"logprobs": [],
+									"text": "I can’t search the uploaded files right now, so I can’t verify what they say about Zorbia’s capital."
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "none",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "file_search",
+							"filters": null,
+							"max_num_results": 2,
+							"ranking_options": {
+								"ranker": "auto",
+								"score_threshold": 0
+							},
+							"vector_store_ids": [
+								"vs_6b025bc5b5f88191a233895c6ebb442f"
+							]
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 1502,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 1401
+						},
+						"output_tokens": 29,
+						"output_tokens_details": {
+							"reasoning_tokens": 0
+						},
+						"total_tokens": 1531
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "a search without its results",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 300,
+					"tools": [
+						{
+							"type": "file_search",
+							"vector_store_ids": [
+								"vs_6b025bc5b5f88191a233895c6ebb442f"
+							],
+							"max_num_results": 2
+						}
+					],
+					"tool_choice": "required",
+					"input": [
+						{
+							"role": "user",
+							"content": "Search the files: what is the capital of Zorbia?"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_003551c363edeab6016b025bd2c3d487d1a8501db1722d2a48",
+					"object": "response",
+					"created_at": 1795316690,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795316693,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 300,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "fs_003551c363edeab6016b025bd3831487d1aa8e50ed72fe237f",
+							"type": "file_search_call",
+							"status": "completed",
+							"queries": [
+								"What is the capital of Zorbia?",
+								"Zorbia capital city capital of Zorbia"
+							],
+							"results": null
+						},
+						{
+							"id": "msg_003551c363edeab6016b025bd59a2487d18fc4dcd3974732d5",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [
+										{
+											"type": "file_citation",
+											"file_id": "file-PjnrZaiRqRTaZFV18S1DLC",
+											"filename": "zorbia.txt",
+											"index": 36
+										}
+									],
+									"logprobs": [],
+									"text": "The capital of Zorbia is Quillmont. "
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "required",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "file_search",
+							"filters": null,
+							"max_num_results": 2,
+							"ranking_options": {
+								"ranker": "auto",
+								"score_threshold": 0
+							},
+							"vector_store_ids": [
+								"vs_6b025bc5b5f88191a233895c6ebb442f"
+							]
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 2073,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 1350
+						},
+						"output_tokens": 65,
+						"output_tokens_details": {
+							"reasoning_tokens": 35
+						},
+						"total_tokens": 2138
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "a streamed search",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 300,
+					"tools": [
+						{
+							"type": "file_search",
+							"vector_store_ids": [
+								"vs_6b025bc5b5f88191a233895c6ebb442f"
+							],
+							"max_num_results": 2
+						}
+					],
+					"tool_choice": "required",
+					"include": [
+						"file_search_call.results"
+					],
+					"stream": true,
+					"input": [
+						{
+							"role": "user",
+							"content": "Search the files: what is the capital of Zorbia?"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"events": [
+					{
+						"type": "response.created",
+						"response": {
+							"id": "resp_0178a8750c29bf00016b025bd5fc2c87d190758a44108aad38",
+							"object": "response",
+							"created_at": 1795316694,
+							"status": "in_progress",
+							"access_programs": null,
+							"background": false,
+							"completed_at": null,
+							"error": null,
+							"frequency_penalty": 0,
+							"image": {
+								"context_compression": "disabled"
+							},
+							"incomplete_details": null,
+							"input_transformations": [],
+							"instructions": null,
+							"max_output_tokens": 300,
+							"max_tool_calls": null,
+							"model": "gpt-6-luna",
+							"moderation": null,
+							"output": [],
+							"parallel_tool_calls": true,
+							"presence_penalty": 0,
+							"previous_response_id": null,
+							"prompt_cache_key": null,
+							"prompt_cache_retention": "24h",
+							"reasoning": {
+								"context": "all_turns",
+								"effort": "none",
+								"mode": "standard",
+								"summary": null
+							},
+							"safety_identifier": null,
+							"service_tier": "auto",
+							"store": false,
+							"temperature": 1,
+							"text": {
+								"format": {
+									"type": "text"
+								},
+								"verbosity": "medium"
+							},
+							"tool_choice": "required",
+							"tool_usage": {
+								"image_gen": {
+									"input_tokens": 0,
+									"input_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"output_tokens": 0,
+									"output_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"total_tokens": 0
+								},
+								"web_search": {
+									"num_requests": 0
+								}
+							},
+							"tools": [
+								{
+									"type": "file_search",
+									"filters": null,
+									"max_num_results": 2,
+									"ranking_options": {
+										"ranker": "auto",
+										"score_threshold": 0
+									},
+									"vector_store_ids": [
+										"vs_6b025bc5b5f88191a233895c6ebb442f"
+									]
+								}
+							],
+							"top_logprobs": 0,
+							"top_p": 0.98,
+							"truncation": "disabled",
+							"usage": null,
+							"user": null,
+							"metadata": {}
+						},
+						"sequence_number": 0
+					},
+					{
+						"type": "response.in_progress",
+						"response": {
+							"id": "resp_0178a8750c29bf00016b025bd5fc2c87d190758a44108aad38",
+							"object": "response",
+							"created_at": 1795316694,
+							"status": "in_progress",
+							"access_programs": null,
+							"background": false,
+							"completed_at": null,
+							"error": null,
+							"frequency_penalty": 0,
+							"image": {
+								"context_compression": "disabled"
+							},
+							"incomplete_details": null,
+							"input_transformations": [],
+							"instructions": null,
+							"max_output_tokens": 300,
+							"max_tool_calls": null,
+							"model": "gpt-6-luna",
+							"moderation": null,
+							"output": [],
+							"parallel_tool_calls": true,
+							"presence_penalty": 0,
+							"previous_response_id": null,
+							"prompt_cache_key": null,
+							"prompt_cache_retention": "24h",
+							"reasoning": {
+								"context": "all_turns",
+								"effort": "none",
+								"mode": "standard",
+								"summary": null
+							},
+							"safety_identifier": null,
+							"service_tier": "auto",
+							"store": false,
+							"temperature": 1,
+							"text": {
+								"format": {
+									"type": "text"
+								},
+								"verbosity": "medium"
+							},
+							"tool_choice": "required",
+							"tool_usage": {
+								"image_gen": {
+									"input_tokens": 0,
+									"input_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"output_tokens": 0,
+									"output_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"total_tokens": 0
+								},
+								"web_search": {
+									"num_requests": 0
+								}
+							},
+							"tools": [
+								{
+									"type": "file_search",
+									"filters": null,
+									"max_num_results": 2,
+									"ranking_options": {
+										"ranker": "auto",
+										"score_threshold": 0
+									},
+									"vector_store_ids": [
+										"vs_6b025bc5b5f88191a233895c6ebb442f"
+									]
+								}
+							],
+							"top_logprobs": 0,
+							"top_p": 0.98,
+							"truncation": "disabled",
+							"usage": null,
+							"user": null,
+							"metadata": {}
+						},
+						"sequence_number": 1
+					},
+					{
+						"type": "response.output_item.added",
+						"item": {
+							"id": "fs_0178a8750c29bf00016b025bd69dcc87d18da490399f939877",
+							"type": "file_search_call",
+							"status": "in_progress",
+							"queries": [],
+							"results": null
+						},
+						"output_index": 0,
+						"sequence_number": 2
+					},
+					{
+						"type": "response.file_search_call.in_progress",
+						"item_id": "fs_0178a8750c29bf00016b025bd69dcc87d18da490399f939877",
+						"output_index": 0,
+						"sequence_number": 3
+					},
+					{
+						"type": "response.file_search_call.searching",
+						"item_id": "fs_0178a8750c29bf00016b025bd69dcc87d18da490399f939877",
+						"output_index": 0,
+						"sequence_number": 4
+					},
+					{
+						"type": "response.file_search_call.completed",
+						"item_id": "fs_0178a8750c29bf00016b025bd69dcc87d18da490399f939877",
+						"output_index": 0,
+						"sequence_number": 5
+					},
+					{
+						"type": "response.output_item.done",
+						"item": {
+							"id": "fs_0178a8750c29bf00016b025bd69dcc87d18da490399f939877",
+							"type": "file_search_call",
+							"status": "completed",
+							"queries": [
+								"What is the capital of Zorbia?",
+								"Zorbia capital city"
+							],
+							"results": [
+								{
+									"attributes": {
+										"topic": "zorbia"
+									},
+									"file_id": "file-PjnrZaiRqRTaZFV18S1DLC",
+									"filename": "zorbia.txt",
+									"score": 0.9867,
+									"text": "Zorbia is a country that exists only in this file. The capital of Zorbia is Quillmont. Zorbia's national animal is the striped tapir, and its currency is the zorbian crown.",
+									"vector_store_id": ""
+								}
+							]
+						},
+						"output_index": 0,
+						"sequence_number": 6
+					},
+					{
+						"type": "response.output_item.added",
+						"item": {
+							"id": "msg_0178a8750c29bf00016b025bd7c17c87d199b7dbd1aa1e709a",
+							"type": "message",
+							"status": "in_progress",
+							"content": [],
+							"phase": "final_answer",
+							"role": "assistant"
+						},
+						"output_index": 1,
+						"sequence_number": 7
+					},
+					{
+						"type": "response.content_part.added",
+						"content_index": 0,
+						"item_id": "msg_0178a8750c29bf00016b025bd7c17c87d199b7dbd1aa1e709a",
+						"output_index": 1,
+						"part": {
+							"type": "output_text",
+							"annotations": [],
+							"logprobs": [],
+							"text": ""
+						},
+						"sequence_number": 8
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": "The",
+						"item_id": "msg_0178a8750c29bf00016b025bd7c17c87d199b7dbd1aa1e709a",
+						"logprobs": [],
+						"obfuscation": "F9oNc6vtkvpUv",
+						"output_index": 1,
+						"sequence_number": 9
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": " capital",
+						"item_id": "msg_0178a8750c29bf00016b025bd7c17c87d199b7dbd1aa1e709a",
+						"logprobs": [],
+						"obfuscation": "cQswbHZs",
+						"output_index": 1,
+						"sequence_number": 10
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": " of",
+						"item_id": "msg_0178a8750c29bf00016b025bd7c17c87d199b7dbd1aa1e709a",
+						"logprobs": [],
+						"obfuscation": "BFeKMYmQZqjLG",
+						"output_index": 1,
+						"sequence_number": 11
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": " Z",
+						"item_id": "msg_0178a8750c29bf00016b025bd7c17c87d199b7dbd1aa1e709a",
+						"logprobs": [],
+						"obfuscation": "llpU4QXcbz6R1N",
+						"output_index": 1,
+						"sequence_number": 12
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": "orb",
+						"item_id": "msg_0178a8750c29bf00016b025bd7c17c87d199b7dbd1aa1e709a",
+						"logprobs": [],
+						"obfuscation": "4CLxm46Oe9g8w",
+						"output_index": 1,
+						"sequence_number": 13
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": "ia",
+						"item_id": "msg_0178a8750c29bf00016b025bd7c17c87d199b7dbd1aa1e709a",
+						"logprobs": [],
+						"obfuscation": "DsSDFRNyUNrkRd",
+						"output_index": 1,
+						"sequence_number": 14
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": " is",
+						"item_id": "msg_0178a8750c29bf00016b025bd7c17c87d199b7dbd1aa1e709a",
+						"logprobs": [],
+						"obfuscation": "kxQj6qSFdFTwe",
+						"output_index": 1,
+						"sequence_number": 15
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": " Qu",
+						"item_id": "msg_0178a8750c29bf00016b025bd7c17c87d199b7dbd1aa1e709a",
+						"logprobs": [],
+						"obfuscation": "Bxaii9x8z8wIU",
+						"output_index": 1,
+						"sequence_number": 16
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": "ill",
+						"item_id": "msg_0178a8750c29bf00016b025bd7c17c87d199b7dbd1aa1e709a",
+						"logprobs": [],
+						"obfuscation": "LUcIkFkezyL9k",
+						"output_index": 1,
+						"sequence_number": 17
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": "mont",
+						"item_id": "msg_0178a8750c29bf00016b025bd7c17c87d199b7dbd1aa1e709a",
+						"logprobs": [],
+						"obfuscation": "pLOi42dmYDYY",
+						"output_index": 1,
+						"sequence_number": 18
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": ".",
+						"item_id": "msg_0178a8750c29bf00016b025bd7c17c87d199b7dbd1aa1e709a",
+						"logprobs": [],
+						"obfuscation": "WS88yYRC9UdrTMH",
+						"output_index": 1,
+						"sequence_number": 19
+					},
+					{
+						"type": "response.output_text.delta",
+						"content_index": 0,
+						"delta": " ",
+						"item_id": "msg_0178a8750c29bf00016b025bd7c17c87d199b7dbd1aa1e709a",
+						"logprobs": [],
+						"obfuscation": "tmPBNCE6qzuzWwC",
+						"output_index": 1,
+						"sequence_number": 20
+					},
+					{
+						"type": "response.output_text.annotation.added",
+						"annotation": {
+							"type": "file_citation",
+							"file_id": "file-PjnrZaiRqRTaZFV18S1DLC",
+							"filename": "zorbia.txt",
+							"index": 36
+						},
+						"annotation_index": 0,
+						"content_index": 0,
+						"item_id": "msg_0178a8750c29bf00016b025bd7c17c87d199b7dbd1aa1e709a",
+						"output_index": 1,
+						"sequence_number": 21
+					},
+					{
+						"type": "response.output_text.done",
+						"content_index": 0,
+						"item_id": "msg_0178a8750c29bf00016b025bd7c17c87d199b7dbd1aa1e709a",
+						"logprobs": [],
+						"output_index": 1,
+						"sequence_number": 22,
+						"text": "The capital of Zorbia is Quillmont. "
+					},
+					{
+						"type": "response.content_part.done",
+						"content_index": 0,
+						"item_id": "msg_0178a8750c29bf00016b025bd7c17c87d199b7dbd1aa1e709a",
+						"output_index": 1,
+						"part": {
+							"type": "output_text",
+							"annotations": [
+								{
+									"type": "file_citation",
+									"file_id": "file-PjnrZaiRqRTaZFV18S1DLC",
+									"filename": "zorbia.txt",
+									"index": 36
+								}
+							],
+							"logprobs": [],
+							"text": "The capital of Zorbia is Quillmont. "
+						},
+						"sequence_number": 23
+					},
+					{
+						"type": "response.output_item.done",
+						"item": {
+							"id": "msg_0178a8750c29bf00016b025bd7c17c87d199b7dbd1aa1e709a",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [
+										{
+											"type": "file_citation",
+											"file_id": "file-PjnrZaiRqRTaZFV18S1DLC",
+											"filename": "zorbia.txt",
+											"index": 36
+										}
+									],
+									"logprobs": [],
+									"text": "The capital of Zorbia is Quillmont. "
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						},
+						"output_index": 1,
+						"sequence_number": 24
+					},
+					{
+						"type": "response.completed",
+						"response": {
+							"id": "resp_0178a8750c29bf00016b025bd5fc2c87d190758a44108aad38",
+							"object": "response",
+							"created_at": 1795316694,
+							"status": "completed",
+							"access_programs": null,
+							"background": false,
+							"completed_at": 1795316696,
+							"error": null,
+							"frequency_penalty": 0,
+							"image": {
+								"context_compression": "disabled"
+							},
+							"incomplete_details": null,
+							"input_transformations": [],
+							"instructions": null,
+							"max_output_tokens": 300,
+							"max_tool_calls": null,
+							"model": "gpt-6-luna",
+							"moderation": null,
+							"output": [
+								{
+									"id": "fs_0178a8750c29bf00016b025bd69dcc87d18da490399f939877",
+									"type": "file_search_call",
+									"status": "completed",
+									"queries": [
+										"What is the capital of Zorbia?",
+										"Zorbia capital city"
+									],
+									"results": [
+										{
+											"attributes": {
+												"topic": "zorbia"
+											},
+											"file_id": "file-PjnrZaiRqRTaZFV18S1DLC",
+											"filename": "zorbia.txt",
+											"score": 0.9867,
+											"text": "Zorbia is a country that exists only in this file. The capital of Zorbia is Quillmont. Zorbia's national animal is the striped tapir, and its currency is the zorbian crown.",
+											"vector_store_id": ""
+										}
+									]
+								},
+								{
+									"id": "msg_0178a8750c29bf00016b025bd7c17c87d199b7dbd1aa1e709a",
+									"type": "message",
+									"status": "completed",
+									"content": [
+										{
+											"type": "output_text",
+											"annotations": [
+												{
+													"type": "file_citation",
+													"file_id": "file-PjnrZaiRqRTaZFV18S1DLC",
+													"filename": "zorbia.txt",
+													"index": 36
+												}
+											],
+											"logprobs": [],
+											"text": "The capital of Zorbia is Quillmont. "
+										}
+									],
+									"phase": "final_answer",
+									"role": "assistant"
+								}
+							],
+							"parallel_tool_calls": true,
+							"presence_penalty": 0,
+							"previous_response_id": null,
+							"prompt_cache_key": null,
+							"prompt_cache_retention": "24h",
+							"reasoning": {
+								"context": "all_turns",
+								"effort": "none",
+								"mode": "standard",
+								"summary": null
+							},
+							"safety_identifier": null,
+							"service_tier": "default",
+							"store": false,
+							"temperature": 1,
+							"text": {
+								"format": {
+									"type": "text"
+								},
+								"verbosity": "medium"
+							},
+							"tool_choice": "required",
+							"tool_usage": {
+								"image_gen": {
+									"input_tokens": 0,
+									"input_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"output_tokens": 0,
+									"output_tokens_details": {
+										"image_tokens": 0,
+										"text_tokens": 0
+									},
+									"total_tokens": 0
+								},
+								"web_search": {
+									"num_requests": 0
+								}
+							},
+							"tools": [
+								{
+									"type": "file_search",
+									"filters": null,
+									"max_num_results": 2,
+									"ranking_options": {
+										"ranker": "auto",
+										"score_threshold": 0
+									},
+									"vector_store_ids": [
+										"vs_6b025bc5b5f88191a233895c6ebb442f"
+									]
+								}
+							],
+							"top_logprobs": 0,
+							"top_p": 0.98,
+							"truncation": "disabled",
+							"usage": {
+								"input_tokens": 2068,
+								"input_tokens_details": {
+									"cache_write_tokens": 0,
+									"cache_write_tokens_details": {
+										"ttl_12h_tokens": 0,
+										"ttl_30m_tokens": 0
+									},
+									"cached_tokens": 1350
+								},
+								"output_tokens": 60,
+								"output_tokens_details": {
+									"reasoning_tokens": 30
+								},
+								"total_tokens": 2128
+							},
+							"user": null,
+							"metadata": {}
+						},
+						"sequence_number": 25
+					}
+				]
+			}
+		},
+		{
+			"name": "a search sent back",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 300,
+					"tools": [
+						{
+							"type": "file_search",
+							"vector_store_ids": [
+								"vs_6b025bc5b5f88191a233895c6ebb442f"
+							],
+							"max_num_results": 2
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Search the files: what is the capital of Zorbia?"
+						},
+						{
+							"id": "fs_09ec32e5332f10c8016b025bcdb1b487d1a96c414712980ce6",
+							"type": "file_search_call",
+							"status": "completed",
+							"queries": [
+								"What is the capital of Zorbia?",
+								"Zorbia capital city"
+							],
+							"results": [
+								{
+									"attributes": {
+										"topic": "zorbia"
+									},
+									"file_id": "file-PjnrZaiRqRTaZFV18S1DLC",
+									"filename": "zorbia.txt",
+									"score": 0.9867,
+									"text": "Zorbia is a country that exists only in this file. The capital of Zorbia is Quillmont. Zorbia's national animal is the striped tapir, and its currency is the zorbian crown.",
+									"vector_store_id": ""
+								}
+							]
+						},
+						{
+							"id": "msg_09ec32e5332f10c8016b025bcf4cec87d19eed3116dcacdf57",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [
+										{
+											"type": "file_citation",
+											"file_id": "file-PjnrZaiRqRTaZFV18S1DLC",
+											"filename": "zorbia.txt",
+											"index": 36
+										}
+									],
+									"logprobs": [],
+									"text": "The capital of Zorbia is Quillmont. "
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						},
+						{
+							"role": "user",
+							"content": "And what is Zorbia's national animal?"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_09ec32e5332f10c8016b025bd83f7087d183887e1f01117398",
+					"object": "response",
+					"created_at": 1795316696,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795316699,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 300,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "fs_09ec32e5332f10c8016b025bd9307487d1a3960d652dd802f8",
+							"type": "file_search_call",
+							"status": "completed",
+							"queries": [
+								"What is Zorbia's national animal?",
+								"Zorbia national animal striped tapir"
+							],
+							"results": null
+						},
+						{
+							"id": "msg_09ec32e5332f10c8016b025bdac86487d18fbaeb4addc035ab",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [
+										{
+											"type": "file_citation",
+											"file_id": "file-PjnrZaiRqRTaZFV18S1DLC",
+											"filename": "zorbia.txt",
+											"index": 47
+										}
+									],
+									"logprobs": [],
+									"text": "Zorbia’s national animal is the striped tapir. "
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "auto",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "file_search",
+							"filters": null,
+							"max_num_results": 2,
+							"ranking_options": {
+								"ranker": "auto",
+								"score_threshold": 0
+							},
+							"vector_store_ids": [
+								"vs_6b025bc5b5f88191a233895c6ebb442f"
+							]
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 2245,
+						"input_tokens_details": {
+							"cache_write_tokens": 174,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 174
+							},
+							"cached_tokens": 1473
+						},
+						"output_tokens": 64,
+						"output_tokens_details": {
+							"reasoning_tokens": 33
+						},
+						"total_tokens": 2309
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "a search sent back without its results",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 300,
+					"tools": [
+						{
+							"type": "file_search",
+							"vector_store_ids": [
+								"vs_6b025bc5b5f88191a233895c6ebb442f"
+							],
+							"max_num_results": 2
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Search the files: what is the capital of Zorbia?"
+						},
+						{
+							"id": "fs_09ec32e5332f10c8016b025bcdb1b487d1a96c414712980ce6",
+							"type": "file_search_call",
+							"status": "completed",
+							"queries": [
+								"What is the capital of Zorbia?",
+								"Zorbia capital city"
+							],
+							"results": null
+						},
+						{
+							"id": "msg_09ec32e5332f10c8016b025bcf4cec87d19eed3116dcacdf57",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [
+										{
+											"type": "file_citation",
+											"file_id": "file-PjnrZaiRqRTaZFV18S1DLC",
+											"filename": "zorbia.txt",
+											"index": 36
+										}
+									],
+									"logprobs": [],
+									"text": "The capital of Zorbia is Quillmont. "
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						},
+						{
+							"role": "user",
+							"content": "And what is Zorbia's national animal?"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 404,
+				"body": {
+					"error": {
+						"message": "Item with id 'fs_09ec32e5332f10c8016b025bcdb1b487d1a96c414712980ce6' not found. Items are not persisted when `store` is set to false. Try again with `store` set to true, or remove this item from your input.",
+						"type": "invalid_request_error",
+						"param": "input",
+						"code": null
+					}
+				}
+			}
+		},
+		{
+			"name": "a forced search",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 300,
+					"tools": [
+						{
+							"type": "file_search",
+							"vector_store_ids": [
+								"vs_6b025bc5b5f88191a233895c6ebb442f"
+							],
+							"max_num_results": 2
+						}
+					],
+					"tool_choice": {
+						"type": "file_search"
+					},
+					"input": [
+						{
+							"role": "user",
+							"content": "Search the files: what is the capital of Zorbia?"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_0869b7cc517595f2016b025bdbbf6487d1ae3f718cd8bb695a",
+					"object": "response",
+					"created_at": 1795316699,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795316701,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 300,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "fs_0869b7cc517595f2016b025bdc3cf887d19d4402632930a077",
+							"type": "file_search_call",
+							"status": "completed",
+							"queries": [
+								"What is the capital of Zorbia?"
+							],
+							"results": null
+						},
+						{
+							"id": "msg_0869b7cc517595f2016b025bdd67ec87d1ba15be38b4333fcd",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [
+										{
+											"type": "file_citation",
+											"file_id": "file-PjnrZaiRqRTaZFV18S1DLC",
+											"filename": "zorbia.txt",
+											"index": 36
+										}
+									],
+									"logprobs": [],
+									"text": "The capital of Zorbia is Quillmont. "
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": {
+						"type": "file_search"
+					},
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "file_search",
+							"filters": null,
+							"max_num_results": 2,
+							"ranking_options": {
+								"ranker": "auto",
+								"score_threshold": 0
+							},
+							"vector_store_ids": [
+								"vs_6b025bc5b5f88191a233895c6ebb442f"
+							]
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 2062,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 1345
+						},
+						"output_tokens": 54,
+						"output_tokens_details": {
+							"reasoning_tokens": 24
+						},
+						"total_tokens": 2116
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "ranking options and a filter",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 300,
+					"tools": [
+						{
+							"type": "file_search",
+							"vector_store_ids": [
+								"vs_6b025bc5b5f88191a233895c6ebb442f"
+							],
+							"max_num_results": 2,
+							"ranking_options": {
+								"ranker": "auto",
+								"score_threshold": 0.1,
+								"hybrid_search": {
+									"embedding_weight": 0.7,
+									"text_weight": 0.3
+								}
+							},
+							"filters": {
+								"type": "and",
+								"filters": [
+									{
+										"type": "eq",
+										"key": "topic",
+										"value": "zorbia"
+									},
+									{
+										"type": "in",
+										"key": "topic",
+										"value": [
+											"zorbia",
+											"other"
+										]
+									}
+								]
+							}
+						}
+					],
+					"tool_choice": "required",
+					"input": [
+						{
+							"role": "user",
+							"content": "Search the files: what is the capital of Zorbia?"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "resp_01a09ae3c14b6648016b025bddd57887d18db747cff3867196",
+					"object": "response",
+					"created_at": 1795316701,
+					"status": "completed",
+					"access_programs": null,
+					"background": false,
+					"billing": {
+						"payer": "developer"
+					},
+					"completed_at": 1795316703,
+					"error": null,
+					"frequency_penalty": 0,
+					"image": {
+						"context_compression": "disabled"
+					},
+					"incomplete_details": null,
+					"input_transformations": [],
+					"instructions": null,
+					"max_output_tokens": 300,
+					"max_tool_calls": null,
+					"model": "gpt-6-luna",
+					"moderation": null,
+					"output": [
+						{
+							"id": "fs_01a09ae3c14b6648016b025bde62d087d189d3b3832be94c93",
+							"type": "file_search_call",
+							"status": "completed",
+							"queries": [
+								"What is the capital of Zorbia?"
+							],
+							"results": null
+						},
+						{
+							"id": "msg_01a09ae3c14b6648016b025bdf433087d1b01121123f98154f",
+							"type": "message",
+							"status": "completed",
+							"content": [
+								{
+									"type": "output_text",
+									"annotations": [
+										{
+											"type": "file_citation",
+											"file_id": "file-PjnrZaiRqRTaZFV18S1DLC",
+											"filename": "zorbia.txt",
+											"index": 36
+										}
+									],
+									"logprobs": [],
+									"text": "The capital of Zorbia is Quillmont. "
+								}
+							],
+							"phase": "final_answer",
+							"role": "assistant"
+						}
+					],
+					"parallel_tool_calls": true,
+					"presence_penalty": 0,
+					"previous_response_id": null,
+					"prompt_cache_key": null,
+					"prompt_cache_retention": "24h",
+					"reasoning": {
+						"context": "all_turns",
+						"effort": "none",
+						"mode": "standard",
+						"summary": null
+					},
+					"safety_identifier": null,
+					"service_tier": "default",
+					"store": false,
+					"temperature": 1,
+					"text": {
+						"format": {
+							"type": "text"
+						},
+						"verbosity": "medium"
+					},
+					"tool_choice": "required",
+					"tool_usage": {
+						"image_gen": {
+							"input_tokens": 0,
+							"input_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"output_tokens": 0,
+							"output_tokens_details": {
+								"image_tokens": 0,
+								"text_tokens": 0
+							},
+							"total_tokens": 0
+						},
+						"web_search": {
+							"num_requests": 0
+						}
+					},
+					"tools": [
+						{
+							"type": "file_search",
+							"filters": {
+								"type": "and",
+								"filters": [
+									{
+										"type": "eq",
+										"key": "topic",
+										"value": "zorbia"
+									},
+									{
+										"type": "in",
+										"key": "topic",
+										"value": [
+											"zorbia",
+											"other"
+										]
+									}
+								]
+							},
+							"max_num_results": 2,
+							"ranking_options": {
+								"hybrid_search": {
+									"embedding_weight": 0.7,
+									"text_weight": 0.3
+								},
+								"ranker": "auto",
+								"score_threshold": 0.1
+							},
+							"vector_store_ids": [
+								"vs_6b025bc5b5f88191a233895c6ebb442f"
+							]
+						}
+					],
+					"top_logprobs": 0,
+					"top_p": 0.98,
+					"truncation": "disabled",
+					"usage": {
+						"input_tokens": 2062,
+						"input_tokens_details": {
+							"cache_write_tokens": 0,
+							"cache_write_tokens_details": {
+								"ttl_12h_tokens": 0,
+								"ttl_30m_tokens": 0
+							},
+							"cached_tokens": 1350
+						},
+						"output_tokens": 54,
+						"output_tokens_details": {
+							"reasoning_tokens": 24
+						},
+						"total_tokens": 2116
+					},
+					"user": null,
+					"metadata": {}
+				}
+			}
+		},
+		{
+			"name": "a vector store of no account",
+			"provider": "openai",
+			"request": {
+				"path": "/v1/responses",
+				"body": {
+					"model": "gpt-6-luna",
+					"store": false,
+					"reasoning": {
+						"effort": "none"
+					},
+					"max_output_tokens": 300,
+					"tools": [
+						{
+							"type": "file_search",
+							"vector_store_ids": [
+								"vs_000000000000000000000000"
+							]
+						}
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Search the files: what is the capital of Zorbia?"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 404,
+				"body": {
+					"error": {
+						"message": "Vector store with id ['vs_000000000000000000000000'] not found.",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": null
+					}
+				}
+			}
+		}
+	]
+}

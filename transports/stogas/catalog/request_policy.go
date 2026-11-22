@@ -343,7 +343,7 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 				}
 			}
 			// Nor does it send provider state, whose held content no input check reads.
-			if held := variants.providerState.Held; held != "" {
+			if held := variants.providerState.Reads; held != "" {
 				if check := value.Config.InputCheck(); check != "" {
 					keep(selection, heldInputCheckRefusal(held, check))
 					continue
@@ -407,7 +407,7 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 			return nil, err
 		}
 	}
-	if held := variants.providerState.Held; held != "" {
+	if held := variants.providerState.Reads; held != "" {
 		if err := heldStateAccounts(held, candidates.filtered, credentials); err != nil {
 			return nil, err
 		}

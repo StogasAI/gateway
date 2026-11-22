@@ -36,7 +36,7 @@ func responsesLoggedToolCall(item providerResponsesItem) (string, bool) {
 			return item.callID, true
 		}
 		return "", true
-	case schemas.ResponsesMessageTypeWebSearchCall, schemas.ResponsesMessageTypeWebFetchCall,
+	case schemas.ResponsesMessageTypeWebSearchCall, schemas.ResponsesMessageTypeWebFetchCall, schemas.ResponsesMessageTypeFileSearchCall,
 		schemas.ResponsesMessageTypeMCPCall, schemas.ResponsesMessageTypeMCPListTools:
 		return "", true
 	default:

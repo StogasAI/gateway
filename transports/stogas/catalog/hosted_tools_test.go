@@ -285,7 +285,21 @@ func TestSnapshotValidationRejectsHostedToolsThatTheRouteCannotRun(t *testing.T)
 			func(route map[string]any) {
 				delete(pricing(route, "web_search"), "openai_responses_web_search_preview_calls")
 			},
-			"offers web search without a price for openai_responses_web_search_preview_calls"},
+			"offers web_search without a price for openai_responses_web_search_preview_calls"},
+		{"file search without its price", "openai-gpt-5.5-2026-04-23", "openai-responses",
+			func(route map[string]any) {
+				delete(pricing(route, "file_search"), "openai_responses_file_search_calls")
+			},
+			"offers file_search without a price for openai_responses_file_search_calls"},
+		{"a web search price on file search", "openai-gpt-5.5-2026-04-23", "openai-responses",
+			func(route map[string]any) {
+				pricing(route, "file_search")["openai_responses_web_search_calls"] = pricing(route, "web_search")["openai_responses_web_search_calls"]
+			}, "prices file_search on a meter that it does not bill"},
+		{"file search on Claude's wire", "anthropic-claude-fable-5-1", "anthropic-messages",
+			func(route map[string]any) {
+				tools(route)["file_search"] = map[string]any{"dataHandling": map[string]any{},
+					"pricing": map[string]any{"openai_responses_file_search_calls": map[string]any{"per_1k_calls": "2.5"}}}
+			}, "offers file search on Claude's wire, which has none"},
 		{"a search price on another tool", "anthropic-claude-fable-5-1", "anthropic-messages",
 			func(route map[string]any) {
 				pricing(route, "web_fetch")["anthropic_web_search_calls"] = pricing(route, "web_search")["anthropic_web_search_calls"]
@@ -313,21 +327,28 @@ func TestSnapshotValidationRejectsHostedToolsThatTheRouteCannotRun(t *testing.T)
 	}
 }
 
-// A search call priced on the deployment would bill on a route that runs no search.
-func TestSnapshotValidationRejectsSearchPricesOutsideWebSearch(t *testing.T) {
-	var whole map[string]any
-	if err := json.Unmarshal(testCatalogJSON, &whole); err != nil {
-		t.Fatal(err)
-	}
-	deployment := whole["graph"].(map[string]any)["deployments"].(map[string]any)["anthropic-claude-fable-5-1"].(map[string]any)
-	deployment["pricing"].(map[string]any)["anthropic_web_search_calls"] = map[string]any{"per_1k_calls": "10"}
-	broken, err := json.Marshal(whole)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := snapshotFromCatalogBytes(broken); err == nil ||
-		!strings.Contains(err.Error(), "which only web search on its wire charges") {
-		t.Fatalf("catalog was accepted or failed for another reason: %v", err)
+// A hosted tool's call priced on the deployment would bill on a route that runs no such tool.
+func TestSnapshotValidationRejectsCallPricesOutsideHostedTools(t *testing.T) {
+	for deployment, meter := range map[string]string{
+		"anthropic-claude-fable-5-1": "anthropic_web_search_calls",
+		"openai-gpt-5.5-2026-04-23":  "openai_responses_file_search_calls",
+	} {
+		t.Run(meter, func(t *testing.T) {
+			var whole map[string]any
+			if err := json.Unmarshal(testCatalogJSON, &whole); err != nil {
+				t.Fatal(err)
+			}
+			record := whole["graph"].(map[string]any)["deployments"].(map[string]any)[deployment].(map[string]any)
+			record["pricing"].(map[string]any)[meter] = map[string]any{"per_1k_calls": "10"}
+			broken, err := json.Marshal(whole)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := snapshotFromCatalogBytes(broken); err == nil ||
+				!strings.Contains(err.Error(), "prices "+meter+", which only a hosted tool on its wire charges") {
+				t.Fatalf("catalog was accepted or failed for another reason: %v", err)
+			}
+		})
 	}
 }
 

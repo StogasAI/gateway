@@ -28,6 +28,7 @@ const (
 	MeterOpenAIResponsesWebSearchCalls                    = "openai_responses_web_search_calls"
 	MeterOpenAIResponsesWebSearchPreviewCalls             = "openai_responses_web_search_preview_calls"
 	MeterOpenAIResponsesWebSearchPreviewNonReasoningCalls = "openai_responses_web_search_preview_non_reasoning_calls"
+	MeterOpenAIResponsesFileSearchCalls                   = "openai_responses_file_search_calls"
 
 	RatePerThousandSearchContextHighCalls   = "per_1k_search_context_high_calls"
 	RatePerThousandSearchContextLowCalls    = "per_1k_search_context_low_calls"
@@ -54,6 +55,8 @@ type openAIAdapterContext struct {
 	ToolTypes            []string
 	RawTools             []map[string]json.RawMessage
 	ActualWebSearchCalls int
+	// ActualFileSearchCalls counts the file searches that OpenAI completed.
+	ActualFileSearchCalls int
 	// InputTokenLimit is the input that the base hold covers.
 	InputTokenLimit int
 }
@@ -243,7 +246,7 @@ func validateOpenAIWireResponsesPolicy(state *State) error {
 	}
 	raw := state.Resolution.RawBody()
 	if err := validateResponsesInclude(raw["include"], "web_search_call.action.sources", "web_search_call.results",
-		"message.output_text.logprobs", "reasoning.encrypted_content"); err != nil {
+		"file_search_call.results", "message.output_text.logprobs", "reasoning.encrypted_content"); err != nil {
 		return err
 	}
 	// OpenAI's Responses have no stop sequences, which decide where the reply ends, and Claude's
@@ -411,6 +414,18 @@ func (a OpenAIAdapter) IngestChunk(state *State, chunk *schemas.BifrostStreamChu
 		return err
 	}
 	observePricedResponsesWebSearchChunk(state, chunk)
+	if chunk != nil && chunk.BifrostResponsesStreamResponse != nil {
+		event := chunk.BifrostResponsesStreamResponse
+		switch event.Type {
+		case schemas.ResponsesStreamResponseTypeFileSearchCallCompleted:
+			if event.ItemID != nil {
+				observeFileSearchCall(state, *event.ItemID)
+			}
+		case schemas.ResponsesStreamResponseTypeOutputItemDone:
+			observeCompletedFileSearch(state, event.Item)
+		}
+		observeResponsesFileSearches(state, event.Response)
+	}
 	return nil
 }
 
@@ -419,7 +434,29 @@ func (a OpenAIAdapter) IngestResponse(state *State, resp *schemas.BifrostRespons
 		return err
 	}
 	observePricedResponsesWebSearchResponse(state, resp)
+	if resp != nil {
+		observeResponsesFileSearches(state, resp.ResponsesResponse)
+	}
 	return nil
+}
+
+// observeResponsesFileSearches counts the file searches of a whole response that completed.
+func observeResponsesFileSearches(state *State, response *schemas.BifrostResponsesResponse) {
+	if response == nil {
+		return
+	}
+	for index := range response.Output {
+		observeCompletedFileSearch(state, &response.Output[index])
+	}
+}
+
+// observeCompletedFileSearch counts a file search item whose status is completed, as web search
+// counts its calls.
+func observeCompletedFileSearch(state *State, item *schemas.ResponsesMessage) {
+	if item != nil && item.Type != nil && *item.Type == schemas.ResponsesMessageTypeFileSearchCall &&
+		item.Status != nil && *item.Status == "completed" && item.ID != nil {
+		observeFileSearchCall(state, *item.ID)
+	}
 }
 
 func (OpenAIAdapter) CalculateUpstreamCost(state *State) error {
@@ -497,15 +534,16 @@ func openAIAdapterContextForDeployment(state *State, deployment catalog.Deployme
 			Pricing:            pricing,
 			ReasoningSupported: deployment.ReasoningSupported,
 		},
-		OutputTokenLimit:     resolution.OutputTokenLimit(),
-		HasWebSearchOptions:  resolution.HasWebSearchOptions(),
-		SearchContextSize:    resolution.SearchContextSize(),
-		ToolsParseFailed:     resolution.ToolsParseFailed(),
-		RawBody:              resolution.RawBody(),
-		ToolTypes:            resolution.ToolTypes(),
-		RawTools:             resolution.RawTools(),
-		ActualWebSearchCalls: actualWebSearchCalls(state),
-		InputTokenLimit:      inputTokenLimit,
+		OutputTokenLimit:      resolution.OutputTokenLimit(),
+		HasWebSearchOptions:   resolution.HasWebSearchOptions(),
+		SearchContextSize:     resolution.SearchContextSize(),
+		ToolsParseFailed:      resolution.ToolsParseFailed(),
+		RawBody:               resolution.RawBody(),
+		ToolTypes:             resolution.ToolTypes(),
+		RawTools:              resolution.RawTools(),
+		ActualWebSearchCalls:  actualWebSearchCalls(state),
+		ActualFileSearchCalls: actualFileSearchCalls(state),
+		InputTokenLimit:       inputTokenLimit,
 	}
 }
 
@@ -546,7 +584,7 @@ func validateOpenAIGuardrails(req openAIAdapterContext) error {
 
 func openAIResponsesToolTypeSupported(rawType string) bool {
 	switch strings.TrimSpace(rawType) {
-	case "function", "custom", "namespace", "mcp", "shell", "apply_patch", "computer", "tool_search":
+	case "function", "custom", "namespace", "mcp", "shell", "apply_patch", "computer", "tool_search", "file_search":
 		return true
 	default:
 		return openAIWebSearchToolType(rawType)
@@ -565,10 +603,10 @@ func openAIUnsupportedResponsesToolMessage(rawType string) string {
 		return "code execution tools are not supported"
 	case normalized == "computer_use_preview":
 		return "computer_use_preview is not supported because OpenAI retired the model that runs it; use the computer tool"
-	case strings.HasPrefix(normalized, "file_search"), normalized == "image_generation", normalized == "memory":
+	case normalized == "image_generation", normalized == "memory":
 		return rawType + " is not supported"
 	default:
-		return "Only function, custom, namespace, shell, apply_patch, computer, tool_search, remote MCP, and priced hosted web search tools are supported"
+		return "Only function, custom, namespace, shell, apply_patch, computer, tool_search, file_search, remote MCP, and priced hosted web search tools are supported"
 	}
 }
 
@@ -661,7 +699,7 @@ func openAIResponsesHostedToolHoldMeters(req openAIAdapterContext) []billing.Met
 	}
 	quantity := responsesHostedToolHoldQuantity(req)
 	searchKind := responsesSearchHoldKind(req)
-	if contentTokens := webSearchContentHoldTokensForKind(req, searchKind); contentTokens > 0 {
+	if contentTokens := searchContentHoldTokensForKind(req, searchKind); contentTokens > 0 {
 		meters = billing.AppendTokenMeterCost(meters, req.Deployment.Pricing, billing.MeterInputTokens, contentTokens*quantity, true, billing.TokenRateHighest)
 	}
 	if meterKey := responsesSearchMeterForKind(req, searchKind); meterKey != "" {
@@ -670,18 +708,21 @@ func openAIResponsesHostedToolHoldMeters(req openAIAdapterContext) []billing.Met
 	return meters
 }
 
+// openAIResponsesHostedToolFinalMeters charges the hosted calls that ran: each web search, and
+// each file search, whose results OpenAI counts in the input tokens.
 func openAIResponsesHostedToolFinalMeters(req openAIAdapterContext) []billing.MeterEstimate {
 	meters := []billing.MeterEstimate{}
-	quantity := req.ActualWebSearchCalls
-	if quantity <= 0 {
-		return meters
+	if quantity := req.ActualWebSearchCalls; quantity > 0 {
+		searchKind := responsesSearchKind(req)
+		if fixedContentTokens := webSearchFixedContentTokensForKind(req.Deployment.Model, searchKind); fixedContentTokens > 0 {
+			meters = billing.AppendTokenMeterCost(meters, req.Deployment.Pricing, billing.MeterInputTokens, fixedContentTokens*quantity, false, billing.TokenRateStandard)
+		}
+		if meterKey := responsesSearchMeterForKind(req, searchKind); meterKey != "" {
+			meters = billing.AppendCallMeterCost(meters, req.Deployment.Pricing, meterKey, quantity, false)
+		}
 	}
-	searchKind := responsesSearchKind(req)
-	if fixedContentTokens := webSearchFixedContentTokensForKind(req.Deployment.Model, searchKind); fixedContentTokens > 0 {
-		meters = billing.AppendTokenMeterCost(meters, req.Deployment.Pricing, billing.MeterInputTokens, fixedContentTokens*quantity, false, billing.TokenRateStandard)
-	}
-	if meterKey := responsesSearchMeterForKind(req, searchKind); meterKey != "" {
-		meters = billing.AppendCallMeterCost(meters, req.Deployment.Pricing, meterKey, quantity, false)
+	if quantity := req.ActualFileSearchCalls; quantity > 0 {
+		meters = billing.AppendCallMeterCost(meters, req.Deployment.Pricing, MeterOpenAIResponsesFileSearchCalls, quantity, false)
 	}
 	return meters
 }
@@ -790,7 +831,8 @@ func validateTool(route openAIAdapterRoute, tool map[string]json.RawMessage) err
 			schemas.ResponsesToolTypeMCP,
 			schemas.ResponsesToolTypeApplyPatch,
 			schemas.ResponsesToolTypeComputer,
-			schemas.ResponsesToolTypeToolSearch:
+			schemas.ResponsesToolTypeToolSearch,
+			schemas.ResponsesToolTypeFileSearch:
 			return nil
 		case schemas.ResponsesToolTypeShell:
 			// Only the client's own shell: a hosted one starts a container that bills by the minute.
@@ -867,6 +909,8 @@ func responsesSearchMeterForKind(ctx openAIAdapterContext, kind string) string {
 		return MeterOpenAIResponsesWebSearchPreviewCalls
 	case "web_search":
 		return MeterOpenAIResponsesWebSearchCalls
+	case "file_search":
+		return MeterOpenAIResponsesFileSearchCalls
 	default:
 		return ""
 	}
@@ -877,8 +921,8 @@ func responsesSearchKind(ctx openAIAdapterContext) string {
 		return ""
 	}
 	toolTypes := catalog.EffectiveResponsesToolTypes(ctx.RawBody, ctx.ToolTypes)
-	usesWebSearch := usesWebSearchKind(toolTypes, "web_search")
-	usesPreview := usesWebSearchKind(toolTypes, "web_search_preview")
+	usesWebSearch := usesToolType(toolTypes, "web_search")
+	usesPreview := usesToolType(toolTypes, "web_search_preview")
 	switch {
 	case usesWebSearch && usesPreview:
 		return higherCostSearchKind(ctx)
@@ -891,6 +935,8 @@ func responsesSearchKind(ctx openAIAdapterContext) string {
 	}
 }
 
+// responsesSearchHoldKind returns the costliest search that the request lets the model call. The
+// searches share max_tool_calls, so the hold covers that many calls of this one.
 func responsesSearchHoldKind(ctx openAIAdapterContext) string {
 	if ctx.Route != openAIAdapterRouteResponses {
 		return ""
@@ -898,11 +944,11 @@ func responsesSearchHoldKind(ctx openAIAdapterContext) string {
 	toolTypes := catalog.EffectiveResponsesToolTypes(ctx.RawBody, ctx.ToolTypes)
 	selected := ""
 	var highest *money.USD
-	for _, kind := range []string{"web_search", "web_search_preview"} {
-		if !usesWebSearchKind(toolTypes, kind) {
+	for _, kind := range []string{"web_search", "web_search_preview", "file_search"} {
+		if !usesToolType(toolTypes, kind) {
 			continue
 		}
-		cost := searchKindEstimatedExtraCost(ctx, kind, webSearchContentHoldTokensForKind(ctx, kind))
+		cost := searchKindEstimatedExtraCost(ctx, kind, searchContentHoldTokensForKind(ctx, kind))
 		if cost != nil && (highest == nil || cost.Cmp(highest) > 0) {
 			selected, highest = kind, cost
 		}
@@ -910,10 +956,14 @@ func responsesSearchHoldKind(ctx openAIAdapterContext) string {
 	return selected
 }
 
-// Later passes read earlier results again mostly from OpenAI's automatic cache,
-// so a hold covers each call's content once.
-func webSearchContentHoldTokensForKind(ctx openAIAdapterContext, kind string) int {
-	if webSearchFixedContentTokensForKind(ctx.Deployment.Model, kind) > 0 || webSearchContentTokensBilledAtModelRatesForKind(ctx, kind) {
+// searchContentHoldTokensForKind is the content that the hold covers for each search of kind: what
+// a hosted call typically reads, where the provider bills it as input. A file search's results are
+// chunks of the vector stores' files, which OpenAI bills at the model's rates. Later passes read
+// earlier results again mostly from OpenAI's automatic cache, so a hold covers each call's content
+// once.
+func searchContentHoldTokensForKind(ctx openAIAdapterContext, kind string) int {
+	if kind == "file_search" || webSearchFixedContentTokensForKind(ctx.Deployment.Model, kind) > 0 ||
+		webSearchContentTokensBilledAtModelRatesForKind(ctx, kind) {
 		return hostedCallContentTokens
 	}
 	return 0
@@ -941,15 +991,6 @@ func webSearchFixedContentTokensForKind(model string, kind string) int {
 		return hostedCallContentTokens
 	}
 	return 0
-}
-
-func usesWebSearchKind(toolTypes []string, kind string) bool {
-	for _, toolType := range toolTypes {
-		if strings.EqualFold(strings.TrimSpace(toolType), kind) {
-			return true
-		}
-	}
-	return false
 }
 
 func higherCostSearchKind(ctx openAIAdapterContext) string {

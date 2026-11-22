@@ -12,6 +12,8 @@ import (
 // only through a customer's credential, and, when it reads what one account holds, only where one
 // credential can serve it. Its data handling and its policy fields say what the provider keeps.
 func TestRoutingSendsProviderStateOnlyThroughCustomerAccounts(t *testing.T) {
+	// A file search tool after another, so that the refusal names its place.
+	const fileSearch = `"tools":[{"type":"function","name":"lookup"},{"type":"file_search","vector_store_ids":["vs_1"]}]`
 	// Stogas serves this deployment with its own account too, so its credentials reach it.
 	loadTestCatalog(t).graph.Deployments["openai-gpt-5.6-sol"].StogasManaged = true
 	customer := func(schemas.ModelProvider, int) string { return CredentialStored }
@@ -29,12 +31,12 @@ func TestRoutingSendsProviderStateOnlyThroughCustomerAccounts(t *testing.T) {
 			want: ProviderState{Fields: []string{"store"}, Store: true, Keeps: true}},
 		// A continuation stores its reply, as OpenAI's default does, unless the client says not to.
 		{name: "a continued reply", body: `"previous_response_id":"resp_1"`,
-			want: ProviderState{Fields: []string{"store", "previous_response_id"}, Store: true, Keeps: true, Held: "previous_response_id"}},
+			want: ProviderState{Fields: []string{"store", "previous_response_id"}, Store: true, Keeps: true, Held: "previous_response_id", Reads: "previous_response_id"}},
 		{name: "a continued reply that stores nothing", body: `"previous_response_id":"resp_1","store":false`,
-			want: ProviderState{Fields: []string{"previous_response_id"}, Held: "previous_response_id"}},
+			want: ProviderState{Fields: []string{"previous_response_id"}, Held: "previous_response_id", Reads: "previous_response_id"}},
 		// A conversation keeps each turn, whatever store says.
 		{name: "a conversation", body: `"conversation":{"id":"conv_1"},"store":false`,
-			want: ProviderState{Fields: []string{"conversation"}, Keeps: true, Held: "conversation"}},
+			want: ProviderState{Fields: []string{"conversation"}, Keeps: true, Held: "conversation", Reads: "conversation"}},
 		{name: "null and empty continuations", body: `"previous_response_id":"","conversation":null,"store":null`},
 		{name: "Stogas credentials", body: `"store":true`, kind: func(schemas.ModelProvider, int) string { return CredentialManaged },
 			wantErr: "store needs your own provider credential, because Stogas's provider accounts keep nothing for a request. Omit store or set it to false."},
@@ -53,6 +55,19 @@ func TestRoutingSendsProviderStateOnlyThroughCustomerAccounts(t *testing.T) {
 			wantErr: "The routing lists and filters of the organization policy leave no deployment for this request."},
 		{name: "a policy that lets a reply be stored", body: `"store":true`, policy: `{"routing":{"filter":"request.store && !request.storedInput"}}`,
 			want: ProviderState{Fields: []string{"store"}, Store: true, Keeps: true}},
+		// A file search reads the vector stores of one account and keeps nothing there.
+		{name: "a file search", body: fileSearch,
+			want: ProviderState{Fields: []string{"vector_store_ids"}, Reads: "tools[1].vector_store_ids"}},
+		{name: "a file search that continues a stored reply", body: fileSearch + `,"previous_response_id":"resp_1","store":false`,
+			want: ProviderState{Fields: []string{"previous_response_id", "vector_store_ids"}, Held: "previous_response_id", Reads: "previous_response_id"}},
+		{name: "a file search on Stogas credentials", body: fileSearch, kind: func(schemas.ModelProvider, int) string { return CredentialManaged },
+			wantErr: "tools[1].vector_store_ids needs your own provider credential, because Stogas's provider accounts keep nothing for a request. Remove the tool."},
+		{name: "a file search with two customer credentials", body: fileSearch, credentials: map[string][]int{"openai": {0, 1}},
+			wantErr: "tools[1].vector_store_ids names content that one provider account holds, and this request can use 2 credentials; use a key with one credential for this model"},
+		{name: "a file search where a policy checks input", body: fileSearch, policy: `{"input":{"asciiOnly":true}}`,
+			wantErr: "tools[1].vector_store_ids names content that your provider account holds, which input.asciiOnly cannot check. Remove the tool."},
+		{name: "a policy that refuses stored input refuses a file search", body: fileSearch, policy: `{"routing":{"filter":"!request.storedInput"}}`,
+			wantErr: "The routing lists and filters of the organization policy leave no deployment for this request."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			config := policyConfig(1)
@@ -86,7 +101,7 @@ func TestRoutingSendsProviderStateOnlyThroughCustomerAccounts(t *testing.T) {
 				t.Fatal(err)
 			}
 			state := resolved.ProviderState()
-			if !slices.Equal(state.Fields, tc.want.Fields) || state.Store != tc.want.Store || state.Keeps != tc.want.Keeps || state.Held != tc.want.Held {
+			if !slices.Equal(state.Fields, tc.want.Fields) || state.Store != tc.want.Store || state.Keeps != tc.want.Keeps || state.Held != tc.want.Held || state.Reads != tc.want.Reads {
 				t.Fatalf("provider state %+v, want %+v", state, tc.want)
 			}
 			// What the provider keeps stays as long as the provider decides, whatever the account.
