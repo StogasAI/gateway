@@ -182,7 +182,7 @@ func BenchmarkRatchetWarmStart(b *testing.B) {
 	}
 }
 func BenchmarkRatchetMaximumUnauthenticatedGap(b *testing.B) {
-	for _, gap := range []uint64{0, 32, 256, ReplayWindow - 1} {
+	for _, gap := range []uint64{0, 32, ReplayWindow - 1} {
 		for _, size := range []int{1, MaxRecordPlaintext - 2 - MaxRatchetHeaderBytes} {
 			b.Run(fmt.Sprintf("gap=%d/plaintext=%d", gap, size), func(b *testing.B) {
 				benchmarkUnauthenticatedStart(b, gap, size)

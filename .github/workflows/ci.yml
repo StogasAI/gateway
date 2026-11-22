@@ -100,6 +100,41 @@ jobs:
           npm ci --ignore-scripts
           npm run test:policy
 
+  # Each benchmark runs once beside the tests, so a change that breaks one fails here instead of when
+  # someone measures a bound again. The documented limits rest on these measurements.
+  benchmarks:
+    name: Go Benchmarks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: transports/go.mod
+          cache-dependency-path: |
+            core/go.sum
+            transports/go.sum
+      - id: verifier
+        uses: $/.github/actions/setup-verifier
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: stogas/pdftext
+      - name: Build the PDF reader
+        working-directory: stogas/pdftext
+        env:
+          CARGO_PROFILE_RELEASE_LTO: 'false'
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16'
+        run: |
+          cargo build --quiet --locked --release
+          echo "STOGAS_PDFTEXT=$PWD/target/release/stogas-pdftext" >> "$GITHUB_ENV"
+      - name: Run each benchmark once
+        working-directory: transports
+        env:
+          CGO_LDFLAGS: ${{ steps.verifier.outputs.cgo-ldflags }}
+        run: GOWORK=off go test -tags=stogas_gateway -run '^$' -bench . -benchtime 1x ./...
+
   dependencies:
     name: Dependencies and Release Inputs
     runs-on: ubuntu-24.04

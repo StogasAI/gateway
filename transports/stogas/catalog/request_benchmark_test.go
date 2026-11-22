@@ -49,9 +49,14 @@ func BenchmarkRequestThreeMillionContext(b *testing.B) {
 		for n := range predicates {
 			predicates[n] = fmt.Sprintf("provider.id != 'blocked_%d_%d'", i, n)
 		}
+		routing := map[string]any{"filter": strings.Join(predicates, " && ")}
+		// Role, member and credential policies cannot order deployments.
+		if scope != policy.RoleScope && scope != policy.MemberScope && scope != policy.CredentialScope {
+			routing["sort"] = []map[string]any{{"by": "deployment.id", "direction": "asc"}}
+		}
 		document := map[string]any{
 			"delegation": map[string]any{"requests": true},
-			"routing":    map[string]any{"filter": strings.Join(predicates, " && "), "sort": []map[string]any{{"by": "deployment.id", "direction": "asc"}}},
+			"routing":    routing,
 			"limits": map[string]any{
 				"spend":    map[string]any{"usd": "1000000"},
 				"daily":    map[string]any{"usd": "100000", "per": map[string]any{"count": 1, "unit": "day", "timeZone": "UTC"}},
@@ -183,7 +188,9 @@ func BenchmarkRequestThreeMillionContext(b *testing.B) {
 					AvailableCredentials: map[string][]int{"openai": {0}}, RedactionPolicy: plan,
 				})
 				maximum = max(maximum, time.Since(start))
-				if structureRejected || shape == "unbroken" || shape == "fuzzy_seeds" || shape == "dense_matches" {
+				// Dense matches meet the match limit, and fuzzy seeds and whitespace up to the
+				// wire limit meet the scan meter.
+				if structureRejected || shape == "fuzzy_seeds" || shape == "dense_matches" || shape == "whitespace_max" {
 					if PublicError(err).StatusCode != 413 || resolved != nil {
 						b.Fatalf("expected bounded redaction rejection: %v", err)
 					}

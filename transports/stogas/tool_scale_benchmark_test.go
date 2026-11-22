@@ -9,7 +9,8 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
 
-func toolScaleBodies(count int) (chat, responses string) {
+// toolScaleBodies declares count tools on each interface. chatFields go first in the Chat body.
+func toolScaleBodies(count int, chatFields string) (chat, responses string) {
 	chatTools := make([]string, count)
 	responsesTools := make([]string, count)
 	allowed := make([]string, count)
@@ -18,7 +19,7 @@ func toolScaleBodies(count int) (chat, responses string) {
 		responsesTools[index] = fmt.Sprintf(`{"type":"function","name":"tool_%d","parameters":{"type":"object"}}`, index)
 		allowed[index] = fmt.Sprintf(`{"type":"function","name":"tool_%d"}`, index)
 	}
-	chat = `{"model":"provider:openai gpt-5.6-luna","messages":[{"role":"user","content":"hi"}],"tools":[` + strings.Join(chatTools, ",") + `]}`
+	chat = `{"model":"provider:openai gpt-5.6-luna",` + chatFields + `"messages":[{"role":"user","content":"hi"}],"tools":[` + strings.Join(chatTools, ",") + `]}`
 	responses = `{"model":"provider:openai gpt-5.6-luna","input":"hi","tools":[` + strings.Join(responsesTools, ",") +
 		`],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[` + strings.Join(allowed, ",") + `]}}`
 	return chat, responses
@@ -41,7 +42,8 @@ func admitToolScaleRequest(b *testing.B, path, body string) *State {
 // event costs the same for any tool count.
 func BenchmarkProviderToolChecks(b *testing.B) {
 	for _, count := range []int{128, 10_000} {
-		chatBody, responsesBody := toolScaleBodies(count)
+		// Without reasoning, Chat tools stay on the Chat wire, whose name check this measures.
+		chatBody, responsesBody := toolScaleBodies(count, `"reasoning_effort":"none",`)
 		chat := admitToolScaleRequest(b, "/v1/chat/completions", chatBody)
 		responses := admitToolScaleRequest(b, "/v1/responses", responsesBody)
 		last := fmt.Sprintf("tool_%d", count-1)
@@ -72,7 +74,8 @@ func BenchmarkProviderToolChecks(b *testing.B) {
 // Tools cost about as much per byte to admit as messages, so the body and JSON-value
 // bounds also bound tool work.
 func BenchmarkToolRequestAdmission(b *testing.B) {
-	chat, responses := toolScaleBodies(4_096)
+	// With reasoning on, Chat tools go through Responses, the costlier path.
+	chat, responses := toolScaleBodies(4_096, "")
 	messages := `{"model":"provider:openai gpt-5.6-luna","messages":[` +
 		strings.Repeat(`{"role":"user","content":"hi"},`, 99_999) + `{"role":"user","content":"hi"}]}`
 	for _, request := range []struct{ name, path, body string }{

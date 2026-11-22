@@ -104,6 +104,11 @@ func BenchmarkRoutingDistinctCredentialPolicies(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	// The sort that new organizations get orders the equal deployments below.
+	organization, err := policy.CompileSource([]byte(`{"routing":{"sort":[{"by":"model.releaseDate","direction":"desc"},{"by":"blendedPrice(3, 1)"},{"by":"random()"}]}}`))
+	if err != nil {
+		b.Fatal(err)
+	}
 	configs := make([]*policy.Config, 1000)
 	indexes := make([]int, len(configs))
 	for index := range configs {
@@ -112,7 +117,7 @@ func BenchmarkRoutingDistinctCredentialPolicies(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		configs[index], err = policy.ComposeSources([]policy.ScopedSource{{Scope: policy.OrganizationScope, Value: empty}, {Scope: policy.CredentialScope, Value: source}, {Scope: policy.KeyScope, Value: empty}})
+		configs[index], err = policy.ComposeSources([]policy.ScopedSource{{Scope: policy.OrganizationScope, Value: organization}, {Scope: policy.CredentialScope, Value: source}, {Scope: policy.KeyScope, Value: empty}})
 		if err != nil {
 			b.Fatal(err)
 		}
