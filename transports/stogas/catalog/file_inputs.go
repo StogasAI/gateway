@@ -102,7 +102,8 @@ func attachmentError(provider schemas.ModelProvider, deployment Deployment, atta
 	}
 	claude := UsesClaudeWire(provider, deployment.ModelID)
 	gemini := deployment.RouteID == string(CoreProviderGoogleCloudGenerateContent)
-	// Chat Completions, which a bridged deployment gets, has no image file IDs or file URLs.
+	// Chat Completions, which a bridged deployment gets, has no image file IDs, and core carries a
+	// file URL there only to Claude and Gemini.
 	bridged := attachment.Responses && deployment.bridges(RouteResponses)
 	modality := ""
 	switch attachment.Kind {
@@ -114,7 +115,7 @@ func attachmentError(provider schemas.ModelProvider, deployment Deployment, atta
 	case "input_audio":
 		modality = "audio"
 	case "file", "input_file":
-		if bridged && attachment.URL != "" {
+		if bridged && attachment.URL != "" && !claude && !gemini {
 			return attachmentRefusal(attachment.Path, " file URLs are not supported by "+subject)
 		}
 		if err := documentError(claude, gemini, deployment.DocumentFormats, attachment, subject); err != nil {

@@ -3,6 +3,7 @@ package stogas
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"path"
 	"slices"
@@ -174,6 +175,25 @@ func TestGeminiSendsWhatGoogleTook(t *testing.T) {
 			`,{"type":"text","text":` + question + `}]}],"max_completion_tokens":2000,"reasoning_effort":"low"}`
 	}
 	linked := func(name string) string { return file(name, geminiRecordedText(t, exchange(t, files, name))) }
+	// linkedOnResponses asks the question of linked on Responses, which reach Gemini through Chat
+	// Completions with the URL and its file_type.
+	linkedOnResponses := func(name string) string {
+		var part struct {
+			ImageURL *struct{ URL string } `json:"image_url"`
+			File     map[string]string     `json:"file"`
+		}
+		if err := json.Unmarshal([]byte(geminiRecordedPart(t, exchange(t, files, name))), &part); err != nil {
+			t.Fatal(err)
+		}
+		input := map[string]string{"type": "input_file"}
+		if part.ImageURL != nil {
+			input = map[string]string{"type": "input_image", "image_url": part.ImageURL.URL}
+		}
+		maps.Copy(input, part.File)
+		encoded, _ := json.Marshal(input)
+		return `{"model":"google-cloud-gemini-3.8-flash","input":[{"role":"user","content":[` + string(encoded) +
+			`,{"type":"input_text","text":` + geminiRecordedText(t, exchange(t, files, name)) + `}]}],"max_output_tokens":2000,"reasoning":{"effort":"low"}}`
+	}
 	arithmetic := `"messages":[{"role":"user","content":"What is 17*23? Answer with the number only."}],"max_completion_tokens":4000`
 	for _, test := range []struct {
 		took   providerExchange
@@ -204,6 +224,9 @@ func TestGeminiSendsWhatGoogleTook(t *testing.T) {
 		{exchange(t, files, "mp3 url"), geminiChatPath, linked("mp3 url")},
 		{exchange(t, files, "pdf url"), geminiChatPath, linked("pdf url")},
 		{exchange(t, files, "pdf url without an extension"), geminiChatPath, linked("pdf url without an extension")},
+		{exchange(t, files, "image url"), geminiResponsesPath, linkedOnResponses("image url")},
+		{exchange(t, files, "pdf url"), geminiResponsesPath, linkedOnResponses("pdf url")},
+		{exchange(t, files, "pdf url without an extension"), geminiResponsesPath, linkedOnResponses("pdf url without an extension")},
 		{exchange(t, stream, "stream with thought summaries"), geminiChatPath,
 			`{"model":"google-cloud-gemini-3.8-flash",` + arithmetic + `,"reasoning_effort":"medium","stream":true,"stream_options":{"include_usage":true}}`},
 		{exchange(t, stream, "reply without thoughts"), geminiChatPath,
