@@ -1,0 +1,170 @@
+== tool-opus-4-5 on anthropic-claude-opus-4-5
+anthropic-beta claude-code-20250219,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,tool-search-tool-2025-10-19,context-management-2025-06-27
+messages.2.content.0.is_error: left out false
+metadata: left out {"user_id":"user"}
+model: added "claude-opus-4-5-20251101"
+service_tier: added "standard_only"
+tools.*.eager_input_streaming: added true (12 times)
+== tool-opus-4-5 on aws-claude-opus-4-5-anthropic-hosted
+anthropic-beta claude-code-20250219,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,tool-search-tool-2025-10-19,context-management-2025-06-27
+messages.2.content.0.is_error: left out false
+metadata: left out {"user_id":"user"}
+model: added "claude-opus-4-5-20251101"
+tools.*.eager_input_streaming: added true (12 times)
+== tool-haiku-4-5 on anthropic-claude-haiku-4-5
+anthropic-beta interleaved-thinking-2025-05-14,claude-code-20250219,thinking-token-count-2026-05-13,tool-search-tool-2025-10-19,context-management-2025-06-27
+messages.2.content.0.is_error: left out false
+metadata: left out {"user_id":"user"}
+model: added "claude-haiku-4-5-20251001"
+service_tier: added "standard_only"
+tools.*.eager_input_streaming: added true (12 times)
+== tool-haiku-4-5 on google-cloud-claude-haiku-4-5-anthropic-hosted
+anthropic-beta interleaved-thinking-2025-05-14,claude-code-20250219,thinking-token-count-2026-05-13,tool-search-tool-2025-10-19,context-management-2025-06-27
+messages.2.content.0.is_error: left out false
+metadata: left out {"user_id":"user"}
+model: added "claude-haiku-4-5-20251001"
+tools.*.eager_input_streaming: added true (12 times)
+== tool-opus-4-6 on anthropic-claude-opus-4-6
+anthropic-beta claude-code-20250219,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,tool-search-tool-2025-10-19,context-management-2025-06-27
+inference_geo: added "global"
+messages.2.content.0.is_error: left out false
+metadata: left out {"user_id":"user"}
+model: added "claude-opus-4-6"
+service_tier: added "standard_only"
+tools.*.eager_input_streaming: added true (12 times)
+== tool-sonnet-4-6 on anthropic-claude-sonnet-4-6
+anthropic-beta claude-code-20250219,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,tool-search-tool-2025-10-19,context-management-2025-06-27
+inference_geo: added "global"
+messages.2.content.0.is_error: left out false
+metadata: left out {"user_id":"user"}
+model: added "claude-sonnet-4-6"
+service_tier: added "standard_only"
+tools.*.eager_input_streaming: added true (12 times)
+== web-search-query on anthropic-claude-opus-5-5
+anthropic-beta claude-code-20250219,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13
+inference_geo: added "global"
+metadata: left out {"user_id":"user"}
+model: added "claude-opus-5-5"
+service_tier: added "standard_only"
+== web-search-query on azure-claude-opus-5-5
+anthropic-beta interleaved-thinking-2025-05-14
+metadata: left out {"user_id":"user"}
+model: added "claude-opus-5-5"
+== web-search-query on azure-claude-opus-5-5-anthropic-hosted
+anthropic-beta interleaved-thinking-2025-05-14
+metadata: left out {"user_id":"user"}
+model: added "claude-opus-5-5"
+== web-search on anthropic-claude-opus-5-5
+anthropic-beta claude-code-20250219,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,tool-search-tool-2025-10-19,context-management-2025-06-27
+inference_geo: added "global"
+metadata: left out {"user_id":"user"}
+model: added "claude-opus-5-5"
+service_tier: added "standard_only"
+tools.*.eager_input_streaming: added true (13 times)
+== web-search on azure-claude-opus-5-5
+anthropic-beta interleaved-thinking-2025-05-14,tool-search-tool-2025-10-19,context-management-2025-06-27
+metadata: left out {"user_id":"user"}
+model: added "claude-opus-5-5"
+tools.*.eager_input_streaming: added true (13 times)
+== web-search on azure-claude-opus-5-5-anthropic-hosted
+anthropic-beta interleaved-thinking-2025-05-14,tool-search-tool-2025-10-19,context-management-2025-06-27
+metadata: left out {"user_id":"user"}
+model: added "claude-opus-5-5"
+tools.*.eager_input_streaming: added true (13 times)
+== agent on anthropic-claude-opus-5-5
+anthropic-beta claude-code-20250219,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,tool-search-tool-2025-10-19,context-management-2025-06-27
+inference_geo: added "global"
+metadata: left out {"user_id":"user"}
+model: added "claude-opus-5-5"
+service_tier: added "standard_only"
+tools.*.eager_input_streaming: added true (12 times)
+== agent on azure-claude-opus-5-5
+anthropic-beta interleaved-thinking-2025-05-14,tool-search-tool-2025-10-19,context-management-2025-06-27
+metadata: left out {"user_id":"user"}
+model: added "claude-opus-5-5"
+tools.*.eager_input_streaming: added true (12 times)
+== agent on azure-claude-opus-5-5-anthropic-hosted
+anthropic-beta interleaved-thinking-2025-05-14,tool-search-tool-2025-10-19,context-management-2025-06-27
+metadata: left out {"user_id":"user"}
+model: added "claude-opus-5-5"
+tools.*.eager_input_streaming: added true (12 times)
+== agent on aws-claude-fable-5-1
+anthropic-beta interleaved-thinking-2025-05-14,tool-search-tool-2025-10-19,context-management-2025-06-27
+metadata: left out {"user_id":"user"}
+model: added "global.anthropic.claude-fable-5-1"
+tools.*.eager_input_streaming: added true (12 times)
+== agent on aws-claude-fable-5-1-anthropic-hosted
+anthropic-beta claude-code-20250219,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,tool-search-tool-2025-10-19,context-management-2025-06-27
+inference_geo: added "global"
+metadata: left out {"user_id":"user"}
+model: added "claude-fable-5-1"
+tools.*.eager_input_streaming: added true (12 times)
+== agent on google-cloud-claude-fable-5-1
+anthropic-beta interleaved-thinking-2025-05-14,tool-search-tool-2025-10-19,context-management-2025-06-27
+anthropic_beta: added ["interleaved-thinking-2025-05-14","tool-search-tool-2025-10-19","context-management-2025-06-27"]
+anthropic_version: added "vertex-2023-10-16"
+metadata: left out {"user_id":"user"}
+tools.*.eager_input_streaming: added true (12 times)
+== agent on google-cloud-claude-fable-5-1-anthropic-hosted
+anthropic-beta claude-code-20250219,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,tool-search-tool-2025-10-19,context-management-2025-06-27
+inference_geo: added "global"
+metadata: left out {"user_id":"user"}
+model: added "claude-fable-5-1"
+tools.*.eager_input_streaming: added true (12 times)
+== read-files on anthropic-claude-opus-5-5
+anthropic-beta claude-code-20250219,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,tool-search-tool-2025-10-19,context-management-2025-06-27
+inference_geo: added "global"
+metadata: left out {"user_id":"user"}
+model: added "claude-opus-5-5"
+service_tier: added "standard_only"
+tools.*.eager_input_streaming: added true (12 times)
+== read-files on azure-claude-opus-5-5
+anthropic-beta interleaved-thinking-2025-05-14,tool-search-tool-2025-10-19,context-management-2025-06-27
+metadata: left out {"user_id":"user"}
+model: added "claude-opus-5-5"
+tools.*.eager_input_streaming: added true (12 times)
+== read-files on azure-claude-opus-5-5-anthropic-hosted
+anthropic-beta interleaved-thinking-2025-05-14,tool-search-tool-2025-10-19,context-management-2025-06-27
+metadata: left out {"user_id":"user"}
+model: added "claude-opus-5-5"
+tools.*.eager_input_streaming: added true (12 times)
+== one-hour-cache on anthropic-claude-opus-5-5
+anthropic-beta claude-code-20250219,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,tool-search-tool-2025-10-19,context-management-2025-06-27
+inference_geo: added "global"
+messages.3.content.0.is_error: left out false
+metadata: left out {"user_id":"user"}
+model: added "claude-opus-5-5"
+service_tier: added "standard_only"
+tools.*.eager_input_streaming: added true (12 times)
+== one-hour-cache on azure-claude-opus-5-5
+anthropic-beta interleaved-thinking-2025-05-14,tool-search-tool-2025-10-19,context-management-2025-06-27
+messages.3.content.0.is_error: left out false
+metadata: left out {"user_id":"user"}
+model: added "claude-opus-5-5"
+tools.*.eager_input_streaming: added true (12 times)
+== one-hour-cache on azure-claude-opus-5-5-anthropic-hosted
+anthropic-beta interleaved-thinking-2025-05-14,tool-search-tool-2025-10-19,context-management-2025-06-27
+messages.3.content.0.is_error: left out false
+metadata: left out {"user_id":"user"}
+model: added "claude-opus-5-5"
+tools.*.eager_input_streaming: added true (12 times)
+== no-experimental-betas on anthropic-claude-opus-5-5
+anthropic-beta claude-code-20250219,interleaved-thinking-2025-05-14
+inference_geo: added "global"
+messages.3.content.0.is_error: left out false
+metadata: left out {"user_id":"user"}
+model: added "claude-opus-5-5"
+service_tier: added "standard_only"
+tools.*.eager_input_streaming: added true (21 times)
+== no-experimental-betas on azure-claude-opus-5-5
+anthropic-beta interleaved-thinking-2025-05-14
+messages.3.content.0.is_error: left out false
+metadata: left out {"user_id":"user"}
+model: added "claude-opus-5-5"
+tools.*.eager_input_streaming: added true (21 times)
+== no-experimental-betas on azure-claude-opus-5-5-anthropic-hosted
+anthropic-beta interleaved-thinking-2025-05-14
+messages.3.content.0.is_error: left out false
+metadata: left out {"user_id":"user"}
+model: added "claude-opus-5-5"
+tools.*.eager_input_streaming: added true (21 times)

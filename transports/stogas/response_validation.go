@@ -149,11 +149,24 @@ func validateProviderResponsesStream(state *State, response *schemas.BifrostResp
 		return ErrProviderResponseMalformed
 	}
 	discardUnexposedResponsesStreamFields(response)
-	if !validResponsesStreamType(response.Type) || response.SequenceNumber != state.responsesNextSequence || state.responsesStreamEnded {
+	// A Messages client gets Claude's own events, so core sends an event that yields no other
+	// chunk, such as a ping, on a chunk of its own.
+	rawEvent := response.Type == schemas.ResponsesStreamResponseTypeProviderRawEvent && state.Resolution.Messages
+	if !rawEvent && !validResponsesStreamType(response.Type) || response.SequenceNumber != state.responsesNextSequence || state.responsesStreamEnded {
 		return ErrProviderResponseMalformed
 	}
-	if !observeProviderStreamPayload(state, response) {
+	// Claude's event repeats what the chunk holds, so the limit counts it once.
+	counted := *response
+	counted.ExtraFields.RawResponse = nil
+	if !observeProviderStreamPayload(state, &counted) {
 		return ErrProviderResponseMalformed
+	}
+	if rawEvent {
+		if validateResponsesStreamEventShape(response) != nil {
+			return ErrProviderResponseMalformed
+		}
+		state.responsesNextSequence++
+		return nil
 	}
 	if !state.responsesStreamSeen {
 		if response.Type != schemas.ResponsesStreamResponseTypeCreated {

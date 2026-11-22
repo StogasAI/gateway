@@ -6,10 +6,12 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/bytedance/sonic"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 	"github.com/maximhq/bifrost/transports/stogas/plugins"
 	"github.com/maximhq/bifrost/transports/stogas/plugins/redaction"
+	"github.com/tidwall/sjson"
 )
 
 // ReplyRedaction changes the response of one request as the redactions of its policies say. It
@@ -26,6 +28,8 @@ type ReplyRedaction struct {
 	reserve  func(int) error
 	// jsonOutput marks a reply whose text is a JSON document, as the request asked.
 	jsonOutput bool
+	// messages marks Claude's own reply to a Messages request, whose events the client gets.
+	messages bool
 	// request is what the request's own redaction recorded.
 	request *plugins.RedactionMetrics
 	// views count what each view of the reply found.
@@ -35,10 +39,11 @@ type ReplyRedaction struct {
 	sealed        map[int]bool
 	sealedChoices map[int]bool
 	sealedDetails map[chatReplyText]bool
-	// passed holds each text of a Chat Completions stream that has passed to the client and that
-	// a redaction records, until the stream ends. A Responses stream repeats its texts whole.
-	passed      map[chatReplyText]*bytes.Buffer
-	passedOrder []chatReplyText
+	// passed holds each text of a Chat Completions or Messages stream that has passed to the
+	// client and that a redaction records, until the stream ends. A Responses stream repeats its
+	// texts whole.
+	passed      map[any]*bytes.Buffer
+	passedOrder []any
 	// tails are the ends of the streamed texts that may become placeholders.
 	tails map[any]string
 }
@@ -66,7 +71,7 @@ func NewReplyRedaction(state *State, reserve func(int) error) *ReplyRedaction {
 	if redactor == nil {
 		return nil
 	}
-	reply := &ReplyRedaction{state: state, redactor: redactor, reserve: reserve, request: state.PluginMetrics.Redaction}
+	reply := &ReplyRedaction{state: state, redactor: redactor, reserve: reserve, request: state.PluginMetrics.Redaction, messages: state.Resolution.Messages}
 	if state.structuredOutput().json {
 		reply.jsonOutput = true
 		redactor.JSONOutput()
@@ -80,16 +85,23 @@ func (r *ReplyRedaction) Response(encoded []byte) ([]byte, error) {
 		return encoded, nil
 	}
 	shape := redaction.ReplyChat
-	if r.state.Resolution.Route == catalog.RouteResponses {
+	switch {
+	case r.messages:
+		shape = redaction.ReplyMessages
+	case r.state.Resolution.Route == catalog.RouteResponses:
 		shape = redaction.ReplyResponses
 	}
 	defer r.count(replyViewWhole)()
 	return r.redactor.RedactReply(encoded, shape, r.reserve)
 }
 
-// Event returns an encoded event of a held Responses stream, changed. Stream has already
-// changed the event's delta, and the events of signed or encrypted reasoning stay as they are.
+// Event returns an encoded event of a held Responses stream, or Claude's event of a Messages
+// stream, changed. Stream has already changed the event's delta, and the events of signed or
+// encrypted reasoning stay as they are.
 func (r *ReplyRedaction) Event(event *schemas.BifrostResponsesStreamResponse, encoded []byte) ([]byte, error) {
+	if r != nil && r.messages {
+		return r.messagesEvent(encoded)
+	}
 	if r == nil || event == nil || event.Delta != nil || event.OutputIndex != nil && r.sealed[*event.OutputIndex] {
 		return encoded, nil
 	}
@@ -139,6 +151,108 @@ type responsesReplyText struct {
 	output, content, summary, shell int
 }
 
+// messagesReplyText names one text of a streamed Messages reply: the text of a content block,
+// the input of its tool call, or the summary of a compaction.
+type messagesReplyText struct {
+	block int
+	kind  uint8
+}
+
+const (
+	messagesTextBlock = iota
+	messagesToolInputBlock
+	messagesCompactionBlock
+)
+
+// messagesEvent returns Claude's event of a Messages stream, changed. Stream has already changed
+// the deltas of a content block, and the other events hold whole values.
+func (r *ReplyRedaction) messagesEvent(encoded []byte) ([]byte, error) {
+	var event struct {
+		Type string `json:"type"`
+	}
+	if err := sonic.Unmarshal(encoded, &event); err != nil {
+		return nil, err
+	}
+	switch event.Type {
+	case "message_start", "content_block_start", "message_delta":
+		defer r.count(replyViewDeltas)()
+		return r.redactor.RedactReply(encoded, redaction.ReplyMessagesEvent, r.reserve)
+	}
+	return encoded, nil
+}
+
+// messagesDelta is the text of a content block delta of a Messages stream that reply redaction
+// reads: the chunk that carries Claude's event, and the path of the text in it.
+type messagesDelta struct {
+	chunk          *schemas.BifrostResponsesStreamResponse
+	path           string
+	text, original string
+}
+
+// readMessagesDelta reads Claude's event on a chunk of a Messages stream. It returns the delta of
+// a content block's text or tool input, or the block that a content_block_stop ends. Thinking
+// keeps its text, and citations are Claude's own.
+func readMessagesDelta(chunk *schemas.BifrostStreamChunk) (delta *messagesDelta, key messagesReplyText, stopped int, err error) {
+	stopped = -1
+	event := chunk.BifrostResponsesStreamResponse
+	if event == nil {
+		return nil, key, stopped, nil
+	}
+	raw, _ := event.ExtraFields.RawResponse.(string)
+	if raw == "" {
+		return nil, key, stopped, nil
+	}
+	var claude struct {
+		Type  string `json:"type"`
+		Index int    `json:"index"`
+		Delta struct {
+			Type        string  `json:"type"`
+			Text        *string `json:"text"`
+			PartialJSON *string `json:"partial_json"`
+			Content     *string `json:"content"`
+		} `json:"delta"`
+	}
+	if err := sonic.UnmarshalString(raw, &claude); err != nil {
+		return nil, key, stopped, err
+	}
+	switch claude.Type {
+	case "content_block_stop":
+		return nil, key, claude.Index, nil
+	case "content_block_delta":
+	default:
+		return nil, key, stopped, nil
+	}
+	key.block = claude.Index
+	var path string
+	var text *string
+	switch claude.Delta.Type {
+	case "text_delta":
+		path, text, key.kind = "delta.text", claude.Delta.Text, messagesTextBlock
+	case "input_json_delta":
+		path, text, key.kind = "delta.partial_json", claude.Delta.PartialJSON, messagesToolInputBlock
+	case "compaction_delta":
+		path, text, key.kind = "delta.content", claude.Delta.Content, messagesCompactionBlock
+	}
+	if text == nil || *text == "" {
+		return nil, key, stopped, nil
+	}
+	return &messagesDelta{chunk: event, path: path, text: *text, original: *text}, key, stopped, nil
+}
+
+// write puts a changed text back into Claude's event.
+func (d *messagesDelta) write() error {
+	if d.text == d.original {
+		return nil
+	}
+	raw, _ := d.chunk.ExtraFields.RawResponse.(string)
+	changed, err := sjson.Set(raw, d.path, d.text)
+	if err != nil {
+		return err
+	}
+	d.chunk.ExtraFields.RawResponse = changed
+	return nil
+}
+
 // Holds takes the next chunks of a stream and reports whether the client waits for more
 // before it gets the chunks held so far. A redaction that changes the response holds every
 // chunk. Any other reply is held only while a text ends in what may become a placeholder.
@@ -159,17 +273,29 @@ func (r *ReplyRedaction) Holds(chunks []*schemas.BifrostStreamChunk) bool {
 			}
 		}
 	}
+	observe := func(key any, delta *string, _ bool) {
+		if reasoningText(key) {
+			return
+		}
+		if tail := redaction.UnfinishedPlaceholder(r.tails[key] + *delta); tail != "" {
+			r.tails[key] = tail
+		} else {
+			delete(r.tails, key)
+		}
+	}
 	for _, chunk := range chunks {
-		replyDeltas(chunk, func(key any, delta *string, _ bool) {
-			if reasoningText(key) {
-				return
+		if r.messages {
+			// Stream reports an event that it cannot read.
+			delta, key, stopped, _ := readMessagesDelta(chunk)
+			if delta != nil {
+				observe(key, &delta.text, false)
 			}
-			if tail := redaction.UnfinishedPlaceholder(r.tails[key] + *delta); tail != "" {
-				r.tails[key] = tail
-			} else {
-				delete(r.tails, key)
+			if stopped >= 0 {
+				ended(func(key any) bool { text, ok := key.(messagesReplyText); return ok && text.block == stopped })
 			}
-		})
+			continue
+		}
+		replyDeltas(chunk, observe)
 		// No text of an ended choice or item continues.
 		if chat := chunk.BifrostChatResponse; chat != nil {
 			for i := range chat.Choices {
@@ -208,6 +334,8 @@ func outputText(key any) bool {
 		return key.kind == chatTextContent
 	case responsesReplyText:
 		return key.event == schemas.ResponsesStreamResponseTypeOutputTextDelta
+	case messagesReplyText:
+		return key.kind == messagesTextBlock
 	}
 	return false
 }
@@ -276,16 +404,30 @@ func (r *ReplyRedaction) Stream(chunks []*schemas.BifrostStreamChunk, ended bool
 	sealedChoices, sealedDetails := r.sealedChoices, r.sealedDetails
 	// The held chunks of a reply that a redaction changes hold every text whole.
 	pieces := !r.redactor.ChangesResponse()
+	collect := func(key any, delta *string, arguments bool) {
+		text := texts[key]
+		if text == nil {
+			text = &replyText{arguments: arguments}
+			texts[key] = text
+			order = append(order, key)
+		}
+		text.deltas = append(text.deltas, delta)
+	}
+	// A Messages client gets Claude's events, which get the changed texts back.
+	var claude []*messagesDelta
 	for _, chunk := range chunks {
-		replyDeltas(chunk, func(key any, delta *string, arguments bool) {
-			text := texts[key]
-			if text == nil {
-				text = &replyText{arguments: arguments}
-				texts[key] = text
-				order = append(order, key)
+		if r.messages {
+			delta, key, _, err := readMessagesDelta(chunk)
+			if err != nil {
+				return err
 			}
-			text.deltas = append(text.deltas, delta)
-		})
+			if delta != nil {
+				claude = append(claude, delta)
+				collect(key, &delta.text, key.kind == messagesToolInputBlock)
+			}
+			continue
+		}
+		replyDeltas(chunk, collect)
 		if chat := chunk.BifrostChatResponse; chat != nil {
 			for i := range chat.Choices {
 				choice := &chat.Choices[i]
@@ -337,8 +479,8 @@ func (r *ReplyRedaction) Stream(chunks []*schemas.BifrostStreamChunk, ended bool
 		if err != nil {
 			return err
 		}
-		if chat, ok := key.(chatReplyText); ok && pieces && r.redactor.RecordsResponse() {
-			if err := r.pass(chat, changed); err != nil {
+		if _, responses := key.(responsesReplyText); !responses && pieces && r.redactor.RecordsResponse() {
+			if err := r.pass(key, changed); err != nil {
 				return err
 			}
 		}
@@ -350,13 +492,18 @@ func (r *ReplyRedaction) Stream(chunks []*schemas.BifrostStreamChunk, ended bool
 			*delta = ""
 		}
 	}
+	for _, delta := range claude {
+		if err := delta.write(); err != nil {
+			return err
+		}
+	}
 	if !ended {
 		return nil
 	}
 	for _, key := range r.passedOrder {
 		// The signature of a reasoning text can arrive after the text.
-		if key.kind == chatTextReasoning && sealedChoices[key.choice] ||
-			(key.kind == chatTextDetail || key.kind == chatTextDetailSummary) && sealedDetails[chatReplyText{choice: key.choice, index: key.index}] {
+		if chat, ok := key.(chatReplyText); ok && (chat.kind == chatTextReasoning && sealedChoices[chat.choice] ||
+			(chat.kind == chatTextDetail || chat.kind == chatTextDetailSummary) && sealedDetails[chatReplyText{choice: chat.choice, index: chat.index}]) {
 			continue
 		}
 		if err := r.redactor.RecordReplyText(r.passed[key].Bytes()); err != nil {
@@ -368,12 +515,12 @@ func (r *ReplyRedaction) Stream(chunks []*schemas.BifrostStreamChunk, ended bool
 }
 
 // pass keeps a piece of a text that has passed to the client, within the reply's memory.
-func (r *ReplyRedaction) pass(key chatReplyText, piece string) error {
+func (r *ReplyRedaction) pass(key any, piece string) error {
 	if err := r.redactor.ReserveGrowth(len(piece), r.reserve); err != nil {
 		return err
 	}
 	if r.passed == nil {
-		r.passed = map[chatReplyText]*bytes.Buffer{}
+		r.passed = map[any]*bytes.Buffer{}
 	}
 	text := r.passed[key]
 	if text == nil {

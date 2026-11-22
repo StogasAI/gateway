@@ -10,6 +10,7 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 	stogas "github.com/maximhq/bifrost/transports/stogas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
+	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
 
 type requestAdmissionCounters struct {
@@ -103,8 +104,10 @@ func (s *Server) recordAdmissionRejection(ctx *requestContext, status int, code 
 		startedAt = time.Now()
 	}
 	traceID, _ := stogas.RequestTrace(ctx.request.Header)
+	route, _ := catalog.RouteForPath(ctx.request.URL.Path)
 	s.runtime.Billing().RecordRejection(billing.RejectionInput{
-		PolicyVersions: ctx.policyVersions, Claims: claims, RequestID: requestID, RequestType: requestType, Code: code,
+		PolicyVersions: ctx.policyVersions, Claims: claims, RequestID: requestID, RequestType: requestType,
+		Interface: route.Interface(), Code: code,
 		StatusCode: status, Limit: limit, CreatedAt: startedAt, NodeID: s.nodeID(), GatewayVersion: stogas.GatewayVersion,
 		Transport: ctx.transport(), EncryptionKeyIDs: ctx.encryptionKeyIDs,
 		TraceID: traceID,

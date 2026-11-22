@@ -44,6 +44,14 @@ func captureExportError(state *stogas.State, failure *schemas.BifrostError) {
 	captureExportPayload(state, bifrostErrorPayload(state, failure))
 }
 
+// captureExportResponse keeps the error that the caller gets.
+func captureExportResponse(state *stogas.State, response errorResponse) {
+	if state == nil || !state.Export.Active() {
+		return
+	}
+	captureExportPayload(state, clientErrorPayload(state, response.status, response.payload))
+}
+
 func captureExportPayload(state *stogas.State, payload any) {
 	if state == nil || !state.Export.Active() {
 		return

@@ -195,7 +195,7 @@ func (s *Server) inference(ctx *requestContext) {
 		}
 	}()
 
-	if ctx.request.URL.RawQuery != "" {
+	if !acceptedInferenceQuery(ctx.request) {
 		s.writeError(ctx, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "Query parameters are not supported", "type": "invalid_request_error"}})
 		return
 	}
@@ -331,7 +331,7 @@ func (s *Server) failRun(ctx *requestContext, run *providerRun, respond bool) {
 		if !cancelledLocally(run.local) {
 			local := run.response()
 			response = &local
-			captureExportPayload(run.state, local.payload)
+			captureExportResponse(run.state, local)
 		}
 		if run.state.Authorization != nil {
 			s.finalizeAfterResponse(ctx, run, run.request)
@@ -351,7 +351,7 @@ func (s *Server) failRun(ctx *requestContext, run *providerRun, respond bool) {
 		return
 	}
 	response := run.report(ctx.memory, outcome, last)
-	captureExportPayload(run.state, response.payload)
+	captureExportResponse(run.state, response)
 	if ctx.responseWait.timedOut() {
 		failure := requestTimeoutError()
 		retainResponseFailure(run.state, failure)
@@ -561,7 +561,7 @@ func (s *Server) startSSEStream(ctx *requestContext, run *providerRun, started p
 			}
 			encoded, err := marshalPayload(bifrostErrorPayload(state, bifrostErr))
 			if err == nil {
-				_ = reader.sendErrorEvent(request, "", encoded)
+				_ = reader.sendErrorEvent(request, streamErrorEvent(state), encoded)
 				clear(encoded)
 			}
 		}
@@ -586,7 +586,7 @@ func (s *Server) startSSEStream(ctx *requestContext, run *providerRun, started p
 		// A run that no provider served ends with the failure that it reports.
 		sendRunFailure := func(response errorResponse) {
 			wait.stop()
-			encoded, marshalErr := marshalPayload(response.payload)
+			encoded, marshalErr := marshalPayload(clientErrorPayload(state, response.status, response.payload))
 			if marshalErr != nil {
 				return
 			}
@@ -597,7 +597,7 @@ func (s *Server) startSSEStream(ctx *requestContext, run *providerRun, started p
 				retainResponseFailure(state, failure)
 				sendClientError(failure)
 			} else if clientConnected {
-				_ = reader.sendErrorEvent(request, "", encoded)
+				_ = reader.sendErrorEvent(request, streamErrorEvent(state), encoded)
 			}
 		}
 		finishRequestTimeout := func() {
@@ -996,7 +996,8 @@ type streamEvent struct {
 	payload    any
 	client     any
 	exportOnly bool
-	// responses is the Responses event that payload holds.
+	// responses is the Responses event that payload holds, or the chunk whose Claude event a
+	// Messages stream's payload holds.
 	responses *schemas.BifrostResponsesStreamResponse
 }
 
@@ -1017,10 +1018,17 @@ func clientStreamChunks(bridge *stogas.BridgedStream, chunk *schemas.BifrostStre
 
 // clientStreamEvents returns the events of the client's chunks.
 func clientStreamEvents(state *stogas.State, chunks []*schemas.BifrostStreamChunk, includeChatUsage bool) []streamEvent {
-	model := servedModel(state)
+	model, messages := servedModel(state), usesMessages(state)
 	events := make([]streamEvent, 0, len(chunks))
 	for _, chunk := range chunks {
-		if event, ok := clientStreamEvent(chunk, model, includeChatUsage); ok {
+		var event streamEvent
+		var ok bool
+		if messages && chunk.BifrostResponsesStreamResponse != nil {
+			event, ok = messagesStreamEvent(chunk.BifrostResponsesStreamResponse, model)
+		} else {
+			event, ok = clientStreamEvent(chunk, model, includeChatUsage)
+		}
+		if ok {
 			events = append(events, event)
 		}
 	}

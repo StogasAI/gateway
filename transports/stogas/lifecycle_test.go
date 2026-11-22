@@ -25,8 +25,11 @@ import (
 // testDeploymentForRoute resolves an exact deployment selector as a request on the route does.
 func testDeploymentForRoute(provider schemas.ModelProvider, deploymentID string, route catalog.Route) (catalog.Deployment, bool) {
 	path, body := "/v1/responses", fmt.Sprintf(`{"model":%q,"input":"hi"}`, deploymentID)
-	if route == catalog.RouteChat {
+	switch route {
+	case catalog.RouteChat:
 		path, body = "/v1/chat/completions", fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"hi"}]}`, deploymentID)
+	case catalog.RouteMessages:
+		path, body = "/v1/messages", fmt.Sprintf(`{"model":%q,"max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`, deploymentID)
 	}
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: path, Body: []byte(body)})
 	if err != nil || resolution.Provider != provider {
@@ -1503,6 +1506,11 @@ func TestEveryActiveCatalogDeploymentHoldCoversEveryTokenCategory(t *testing.T) 
 					route = catalog.RouteResponses
 					requestBody["input"] = "hi"
 					requestBody["max_output_tokens"] = 16
+				case "messages":
+					path = "/v1/messages"
+					route = catalog.RouteMessages
+					requestBody["messages"] = []map[string]any{{"content": "hi", "role": "user"}}
+					requestBody["max_tokens"] = 16
 				default:
 					t.Fatalf("%s: unsupported catalog interface %q", routeID, interfaceName)
 				}

@@ -1,6 +1,7 @@
 package billing
 
 import (
+	"cmp"
 	"fmt"
 	"math/big"
 	"strings"
@@ -39,19 +40,22 @@ type EventInput struct {
 	NodeID                string
 	GatewayVersion        string
 	RequestType           string
-	RequestSettings       RequestSettings
-	SessionID             string
-	TraceID               string
-	EncryptionKeyIDs      []string
-	Metadata              map[string]string
-	AppTitle              string
-	AppURL                string
-	AgentID               string
-	ParentAgentID         string
-	AgentName             string
-	Transport             string
-	StartedAt             time.Time
-	ToolCalls             []ToolCallInput
+	// Interface is the interface that the client called, where RequestType names another: a
+	// Messages request runs as a Responses request.
+	Interface        string
+	RequestSettings  RequestSettings
+	SessionID        string
+	TraceID          string
+	EncryptionKeyIDs []string
+	Metadata         map[string]string
+	AppTitle         string
+	AppURL           string
+	AgentID          string
+	ParentAgentID    string
+	AgentName        string
+	Transport        string
+	StartedAt        time.Time
+	ToolCalls        []ToolCallInput
 	// AnsweredCallIDs are the IDs that the input's results name after the latest model turn.
 	AnsweredCallIDs []string
 }
@@ -116,7 +120,7 @@ func NewRequestEvent(input EventInput) (RequestEvent, error) {
 		return RequestEvent{}, fmt.Errorf("invalid upstream cost: %w", err)
 	}
 	ttftMS := cloneUint32Pointer(input.TTFTMS)
-	requestInterface, stream := RequestShape(input.RequestType)
+	requestInterface, stream := requestShape(input.Interface, input.RequestType)
 	if !stream {
 		ttftMS = nil
 	} else if ttftMS != nil && *ttftMS > totalTimeMS {
@@ -365,6 +369,13 @@ func RequestShape(requestType string) (string, bool) {
 		return "responses", true
 	}
 	return "responses", false
+}
+
+// requestShape is RequestShape with the interface that the client called, where the input names
+// one.
+func requestShape(requestInterface, requestType string) (string, bool) {
+	derived, stream := RequestShape(requestType)
+	return cmp.Or(requestInterface, derived), stream
 }
 
 func providerStatusCode(bifrostErr *schemas.BifrostError) *int {

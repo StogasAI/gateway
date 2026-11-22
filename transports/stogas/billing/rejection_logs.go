@@ -40,8 +40,11 @@ type RejectionInput struct {
 	Claims         *APIKeyClaims
 	RequestID      string
 	RequestType    string
-	Code           string
-	StatusCode     int
+	// Interface is the interface that the client called, where RequestType names another
+	// (EventInput.Interface).
+	Interface  string
+	Code       string
+	StatusCode int
 	// Limit names the policy limit that refused the request, if one did.
 	Limit          RefusedLimit
 	CreatedAt      time.Time
@@ -132,7 +135,7 @@ func NewRejectionEvent(input RejectionInput) RequestEvent {
 	}
 	stamp := at.Format("2006-01-02T15:04:05.000Z")
 	zero := ZeroChargeUSD
-	requestInterface, stream := RequestShape(input.RequestType)
+	requestInterface, stream := requestShape(input.Interface, input.RequestType)
 	return RequestEvent{
 		Interface: requestInterface, Stream: stream,
 		SchemaVersion: RequestLogSchemaVersion,
@@ -215,7 +218,7 @@ func (s *Service) recordRejection(input RejectionInput, export *RejectionExport)
 	if len(input.EncryptionKeyIDs) > 0 {
 		roots = sha256.Sum256([]byte(strings.Join(input.EncryptionKeyIDs, ",")))
 	}
-	requestInterface, stream := RequestShape(input.RequestType)
+	requestInterface, stream := requestShape(input.Interface, input.RequestType)
 	key := rejectionLogKey{input.Claims.KeyID, requestInterface, input.Code, input.Transport, input.Limit, stream, input.StatusCode, at.Truncate(rejectionLogWindow).Unix(), versions, roots}
 	stamp := at.Format("2006-01-02T15:04:05.000Z")
 	group := b.groups[key]

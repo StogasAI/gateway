@@ -2341,6 +2341,27 @@ type AnthropicStreamEvent struct {
 	SafeguardResults json.RawMessage `json:"safeguard_results,omitempty"`
 }
 
+// knownAnthropicStreamEvent reports whether core reads events of this type, and of this delta
+// type for a content block delta.
+func knownAnthropicStreamEvent(event *AnthropicStreamEvent) bool {
+	switch event.Type {
+	case AnthropicStreamEventTypeMessageStart, AnthropicStreamEventTypeMessageStop, AnthropicStreamEventTypeContentBlockStart,
+		AnthropicStreamEventTypeContentBlockStop, AnthropicStreamEventTypeMessageDelta, AnthropicStreamEventTypePing,
+		AnthropicStreamEventTypeSafeguardsUpdate, AnthropicStreamEventTypeError:
+		return true
+	case AnthropicStreamEventTypeContentBlockDelta:
+		if event.Delta == nil {
+			return false
+		}
+		switch event.Delta.Type {
+		case AnthropicStreamDeltaTypeText, AnthropicStreamDeltaTypeInputJSON, AnthropicStreamDeltaTypeThinking,
+			AnthropicStreamDeltaTypeSignature, AnthropicStreamDeltaTypeCitations, AnthropicStreamDeltaTypeCompaction:
+			return true
+		}
+	}
+	return false
+}
+
 type AnthropicStreamDeltaType string
 
 const (

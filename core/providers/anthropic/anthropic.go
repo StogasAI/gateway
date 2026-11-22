@@ -2022,6 +2022,15 @@ func HandleAnthropicResponsesStream(
 				// post-loop truncation check from reporting the same stream twice.
 				return
 			}
+			// An event that yields no chunk, such as a ping or a delta held for a later chunk,
+			// still reaches a caller that reads the provider's events, on a chunk of its own. An
+			// event that core does not read reaches no caller.
+			if len(responses) == 0 && knownAnthropicStreamEvent(&event) && providerUtils.ShouldSendBackRawResponse(ctx, sendBackRawResponse) {
+				responses = []*schemas.BifrostResponsesStreamResponse{{
+					Type:           schemas.ResponsesStreamResponseTypeProviderRawEvent,
+					SequenceNumber: chunkIndex,
+				}}
+			}
 
 			// Attach the upstream raw to exactly one bifrost response. Default to the last,
 			// but for the message_start expansion ([created, in_progress]) attach it to

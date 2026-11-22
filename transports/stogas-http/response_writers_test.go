@@ -160,9 +160,16 @@ func TestPublicProviderErrorSaysHowToRecoverRefusedReasoningHistory(t *testing.T
 		"Remove the block, or set `thinking.block_binding.prefix_mismatch_behavior` to \"drop_block\". That setting requires the `thinking-binding-controls-2026-08-01` value in the `anthropic-beta` header.",
 		"invalid_request_error", "")
 	for _, use := range []providerMessageUse{filterProviderMessage, passProviderMessage, withholdProviderMessage} {
-		status, payload := publicProviderError(refusal, use)
+		status, payload := publicProviderError(refusal, use, false)
 		if errorObject := publicErrorObject(t, payload); status != http.StatusBadRequest || errorObject["type"] != "invalid_request_error" || errorObject["message"] != reasoningHistoryRefused {
 			t.Fatalf("use %d: status = %d, error = %#v", use, status, errorObject)
+		}
+	}
+	// A Messages client gets Claude's own words, on which Claude Code drops its earlier thinking and
+	// sends the request again.
+	for _, use := range []providerMessageUse{filterProviderMessage, passProviderMessage} {
+		if _, payload := publicProviderError(refusal, use, true); publicErrorObject(t, payload)["message"] != refusal.Error.Message {
+			t.Fatalf("use %d: error = %#v", use, payload)
 		}
 	}
 	// A signature that Claude cannot read is another failure and keeps Anthropic's words.
@@ -216,7 +223,7 @@ func TestProviderErrorCarriesProviderWordsForACustomerCredential(t *testing.T) {
 				byok = "byok_1"
 			}
 			state := &stogas.State{Authorization: &billing.Authorization{UpstreamByok: byok, UpstreamByokSecret: testProviderSecret}}
-			status, payload := publicProviderError(tc.err, providerMessageUseFor(state, tc.err))
+			status, payload := publicProviderError(tc.err, providerMessageUseFor(state, tc.err), false)
 			errorObject := publicErrorObject(t, payload)
 			if status != tc.wantStatus || errorObject["code"] != tc.wantCode || errorObject["message"] != tc.wantMessage {
 				t.Fatalf("status = %d, error = %#v", status, errorObject)

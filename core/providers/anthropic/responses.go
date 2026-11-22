@@ -5155,6 +5155,15 @@ func ToAnthropicResponsesRequest(ctx *schemas.BifrostContext, bifrostReq *schema
 						Type:         "enabled",
 						BudgetTokens: schemas.Ptr(budgetTokens),
 					}
+					// An effort that a Messages caller sent beside the budget goes with it to a
+					// model that takes both, as Claude Code sends Opus 4.5. An effort that the
+					// conversion derived from the budget does not.
+					if effort := bifrostReq.Params.Reasoning.Effort; effort != nil && *effort != "none" {
+						if _, callerSentEffort := anthropicNativeEffortFrom(ctx); callerSentEffort &&
+							caps.SupportsNativeEffort(DefaultSupportsNativeEffort(caps.Model())) {
+							setEffortOnOutputConfig(anthropicReq, MapBifrostEffortToAnthropic(*effort))
+						}
+					}
 				}
 			} else if native, ok := anthropicNativeEffortFrom(ctx); ok && native.ThinkingOmitted {
 				// The caller sent output_config.effort and no thinking parameter.
@@ -5514,8 +5523,9 @@ func ToAnthropicResponsesRequest(ctx *schemas.BifrostContext, bifrostReq *schema
 			anthropicReq.System = systemContent
 		}
 
-		// Set regular messages
-		if usesOpenAIReasoning(ctx) {
+		// Set regular messages. A request that came in as Anthropic's own body keeps each thinking
+		// block in its place, so it keeps the later ones too.
+		if _, native := anthropicNativeRequestSurfaceFrom(ctx); usesOpenAIReasoning(ctx) && !native {
 			anthropicMessages = leaveOutLaterThinking(anthropicMessages)
 		}
 		anthropicReq.Messages = anthropicMessages
@@ -6065,6 +6075,16 @@ func convertBifrostMessagesToAnthropicMessages(ctx *schemas.BifrostContext, bifr
 	// its earlier actions, which need a filler tool_result beside the one screenshot.
 	computerCallFillerIDs := make(map[string][]string)
 
+	// clientTurns marks, by index, each message that stands for a message item of the
+	// client, so joinConsecutiveTurns keeps apart the turns that the client sent apart.
+	var clientTurns []bool
+	markClientTurn := func() {
+		for len(clientTurns) < len(anthropicMessages) {
+			clientTurns = append(clientTurns, false)
+		}
+		clientTurns[len(anthropicMessages)-1] = true
+	}
+
 	// midConvPlacementOK reports whether a mid-conversation system message at input index i can
 	// legally be forwarded as role:"system". Anthropic enforces two clauses and rejects a
 	// violation of either with "messages.N: role 'system' must follow a 'user' message ...":
@@ -6395,6 +6415,7 @@ func convertBifrostMessagesToAnthropicMessages(ctx *schemas.BifrostContext, bifr
 					appendEffortOnly()
 					if inlined := inlineMidConversationSystem(content); inlined != nil {
 						anthropicMessages = append(anthropicMessages, *inlined)
+						markClientTurn()
 					}
 				default:
 					// Leading system run, or a non-Anthropic model: hoist (historical behavior).
@@ -6425,6 +6446,7 @@ func convertBifrostMessagesToAnthropicMessages(ctx *schemas.BifrostContext, bifr
 			anthropicMsg := convertBifrostMessageToAnthropicMessage(caps, &msg, &pendingReasoningContentBlocks)
 			if anthropicMsg != nil {
 				anthropicMessages = append(anthropicMessages, *anthropicMsg)
+				markClientTurn()
 				// Register any tool_use ids carried on a regular assistant message so
 				// later tool_result blocks referencing them are not treated as orphans.
 				for _, b := range anthropicMsg.Content.ContentBlocks {
@@ -6548,6 +6570,7 @@ func convertBifrostMessagesToAnthropicMessages(ctx *schemas.BifrostContext, bifr
 			referenceMsg := convertBifrostItemReferenceToAnthropicMessage(&msg)
 			if referenceMsg != nil {
 				anthropicMessages = append(anthropicMessages, *referenceMsg)
+				markClientTurn()
 			}
 
 		case schemas.ResponsesMessageTypeComputerCall:
@@ -6865,6 +6888,8 @@ func convertBifrostMessagesToAnthropicMessages(ctx *schemas.BifrostContext, bifr
 	// Flush any remaining pending tool calls (with tracking)
 	flushPendingToolCallsWithTracking()
 
+	anthropicMessages = joinConsecutiveTurns(anthropicMessages, clientTurns)
+
 	// Trim trailing whitespace from the last assistant message
 	// ContentStr is converted to a single text ContentBlock during message conversion
 	// so we trim the text of that block instead.
@@ -6880,6 +6905,46 @@ func convertBifrostMessagesToAnthropicMessages(ctx *schemas.BifrostContext, bifr
 	}
 
 	return anthropicMessages, systemContent
+}
+
+// joinConsecutiveTurns joins each user or assistant message to the one before it when both have
+// the same role. The loop above starts a message at each group of tool calls or tool results, so a
+// turn such as [tool_result, text] or [thinking, tool_use, thinking, text] left as two messages.
+// Anthropic reads them as one turn, but a client of the Messages API must find its own turns
+// upstream, where errors index messages. Two messages that each hold a message item of the client
+// (clientTurns) stay apart, as the client sent them, and a user message that holds a tool result
+// stays apart from one before it that holds anything else, since tool results lead a turn.
+func joinConsecutiveTurns(messages []AnthropicMessage, clientTurns []bool) []AnthropicMessage {
+	isClientTurn := func(i int) bool { return i < len(clientTurns) && clientTurns[i] }
+	joined := messages[:0]
+	lastIsClientTurn := false
+	for i, message := range messages {
+		if n := len(joined); n > 0 && !(lastIsClientTurn && isClientTurn(i)) && continuesTurn(&joined[n-1], &message) {
+			previous := &joined[n-1]
+			previous.Content.ContentBlocks = append(slices.Clip(previous.Content.ContentBlocks), message.Content.ContentBlocks...)
+			lastIsClientTurn = lastIsClientTurn || isClientTurn(i)
+			continue
+		}
+		joined = append(joined, message)
+		lastIsClientTurn = isClientTurn(i)
+	}
+	return joined
+}
+
+// continuesTurn reports whether next can join the turn of previous, the message before it.
+func continuesTurn(previous, next *AnthropicMessage) bool {
+	if previous.Role != next.Role || previous.Content.ContentStr != nil || next.Content.ContentStr != nil {
+		return false
+	}
+	switch next.Role {
+	case AnthropicMessageRoleAssistant:
+		return true
+	case AnthropicMessageRoleUser:
+		isToolResult := func(block AnthropicContentBlock) bool { return block.Type == AnthropicContentBlockTypeToolResult }
+		return !slices.ContainsFunc(next.Content.ContentBlocks, isToolResult) ||
+			!slices.ContainsFunc(previous.Content.ContentBlocks, func(block AnthropicContentBlock) bool { return !isToolResult(block) })
+	}
+	return false
 }
 
 // Helper function to convert Anthropic system content to Bifrost messages

@@ -325,3 +325,142 @@ func TestReplyRedactionRestoresIntoAStreamedJSONReply(t *testing.T) {
 		}
 	}
 }
+
+// claudeEvent is a chunk of a Messages stream that carries one of Claude's events.
+func claudeEvent(raw string) *schemas.BifrostStreamChunk {
+	event := &schemas.BifrostResponsesStreamResponse{Type: schemas.ResponsesStreamResponseTypeProviderRawEvent}
+	event.ExtraFields.RawResponse = raw
+	return &schemas.BifrostStreamChunk{BifrostResponsesStreamResponse: event}
+}
+
+func claudeEventText(chunk *schemas.BifrostStreamChunk) string {
+	raw, _ := chunk.BifrostResponsesStreamResponse.ExtraFields.RawResponse.(string)
+	return raw
+}
+
+// A Messages client gets Claude's own events, which get the changed texts: a value that spans
+// deltas goes whole into the first delta of its block, a tool call's input changes as JSON, and
+// thinking, which Claude signs, keeps its text.
+func TestReplyRedactionChangesClaudesStreamedEvents(t *testing.T) {
+	t.Parallel()
+	reply := replyRedactionFor(t, redaction.ActionReplace, "I am a@corp.io")
+	reply.messages = true
+	chunks := []*schemas.BifrostStreamChunk{
+		claudeEvent(`{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}`),
+		claudeEvent(`{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"+44 20 7123 4567 <EMAIL_ADDRESS_1>"}}`),
+		claudeEvent(`{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig"}}`),
+		claudeEvent(`{"type":"content_block_stop","index":0}`),
+		claudeEvent(`{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Call +44 20 "}}`),
+		claudeEvent(`{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"7123 4567 or <EMAIL_ADD"}}`),
+		claudeEvent(`{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"RESS_1>."}}`),
+		claudeEvent(`{"type":"content_block_stop","index":1}`),
+		claudeEvent(`{"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"to\":\"<EMAIL_"}}`),
+		claudeEvent(`{"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"ADDRESS_1>\"}"}}`),
+		claudeEvent(`{"type":"content_block_stop","index":2}`),
+	}
+	want := make([]string, len(chunks))
+	for i, chunk := range chunks {
+		want[i] = claudeEventText(chunk)
+	}
+	want[4] = `{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Call <PHONE_NUMBER> or a@corp.io."}}`
+	want[5] = `{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":""}}`
+	want[6] = `{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":""}}`
+	want[8] = `{"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"to\":\"a@corp.io\"}"}}`
+	want[9] = `{"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":""}}`
+	if err := reply.Stream(chunks, true); err != nil {
+		t.Fatal(err)
+	}
+	for i, chunk := range chunks {
+		if got := claudeEventText(chunk); got != want[i] {
+			t.Errorf("event %d = %s, want %s", i, got, want[i])
+		}
+	}
+
+	// The events that hold whole values change as Claude's message does, apart from thinking and
+	// the encrypted results of a web search.
+	for _, test := range []struct{ event, want string }{
+		{`{"type":"content_block_start","index":1,"content_block":{"type":"text","text":"<EMAIL_ADDRESS_1> +44 20 7123 4567"}}`,
+			`{"type":"content_block_start","index":1,"content_block":{"type":"text","text":"a@corp.io <PHONE_NUMBER>"}}`},
+		{`{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"<EMAIL_ADDRESS_1>","signature":"sig"}}`, ""},
+		{`{"type":"content_block_start","index":3,"content_block":{"type":"web_search_tool_result","tool_use_id":"srvtoolu_1","content":[{"type":"web_search_result","title":"+44 20 7123 4567","encrypted_content":"abc"}]}}`, ""},
+		// The stop sequence that ended the message is the request's, which Claude got redacted.
+		{`{"type":"message_delta","delta":{"stop_reason":"stop_sequence","stop_sequence":"<EMAIL_ADDRESS_1>"},"usage":{"output_tokens":5}}`,
+			`{"type":"message_delta","delta":{"stop_reason":"stop_sequence","stop_sequence":"a@corp.io"},"usage":{"output_tokens":5}}`},
+		{`{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"<EMAIL_ADDRESS_1>"}}`, ""},
+	} {
+		want := test.want
+		if want == "" {
+			want = test.event
+		}
+		if got, err := reply.Event(nil, []byte(test.event)); err != nil || string(got) != want {
+			t.Errorf("event %s = %s, err %v, want %s", test.event, got, err, want)
+		}
+	}
+}
+
+// Claude's whole reply changes as its stream does: its text and the input of its tool call, with
+// thinking, citations and the identifiers left as Claude wrote them.
+func TestReplyRedactionChangesClaudesMessage(t *testing.T) {
+	t.Parallel()
+	reply := replyRedactionFor(t, redaction.ActionReplace, "I am a@corp.io")
+	reply.messages = true
+	message := `{"id":"msg_1","type":"message","role":"assistant","model":"claude-haiku-4-5","content":[` +
+		`{"type":"thinking","thinking":"+44 20 7123 4567 <EMAIL_ADDRESS_1>","signature":"sig"},` +
+		`{"type":"text","text":"Call +44 20 7123 4567 <EMAIL_ADDRESS_1>","citations":[{"type":"char_location","cited_text":"+44 20 7123 4567","document_index":0}]},` +
+		`{"type":"tool_use","id":"toolu_1","name":"send","input":{"name":"<EMAIL_ADDRESS_1>","id":"+44 20 7123 4567","nested":{"type":"<EMAIL_ADDRESS_1>"}}}` +
+		`],"stop_reason":"tool_use","stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":5}}`
+	want := strings.NewReplacer(
+		`"text":"Call +44 20 7123 4567 <EMAIL_ADDRESS_1>"`, `"text":"Call <PHONE_NUMBER> a@corp.io"`,
+		`"input":{"name":"<EMAIL_ADDRESS_1>","id":"+44 20 7123 4567","nested":{"type":"<EMAIL_ADDRESS_1>"}}`,
+		`"input":{"name":"a@corp.io","id":"<PHONE_NUMBER>","nested":{"type":"a@corp.io"}}`,
+	).Replace(message)
+	if got, err := reply.Response([]byte(message)); err != nil || string(got) != want {
+		t.Fatalf("message = %s, err %v\nwant %s", got, err, want)
+	}
+}
+
+// A Messages reply that only gets values back holds an event only while its text ends in what
+// may become a placeholder, and the end of the block lets it pass.
+func TestReplyRedactionHoldsClaudesEventsOnlyForAPlaceholder(t *testing.T) {
+	t.Parallel()
+	reply := replyRedactionOf(t, "I am a@corp.io")
+	reply.messages = true
+	steps := []struct {
+		chunk *schemas.BifrostStreamChunk
+		holds bool
+	}{
+		{claudeEvent(`{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"see <EMAIL"}}`), false},
+		{claudeEvent(`{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Mail <EMAIL"}}`), true},
+		{claudeEvent(`{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"_ADDRESS_1> now, "}}`), false},
+		{claudeEvent(`{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"a < b and <"}}`), true},
+		{claudeEvent(`{"type":"content_block_stop","index":1}`), false},
+		{claudeEvent(`{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":5}}`), false},
+	}
+	var held []*schemas.BifrostStreamChunk
+	for index, step := range steps {
+		held = append(held, step.chunk)
+		holds := reply.Holds([]*schemas.BifrostStreamChunk{step.chunk})
+		if holds != step.holds {
+			t.Errorf("step %d holds = %t, want %t", index, holds, step.holds)
+		}
+		if !holds {
+			if err := reply.Stream(held, index == len(steps)-1); err != nil {
+				t.Fatal(err)
+			}
+			held = nil
+		}
+	}
+	for index, want := range map[int]string{
+		0: `{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"see <EMAIL"}}`,
+		1: `{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Mail a@corp.io now, "}}`,
+		2: `{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":""}}`,
+		3: `{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"a < b and <"}}`,
+	} {
+		if got := claudeEventText(steps[index].chunk); got != want {
+			t.Errorf("event %d = %s, want %s", index, got, want)
+		}
+	}
+	if metrics := reply.state.PluginMetrics.Redaction; metrics == nil || metrics.ItemsRestored != 1 {
+		t.Errorf("metrics = %+v", metrics)
+	}
+}

@@ -75,6 +75,13 @@ const (
 	jsonContextReplyChoice
 	jsonContextReplyResponses
 	jsonContextReplyEvent
+	// Claude's reply to a Messages request: its message, an event of its stream, the message's
+	// content blocks, and the input of a tool call, which is the model's own JSON.
+	jsonContextReplyMessages
+	jsonContextReplyMessagesEvent
+	jsonContextMessagesContent
+	jsonContextMessagesBlock
+	jsonContextToolInput
 )
 
 // RedactRequestFields changes only provider-bound text containers. Routing,
@@ -212,6 +219,14 @@ func (r *Redactor) walkJSONValue(source []byte, position int, allow bool, replac
 			r.keepPlaceholders = false
 			return end, err
 		}
+		if context == jsonContextMessagesBlock {
+			// Claude signs its thinking and encrypts its search results, and refuses either
+			// changed in a later turn.
+			switch _, blockType, _ := objectRoleAndType(source, position); blockType {
+			case "thinking", "redacted_thinking", "web_search_tool_result":
+				allow = false
+			}
+		}
 		return r.walkJSONObject(source, position, allow, replacements, depth+1, context)
 	case '[':
 		return r.walkJSONArray(source, position, allow, replacements, depth+1, context)
@@ -272,6 +287,10 @@ func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, repla
 		if err != nil {
 			return position, errInvalidJSON
 		}
+		// A tool call's input is the model's JSON, whose names mean nothing to the walk.
+		if context == jsonContextToolInput {
+			key = jsonKeyOther
+		}
 		position = skipJSONSpace(source, keyEnd)
 		if position >= len(source) || source[position] != ':' {
 			return position, errInvalidJSON
@@ -328,6 +347,25 @@ func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, repla
 			case jsonKeyResponse:
 				valueContext = jsonContextReplyResponses
 			}
+		case jsonContextReplyMessages:
+			// A message's stop_sequence repeats the request's stop sequence that ended it.
+			valueAllowed = allow && (key == jsonKeyContent || key == jsonKeyStopSequence)
+			if key == jsonKeyContent {
+				valueContext = jsonContextMessagesContent
+			}
+		case jsonContextReplyMessagesEvent:
+			// message_delta holds the end of the message in delta.
+			valueAllowed = allow && (key == jsonKeyMessage || key == jsonKeyContentBlock || key == jsonKeyDelta)
+			valueContext = jsonContextReplyMessages
+			if key == jsonKeyContentBlock {
+				valueContext = jsonContextMessagesBlock
+			}
+		case jsonContextMessagesBlock:
+			if key == jsonKeyInput {
+				valueContext = jsonContextToolInput
+			}
+		case jsonContextToolInput:
+			valueContext = jsonContextToolInput
 		}
 		if r.reply {
 			// A reply's media, encrypted values, signatures, citations and metadata are the
@@ -396,7 +434,15 @@ func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, repla
 		// A function call's arguments are a JSON document in a string, and so is the text of a
 		// reply to a request that asked for JSON output.
 		argumentsJSON := r.argumentsJSON
-		if key == jsonKeyArguments || r.reply && r.jsonOutput && key == jsonKeyContent {
+		switch {
+		case key == jsonKeyArguments:
+			r.argumentsJSON = true
+		case r.messages:
+			// Claude's text block holds the reply's text, and a content key holds blocks.
+			if r.jsonOutput && context == jsonContextMessagesBlock && key == jsonKeyText {
+				r.argumentsJSON = true
+			}
+		case r.reply && r.jsonOutput && key == jsonKeyContent:
 			r.argumentsJSON = true
 		}
 		// The provider runs the call of a hosted tool and writes the result into the call's own
@@ -500,6 +546,10 @@ func (r *Redactor) walkJSONArray(source []byte, position int, allow bool, replac
 			childContext = jsonContextSearchResult
 		case jsonContextReplyChoices:
 			childContext = jsonContextReplyChoice
+		case jsonContextMessagesContent:
+			childContext = jsonContextMessagesBlock
+		case jsonContextToolInput:
+			childContext = jsonContextToolInput
 		}
 		// Each message of a request, and each item of its input, is one part of the request.
 		part := r.part
@@ -782,6 +832,12 @@ const (
 	jsonKeyResult
 	jsonKeyProviderData
 	jsonKeyContext
+	// The keys below matter only in Claude's reply to a Messages request.
+	jsonKeyContentBlock
+	jsonKeyDelta
+	jsonKeyInput
+	jsonKeyText
+	jsonKeyStopSequence
 )
 
 func classifyJSONKey(encoded []byte, escaped bool) (jsonKeyKind, error) {
@@ -830,8 +886,18 @@ func classifyJSONKey(encoded []byte, escaped bool) (jsonKeyKind, error) {
 		return jsonKeyOpaqueText, nil
 	case "result":
 		return jsonKeyResult, nil
-	case "annotations", "annotation", "extra_content":
+	case "annotations", "annotation", "extra_content", "citations":
 		return jsonKeyProviderData, nil
+	case "content_block":
+		return jsonKeyContentBlock, nil
+	case "delta":
+		return jsonKeyDelta, nil
+	case "input":
+		return jsonKeyInput, nil
+	case "text":
+		return jsonKeyText, nil
+	case "stop_sequence":
+		return jsonKeyStopSequence, nil
 	case "context":
 		return jsonKeyContext, nil
 	case "type":
@@ -847,7 +913,7 @@ func classifyJSONKey(encoded []byte, escaped bool) (jsonKeyKind, error) {
 	case "server_url", "connector_id", "tunnel_id", "authorization", "headers",
 		"allowed_tools", "allowed_callers", "require_approval", "container", "environment":
 		return jsonKeyToolSetting, nil
-	case "id", "item_id", "call_id", "tool_call_id", "file_id", "container_id", "conversation_id",
+	case "id", "item_id", "call_id", "tool_call_id", "tool_use_id", "tool_id", "file_id", "container_id", "conversation_id",
 		"request_id", "session_id", "previous_response_id", "prompt_cache_key", "prompt_cache_isolation_key",
 		"model", "name", "namespace", "role", "server_label", "approval_request_id":
 		return jsonKeySkipScalar, nil

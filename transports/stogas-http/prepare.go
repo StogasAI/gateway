@@ -38,6 +38,16 @@ func (s *Server) startRun(ctx *requestContext, startedAt time.Time, preparation 
 		return nil
 	}
 	ctx.credential = nil
+	// Claude Code sends the request again without a beta value that a refusal names, so the
+	// values get their refusal before the body does.
+	var betas []string
+	if isMessagesRequest(ctx.request) {
+		var err error
+		if betas, err = catalog.MessagesBetas(ctx.request.Header.Values("anthropic-beta")); err != nil {
+			s.writeCatalogError(ctx, err)
+			return nil
+		}
+	}
 	decodeStarted := time.Now()
 	s.jsonDecode.start()
 	fields, err := catalog.DecodeRequestBody(ctx.body, lease.admitJSON)
@@ -104,6 +114,7 @@ func (s *Server) startRun(ctx *requestContext, startedAt time.Time, preparation 
 	first, err := catalog.ResolveRequest(catalog.RequestInput{
 		Body:                 ctx.body,
 		Fields:               fields,
+		AnthropicBeta:        betas,
 		Method:               ctx.request.Method,
 		Path:                 ctx.request.URL.Path,
 		Client:               client,

@@ -113,6 +113,10 @@ type RoutingSimulation struct {
 // routing reads for the hosted tools that the request lists and lets the model
 // call.
 func SimulateRouting(input RequestInput, route Route, model, tier, mode string, tools []string, toolChoice json.RawMessage) *RoutingSimulation {
+	// A Messages request plans in its Responses form.
+	if route == RouteMessages {
+		input.messages, route = true, RouteResponses
+	}
 	trace := &routingTrace{}
 	input.now, input.policyBudget, input.trace = time.Now().UTC(), policy.NewCELBudget(), trace
 	activationMu.RLock()

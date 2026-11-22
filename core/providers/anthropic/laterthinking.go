@@ -8,8 +8,9 @@ package anthropic
 // hosted tool call, before a later reasoning item. Anthropic accepts history that leaves out
 // the newest thinking blocks of a reply, so a Chat reply returns in reasoning_details, and a
 // request with OpenAI's reasoning items (SetOpenAIReasoning) sends, only the thinking that
-// starts each reply. Later thinking, such as a progress update before a tool call, stays
-// readable in a Chat reply's reasoning text and in Responses summaries.
+// starts each reply, unless the request came in as Anthropic's own body, which keeps each block
+// in its place. Later thinking, such as a progress update before a tool call, stays readable in
+// a Chat reply's reasoning text and in Responses summaries.
 
 // thinkingBlockSeparator comes between the texts of two thinking blocks in a Chat reply's
 // reasoning text, whole or streamed. Claude writes each progress update as a block of its own,

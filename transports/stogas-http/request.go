@@ -265,9 +265,10 @@ func isContentType(raw string, expected string) bool {
 // the same request always gets the same error.
 func unsupportedInferenceHeader(ctx *requestContext) string {
 	unsupported := ""
+	messages := isMessagesRequest(ctx.request)
 	for key := range ctx.request.Header {
 		normalized := strings.ToLower(strings.TrimSpace(string(key)))
-		if normalized == "" || !internalOrProviderControlHeader(normalized) {
+		if normalized == "" || !internalOrProviderControlHeader(normalized) || messages && normalized == "anthropic-beta" {
 			continue
 		}
 		if unsupported == "" || normalized < unsupported {
@@ -281,7 +282,8 @@ func unsupportedInferenceHeader(ctx *requestContext) string {
 // gateway cannot give. Other headers are ignored, as RFC 9110 section 5.1
 // asks, and none reach a provider. x-bf- and x-stogas- look like gateway
 // controls. anthropic-beta turns on Claude features, which the gateway enables
-// from body fields instead, so ignoring it would silently leave them off.
+// from body fields instead, so ignoring it would silently leave them off. The
+// Messages route reads each of its values (catalog.MessagesBetas).
 func internalOrProviderControlHeader(name string) bool {
 	return strings.HasPrefix(name, "x-bf-") || strings.HasPrefix(name, "x-stogas-") || name == "anthropic-beta"
 }
@@ -323,7 +325,7 @@ func validContentEncodingHeaders(values []string) bool {
 }
 
 func clearInferenceCredentials(ctx *requestContext) {
-	for _, route := range []catalog.Route{catalog.RouteChat, catalog.RouteResponses} {
+	for _, route := range []catalog.Route{catalog.RouteChat, catalog.RouteResponses, catalog.RouteMessages} {
 		for _, header := range catalog.AuthHeaderNames(route) {
 			ctx.request.Header.Del(header)
 		}

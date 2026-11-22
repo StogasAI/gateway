@@ -711,6 +711,89 @@ func TestTraceExportConvertsResponsesContent(t *testing.T) {
 	}
 }
 
+// A Messages request runs as a Responses request, whose form the capture
+// keeps, and its reply is Claude's: a message, or the events of its stream.
+func TestTraceExportConvertsMessagesContent(t *testing.T) {
+	for _, v := range []conventions{conventions141, conventions01} {
+		event := traceEvent()
+		event.Interface = "messages"
+		event.ProviderAttempts[1].FinishReason = "tool_use"
+		request := `{"model":"claude-sonnet-5-5","instructions":"Answer briefly.","input":[{"role":"user","content":"Hi"}],
+			"tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}]}`
+		content := `[
+			{"type":"thinking","thinking":"Think.","signature":"sig"},
+			{"type":"redacted_thinking","data":"opaque"},
+			{"type":"text","text":"Checking.","citations":null},
+			{"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{"query":"cats"}},
+			{"type":"web_search_tool_result","tool_use_id":"srvtoolu_1","content":[{"type":"web_search_result","url":"https://example.com","title":"Cats"}]},
+			{"type":"tool_use","id":"toolu_1","name":"lookup","input":{"id":1}}]`
+		wantOutput := `[{"role":"assistant","finish_reason":"tool_call","parts":[
+			{"type":"reasoning","content":"Think."},
+			{"type":"redacted_thinking","data":"opaque"},
+			{"type":"text","content":"Checking."},
+			{"type":"server_tool_call","id":"srvtoolu_1","name":"web_search","server_tool_call":{"type":"web_search","name":"web_search","input":{"query":"cats"}}},
+			{"type":"server_tool_call_response","id":"srvtoolu_1","server_tool_call_response":{"type":"web_search","content":[{"type":"web_search_result","url":"https://example.com","title":"Cats"}]}},
+			{"type":"tool_call","id":"toolu_1","name":"lookup","arguments":{"id":1}}]}]`
+		reply := `{"id":"msg_1","type":"message","role":"assistant","model":"claude-sonnet-5-5","content":` + content + `,"stop_reason":"tool_use"}`
+		buffered := encodeTrace(t, v, event, `{}`, Trace{}, &traceBodies{request: []byte(request), response: []byte(reply)})
+		expectMessages(t, buffered, "gen_ai.system_instructions", `[{"type":"text","content":"Answer briefly."}]`)
+		expectMessages(t, buffered, "gen_ai.input.messages", `[{"role":"user","parts":[{"type":"text","content":"Hi"}]}]`)
+		expectMessages(t, buffered, "gen_ai.tool.definitions", `[{"type":"function","name":"lookup","parameters":{"type":"object"}}]`)
+		expectMessages(t, buffered, "gen_ai.output.messages", wantOutput)
+
+		events := [][]byte{
+			[]byte(`{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"stop_reason":null}}`),
+			[]byte(`{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}`),
+			[]byte(`{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Thi"}}`),
+			[]byte(`{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"nk."}}`),
+			[]byte(`{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig"}}`),
+			[]byte(`{"type":"content_block_stop","index":0}`),
+			[]byte(`{"type":"content_block_start","index":1,"content_block":{"type":"redacted_thinking","data":"opaque"}}`),
+			[]byte(`{"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}}`),
+			[]byte(`{"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"Check"}}`),
+			[]byte(`{"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ing."}}`),
+			[]byte(`{"type":"content_block_start","index":3,"content_block":{"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{}}}`),
+			[]byte(`{"type":"content_block_delta","index":3,"delta":{"type":"input_json_delta","partial_json":""}}`),
+			[]byte(`{"type":"content_block_delta","index":3,"delta":{"type":"input_json_delta","partial_json":"{\"query\": \"cats\"}"}}`),
+			[]byte(`{"type":"content_block_start","index":4,"content_block":{"type":"web_search_tool_result","tool_use_id":"srvtoolu_1","content":[{"type":"web_search_result","url":"https://example.com","title":"Cats"}]}}`),
+			[]byte(`{"type":"content_block_start","index":5,"content_block":{"type":"tool_use","id":"toolu_1","name":"lookup","input":{}}}`),
+			[]byte(`{"type":"content_block_delta","index":5,"delta":{"type":"input_json_delta","partial_json":"{\"id\""}}`),
+			[]byte(`{"type":"content_block_delta","index":5,"delta":{"type":"input_json_delta","partial_json":":1}"}}`),
+			[]byte(`{"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":9}}`),
+			[]byte(`{"type":"message_stop"}`),
+		}
+		expectMessages(t, encodeTrace(t, v, event, `{}`, Trace{}, &traceBodies{request: []byte(request), events: events}), "gen_ai.output.messages", wantOutput)
+
+		// A stream that stopped early keeps the input that had arrived, as text, and takes the
+		// record's finish reason.
+		cut := append(events[:16:16], []byte(`{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`))
+		expectMessages(t, encodeTrace(t, v, event, `{}`, Trace{}, &traceBodies{events: cut}), "gen_ai.output.messages", `[{"role":"assistant","finish_reason":"tool_call","parts":[
+			{"type":"reasoning","content":"Think."},
+			{"type":"redacted_thinking","data":"opaque"},
+			{"type":"text","content":"Checking."},
+			{"type":"server_tool_call","id":"srvtoolu_1","name":"web_search","server_tool_call":{"type":"web_search","name":"web_search","input":{"query":"cats"}}},
+			{"type":"server_tool_call_response","id":"srvtoolu_1","server_tool_call_response":{"type":"web_search","content":[{"type":"web_search_result","url":"https://example.com","title":"Cats"}]}},
+			{"type":"tool_call","id":"toolu_1","name":"lookup","arguments":"{\"id\""}]}]`)
+
+		// A compaction summary arrives in its delta.
+		compacted := encodeTrace(t, v, event, `{}`, Trace{}, &traceBodies{events: [][]byte{
+			[]byte(`{"type":"message_start","message":{"role":"assistant","content":[]}}`),
+			[]byte(`{"type":"content_block_start","index":0,"content_block":{"type":"compaction","content":null}}`),
+			[]byte(`{"type":"content_block_delta","index":0,"delta":{"type":"compaction_delta","content":"Summary.","encrypted_content":"opaque"}}`),
+			[]byte(`{"type":"message_delta","delta":{"stop_reason":"end_turn"}}`),
+		}})
+		expectMessages(t, compacted, "gen_ai.output.messages", `[{"role":"assistant","finish_reason":"stop","parts":[{"type":"compaction","content":"Summary.","encrypted_content":"opaque"}]}]`)
+
+		// An error reply holds no message.
+		failure := []byte(`{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`)
+		for _, bodies := range []*traceBodies{{response: failure}, {events: [][]byte{failure}}} {
+			if failed := encodeTrace(t, v, event, `{}`, Trace{}, bodies); messages(t, failed, "gen_ai.output.messages") != nil {
+				t.Error("an error reply made messages")
+			}
+		}
+	}
+}
+
 // A long value needs a length of several bytes, which the encoder writes after
 // the value.
 func TestTraceExportEncodesLongAndNestedValues(t *testing.T) {

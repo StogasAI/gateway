@@ -180,6 +180,33 @@ var routeSpecs = map[Route]routeSpec{
 			"reasoning.effort",
 		},
 	},
+	// messagesBody lists the fields of a Messages request, at every depth.
+	RouteMessages: {
+		Method: "POST",
+		Path:   "/v1/messages",
+		Headers: []string{
+			"authorization",
+			"x-api-key",
+			"content-type",
+			"accept",
+			"anthropic-version",
+			"anthropic-beta",
+			"anthropic-dangerous-direct-browser-access",
+			"stogas-metadata",
+			"stogas-request-metadata",
+			"x-session-id",
+			"x-claude-code-session-id",
+			"stogas-agent-id",
+			"stogas-agent-name",
+			"stogas-parent-agent-id",
+			"stogas-app-title",
+			"stogas-app-url",
+			"http-referer",
+			"x-openrouter-title",
+			"x-title",
+		},
+		AuthHeaders: []string{"authorization", "x-api-key"},
+	},
 }
 
 var routeByPath = func() map[string]Route {

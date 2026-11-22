@@ -94,7 +94,7 @@ var (
 		_, err := time.Parse(time.DateOnly, value)
 		return err == nil
 	}, "a date such as '2027-01-31'", nil}
-	interfaces = oneOf("chat_completions", "responses")
+	interfaces = oneOf("chat_completions", "responses", "messages")
 	// A remote MCP server reads as its URL's lowercase host, or as connector: or tunnel: and the
 	// lowercase ID, and each of its tools as the server, a slash and the tool's name, or * for every
 	// tool.

@@ -386,7 +386,9 @@ func parseResponsesTools(state *State, raw json.RawMessage) ([]schemas.Responses
 			seenServers[name] = true
 		}
 	}
-	if deferred != "" {
+	// A Messages client runs its own tool search and loads a deferred tool with a tool_reference
+	// in a tool result, which every Claude hosting takes.
+	if deferred != "" && !messagesRequest(state) {
 		// Core keeps defer_loading only for the models that it knows take tool search, and would
 		// send the tool with all the others at once to any other.
 		if model := state.Resolution.Deployment.Upstream.Model; !openaiprovider.SupportsToolSearch(state.Resolution.Provider, model) {
@@ -1187,6 +1189,29 @@ func responsesUsesAnthropicWire(state *State) bool {
 	return stateUsesClaudeWire(state)
 }
 
+// messagesRequest reports a request that came in on the Messages route. Its Responses form holds
+// a few of Anthropic's own fields, which the Responses route does not take.
+func messagesRequest(state *State) bool {
+	return state != nil && state.Resolution != nil && state.Resolution.Messages
+}
+
+// effortSystemMessage reports a Messages request's system message that sets the effort of the
+// turns after it (output_config), as Claude Code sends one. Core sends the effort where the
+// hosting takes it and leaves it out elsewhere.
+func effortSystemMessage(state *State, item map[string]json.RawMessage) bool {
+	return messagesRequest(state) && rawString(item["role"]) == "system" && rawJSONValueSet(item["output_config"])
+}
+
+// emptyMessageContent reports content that holds nothing, such as the content of a system message
+// that only sets the effort.
+func emptyMessageContent(raw json.RawMessage) bool {
+	if text, ok := rawStringValue(raw); ok {
+		return text == ""
+	}
+	items, err := rawjson.Array(raw)
+	return err == nil && len(items) == 0
+}
+
 func validateRawResponsesToolType(state *State, tool map[string]json.RawMessage) error {
 	rawType := rawString(tool["type"])
 	if rawType == "" {
@@ -1666,6 +1691,13 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 			// interleave with client calls, as Claude does with a progress update before each call.
 			case "reasoning", "mcp_list_tools", "mcp_call", "mcp_approval_request", "mcp_approval_response",
 				"web_search_call", "web_fetch_call", "file_search_call", "code_interpreter_call", "image_generation_call":
+			case "", "message":
+				// Claude can write text after a tool call in the same turn. Core sends a run of
+				// assistant items as one turn, before the tool results.
+				if role == "assistant" && responsesUsesAnthropicWire(state) {
+					break
+				}
+				fallthrough
 			default:
 				return invalidRequest(path + " must resolve the preceding client tool calls before adding another input item")
 			}
@@ -1811,6 +1843,9 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 		if checksSystemPlacement(state) {
 			side := placementUser
 			switch {
+			case isSystemMessage && effortSystemMessage(state, item) && emptyMessageContent(item["content"]):
+				// A message that only sets the effort can stand anywhere.
+				continue
 			case isSystemMessage:
 				side = placementSystem
 			case itemType == "web_search_call", itemType == "web_fetch_call", itemType == "file_search_call",
@@ -1849,7 +1884,15 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 }
 
 func validateResponsesMessageInput(state *State, item map[string]json.RawMessage, path string, validation *responsesInputValidation) error {
-	if err := rejectUnsupportedInputKeys(item, path, "type", "id", "status", "role", "phase", "content"); err != nil {
+	keys := []string{"type", "id", "status", "role", "phase", "content"}
+	if effortSystemMessage(state, item) {
+		keys = append(keys, "output_config")
+		if emptyMessageContent(item["content"]) {
+			// The message only sets the effort, so the model reads nothing in it.
+			return rejectUnsupportedInputKeys(item, path, keys...)
+		}
+	}
+	if err := rejectUnsupportedInputKeys(item, path, keys...); err != nil {
 		return err
 	}
 	if err := validateResponsesInputItemIdentity(item, path); err != nil {
@@ -2591,7 +2634,12 @@ func responsesNamespaceDeclares(state *State, namespace, name string) bool {
 }
 
 func validateResponsesToolCallOutputInput(state *State, item map[string]json.RawMessage, path string, kind string, validation *responsesInputValidation) error {
-	if err := rejectUnsupportedInputKeys(item, path, "type", "id", "status", "call_id", "output"); err != nil {
+	keys := []string{"type", "id", "status", "call_id", "output"}
+	if messagesRequest(state) {
+		// A Messages request can mark a tool result as a cache breakpoint.
+		keys = append(keys, "cache_control")
+	}
+	if err := rejectUnsupportedInputKeys(item, path, keys...); err != nil {
 		return err
 	}
 	if err := validateResponsesInputItemIdentity(item, path); err != nil {
@@ -2648,6 +2696,14 @@ func validateResponsesToolOutput(state *State, raw json.RawMessage, path string)
 			}
 		case "input_image", "input_file":
 			if err := validateNativeAttachment(state, part, partPath, true); err != nil {
+				return err
+			}
+		case "tool_reference":
+			// A Messages client's own tool search answers with the deferred tools to load.
+			if !messagesRequest(state) {
+				return invalidRequest(partPath + ".type must be input_text, input_image or input_file")
+			}
+			if err := rejectUnsupportedInputKeys(part, partPath, "type", "tool_name"); err != nil {
 				return err
 			}
 		default:

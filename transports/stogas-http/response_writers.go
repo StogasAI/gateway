@@ -38,7 +38,7 @@ func (s *Server) writeProviderError(ctx *requestContext, state *stogas.State, bi
 // retry, as the gateway's own refusals do (billingErrorResponse).
 func providerErrorResponse(state *stogas.State, bifrostErr *schemas.BifrostError, bifrostCtx *schemas.BifrostContext) errorResponse {
 	bifrostErr = withoutToolCredentials(state, bifrostErr)
-	statusCode, payload := publicProviderError(bifrostErr, providerMessageUseFor(state, bifrostErr))
+	statusCode, payload := publicProviderError(bifrostErr, providerMessageUseFor(state, bifrostErr), usesMessages(state))
 	attributeProvider(payload, bifrostErr, callProvider(state))
 	response := errorResponse{status: statusCode, payload: payload}
 	if wait := providerErrorWait(statusCode, bifrostCtx); wait > 0 {
@@ -157,11 +157,12 @@ func spreadRetryAfter(wait time.Duration) string {
 	return strconv.FormatInt(seconds, 10)
 }
 
+// bifrostErrorPayload is a failed call's error as the state's client gets it.
 func bifrostErrorPayload(state *stogas.State, bifrostErr *schemas.BifrostError) any {
 	bifrostErr = withoutToolCredentials(state, bifrostErr)
-	_, payload := publicProviderError(bifrostErr, providerMessageUseFor(state, bifrostErr))
+	statusCode, payload := publicProviderError(bifrostErr, providerMessageUseFor(state, bifrostErr), usesMessages(state))
 	attributeProvider(payload, bifrostErr, callProvider(state))
-	return payload
+	return clientErrorPayload(state, statusCode, payload)
 }
 
 // usesCustomerCredential reports whether the request's bound pair calls the
@@ -261,15 +262,15 @@ func messageNamesCredential(message string, secret string) bool {
 
 // publicBifrostError is the public form of a failure of the gateway itself.
 func publicBifrostError(bifrostErr *schemas.BifrostError) (int, map[string]any) {
-	return publicProviderError(bifrostErr, filterProviderMessage)
+	return publicProviderError(bifrostErr, filterProviderMessage, false)
 }
 
 // publicProviderError is the public form of a failed provider call. With
 // passProviderMessage, a refusal of the credential, its quota, its access or
 // its rate limit carries the provider's message after the stable one, and no
 // other 4xx message is withheld for its words. A managed account's refusal
-// stays ours.
-func publicProviderError(bifrostErr *schemas.BifrostError, use providerMessageUse) (int, map[string]any) {
+// stays ours. claudeWording keeps Claude's words where only a Messages client can act on them.
+func publicProviderError(bifrostErr *schemas.BifrostError, use providerMessageUse, claudeWording bool) (int, map[string]any) {
 	said := use == passProviderMessage
 	if statusCode, errorType, code, message, ok := publicStableGatewayError(bifrostErr); ok {
 		if said && providerAccountRefusal(code) {
@@ -288,7 +289,7 @@ func publicProviderError(bifrostErr *schemas.BifrostError, use providerMessageUs
 	}
 	statusCode := publicBifrostStatus(bifrostErr)
 	errorType := publicBifrostType(statusCode, bifrostErr)
-	message := publicBifrostMessage(statusCode, errorType, bifrostErr, use)
+	message := publicBifrostMessage(statusCode, errorType, bifrostErr, use, claudeWording)
 	code := publicBifrostCode(statusCode, bifrostErr)
 	param := publicBifrostParam(statusCode, bifrostErr)
 	if code == nil && statusCode < http.StatusInternalServerError {
@@ -475,20 +476,21 @@ func publicBifrostType(statusCode int, bifrostErr *schemas.BifrostError) string 
 // Claude refuses reasoning history whose system prompt, tools or earlier messages changed after
 // Claude produced it (https://platform.claude.com/docs/en/build-with-claude/preserved-thinking/prefix-checks).
 // Its 400 names a position in its own message list and a setting that Chat Completions and
-// Responses do not have, so the client reads what it can do instead.
+// Responses do not have, so their client reads what it can do instead. A Messages client gets
+// Claude's words, on which Claude Code drops its earlier thinking and sends the request again.
 const (
 	claudeHistoryRefusal    = "bound to a different conversation"
 	reasoningHistoryRefused = "Claude refused the reasoning in this conversation's history, because the system prompt, the tools or an earlier message changed after Claude produced it. " +
 		"Send each assistant message back unchanged, or send the request again without its reasoning."
 )
 
-func publicBifrostMessage(statusCode int, errorType string, bifrostErr *schemas.BifrostError, use providerMessageUse) string {
+func publicBifrostMessage(statusCode int, errorType string, bifrostErr *schemas.BifrostError, use providerMessageUse, claudeWording bool) string {
 	switch {
 	case bifrostErr == nil:
 		return "Internal server error"
 	case statusCode >= 400 && statusCode < 500:
 		message := bifrostErrorMessage(bifrostErr)
-		if strings.Contains(message, claudeHistoryRefusal) {
+		if !claudeWording && strings.Contains(message, claudeHistoryRefusal) {
 			return reasoningHistoryRefused
 		}
 		switch use {
@@ -726,8 +728,16 @@ func (s *Server) writeError(ctx *requestContext, statusCode int, payload any) {
 		_, _ = inferenceRequestID(ctx)
 	}
 	s.recordAdmissionRejection(ctx, statusCode, stogasbilling.NormalizeStogasErrorCode(code, statusCode), stogasbilling.RefusedLimit{}, nil)
+	messages := isMessagesRequest(ctx.request)
+	if body, ok := payload.(map[string]any); ok && messages {
+		payload = anthropicError(statusCode, body, ctx.requestID)
+	}
 	data, err := sonic.Marshal(payload)
-	if err != nil {
+	switch {
+	case err == nil:
+	case messages:
+		data = []byte(`{"type":"error","error":{"type":"api_error","message":"We could not complete the response.","code":"internal_error"}}`)
+	default:
 		data = []byte(`{"error":{"message":"We could not complete the response.","type":"internal_error","code":"internal_error","param":null}}`)
 	}
 	defer clear(data)

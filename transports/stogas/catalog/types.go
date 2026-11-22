@@ -9,11 +9,15 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/location"
 )
 
+// Route is a client API that the gateway serves. RouteMessages is Anthropic's Messages API, which
+// the gateway serves for Claude: it plans and checks a Messages request in its Responses form
+// (ResolvedRequest.Messages).
 type Route string
 
 const (
 	RouteChat           Route                 = "chat-completions"
 	RouteResponses      Route                 = "responses"
+	RouteMessages       Route                 = "messages"
 	ProviderChutes      schemas.ModelProvider = "chutes"
 	ProviderAzure       schemas.ModelProvider = schemas.Azure
 	ProviderAWS         schemas.ModelProvider = "aws"
@@ -68,7 +72,7 @@ func (r Route) Interface() string { return strings.ReplaceAll(string(r), "-", "_
 
 // RouteForInterface reads an interface as policies and route.interfaces spell it.
 func RouteForInterface(name string) (Route, bool) {
-	for _, route := range []Route{RouteChat, RouteResponses} {
+	for _, route := range []Route{RouteChat, RouteResponses, RouteMessages} {
 		if route.Interface() == name {
 			return route, true
 		}

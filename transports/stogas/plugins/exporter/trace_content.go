@@ -111,8 +111,12 @@ func (p *protobuf) endList(list jsonList) {
 }
 
 // contentAttributes writes the messages. Under the 1.41 conventions, each
-// output message names its finish reason, which 0.1 left to the span's.
-func (p *protobuf) contentAttributes(responses bool, reason string, bodies *traceBodies) {
+// output message names its finish reason, which 0.1 left to the span's. A
+// Messages request runs as a Responses request, whose form the capture keeps,
+// and its reply is Claude's, as the client received it.
+func (p *protobuf) contentAttributes(requestInterface, reason string, bodies *traceBodies) {
+	claude := requestInterface == "messages"
+	responses := claude || requestInterface == "responses"
 	var finish []byte
 	if p.conventions == conventions141 {
 		finish, _ = json.Marshal(reason)
@@ -147,6 +151,10 @@ func (p *protobuf) contentAttributes(responses bool, reason string, bodies *trac
 	}
 	list := p.beginList("gen_ai.output.messages")
 	switch {
+	case bodies.events != nil && claude:
+		p.claudeStream(bodies.events, finish)
+	case claude:
+		p.claudeMessage(members(bodies.response), finish)
 	case bodies.events != nil && responses:
 		p.responsesMessages(responsesStreamItems(bodies.events), finish)
 	case bodies.events != nil:
@@ -516,11 +524,16 @@ func (p *protobuf) responsesMessages(items []json.RawMessage, finish []byte) {
 // serverToolPart writes an item of a tool that the provider ran, such as a
 // web_search_call, as the conventions' server tool call or response: the
 // item's own fields under the tool's type, such as web_search. A call's ID
-// names it, and the output of OpenAI's own tool search has no ID of its call.
+// names it. A response names the call that it answers where it can: Claude's
+// results do, and the output of OpenAI's own tool search has no ID of its call.
 func (p *protobuf) serverToolPart(part, tool string, item fields) {
 	p.next()
 	p.put(`{"type":"` + part + `"`)
-	if id := item["id"]; part == "server_tool_call" && len(inner(id)) > 0 {
+	id := item["id"]
+	if part == "server_tool_call_response" {
+		id = item["tool_use_id"]
+	}
+	if len(inner(id)) > 0 {
 		p.put(`,"id":`)
 		p.value(id)
 	}
@@ -534,7 +547,7 @@ func (p *protobuf) serverToolPart(part, tool string, item fields) {
 	}
 	details := fields{}
 	for key, value := range item {
-		if key != "id" {
+		if key != "id" && key != "tool_use_id" {
 			details[key] = value
 		}
 	}
@@ -585,6 +598,120 @@ func responsesStreamItems(events [][]byte) []json.RawMessage {
 	}
 	slices.Reverse(finished)
 	return finished
+}
+
+// claudeMessage writes Claude's reply to a Messages request as one output
+// message. An error reply has no content and writes nothing.
+func (p *protobuf) claudeMessage(message fields, finish []byte) {
+	content, err := rawjson.Array(message["content"])
+	if err != nil {
+		return
+	}
+	blocks := make([]fields, 0, len(content))
+	for _, raw := range content {
+		blocks = append(blocks, members(raw))
+	}
+	p.claudeTurn(message["role"], message["stop_reason"], blocks, finish)
+}
+
+// claudeStream joins the events of Claude's stream into the message that a
+// reply without a stream would hold. Each block starts whole apart from its
+// text, thinking, tool input or compaction summary, whose deltas join as
+// escaped text.
+func (p *protobuf) claudeStream(events [][]byte, finish []byte) {
+	type block struct {
+		fields      fields
+		text, input []byte
+	}
+	var role, stopReason []byte
+	started := false
+	blocks := map[string]*block{}
+	for _, raw := range events {
+		event := members(raw)
+		switch word(event["type"]) {
+		case "message_start":
+			started, role = true, members(event["message"])["role"]
+		case "content_block_start":
+			if start := members(event["content_block"]); start != nil {
+				blocks[string(event["index"])] = &block{fields: start}
+			}
+		case "content_block_delta":
+			current := blocks[string(event["index"])]
+			if current == nil {
+				continue
+			}
+			delta := members(event["delta"])
+			switch word(delta["type"]) {
+			case "text_delta":
+				current.text = append(current.text, inner(delta["text"])...)
+			case "thinking_delta":
+				current.text = append(current.text, inner(delta["thinking"])...)
+			case "compaction_delta":
+				current.text = append(current.text, inner(delta["content"])...)
+				if encrypted := delta["encrypted_content"]; len(inner(encrypted)) > 0 {
+					current.fields["encrypted_content"] = encrypted
+				}
+			case "input_json_delta":
+				current.input = append(current.input, inner(delta["partial_json"])...)
+			}
+		case "message_delta":
+			if reason := members(event["delta"])["stop_reason"]; len(inner(reason)) > 0 {
+				stopReason = reason
+			}
+		}
+	}
+	if !started {
+		return
+	}
+	joined := make([]fields, 0, len(blocks))
+	for _, index := range sortedIndexes(blocks) {
+		current := blocks[index]
+		key := map[string]string{"text": "text", "thinking": "thinking", "compaction": "content"}[word(current.fields["type"])]
+		if key != "" && len(current.text) > 0 {
+			current.fields[key] = slices.Concat([]byte{'"'}, inner(current.fields[key]), current.text, []byte{'"'})
+		}
+		// The deltas of an input join into its JSON text, which a stream that
+		// stopped early leaves incomplete, as text.
+		if len(current.input) > 0 {
+			partial := slices.Concat([]byte{'"'}, current.input, []byte{'"'})
+			current.fields["input"] = partial
+			var text string
+			if json.Unmarshal(partial, &text) == nil && json.Valid([]byte(text)) {
+				current.fields["input"] = json.RawMessage(text)
+			}
+		}
+		joined = append(joined, current.fields)
+	}
+	p.claudeTurn(role, stopReason, joined, finish)
+}
+
+// claudeTurn writes Claude's content blocks as one output message: text,
+// thinking and client tool calls as the conventions' parts, and the tools
+// that Anthropic ran as server tool calls and their responses. A block that
+// the conventions have no type for passes through as Claude wrote it.
+func (p *protobuf) claudeTurn(role, stopReason []byte, blocks []fields, finish []byte) {
+	if inner(role) == nil {
+		role = []byte(`"assistant"`)
+	}
+	p.beginMessage(role, nil, choiceFinish(stopReason, finish))
+	for _, block := range blocks {
+		switch kind := word(block["type"]); {
+		case kind == "text":
+			p.textPart("text", inner(block["text"]))
+		case kind == "thinking":
+			p.textPart("reasoning", inner(block["thinking"]))
+		case kind == "tool_use":
+			p.toolCall(block["id"], block["name"], block["input"], false)
+		case kind == "server_tool_use":
+			p.serverToolPart("server_tool_call", word(block["name"]), block)
+		case strings.HasSuffix(kind, "_tool_result"):
+			p.serverToolPart("server_tool_call_response", strings.TrimSuffix(kind, "_tool_result"), block)
+		case kind != "":
+			p.next()
+			p.object(block)
+		}
+	}
+	p.put("]}")
 }
 
 // toolDefinition names a tool as the conventions do: a function tool by its

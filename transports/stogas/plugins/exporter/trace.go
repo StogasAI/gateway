@@ -121,7 +121,7 @@ func traceExport(event, metadata []byte, trace Trace, bodies *traceBodies, v con
 	failure, finish := requestFailure(record, served), requestFinish(record, served)
 	p.genAIAttributes(record, served, trace.Model, failure, finish)
 	if bodies != nil {
-		p.contentAttributes(text(record["interface"]) == "responses", finish, bodies)
+		p.contentAttributes(text(record["interface"]), finish, bodies)
 	}
 	for _, key := range sortedKeys(record) {
 		// These three are the trace, its conversation and its child spans.
@@ -323,10 +323,10 @@ func (p *protobuf) genAIAttributes(record, served map[string]any, model, failure
 }
 
 // traceOperation names every text generation interface "chat", as the
-// conventions do for both of OpenAI's.
+// conventions do for OpenAI's and Anthropic's.
 func traceOperation(record map[string]any) string {
 	switch name := text(record["interface"]); name {
-	case "", "chat_completions", "responses":
+	case "", "chat_completions", "responses", "messages":
 		return "chat"
 	default:
 		return name

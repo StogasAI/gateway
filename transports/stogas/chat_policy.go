@@ -437,9 +437,10 @@ func metadataText(text string) bool {
 
 // RequestSessionID reads the ID that groups a request with others in its
 // organization's logs, as OpenRouter does: the body's session_id or else the
-// X-Session-Id header. Codex sends its own Session-Id header, which counts
-// only when nothing else names a session and its value is valid, so a change
-// in Codex never fails its requests. Providers never receive the ID.
+// X-Session-Id header. Codex sends its own Session-Id header and Claude Code
+// X-Claude-Code-Session-Id, which count only when nothing else names a
+// session and the value is valid, so a change in either client never fails
+// its requests. Providers never receive the ID.
 func RequestSessionID(body map[string]json.RawMessage, header http.Header) (string, error) {
 	if raw, ok := body["session_id"]; ok {
 		id, ok := rawStringValue(raw)
@@ -462,8 +463,10 @@ func RequestSessionID(body map[string]json.RawMessage, header http.Header) (stri
 			return values[0], nil
 		}
 	}
-	if values := header.Values("Session-Id"); len(values) == 1 && validSessionID(values[0]) {
-		return values[0], nil
+	for _, name := range []string{"Session-Id", "X-Claude-Code-Session-Id"} {
+		if values := header.Values(name); len(values) == 1 && validSessionID(values[0]) {
+			return values[0], nil
+		}
 	}
 	return "", nil
 }

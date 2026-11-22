@@ -40,11 +40,11 @@ var compiledRouteContracts = map[string]struct {
 }{
 	"anthropic-messages": {
 		providerID: "anthropic",
-		interfaces: []string{"chat_completions", "responses"},
+		interfaces: []string{"chat_completions", "responses", "messages"},
 	},
 	"azure-anthropic-messages": {
 		providerID: "azure",
-		interfaces: []string{"chat_completions", "responses"},
+		interfaces: []string{"chat_completions", "responses", "messages"},
 	},
 	"azure-chat-completions": {
 		providerID: "azure",
@@ -56,7 +56,7 @@ var compiledRouteContracts = map[string]struct {
 	},
 	"aws-bedrock-messages": {
 		providerID: "aws",
-		interfaces: []string{"chat_completions", "responses"},
+		interfaces: []string{"chat_completions", "responses", "messages"},
 	},
 	"aws-bedrock-chat-completions": {
 		providerID: "aws",
@@ -64,7 +64,7 @@ var compiledRouteContracts = map[string]struct {
 	},
 	"aws-claude-platform-messages": {
 		providerID: "aws",
-		interfaces: []string{"chat_completions", "responses"},
+		interfaces: []string{"chat_completions", "responses", "messages"},
 	},
 	"chutes-chat-completions": {
 		providerID: "chutes",
@@ -84,7 +84,7 @@ var compiledRouteContracts = map[string]struct {
 	},
 	"google-cloud-agent-platform-messages": {
 		providerID: "google-cloud",
-		interfaces: []string{"chat_completions", "responses"},
+		interfaces: []string{"chat_completions", "responses", "messages"},
 	},
 	"google-cloud-agent-platform-meta-responses": {
 		providerID: "google-cloud",
@@ -92,7 +92,7 @@ var compiledRouteContracts = map[string]struct {
 	},
 	"google-cloud-anthropic-managed-messages": {
 		providerID: "google-cloud",
-		interfaces: []string{"chat_completions", "responses"},
+		interfaces: []string{"chat_completions", "responses", "messages"},
 	},
 	"openai-chat-completions": {
 		providerID: "openai",
@@ -991,7 +991,7 @@ func validateCompiledRoute(graph compiledGraph, routeID string, route compiledRo
 	contract, allowed := compiledRouteContracts[routeID]
 	if !allowed ||
 		route.ProviderID != contract.providerID ||
-		!sameStrings(route.Interfaces, contract.interfaces) {
+		!listsServedInterfaces(route.Interfaces, contract.interfaces) {
 		return fmt.Errorf("route %s is not a compiled gateway transport contract", routeID)
 	}
 	if _, ok := graph.Providers[route.ProviderID]; !ok {
@@ -1663,16 +1663,16 @@ func sameKeys[A, B any](left map[string]A, right map[string]B) bool {
 	return true
 }
 
-func sameStrings(left, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index] != right[index] {
+// listsServedInterfaces reports whether a route lists only interfaces that the gateway serves on
+// it, each once. A route can list fewer, so that a gateway serves an interface before catalogs list
+// it.
+func listsServedInterfaces(listed, served []string) bool {
+	for index, name := range listed {
+		if !slices.Contains(served, name) || slices.Contains(listed[:index], name) {
 			return false
 		}
 	}
-	return true
+	return len(listed) > 0
 }
 
 func sortDeploymentIDs(ids []string, deployments map[string]*compiledDeployment) {

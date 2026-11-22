@@ -5277,7 +5277,7 @@ func TestSafeguardsStreamHandler(t *testing.T) {
 			if response == nil {
 				continue
 			}
-			if response.Type == schemas.ResponsesStreamResponseTypeProviderRawEvent {
+			if frame, _ := response.ExtraFields.RawResponse.(string); gjson.Get(frame, "type").String() == "future_unknown_event" {
 				t.Fatal("unknown event forwarded")
 			}
 			if response.Type == schemas.ResponsesStreamResponseTypeSafeguardsUpdate {

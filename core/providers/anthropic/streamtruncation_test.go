@@ -6,6 +6,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -740,6 +741,35 @@ func TestStreamErrorStatusMapsAnthropicErrorTypes(t *testing.T) {
 		if got := streamErrorStatus(tc.errType); got != tc.want {
 			t.Errorf("streamErrorStatus(%q) = %d, want %d", tc.errType, got, tc.want)
 		}
+	}
+}
+
+// A caller that reads the provider's events gets every event that core reads in order, a ping that
+// yields no Responses chunk included, each on exactly one chunk, and no event of an unknown type.
+func TestResponsesStreamCarriesEveryRawEvent(t *testing.T) {
+	ping := "event: ping\n" + `data: {"type":"ping"}` + "\n\n"
+	unknown := "event: future_event\n" + `data: {"type":"future_event"}` + "\n\n"
+	body := anthropicMessageStart + ping + unknown + anthropicTextDelta + anthropicMessageStop
+	server := anthropicSSEServer(t, body, false)
+	defer server.Close()
+	provider := NewAnthropicProvider(&schemas.ProviderConfig{
+		NetworkConfig:       schemas.NetworkConfig{BaseURL: server.URL},
+		SendBackRawResponse: true,
+	}, truncationTestLogger{})
+	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	stream, bifrostErr := provider.ResponsesStream(ctx, truncationPassthroughPostHook, nil, schemas.Key{Value: *schemas.NewSecretVar("test-key")}, truncationResponsesRequest())
+	if bifrostErr != nil {
+		t.Fatalf("stream setup failed: %v", bifrostErr)
+	}
+	var got []string
+	for _, chunk := range collectTruncationChunks(t, stream) {
+		if event := chunk.BifrostResponsesStreamResponse; event != nil && event.ExtraFields.RawResponse != nil {
+			got = append(got, gjson.Get(event.ExtraFields.RawResponse.(string), "type").String())
+		}
+	}
+	want := "message_start content_block_start ping content_block_delta content_block_stop message_delta message_stop"
+	if strings.Join(got, " ") != want {
+		t.Fatalf("raw events = %v, want %s", got, want)
 	}
 }
 

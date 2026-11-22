@@ -204,11 +204,11 @@ func (s *Server) simulatePolicy(ctx *requestContext) {
 	}
 	route, known := catalog.RouteForInterface(input.Interface)
 	if input.Tools != nil || input.ToolChoice != nil {
-		valid = valid && route == catalog.RouteResponses && simulatedTools(input.Tools, input.ToolChoice)
+		valid = valid && route != catalog.RouteChat && simulatedTools(input.Tools, input.ToolChoice)
 	}
 	if !valid || !known ||
 		input.Policy != nil && (!input.Policy.Scope.Valid() || input.Policy.ID == "" || len(input.Policy.ID) > 64 || len(input.Policy.Config) == 0) {
-		s.writeError(ctx, http.StatusBadRequest, map[string]any{"error": map[string]any{"code": "invalid_request", "message": "Provide interface as chat_completions or responses, optional model, serviceTier and reasoningMode strings, for responses optional tools listing up to 128 tool types and an optional toolChoice as a mode or an object with only its types, optional encryptionKeys as a list of registered labels, and an optional policy with scope, id and config", "type": "invalid_request_error"}})
+		s.writeError(ctx, http.StatusBadRequest, map[string]any{"error": map[string]any{"code": "invalid_request", "message": "Provide interface as chat_completions, responses or messages, optional model, serviceTier and reasoningMode strings, for responses and messages optional tools listing up to 128 tool types and an optional toolChoice as a mode or an object with only its types, optional encryptionKeys as a list of registered labels, and an optional policy with scope, id and config", "type": "invalid_request_error"}})
 		return
 	}
 	if s.runtime == nil || s.runtime.Billing() == nil {

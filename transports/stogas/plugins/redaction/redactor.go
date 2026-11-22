@@ -133,6 +133,8 @@ type Redactor struct {
 	// jsonOutput marks a reply whose text is a JSON document, because its request asked for
 	// JSON output.
 	jsonOutput bool
+	// messages marks the walk of Claude's own reply to a Messages request.
+	messages bool
 	// keepPlaceholders is set while a reply's walk reads reasoning, which gets no value back.
 	keepPlaceholders bool
 	// input measures the provider-bound text that the walk passes, after redaction.

@@ -33,6 +33,10 @@ func inferenceRequestID(ctx *requestContext) (string, error) {
 	value := id.String()
 	ctx.requestID = value
 	ctx.writer.Header().Set("X-Request-ID", value)
+	if isMessagesRequest(ctx.request) {
+		// Anthropic's SDKs read a request's ID from request-id.
+		ctx.writer.Header().Set("Request-Id", value)
+	}
 	return value, nil
 }
 

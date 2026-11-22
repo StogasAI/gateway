@@ -7,7 +7,7 @@
 # and https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/claude/web-search
 routes:
   providerId: google-cloud
-  interfaces: [chat_completions, responses]
+  interfaces: [chat_completions, responses, messages]
   inputModalities: [text, image]
   capabilities:
     streaming: true

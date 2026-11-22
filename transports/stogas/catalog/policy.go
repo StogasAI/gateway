@@ -585,7 +585,7 @@ func receivingCompanies(provider, hosting string, sharedWith []string) []string 
 // the catalog checks its values, reads no request facts.
 func (r *ResolvedRequest) policyRequestData(hostedTools []string) policyRequestData {
 	data := policyRequestData{
-		BodyBytes: r.policyBodyBytes, HostedTools: hostedTools, Interface: r.Route.Interface(), Model: r.policyModel,
+		BodyBytes: r.policyBodyBytes, HostedTools: hostedTools, Interface: r.Interface(), Model: r.policyModel,
 		Store: r.providerState.Keeps, StoredInput: r.providerState.Reads != "",
 	}
 	if facts := r.policyFacts; facts != nil {

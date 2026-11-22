@@ -21,6 +21,11 @@ const (
 	// ReplyResponsesTextEvent is such an event of an output text or its part, whose text is not
 	// inside an item's content.
 	ReplyResponsesTextEvent
+	// ReplyMessages is Claude's reply to a Messages request.
+	ReplyMessages
+	// ReplyMessagesEvent is an event of a Messages stream that holds whole values: the message
+	// that starts it, a content block that starts, or the end of the message.
+	ReplyMessagesEvent
 )
 
 // RedactReply returns a response with the values of the request's restoring redactions back
@@ -43,6 +48,10 @@ func (r *Redactor) RedactReply(source []byte, shape ReplyShape, reserve func(int
 	case ReplyResponses:
 		context = jsonContextReplyResponses
 	case ReplyResponsesEvent, ReplyResponsesReasoningEvent, ReplyResponsesTextEvent:
+	case ReplyMessages:
+		context = jsonContextReplyMessages
+	case ReplyMessagesEvent:
+		context = jsonContextReplyMessagesEvent
 	default:
 		return nil, errInvalidJSON
 	}
@@ -50,8 +59,9 @@ func (r *Redactor) RedactReply(source []byte, shape ReplyShape, reserve func(int
 	baseRestored := r.restored
 	r.keepPlaceholders = shape == ReplyResponsesReasoningEvent
 	r.argumentsJSON = r.jsonOutput && shape == ReplyResponsesTextEvent
+	r.messages = shape == ReplyMessages || shape == ReplyMessagesEvent
 	redacted, _, err := r.redactJSONContext(source, context)
-	r.keepPlaceholders, r.argumentsJSON = false, false
+	r.keepPlaceholders, r.argumentsJSON, r.messages = false, false, false
 	if err != nil {
 		r.restored = baseRestored
 		return nil, err

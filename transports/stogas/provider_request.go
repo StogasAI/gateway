@@ -3,6 +3,7 @@ package stogas
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -55,6 +56,9 @@ func PrepareProviderRequest(ctx *schemas.BifrostContext, state *State, request *
 			ctx.ClearValue(schemas.BifrostContextKeyRequestModelInfo)
 		}
 	}()
+	if resolution.Messages {
+		prepareMessagesCall(ctx, resolution)
+	}
 
 	var (
 		body       []byte
@@ -135,6 +139,36 @@ func PrepareProviderRequest(ctx *schemas.BifrostContext, state *State, request *
 	settings.ProviderState = resolution.ProviderState().Fields
 	state.RequestSettings = settings
 	return nil
+}
+
+// prepareMessagesCall has core keep Claude's own reply to a Messages request, which the client gets
+// as Claude wrote it, and adds the anthropic-beta values that the request carries and the hosting
+// takes. Core checks them by the provider that it builds the body for, while a cloud's call runs
+// as a custom provider, whose values core does not check. Each pair writes its own headers, and
+// body preparation adds the values that the body needs.
+func prepareMessagesCall(ctx *schemas.BifrostContext, resolution *catalog.ResolvedRequest) {
+	ctx.SetValue(schemas.BifrostContextKeyAllowPerRequestRawOverride, true)
+	ctx.SetValue(schemas.BifrostContextKeySendBackRawResponse, true)
+	builder := resolution.CoreProvider()
+	if resolution.Provider == catalog.ProviderAWS || resolution.Provider == catalog.ProviderGoogleCloud {
+		builder = cloudClaudeBuildConfig(resolution.Model, resolution.Deployment.Hosting, false).Provider
+	}
+	carried := anthropicprovider.FilterBetaHeadersForProvider(resolution.AnthropicBeta, builder)
+	if len(carried) == 0 {
+		return
+	}
+	headers := map[string][]string{}
+	if existing, ok := ctx.Value(schemas.BifrostContextKeyExtraHeaders).(map[string][]string); ok {
+		for name, values := range existing {
+			headers[name] = slices.Clone(values)
+		}
+	}
+	for _, value := range carried {
+		if !slices.Contains(headers[anthropicprovider.AnthropicBetaHeader], value) {
+			headers[anthropicprovider.AnthropicBetaHeader] = append(headers[anthropicprovider.AnthropicBetaHeader], value)
+		}
+	}
+	ctx.SetValue(schemas.BifrostContextKeyExtraHeaders, headers)
 }
 
 func resolvedOutputLimit(resolution *catalog.ResolvedRequest) int {

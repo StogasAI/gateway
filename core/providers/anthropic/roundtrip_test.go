@@ -647,9 +647,37 @@ func TestRoundTrip_UserTurnMergeKeepsTurnsAndToolResults(t *testing.T) {
 		shape = append(shape, m.Get("role").String()+":"+strings.Join(types, "+"))
 	}
 	got := strings.Join(shape, " ")
-	// The tool_result and the text after it already went out as two user messages before this
-	// change (egress flushes tool results on their own); that split is unchanged here.
-	want := "user:text+text assistant:tool_use user:tool_result user:text+text user:text"
+	// The tool_result and the text after it share one turn, as sent, and the last user message
+	// stays a turn of its own.
+	want := "user:text+text assistant:tool_use user:tool_result+text+text user:text"
+	if got != want {
+		t.Fatalf("message shape changed:\n got %s\nwant %s", got, want)
+	}
+}
+
+// An assistant turn that thinks again after a tool call, and the user turn that answers it with
+// text after the tool result, each reach Anthropic as one message, as Claude Code sends them,
+// while two assistant messages that the client sent apart stay apart.
+func TestRoundTrip_InterleavedTurnsKeepTheirMessages(t *testing.T) {
+	body := requestRoundTrip(t, `{"model":"claude-opus-5-5","max_tokens":16,
+		"tools":[{"name":"read","input_schema":{"type":"object"}}],
+		"messages":[
+		{"role":"user","content":"go"},
+		{"role":"assistant","content":[{"type":"thinking","thinking":"a","signature":"c2E="},{"type":"tool_use","id":"toolu_1","name":"read","input":{}},{"type":"thinking","thinking":"b","signature":"c2I="},{"type":"text","text":"reading"}]},
+		{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"r"},{"type":"text","text":"next"}]},
+		{"role":"assistant","content":[{"type":"text","text":"one"}]},
+		{"role":"assistant","content":[{"type":"text","text":"two"}]},
+		{"role":"user","content":"end"}]}`)
+	var shape []string
+	for _, m := range gjson.GetBytes(body, "messages").Array() {
+		var types []string
+		for _, b := range m.Get("content").Array() {
+			types = append(types, b.Get("type").String())
+		}
+		shape = append(shape, m.Get("role").String()+":"+strings.Join(types, "+"))
+	}
+	got := strings.Join(shape, " ")
+	want := "user:text assistant:thinking+tool_use+thinking+text user:tool_result+text assistant:text assistant:text user:text"
 	if got != want {
 		t.Fatalf("message shape changed:\n got %s\nwant %s", got, want)
 	}

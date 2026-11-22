@@ -194,6 +194,30 @@ func deploymentReasoning(reasoning *schemas.ResponsesParametersReasoning, deploy
 	return &copied
 }
 
+// normalizeMessagesReasoning checks the reasoning of a Messages request. Claude takes an effort
+// beside a thinking budget, which Claude Code sends Claude Opus 4.5, so a deployment with both
+// controls keeps both, and a deployment with one keeps the one that it has.
+func normalizeMessagesReasoning(reasoning *schemas.ResponsesParametersReasoning, deployment Deployment, outputTokenLimit int) error {
+	if reasoning == nil || reasoning.Effort == nil || reasoning.MaxTokens == nil {
+		return normalizeResponsesReasoning(reasoning, deployment, outputTokenLimit)
+	}
+	effort := *reasoning.Effort
+	if deployment.ReasoningMaxTokens == nil {
+		reasoning.MaxTokens = nil
+		return normalizeResponsesReasoning(reasoning, deployment, outputTokenLimit)
+	}
+	reasoning.Effort = nil
+	if err := normalizeResponsesReasoning(reasoning, deployment, outputTokenLimit); err != nil || reasoning.MaxTokens == nil {
+		return err
+	}
+	selected, err := normalizeReasoningEffort(effort, deployment, outputTokenLimit)
+	if err != nil {
+		return err
+	}
+	reasoning.Effort = selected.Effort
+	return nil
+}
+
 func normalizeResponsesReasoning(reasoning *schemas.ResponsesParametersReasoning, deployment Deployment, outputTokenLimit int) error {
 	if reasoning == nil {
 		return nil
@@ -351,7 +375,8 @@ func chatRawReasoning(raw map[string]json.RawMessage) (*schemas.ChatReasoning, e
 // requestReasoningValidation checks the reasoning controls against each candidate deployment.
 // requested is the output token limit that the client set. A reasoning budget at or above it
 // leaves no room for an answer on any deployment, so the request is refused before routing.
-func requestReasoningValidation(raw map[string]json.RawMessage, route Route, requested *int) (func(Deployment, int) error, error) {
+// messages marks the Responses form of a Messages request.
+func requestReasoningValidation(raw map[string]json.RawMessage, route Route, requested *int, messages bool) (func(Deployment, int) error, error) {
 	fitsOutputLimit := func(budget *int) error {
 		if budget != nil && requested != nil && *budget >= *requested {
 			return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "reasoning.max_tokens must be less than the output token limit"}
@@ -408,6 +433,9 @@ func requestReasoningValidation(raw map[string]json.RawMessage, route Route, req
 			return normalizeChatReasoning(chatReasoning(parameters.Reasoning), deployment, outputLimit)
 		}
 		reasoning := *parameters.Reasoning
+		if messages {
+			return normalizeMessagesReasoning(&reasoning, deployment, outputLimit)
+		}
 		return normalizeResponsesReasoning(&reasoning, deployment, outputLimit)
 	}, nil
 }

@@ -149,8 +149,17 @@ type RequestInput struct {
 	// tools, set by a simulation, are the tools that its request lists. A simulated request has
 	// no body to read them from.
 	tools *requestTools
-	Body  []byte
-	// Fields, when supplied, must come from DecodeRequestBody for this Body.
+	// messages marks a request on Anthropic's Messages API, which planning reads in its Responses
+	// form, and messagesContext holds what core's conversion of it keeps on its context
+	// (messagesToResponses).
+	messages        bool
+	messagesContext map[any]any
+	// AnthropicBeta holds the anthropic-beta values that a Messages request carries to the hostings
+	// that take them (MessagesBetas).
+	AnthropicBeta []string
+	Body          []byte
+	// Fields, when supplied, must come from DecodeRequestBody for this Body. The Messages route
+	// replaces them with the request's Responses form.
 	Fields map[string]json.RawMessage
 	Method string
 	Path   string
@@ -231,8 +240,19 @@ type ResolvedRequest struct {
 	// policyModel is what the request's model field selects, as request.model reads it.
 	policyModel string
 	// policyFacts are what policies read about the request's tools and messages.
-	policyFacts     *requestFacts
-	Route           Route
+	policyFacts *requestFacts
+	Route       Route
+	// Messages marks a request on Anthropic's Messages API, which the gateway checks in its
+	// Responses form: Route is RouteResponses, and policies and records name the interface
+	// messages (Interface).
+	Messages bool
+	// messagesContext holds what core's conversion of a Messages request keeps on its context to
+	// write the client's thinking, effort and tools back into each hosting's body. ToBifrost gives
+	// it to each provider call.
+	messagesContext map[any]any
+	// AnthropicBeta holds the anthropic-beta values that a Messages request carries to the hostings
+	// that take them.
+	AnthropicBeta   []string
 	RequestType     schemas.RequestType
 	Provider        schemas.ModelProvider
 	CredentialIndex int
@@ -355,6 +375,7 @@ func (r *ResolvedRequest) retainVariant(variant *requestBodyVariant, config *pol
 	r.retainPolicyDecision(config)
 	r.policyTime, r.policyBudget = input.now, input.policyBudget
 	r.policyBodyBytes = len(input.Body)
+	r.Messages, r.messagesContext, r.AnthropicBeta = input.messages, input.messagesContext, input.AnthropicBeta
 }
 
 type requestPricingContext struct {
@@ -405,9 +426,40 @@ func ResolveRequest(input RequestInput) (*ResolvedRequest, error) {
 		return resolveChatRequests(input, route)
 	case RouteResponses:
 		return resolveResponsesRequests(input, route)
+	case RouteMessages:
+		return resolveMessagesRequests(input)
 	default:
 		return nil, ErrUnsupportedRequest
 	}
+}
+
+// resolveMessagesRequests plans a Messages request in its Responses form, on the deployments whose
+// routes list the messages interface.
+func resolveMessagesRequests(input RequestInput) (*ResolvedRequest, error) {
+	fields := input.Fields
+	if fields == nil {
+		var err error
+		if fields, err = DecodeRequestBody(input.Body, nil); err != nil {
+			return nil, err
+		}
+	}
+	responses, values, err := messagesToResponses(input.Body, fields)
+	if err != nil {
+		return nil, err
+	}
+	input.Fields, input.messages, input.messagesContext = responses, true, values
+	return resolveResponsesRequests(input, RouteResponses)
+}
+
+// Interface is the interface that the client called, as policies and records name it.
+func (r *ResolvedRequest) Interface() string {
+	switch {
+	case r == nil:
+		return ""
+	case r.Messages:
+		return RouteMessages.Interface()
+	}
+	return r.Route.Interface()
 }
 
 func (r *ResolvedRequest) ToBifrost(ctx *schemas.BifrostContext) (*schemas.BifrostRequest, error) {
@@ -453,6 +505,11 @@ func (r *ResolvedRequest) ToBifrost(ctx *schemas.BifrostContext) (*schemas.Bifro
 		body := r.responses.ToBifrostResponsesRequest(ctx)
 		if body == nil {
 			return nil, APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Invalid responses request"}
+		}
+		if ctx != nil {
+			for key, value := range r.messagesContext {
+				ctx.SetValue(key, value)
+			}
 		}
 		body.Provider = r.CoreProvider()
 		body.Model = r.Model
@@ -1106,7 +1163,12 @@ func planRoutes(input RequestInput, route Route, rawData map[string]json.RawMess
 	if route == RouteChat {
 		throughResponses = sync.OnceValue(func() bool { return chatThroughResponses(rawData, bridgeGap) })
 	}
-	selections, requested, err := routingSelectionsForRequest(input.now, route, base.Model, base.variant, throughResponses, input.AvailableCredentials, input.trace)
+	// A Messages request routes to the deployments whose routes list its own interface.
+	selectionRoute := route
+	if input.messages {
+		selectionRoute = RouteMessages
+	}
+	selections, requested, err := routingSelectionsForRequest(input.now, selectionRoute, base.Model, base.variant, throughResponses, input.AvailableCredentials, input.trace)
 	if err != nil {
 		return nil, err
 	}
@@ -1116,7 +1178,7 @@ func planRoutes(input RequestInput, route Route, rawData map[string]json.RawMess
 		// model's other variants to find which field to name, and otherwise name the policies
 		// whose lists removed the deployments.
 		err := base.variant.unavailable(func(other variant) bool {
-			inVariant, _, err := routingSelectionsForRequest(input.now, route, base.Model, other, throughResponses, input.AvailableCredentials, nil)
+			inVariant, _, err := routingSelectionsForRequest(input.now, selectionRoute, base.Model, other, throughResponses, input.AvailableCredentials, nil)
 			if err != nil {
 				return false
 			}
@@ -1147,7 +1209,7 @@ func planRoutes(input RequestInput, route Route, rawData map[string]json.RawMess
 	if err != nil {
 		return nil, err
 	}
-	selections, ruledOut, err := filterRequestParameters(selections, rawData, route, bridgeGap, tokenFields...)
+	selections, ruledOut, err := filterRequestParameters(selections, rawData, route, input.messages, bridgeGap, tokenFields...)
 	if err != nil {
 		return nil, err
 	}
@@ -1282,7 +1344,11 @@ func resolveResponsesRequests(input RequestInput, route Route) (*ResolvedRequest
 		)
 		// A bridged request takes Chat Completions' reasoning controls, which Translate applies
 		// once the request's checks have passed.
-		if err == nil && !resolution.Bridged() {
+		switch {
+		case err != nil || resolution.Bridged():
+		case input.messages:
+			err = normalizeMessagesReasoning(request.ResponsesParameters.Reasoning, resolution.Deployment, resolution.outputTokenLimit)
+		default:
 			err = normalizeResponsesReasoning(request.ResponsesParameters.Reasoning, resolution.Deployment, resolution.outputTokenLimit)
 		}
 		if err != nil {
@@ -1330,7 +1396,7 @@ type ruledOut struct {
 
 // Apply catalog-known parameter constraints before credential checks, redaction,
 // typed message decoding or tokenization.
-func filterRequestParameters(selections []routingSelection, raw map[string]json.RawMessage, route Route, bridgeGap func() error, fields ...string) ([]routingSelection, []ruledOut, error) {
+func filterRequestParameters(selections []routingSelection, raw map[string]json.RawMessage, route Route, messages bool, bridgeGap func() error, fields ...string) ([]routingSelection, []ruledOut, error) {
 	var requested *int
 	for _, field := range fields {
 		if value, ok := raw[field]; ok {
@@ -1342,7 +1408,7 @@ func filterRequestParameters(selections []routingSelection, raw map[string]json.
 			break
 		}
 	}
-	validateReasoning, err := requestReasoningValidation(raw, route, requested)
+	validateReasoning, err := requestReasoningValidation(raw, route, requested, messages)
 	if err != nil {
 		return nil, nil, err
 	}

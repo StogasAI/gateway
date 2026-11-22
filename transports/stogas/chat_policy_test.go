@@ -2137,6 +2137,9 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 				case "responses":
 					path = "/v1/responses"
 					route = catalog.RouteResponses
+				case "messages":
+					path = "/v1/messages"
+					route = catalog.RouteMessages
 				default:
 					t.Fatalf("%s: unsupported catalog interface %q", routeID, interfaceName)
 				}
@@ -2165,15 +2168,26 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 					}
 					t.Run(name, func(t *testing.T) {
 						requestBody := map[string]any{"model": deploymentID}
-						if interfaceName == "chat_completions" {
+						switch interfaceName {
+						case "chat_completions":
 							requestBody["messages"] = []map[string]any{{"content": "hi", "role": "user"}}
 							requestBody["max_completion_tokens"] = 2048
-						} else {
+						case "messages":
+							requestBody["messages"] = []map[string]any{{"content": "hi", "role": "user"}}
+							requestBody["max_tokens"] = 2048
+						default:
 							requestBody["input"] = "hi"
 							requestBody["max_output_tokens"] = 2048
 						}
-						if effort != "" {
+						switch {
+						case effort == "":
+						case interfaceName != "messages":
 							requestBody["reasoning"] = map[string]any{"effort": effort}
+						// Claude's own API turns thinking off and names the other efforts in output_config.
+						case effort == "none":
+							requestBody["thinking"] = map[string]any{"type": "disabled"}
+						default:
+							requestBody["output_config"] = map[string]any{"effort": effort}
 						}
 						body, err := json.Marshal(requestBody)
 						if err != nil {
@@ -2206,7 +2220,7 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 						if interfaceName == "chat_completions" && request.ChatRequest.Provider != coreProvider {
 							t.Fatalf("Bifrost chat provider = %q, want %q", request.ChatRequest.Provider, coreProvider)
 						}
-						if interfaceName == "responses" && request.ResponsesRequest.Provider != coreProvider {
+						if interfaceName != "chat_completions" && request.ResponsesRequest.Provider != coreProvider {
 							t.Fatalf("Bifrost Responses provider = %q, want %q", request.ResponsesRequest.Provider, coreProvider)
 						}
 
@@ -2217,7 +2231,7 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 							if wireBytes, bifrostErr = prepareChatProviderBody(ctx, request.ChatRequest, false, source.Hosting); bifrostErr != nil {
 								t.Fatalf("prepare cloud Claude chat body: %v", bifrostErr)
 							}
-						case cloudClaude && interfaceName == "responses":
+						case cloudClaude && interfaceName != "chat_completions":
 							var bifrostErr *schemas.BifrostError
 							if wireBytes, bifrostErr = prepareResponsesProviderBody(ctx, request.ResponsesRequest, false, source.Hosting); bifrostErr != nil {
 								t.Fatalf("prepare cloud Claude Responses body: %v", bifrostErr)
@@ -2232,7 +2246,7 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 							if bifrostErr != nil {
 								t.Fatalf("build Anthropic-family chat wire request: %v", bifrostErr)
 							}
-						case usesAnthropicWire && interfaceName == "responses":
+						case usesAnthropicWire && interfaceName != "chat_completions":
 							var bifrostErr *schemas.BifrostError
 							wireBytes, bifrostErr = anthropicprovider.BuildAnthropicResponsesRequestBody(
 								ctx,
@@ -2408,8 +2422,11 @@ func TestEveryAdvertisedManualReasoningBudgetReachesAnthropicWireFormat(t *testi
 			for _, interfaceName := range route.Interfaces {
 				interfaceName := interfaceName
 				catalogRoute := catalog.RouteResponses
-				if interfaceName == "chat_completions" {
+				switch interfaceName {
+				case "chat_completions":
 					catalogRoute = catalog.RouteChat
+				case "messages":
+					catalogRoute = catalog.RouteMessages
 				}
 				resolved, active := testDeploymentForRoute(provider, deploymentID, catalogRoute)
 				if !active || resolved.ReasoningMaxTokens == nil {
@@ -2422,14 +2439,21 @@ func TestEveryAdvertisedManualReasoningBudgetReachesAnthropicWireFormat(t *testi
 						"reasoning": map[string]any{"max_tokens": minimum},
 					}
 					path := "/v1/responses"
-					if interfaceName == "chat_completions" {
+					switch interfaceName {
+					case "chat_completions":
 						path = "/v1/chat/completions"
 						requestBody["messages"] = []map[string]any{{"content": "hi", "role": "user"}}
 						requestBody["max_completion_tokens"] = minimum + 1
-					} else if interfaceName == "responses" {
+					case "responses":
 						requestBody["input"] = "hi"
 						requestBody["max_output_tokens"] = minimum + 1
-					} else {
+					case "messages":
+						path = "/v1/messages"
+						delete(requestBody, "reasoning")
+						requestBody["thinking"] = map[string]any{"type": "enabled", "budget_tokens": minimum}
+						requestBody["messages"] = []map[string]any{{"content": "hi", "role": "user"}}
+						requestBody["max_tokens"] = minimum + 1
+					default:
 						t.Fatalf("unsupported catalog interface %q", interfaceName)
 					}
 					body, err := json.Marshal(requestBody)

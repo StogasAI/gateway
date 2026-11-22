@@ -4603,8 +4603,8 @@ const (
 	// Ping events are just keepalive (sent by very few providers, Anthropic is one of them)
 	ResponsesStreamResponseTypePing ResponsesStreamResponseType = "response.ping"
 
-	// Deprecated: retained for source compatibility. Providers no longer synthesize
-	// generic raw events; supported provider events have explicit types.
+	// ProviderRawEvent carries only the raw provider event of an Anthropic stream event that
+	// yields no other chunk, for a caller that asked for raw responses.
 	ResponsesStreamResponseTypeProviderRawEvent ResponsesStreamResponseType = "response.provider_raw_event"
 	// SafeguardsUpdate carries an Anthropic classifier event, omitted on OpenAI surfaces.
 	ResponsesStreamResponseTypeSafeguardsUpdate ResponsesStreamResponseType = "response.safeguards_update"

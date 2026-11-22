@@ -944,11 +944,11 @@ func TestGPT56ReasoningEffortsFollowTheSelectedRoute(t *testing.T) {
 		{provider: schemas.Azure, model: "azure-gpt-5.6-sol"},
 	} {
 		chat, ok := testDeploymentForRoute(test.provider, test.model, RouteChat)
-		if !ok || !sameStrings(chat.ReasoningEfforts, []string{"low", "medium", "high", "xhigh"}) {
+		if !ok || !slices.Equal(chat.ReasoningEfforts, []string{"low", "medium", "high", "xhigh"}) {
 			t.Fatalf("%s Chat reasoning efforts = %#v", test.model, chat.ReasoningEfforts)
 		}
 		responses, ok := testDeploymentForRoute(test.provider, test.model, RouteResponses)
-		if !ok || !sameStrings(responses.ReasoningEfforts, []string{"low", "medium", "high", "xhigh", "max"}) {
+		if !ok || !slices.Equal(responses.ReasoningEfforts, []string{"low", "medium", "high", "xhigh", "max"}) {
 			t.Fatalf("%s Responses reasoning efforts = %#v", test.model, responses.ReasoningEfforts)
 		}
 	}

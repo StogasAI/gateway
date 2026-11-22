@@ -2254,13 +2254,14 @@ func TestConvertBifrostMessages_UnsupportedToolCallTurnOrder(t *testing.T) {
 			},
 		}
 		msgs := convert(t, []schemas.ResponsesMessage{user, functionCall, applyPatchCall})
-		if len(msgs) != 3 {
-			t.Fatalf("expected user + tool_use + call text, got %+v", msgs)
+		if len(msgs) != 2 {
+			t.Fatalf("expected user + one assistant turn, got %+v", msgs)
 		}
-		if b := msgs[1].Content.ContentBlocks; len(b) != 1 || b[0].Type != AnthropicContentBlockTypeToolUse {
-			t.Fatalf("expected the tool_use turn first, got %+v", b)
+		b := msgs[1].Content.ContentBlocks
+		if len(b) != 2 || b[0].Type != AnthropicContentBlockTypeToolUse {
+			t.Fatalf("expected the tool_use first, got %+v", b)
 		}
-		if b := msgs[2].Content.ContentBlocks; len(b) != 1 || b[0].Text == nil || !strings.Contains(*b[0].Text, "apply_patch_call") {
+		if b[1].Text == nil || !strings.Contains(*b[1].Text, "apply_patch_call") {
 			t.Fatalf("expected the apply_patch text after the tool_use, got %+v", b)
 		}
 	})
@@ -2295,14 +2296,12 @@ func TestConvertBifrostMessages_UnsupportedToolCallTurnOrder(t *testing.T) {
 			} {
 				t.Run(name, func(t *testing.T) {
 					msgs := convert(t, append([]schemas.ResponsesMessage{user, functionCall, applyPatchCall}, outputs...))
-					if len(msgs) != 5 {
-						t.Fatalf("expected user, tool_use, call text, tool_result, output text; got %+v", msgs)
+					if len(msgs) != 3 {
+						t.Fatalf("expected user, the call turn and the result turn; got %+v", msgs)
 					}
-					if b := msgs[3].Content.ContentBlocks; len(b) != 1 || b[0].Type != AnthropicContentBlockTypeToolResult {
-						t.Fatalf("expected the tool_result before the tool output text, got %+v", msgs[3])
-					}
-					if b := msgs[4].Content.ContentBlocks; msgs[4].Role != AnthropicMessageRoleUser || len(b) != 1 || b[0].Type != AnthropicContentBlockTypeText {
-						t.Fatalf("expected the tool output text as the last user turn, got %+v", msgs[4])
+					b := msgs[2].Content.ContentBlocks
+					if msgs[2].Role != AnthropicMessageRoleUser || len(b) != 2 || b[0].Type != AnthropicContentBlockTypeToolResult || b[1].Type != AnthropicContentBlockTypeText {
+						t.Fatalf("expected the tool_result before the tool output text, got %+v", msgs[2])
 					}
 				})
 			}

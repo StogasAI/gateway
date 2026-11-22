@@ -36,7 +36,18 @@ func replyRedactionFailure(err error) *schemas.BifrostError {
 // provider's reply, changed when a redaction of the request's policies changes replies. A
 // failure is the request's, and its state keeps it.
 func unaryReplyPayload(state *stogas.State, memory *requestMemoryLease, reply *schemas.BifrostResponse) (any, *schemas.BifrostError) {
-	payload := unaryResponsePayload(reply, servedModel(state))
+	var payload any
+	if usesMessages(state) {
+		claude, err := messagesReply(reply.ResponsesResponse, servedModel(state))
+		if err != nil {
+			failure := responseEncodingFailure()
+			retainResponseFailure(state, failure)
+			return nil, failure
+		}
+		payload = claude
+	} else {
+		payload = unaryResponsePayload(reply, servedModel(state))
+	}
 	redaction := stogas.NewReplyRedaction(state, replyGrowth(memory))
 	if redaction == nil {
 		return payload, nil
