@@ -28,6 +28,9 @@ const (
 	// Platform's generateContent API through core's Gemini provider, as
 	// CoreProviderAWSChatCompletions does for AWS.
 	CoreProviderGoogleCloudGenerateContent schemas.ModelProvider = "google-cloud-agent-platform-generate-content"
+	// CoreProviderGoogleCloudChatCompletions sends a Google Cloud deployment of an open model, which
+	// Google runs as a managed API, to Agent Platform's Chat Completions API in OpenAI's format.
+	CoreProviderGoogleCloudChatCompletions schemas.ModelProvider = "google-cloud-agent-platform-chat-completions"
 
 	canonicalAuthHeader = "authorization"
 )
@@ -37,7 +40,7 @@ func CatalogProvider(core schemas.ModelProvider) schemas.ModelProvider {
 	switch core {
 	case CoreProviderAWSChatCompletions:
 		return ProviderAWS
-	case CoreProviderGoogleCloudGenerateContent:
+	case CoreProviderGoogleCloudGenerateContent, CoreProviderGoogleCloudChatCompletions:
 		return ProviderGoogleCloud
 	}
 	return core
@@ -46,7 +49,7 @@ func CatalogProvider(core schemas.ModelProvider) schemas.ModelProvider {
 // UsesClaudeWire reports whether a provider serves the model over Anthropic's Messages API, which
 // bills cache writes by duration and takes a manual thinking budget. Azure, AWS and Google Cloud
 // serve Claude over it. Azure and AWS serve other models in OpenAI's format, and Google Cloud
-// serves Gemini in its own.
+// serves Gemini in its own and open models in OpenAI's.
 func UsesClaudeWire(provider schemas.ModelProvider, modelID string) bool {
 	switch provider {
 	case schemas.Anthropic:

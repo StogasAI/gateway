@@ -1,0 +1,887 @@
+{
+	"shows": "On Agent Platform's Chat Completions API for open models, Google refuses a PDF or text file for every model and an image URL for the models that read images. Gemma 4 26B A4B and DeepSeek V4.1 Flash 1017 read an inline image and an image in a tool message, and gpt-oss-120b and GLM-5.2 answer 200 for an image that they never see.",
+	"recorded": "2026-11-22",
+	"exchanges": [
+		{
+			"name": "openai/gpt-oss-120b-maas pdf",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "openai/gpt-oss-120b-maas",
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "file",
+									"file": {
+										"filename": "note.pdf",
+										"file_data": "data:application/pdf;base64,JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCAzMDAgMTAwXSAvQ29udGVudHMgNCAwIFIgL1Jlc291cmNlcyA8PCAvRm9udCA8PCAvRjEgNSAwIFIgPj4gPj4gPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCA0NyA+PgpzdHJlYW0KQlQgL0YxIDEyIFRmIDIwIDUwIFRkIChUaGUgY29kZSBpcyA0NDE3LikgVGogRVQKZW5kc3RyZWFtCmVuZG9iago1IDAgb2JqCjw8IC9UeXBlIC9Gb250IC9TdWJ0eXBlIC9UeXBlMSAvQmFzZUZvbnQgL0hlbHZldGljYSA+PgplbmRvYmoKeHJlZgowIDYKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwNTggMDAwMDAgbiAKMDAwMDAwMDExNSAwMDAwMCBuIAowMDAwMDAwMjQxIDAwMDAwIG4gCjAwMDAwMDAzMzggMDAwMDAgbiAKdHJhaWxlcgo8PCAvU2l6ZSA2IC9Sb290IDEgMCBSID4+CnN0YXJ0eHJlZgo0MDgKJSVFT0YK"
+									}
+								},
+								{
+									"type": "text",
+									"text": "What is the code in the file? Answer with it only."
+								}
+							]
+						}
+					],
+					"max_tokens": 2000
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": [
+					{
+						"error": {
+							"code": 400,
+							"message": "Unrecognized 'type' field in an object element of an array 'content' field; found: 'file'.",
+							"status": "INVALID_ARGUMENT"
+						}
+					}
+				]
+			}
+		},
+		{
+			"name": "openai/gpt-oss-120b-maas txt",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "openai/gpt-oss-120b-maas",
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "file",
+									"file": {
+										"filename": "note.txt",
+										"file_data": "data:text/plain;base64,VGhlIGNvZGUgaXMgNTUyMy4="
+									}
+								},
+								{
+									"type": "text",
+									"text": "What is the code in the file? Answer with it only."
+								}
+							]
+						}
+					],
+					"max_tokens": 2000
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": [
+					{
+						"error": {
+							"code": 400,
+							"message": "Unrecognized 'type' field in an object element of an array 'content' field; found: 'file'.",
+							"status": "INVALID_ARGUMENT"
+						}
+					}
+				]
+			}
+		},
+		{
+			"name": "openai/gpt-oss-120b-maas inline image",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "openai/gpt-oss-120b-maas",
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "image_url",
+									"image_url": {
+										"url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAyUlEQVR4nO2ZQRKEIAwE5/+fZo+7tadgkEmgpzxLt6OCotE8Gs2DgDs04A4NuEMD7tDA/wVR6CjXQJD7BRPZ0BdpyE+fc1AJ+oSDSqAnNFSLft7hNoEN9JMOqkg/46Ci9GGHSwQs9DEHBBo0YLx/Ag4I0AC3EA8xbyFeo0xkzMQsJc5ejSJQoIH238QnCLT/L7TZIU502b/REwTa7w+8p/GM4uI9soUOmfGzAkmN/Mgr8H/Pt4n7O+BoHgTcoQF3aMAdGnBHboBsPhOLC++0el++AAAAAElFTkSuQmCC"
+									}
+								},
+								{
+									"type": "text",
+									"text": "What color is the shape in this image? Answer in one word."
+								}
+							]
+						}
+					],
+					"max_tokens": 2000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": 200002,
+							"message": {
+								"content": "I’m afraid I can’t view the image. Could you describe it for me?",
+								"reasoning": "The user asks about an image. There's no image attached in the conversation. As an AI, I cannot see images. We must respond that we can't see the image. But policy: If user asks about image but none provided, we should say I cannot see the image. Possibly ask for description. So answer: \"I'm sorry, I can't see the image.\"",
+								"reasoning_content": "The user asks about an image. There's no image attached in the conversation. As an AI, I cannot see images. We must respond that we can't see the image. But policy: If user asks about image but none provided, we should say I cannot see the image. Possibly ask for description. So answer: \"I'm sorry, I can't see the image.\"",
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795325695,
+					"id": "8b87f447-b1aa-4f4d-9b9b-2ccb924367f4",
+					"metadata": {
+						"weight_version": "default"
+					},
+					"model": "openai/gpt-oss-120b-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 100,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 85,
+						"prompt_tokens_details": null,
+						"total_tokens": 185
+					}
+				}
+			}
+		},
+		{
+			"name": "google/gemma-4-26b-a4b-it-maas pdf",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "google/gemma-4-26b-a4b-it-maas",
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "file",
+									"file": {
+										"filename": "note.pdf",
+										"file_data": "data:application/pdf;base64,JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCAzMDAgMTAwXSAvQ29udGVudHMgNCAwIFIgL1Jlc291cmNlcyA8PCAvRm9udCA8PCAvRjEgNSAwIFIgPj4gPj4gPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCA0NyA+PgpzdHJlYW0KQlQgL0YxIDEyIFRmIDIwIDUwIFRkIChUaGUgY29kZSBpcyA0NDE3LikgVGogRVQKZW5kc3RyZWFtCmVuZG9iago1IDAgb2JqCjw8IC9UeXBlIC9Gb250IC9TdWJ0eXBlIC9UeXBlMSAvQmFzZUZvbnQgL0hlbHZldGljYSA+PgplbmRvYmoKeHJlZgowIDYKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwNTggMDAwMDAgbiAKMDAwMDAwMDExNSAwMDAwMCBuIAowMDAwMDAwMjQxIDAwMDAwIG4gCjAwMDAwMDAzMzggMDAwMDAgbiAKdHJhaWxlcgo8PCAvU2l6ZSA2IC9Sb290IDEgMCBSID4+CnN0YXJ0eHJlZgo0MDgKJSVFT0YK"
+									}
+								},
+								{
+									"type": "text",
+									"text": "What is the code in the file? Answer with it only."
+								}
+							]
+						}
+					],
+					"max_tokens": 2000
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": [
+					{
+						"error": {
+							"code": 400,
+							"message": "Unrecognized 'type' field in an object element of an array 'content' field; found: 'file'.",
+							"status": "INVALID_ARGUMENT"
+						}
+					}
+				]
+			}
+		},
+		{
+			"name": "google/gemma-4-26b-a4b-it-maas txt",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "google/gemma-4-26b-a4b-it-maas",
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "file",
+									"file": {
+										"filename": "note.txt",
+										"file_data": "data:text/plain;base64,VGhlIGNvZGUgaXMgNTUyMy4="
+									}
+								},
+								{
+									"type": "text",
+									"text": "What is the code in the file? Answer with it only."
+								}
+							]
+						}
+					],
+					"max_tokens": 2000
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": [
+					{
+						"error": {
+							"code": 400,
+							"message": "Unrecognized 'type' field in an object element of an array 'content' field; found: 'file'.",
+							"status": "INVALID_ARGUMENT"
+						}
+					}
+				]
+			}
+		},
+		{
+			"name": "google/gemma-4-26b-a4b-it-maas inline image",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "google/gemma-4-26b-a4b-it-maas",
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "image_url",
+									"image_url": {
+										"url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAyUlEQVR4nO2ZQRKEIAwE5/+fZo+7tadgkEmgpzxLt6OCotE8Gs2DgDs04A4NuEMD7tDA/wVR6CjXQJD7BRPZ0BdpyE+fc1AJ+oSDSqAnNFSLft7hNoEN9JMOqkg/46Ci9GGHSwQs9DEHBBo0YLx/Ag4I0AC3EA8xbyFeo0xkzMQsJc5ejSJQoIH238QnCLT/L7TZIU502b/REwTa7w+8p/GM4uI9soUOmfGzAkmN/Mgr8H/Pt4n7O+BoHgTcoQF3aMAdGnBHboBsPhOLC++0el++AAAAAElFTkSuQmCC"
+									}
+								},
+								{
+									"type": "text",
+									"text": "What color is the shape in this image? Answer in one word."
+								}
+							]
+						}
+					],
+					"max_tokens": 2000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": 106,
+							"message": {
+								"content": "Red",
+								"reasoning_content": null,
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795325695,
+					"id": "79be79e6-9060-4016-b1d6-ac1d3b7b4efb",
+					"metadata": {
+						"weight_version": "default"
+					},
+					"model": "google/gemma-4-26b-a4b-it-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 2,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 286,
+						"prompt_tokens_details": {
+							"cached_tokens": 3
+						},
+						"total_tokens": 288
+					}
+				}
+			}
+		},
+		{
+			"name": "google/gemma-4-26b-a4b-it-maas image url",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "google/gemma-4-26b-a4b-it-maas",
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "image_url",
+									"image_url": {
+										"url": "https://example.com/photo.png"
+									}
+								},
+								{
+									"type": "text",
+									"text": "What color is this image? Answer in one word."
+								}
+							]
+						}
+					],
+					"max_tokens": 2000
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": [
+					{
+						"error": {
+							"code": 400,
+							"message": "Cannot fetch content from the provided URL. Please ensure the URL is valid and accessible by Vertex AI. Vertex AI respects robots.txt rules, so confirm the URL is allowed to be crawled. Status: URL_ERROR-ERROR_NOT_FOUND",
+							"status": "INVALID_ARGUMENT"
+						}
+					}
+				]
+			}
+		},
+		{
+			"name": "google/gemma-4-26b-a4b-it-maas image in a tool message",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "google/gemma-4-26b-a4b-it-maas",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Call get_photo, then name the color of the shape in it."
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "callphoto",
+									"type": "function",
+									"function": {
+										"name": "get_photo",
+										"arguments": "{}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "callphoto",
+							"content": [
+								{
+									"type": "image_url",
+									"image_url": {
+										"url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAyUlEQVR4nO2ZQRKEIAwE5/+fZo+7tadgkEmgpzxLt6OCotE8Gs2DgDs04A4NuEMD7tDA/wVR6CjXQJD7BRPZ0BdpyE+fc1AJ+oSDSqAnNFSLft7hNoEN9JMOqkg/46Ci9GGHSwQs9DEHBBo0YLx/Ag4I0AC3EA8xbyFeo0xkzMQsJc5ejSJQoIH238QnCLT/L7TZIU502b/REwTa7w+8p/GM4uI9soUOmfGzAkmN/Mgr8H/Pt4n7O+BoHgTcoQF3aMAdGnBHboBsPhOLC++0el++AAAAAElFTkSuQmCC"
+									}
+								}
+							]
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_photo",
+								"description": "Returns a photo.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"max_tokens": 2000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": 106,
+							"message": {
+								"content": "The color of the shape is red.",
+								"reasoning_content": null,
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795325696,
+					"id": "87672afb-f2b2-4e9e-b40e-cc5c9183a6c4",
+					"metadata": {
+						"weight_version": "default"
+					},
+					"model": "google/gemma-4-26b-a4b-it-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 9,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 335,
+						"prompt_tokens_details": {
+							"cached_tokens": 4
+						},
+						"total_tokens": 344
+					}
+				}
+			}
+		},
+		{
+			"name": "deepseek-ai/deepseek-v4.1-flash-1017-maas pdf",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "deepseek-ai/deepseek-v4.1-flash-1017-maas",
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "file",
+									"file": {
+										"filename": "note.pdf",
+										"file_data": "data:application/pdf;base64,JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCAzMDAgMTAwXSAvQ29udGVudHMgNCAwIFIgL1Jlc291cmNlcyA8PCAvRm9udCA8PCAvRjEgNSAwIFIgPj4gPj4gPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCA0NyA+PgpzdHJlYW0KQlQgL0YxIDEyIFRmIDIwIDUwIFRkIChUaGUgY29kZSBpcyA0NDE3LikgVGogRVQKZW5kc3RyZWFtCmVuZG9iago1IDAgb2JqCjw8IC9UeXBlIC9Gb250IC9TdWJ0eXBlIC9UeXBlMSAvQmFzZUZvbnQgL0hlbHZldGljYSA+PgplbmRvYmoKeHJlZgowIDYKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwNTggMDAwMDAgbiAKMDAwMDAwMDExNSAwMDAwMCBuIAowMDAwMDAwMjQxIDAwMDAwIG4gCjAwMDAwMDAzMzggMDAwMDAgbiAKdHJhaWxlcgo8PCAvU2l6ZSA2IC9Sb290IDEgMCBSID4+CnN0YXJ0eHJlZgo0MDgKJSVFT0YK"
+									}
+								},
+								{
+									"type": "text",
+									"text": "What is the code in the file? Answer with it only."
+								}
+							]
+						}
+					],
+					"max_tokens": 2000
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": [
+					{
+						"error": {
+							"code": 400,
+							"message": "Unrecognized 'type' field in an object element of an array 'content' field; found: 'file'.",
+							"status": "INVALID_ARGUMENT"
+						}
+					}
+				]
+			}
+		},
+		{
+			"name": "deepseek-ai/deepseek-v4.1-flash-1017-maas txt",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "deepseek-ai/deepseek-v4.1-flash-1017-maas",
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "file",
+									"file": {
+										"filename": "note.txt",
+										"file_data": "data:text/plain;base64,VGhlIGNvZGUgaXMgNTUyMy4="
+									}
+								},
+								{
+									"type": "text",
+									"text": "What is the code in the file? Answer with it only."
+								}
+							]
+						}
+					],
+					"max_tokens": 2000
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": [
+					{
+						"error": {
+							"code": 400,
+							"message": "Unrecognized 'type' field in an object element of an array 'content' field; found: 'file'.",
+							"status": "INVALID_ARGUMENT"
+						}
+					}
+				]
+			}
+		},
+		{
+			"name": "deepseek-ai/deepseek-v4.1-flash-1017-maas inline image",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "deepseek-ai/deepseek-v4.1-flash-1017-maas",
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "image_url",
+									"image_url": {
+										"url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAyUlEQVR4nO2ZQRKEIAwE5/+fZo+7tadgkEmgpzxLt6OCotE8Gs2DgDs04A4NuEMD7tDA/wVR6CjXQJD7BRPZ0BdpyE+fc1AJ+oSDSqAnNFSLft7hNoEN9JMOqkg/46Ci9GGHSwQs9DEHBBo0YLx/Ag4I0AC3EA8xbyFeo0xkzMQsJc5ejSJQoIH238QnCLT/L7TZIU502b/REwTa7w+8p/GM4uI9soUOmfGzAkmN/Mgr8H/Pt4n7O+BoHgTcoQF3aMAdGnBHboBsPhOLC++0el++AAAAAElFTkSuQmCC"
+									}
+								},
+								{
+									"type": "text",
+									"text": "What color is the shape in this image? Answer in one word."
+								}
+							]
+						}
+					],
+					"max_tokens": 2000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": 1,
+							"message": {
+								"content": "Red",
+								"reasoning_content": null,
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795325696,
+					"id": "c376ec5e-9f2e-4e4f-a12c-c51b5896cfe7",
+					"metadata": {
+						"weight_version": "default",
+						"weight_versions": [
+							{
+								"end": 2,
+								"start": 0,
+								"version": "default"
+							}
+						]
+					},
+					"model": "deepseek-ai/deepseek-v4.1-flash-1017-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 2,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 203,
+						"prompt_tokens_details": {
+							"cached_tokens": 0,
+							"image_tokens": 184
+						},
+						"total_tokens": 205
+					}
+				}
+			}
+		},
+		{
+			"name": "deepseek-ai/deepseek-v4.1-flash-1017-maas image url",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "deepseek-ai/deepseek-v4.1-flash-1017-maas",
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "image_url",
+									"image_url": {
+										"url": "https://example.com/photo.png"
+									}
+								},
+								{
+									"type": "text",
+									"text": "What color is this image? Answer in one word."
+								}
+							]
+						}
+					],
+					"max_tokens": 2000
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": [
+					{
+						"error": {
+							"code": 400,
+							"message": "Cannot fetch content from the provided URL. Please ensure the URL is valid and accessible by Vertex AI. Vertex AI respects robots.txt rules, so confirm the URL is allowed to be crawled. Status: URL_ERROR-ERROR_NOT_FOUND",
+							"status": "INVALID_ARGUMENT"
+						}
+					}
+				]
+			}
+		},
+		{
+			"name": "deepseek-ai/deepseek-v4.1-flash-1017-maas image in a tool message",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "deepseek-ai/deepseek-v4.1-flash-1017-maas",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Call get_photo, then name the color of the shape in it."
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "callphoto",
+									"type": "function",
+									"function": {
+										"name": "get_photo",
+										"arguments": "{}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "callphoto",
+							"content": [
+								{
+									"type": "image_url",
+									"image_url": {
+										"url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAyUlEQVR4nO2ZQRKEIAwE5/+fZo+7tadgkEmgpzxLt6OCotE8Gs2DgDs04A4NuEMD7tDA/wVR6CjXQJD7BRPZ0BdpyE+fc1AJ+oSDSqAnNFSLft7hNoEN9JMOqkg/46Ci9GGHSwQs9DEHBBo0YLx/Ag4I0AC3EA8xbyFeo0xkzMQsJc5ejSJQoIH238QnCLT/L7TZIU502b/REwTa7w+8p/GM4uI9soUOmfGzAkmN/Mgr8H/Pt4n7O+BoHgTcoQF3aMAdGnBHboBsPhOLC++0el++AAAAAElFTkSuQmCC"
+									}
+								}
+							]
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_photo",
+								"description": "Returns a photo.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"max_tokens": 2000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": 1,
+							"message": {
+								"content": "The shape in the photo is red.",
+								"reasoning_content": null,
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795325697,
+					"id": "37793bf7-7ea6-4272-9dd4-9602888c357b",
+					"metadata": {
+						"weight_version": "default",
+						"weight_versions": [
+							{
+								"end": 9,
+								"start": 0,
+								"version": "default"
+							}
+						]
+					},
+					"model": "deepseek-ai/deepseek-v4.1-flash-1017-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 9,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 486,
+						"prompt_tokens_details": {
+							"cached_tokens": 0,
+							"image_tokens": 184
+						},
+						"total_tokens": 495
+					}
+				}
+			}
+		},
+		{
+			"name": "zai-org/glm-5.2-maas pdf",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "zai-org/glm-5.2-maas",
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "file",
+									"file": {
+										"filename": "note.pdf",
+										"file_data": "data:application/pdf;base64,JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCAzMDAgMTAwXSAvQ29udGVudHMgNCAwIFIgL1Jlc291cmNlcyA8PCAvRm9udCA8PCAvRjEgNSAwIFIgPj4gPj4gPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCA0NyA+PgpzdHJlYW0KQlQgL0YxIDEyIFRmIDIwIDUwIFRkIChUaGUgY29kZSBpcyA0NDE3LikgVGogRVQKZW5kc3RyZWFtCmVuZG9iago1IDAgb2JqCjw8IC9UeXBlIC9Gb250IC9TdWJ0eXBlIC9UeXBlMSAvQmFzZUZvbnQgL0hlbHZldGljYSA+PgplbmRvYmoKeHJlZgowIDYKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwNTggMDAwMDAgbiAKMDAwMDAwMDExNSAwMDAwMCBuIAowMDAwMDAwMjQxIDAwMDAwIG4gCjAwMDAwMDAzMzggMDAwMDAgbiAKdHJhaWxlcgo8PCAvU2l6ZSA2IC9Sb290IDEgMCBSID4+CnN0YXJ0eHJlZgo0MDgKJSVFT0YK"
+									}
+								},
+								{
+									"type": "text",
+									"text": "What is the code in the file? Answer with it only."
+								}
+							]
+						}
+					],
+					"max_tokens": 2000
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": [
+					{
+						"error": {
+							"code": 400,
+							"message": "Unrecognized 'type' field in an object element of an array 'content' field; found: 'file'.",
+							"status": "INVALID_ARGUMENT"
+						}
+					}
+				]
+			}
+		},
+		{
+			"name": "zai-org/glm-5.2-maas txt",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "zai-org/glm-5.2-maas",
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "file",
+									"file": {
+										"filename": "note.txt",
+										"file_data": "data:text/plain;base64,VGhlIGNvZGUgaXMgNTUyMy4="
+									}
+								},
+								{
+									"type": "text",
+									"text": "What is the code in the file? Answer with it only."
+								}
+							]
+						}
+					],
+					"max_tokens": 2000
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": [
+					{
+						"error": {
+							"code": 400,
+							"message": "Unrecognized 'type' field in an object element of an array 'content' field; found: 'file'.",
+							"status": "INVALID_ARGUMENT"
+						}
+					}
+				]
+			}
+		},
+		{
+			"name": "zai-org/glm-5.2-maas inline image",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "zai-org/glm-5.2-maas",
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "image_url",
+									"image_url": {
+										"url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAyUlEQVR4nO2ZQRKEIAwE5/+fZo+7tadgkEmgpzxLt6OCotE8Gs2DgDs04A4NuEMD7tDA/wVR6CjXQJD7BRPZ0BdpyE+fc1AJ+oSDSqAnNFSLft7hNoEN9JMOqkg/46Ci9GGHSwQs9DEHBBo0YLx/Ag4I0AC3EA8xbyFeo0xkzMQsJc5ejSJQoIH238QnCLT/L7TZIU502b/REwTa7w+8p/GM4uI9soUOmfGzAkmN/Mgr8H/Pt4n7O+BoHgTcoQF3aMAdGnBHboBsPhOLC++0el++AAAAAElFTkSuQmCC"
+									}
+								},
+								{
+									"type": "text",
+									"text": "What color is the shape in this image? Answer in one word."
+								}
+							]
+						}
+					],
+					"max_tokens": 2000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": 154827,
+							"message": {
+								"content": "Unknown.",
+								"reasoning_content": "1.  **Analyze the Request:** The user is asking for the color of a shape in an image, with a constraint to answer in one word.\n2.  **Analyze the Constraints:** The system reminder explicitly states: \"You are unable to process this image because you don't have multi-modal input ability. Try different methods.\"\n3.  **Evaluate Capabilities:** I am a text-based AI and cannot see images.\n4.  **Determine the Best Response:** Since I cannot see the image, I must state that I cannot process it or don't know the color, but the user asked for a *one-word answer*.\n5.  **Formulate the Answer:** What one-word answer fits best?\n    *   \"Unknown\"\n    *   \"Unable\" (doesn't make sense alone)\n    *   \"Invisible\"\n    *   \"Unclear\"\n    *   \"N/A\"\n    *   Wait, the prompt says \"You are unable to process this image because you don't have multi-modal input ability. Try different methods.\" and asks \"What color is the shape in this image? Answer in one word.\"\n    *   If I strictly follow the one-word constraint, \"Unknown\" is the most accurate description of the color to me.\n    *   Let me double-check if there is any trick. Often in these prompts, the user is testing the system reminder. \"Unknown\" is a good one-word answer. Another option is just stating the limitation, but one word is strict. \"Unknown\" it is.\n    *   Wait, is it better to say \"Unable\" or \"Unknown\"? \"Unknown\" directly answers \"What color...\".\n6.  **Final Selection:** Unknown.",
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795325700,
+					"id": "bde8a0c0-2ce0-402b-9366-22d41b7bdcbb",
+					"metadata": {
+						"weight_version": "default"
+					},
+					"model": "zai-org/glm-5.2-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 357,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 51,
+						"prompt_tokens_details": null,
+						"total_tokens": 408
+					}
+				}
+			}
+		}
+	]
+}

@@ -1,0 +1,404 @@
+{
+	"shows": "On Agent Platform's Chat Completions API for open models, every model calls get_weather under tool_choice none when an earlier call and its result come before a question that still needs it.",
+	"recorded": "2026-11-22",
+	"exchanges": [
+		{
+			"name": "openai/gpt-oss-120b-maas after a call 1",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "openai/gpt-oss-120b-maas",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris and in Rome? Look up each city."
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "a1B2c3D4e",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "a1B2c3D4e",
+							"content": "Sunny, 21 C"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"tool_choice": "none",
+					"max_tokens": 2000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": 200012,
+							"message": {
+								"content": "<|start|>assistant<|channel|>commentary to=functions.get_weather <|constrain|>json<|message|>{\"city\":\"Rome\"}<|call|>",
+								"reasoning_content": "The user asks: \"What is the weather in Paris and in Rome? Look up each city.\" We need to provide weather for both. We already fetched Paris, got \"Sunny, 21 C\". Need to also fetch Rome. Then answer with both.",
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795322323,
+					"id": "c1e247c9-6081-4ef3-b713-e5b56fffd671",
+					"metadata": {
+						"weight_version": "default"
+					},
+					"model": "openai/gpt-oss-120b-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 76,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 120,
+						"prompt_tokens_details": {
+							"cached_tokens": 59
+						},
+						"total_tokens": 196
+					}
+				}
+			}
+		},
+		{
+			"name": "google/gemma-4-26b-a4b-it-maas after a call 1",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "google/gemma-4-26b-a4b-it-maas",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris and in Rome? Look up each city."
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "a1B2c3D4e",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "a1B2c3D4e",
+							"content": "Sunny, 21 C"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"tool_choice": "none",
+					"max_tokens": 2000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": 50,
+							"message": {
+								"content": "<|tool_call>call:get_weather{city:<|\"|>Rome<|\"|>}<tool_call|>",
+								"reasoning_content": null,
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795322323,
+					"id": "4b860daa-e577-442c-b4a7-9f24ee99e0d8",
+					"metadata": {
+						"weight_version": "default"
+					},
+					"model": "google/gemma-4-26b-a4b-it-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 15,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 58,
+						"prompt_tokens_details": {
+							"cached_tokens": 4
+						},
+						"total_tokens": 73
+					}
+				}
+			}
+		},
+		{
+			"name": "deepseek-ai/deepseek-v4.1-flash-1017-maas after a call 1",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "deepseek-ai/deepseek-v4.1-flash-1017-maas",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris and in Rome? Look up each city."
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "a1B2c3D4e",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "a1B2c3D4e",
+							"content": "Sunny, 21 C"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"tool_choice": "none",
+					"max_tokens": 2000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": 1,
+							"message": {
+								"content": "\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"get_weather\">\n<｜DSML｜ parameter name=\"city\" string=\"true\">Rome</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n</｜DSML｜ calls>",
+								"reasoning_content": null,
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795322323,
+					"id": "546b9d5c-a58f-42b3-a0fa-1ccd701b1cf1",
+					"metadata": {
+						"weight_version": "default",
+						"weight_versions": [
+							{
+								"end": 39,
+								"start": 0,
+								"version": "default"
+							}
+						]
+					},
+					"model": "deepseek-ai/deepseek-v4.1-flash-1017-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 39,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 341,
+						"prompt_tokens_details": null,
+						"total_tokens": 380
+					}
+				}
+			}
+		},
+		{
+			"name": "zai-org/glm-5.2-maas after a call 1",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "zai-org/glm-5.2-maas",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris and in Rome? Look up each city."
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "a1B2c3D4e",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "a1B2c3D4e",
+							"content": "Sunny, 21 C"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"tool_choice": "none",
+					"max_tokens": 2000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": 154829,
+							"message": {
+								"content": "<tool_call>get_weather<arg_key>city</arg_key><arg_value>Rome</arg_value></tool_call>",
+								"reasoning_content": "1.  **Analyze the Request:**\n    *   The user is asking for the weather in *both* Paris and Rome.\n    *   The instruction specifically says \"Look up each city\", which means I need to call the weather tool for both cities.\n\n2.  **Current State:**\n    *   I just called `get_weather` for Paris and got the result: \"Sunny, 21 C\".\n\n3.  **Next Step:**\n    *   I still need to get the weather for Rome. I should call `get_weather` for Rome.\n\n4.  **Action:**\n    *   Call `get_weather` with `city=\"Rome\"`.",
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795322325,
+					"id": "630907dc-30d5-4d9f-a500-c1936e1985f4",
+					"metadata": {
+						"weight_version": "default",
+						"weight_versions": [
+							{
+								"end": 154,
+								"start": 0,
+								"version": "default"
+							}
+						]
+					},
+					"model": "zai-org/glm-5.2-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 154,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 49,
+						"prompt_tokens_details": null,
+						"total_tokens": 203
+					}
+				}
+			}
+		}
+	]
+}

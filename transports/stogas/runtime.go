@@ -243,8 +243,8 @@ func confidentialProduction(config Config) bool {
 }
 
 // cloudConfig serves AWS or Google Cloud through the core provider of the format that a
-// deployment takes: Anthropic's for Claude, OpenAI's Chat Completions for other models on AWS and
-// Gemini's generateContent on Google Cloud. Each request names its own URL, so the base URL cannot
+// deployment takes: Anthropic's for Claude, Gemini's generateContent for Gemini, and OpenAI's Chat
+// Completions for the other models. Each request names its own URL, so the base URL cannot
 // resolve: a request without one never reaches Anthropic, OpenAI or Google with a cloud
 // credential.
 func cloudConfig(config Config, format schemas.ModelProvider) schemas.ProviderConfig {
@@ -305,6 +305,8 @@ func newAccount(config Config, chutesE2EE *chutese2ee.Transport) *account {
 	googleCloudConfig.NetworkConfig.RequirePostQuantumTLS = requirePostQuantumTLS
 	googleCloudGenerateContentConfig := cloudConfig(config, schemas.Gemini)
 	googleCloudGenerateContentConfig.NetworkConfig.RequirePostQuantumTLS = requirePostQuantumTLS
+	googleCloudChatCompletionsConfig := cloudConfig(config, schemas.OpenAI)
+	googleCloudChatCompletionsConfig.NetworkConfig.RequirePostQuantumTLS = requirePostQuantumTLS
 
 	return &account{
 		keys: map[schemas.ModelProvider]schemas.Key{
@@ -326,6 +328,7 @@ func newAccount(config Config, chutesE2EE *chutese2ee.Transport) *account {
 			catalog.CoreProviderAWSChatCompletions:         awsChatCompletionsConfig,
 			catalog.ProviderGoogleCloud:                    googleCloudConfig,
 			catalog.CoreProviderGoogleCloudGenerateContent: googleCloudGenerateContentConfig,
+			catalog.CoreProviderGoogleCloudChatCompletions: googleCloudChatCompletionsConfig,
 		},
 	}
 }
@@ -410,7 +413,7 @@ func newProviderConfig(baseURL string, allowPrivateNetwork, requirePostQuantumTL
 }
 
 func (a *account) GetConfiguredProviders() ([]schemas.ModelProvider, error) {
-	return []schemas.ModelProvider{schemas.OpenAI, schemas.Anthropic, schemas.Azure, catalog.ProviderChutes, catalog.ProviderAWS, catalog.CoreProviderAWSChatCompletions, catalog.ProviderGoogleCloud, catalog.CoreProviderGoogleCloudGenerateContent}, nil
+	return []schemas.ModelProvider{schemas.OpenAI, schemas.Anthropic, schemas.Azure, catalog.ProviderChutes, catalog.ProviderAWS, catalog.CoreProviderAWSChatCompletions, catalog.ProviderGoogleCloud, catalog.CoreProviderGoogleCloudGenerateContent, catalog.CoreProviderGoogleCloudChatCompletions}, nil
 }
 
 func (a *account) GetKeysForProvider(ctx context.Context, providerKey schemas.ModelProvider) ([]schemas.Key, error) {

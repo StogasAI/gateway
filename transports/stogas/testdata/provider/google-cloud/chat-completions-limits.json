@@ -1,0 +1,651 @@
+{
+	"shows": "On Agent Platform's Chat Completions API for open models, Google refuses a max_tokens above 131,072 for gpt-oss-120b and above 32,768 for Gemma 4 26B A4B, and above the context window of 1,048,576 tokens for DeepSeek V4.1 Flash 1017 and GLM-5.2, for which the model's server answers 200 with an error, which Google sometimes turns into its own 400, and Google answers 400 when the request streams. It takes the output limits of the Gemma 4 and DeepSeek deployments, refuses those of gpt-oss-120b and GLM-5.2 as over the context window, which they equal, and answers a max_tokens of 0 with an empty reply that ends for its length.",
+	"recorded": "2026-11-22",
+	"exchanges": [
+		{
+			"name": "openai/gpt-oss-120b-maas max_tokens above the maximum",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "openai/gpt-oss-120b-maas",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 131073
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": [
+					{
+						"error": {
+							"code": 400,
+							"message": "Requested maximum tokens of 131073 exceeds the maximum output tokens limit: 131072.",
+							"status": "INVALID_ARGUMENT"
+						}
+					}
+				]
+			}
+		},
+		{
+			"name": "openai/gpt-oss-120b-maas max_tokens above the maximum, streamed",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "openai/gpt-oss-120b-maas",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 131073,
+					"stream": true
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": [
+					{
+						"error": {
+							"code": 400,
+							"message": "Requested maximum tokens of 131073 exceeds the maximum output tokens limit: 131072.",
+							"status": "INVALID_ARGUMENT"
+						}
+					}
+				]
+			}
+		},
+		{
+			"name": "openai/gpt-oss-120b-maas max_tokens at the deployment's limit",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "openai/gpt-oss-120b-maas",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 131072
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": [
+					{
+						"error": {
+							"code": 400,
+							"message": "Requested token count exceeds the model's maximum context length of 131072 tokens. You requested a total of 131142 tokens: 70 tokens from the input messages and 131072 tokens for the completion. Please reduce the number of tokens in the input messages or the completion to fit within the limit.",
+							"status": "INVALID_ARGUMENT"
+						}
+					}
+				]
+			}
+		},
+		{
+			"name": "openai/gpt-oss-120b-maas max_tokens of 0",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "openai/gpt-oss-120b-maas",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 0
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "length",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": null,
+							"message": {
+								"content": null,
+								"reasoning_content": null,
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795328852,
+					"id": "e5cd0d01-08fd-4225-a153-f7cf5f764410",
+					"metadata": {
+						"weight_version": "default"
+					},
+					"model": "openai/gpt-oss-120b-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 0,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 70,
+						"prompt_tokens_details": {
+							"cached_tokens": 40
+						},
+						"total_tokens": 70
+					}
+				}
+			}
+		},
+		{
+			"name": "google/gemma-4-26b-a4b-it-maas max_tokens above the maximum",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "google/gemma-4-26b-a4b-it-maas",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 32769
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": [
+					{
+						"error": {
+							"code": 400,
+							"message": "Requested maximum tokens of 32769 exceeds the maximum output tokens limit: 32768.",
+							"status": "INVALID_ARGUMENT"
+						}
+					}
+				]
+			}
+		},
+		{
+			"name": "google/gemma-4-26b-a4b-it-maas max_tokens above the maximum, streamed",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "google/gemma-4-26b-a4b-it-maas",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 32769,
+					"stream": true
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": [
+					{
+						"error": {
+							"code": 400,
+							"message": "Requested maximum tokens of 32769 exceeds the maximum output tokens limit: 32768.",
+							"status": "INVALID_ARGUMENT"
+						}
+					}
+				]
+			}
+		},
+		{
+			"name": "google/gemma-4-26b-a4b-it-maas max_tokens at the deployment's limit",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "google/gemma-4-26b-a4b-it-maas",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 32768
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": 106,
+							"message": {
+								"content": "OK.",
+								"reasoning_content": null,
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795328852,
+					"id": "413b2272-19b1-46d1-920b-a3b75ffcc10f",
+					"metadata": {
+						"weight_version": "default"
+					},
+					"model": "google/gemma-4-26b-a4b-it-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 3,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 16,
+						"prompt_tokens_details": {
+							"cached_tokens": 4
+						},
+						"total_tokens": 19
+					}
+				}
+			}
+		},
+		{
+			"name": "google/gemma-4-26b-a4b-it-maas max_tokens of 0",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "google/gemma-4-26b-a4b-it-maas",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 0
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "length",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": null,
+							"message": {
+								"content": null,
+								"reasoning_content": null,
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795328852,
+					"id": "55f7f65d-98d2-4eba-876f-09bdbd6c6a2c",
+					"metadata": {
+						"weight_version": "default"
+					},
+					"model": "google/gemma-4-26b-a4b-it-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 0,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 16,
+						"prompt_tokens_details": {
+							"cached_tokens": 4
+						},
+						"total_tokens": 16
+					}
+				}
+			}
+		},
+		{
+			"name": "deepseek-ai/deepseek-v4.1-flash-1017-maas max_tokens above the maximum",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "deepseek-ai/deepseek-v4.1-flash-1017-maas",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 1048577
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"code": 400,
+					"id": "4319895c-fec6-48b0-b2c6-07d96e7c9154",
+					"message": "max_completion_tokens is too large: 1048577.This model supports at most 1048576 completion tokens.",
+					"model": "deepseek-ai/deepseek-v4.1-flash-1017-maas",
+					"object": "error",
+					"param": null,
+					"type": "BadRequestError"
+				}
+			}
+		},
+		{
+			"name": "deepseek-ai/deepseek-v4.1-flash-1017-maas max_tokens above the maximum, streamed",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "deepseek-ai/deepseek-v4.1-flash-1017-maas",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 1048577,
+					"stream": true
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": [
+					{
+						"error": {
+							"code": 400,
+							"message": "max_completion_tokens is too large: 1048577.This model supports at most 1048576 completion tokens.",
+							"status": "INVALID_ARGUMENT"
+						}
+					}
+				]
+			}
+		},
+		{
+			"name": "deepseek-ai/deepseek-v4.1-flash-1017-maas max_tokens at the deployment's limit",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "deepseek-ai/deepseek-v4.1-flash-1017-maas",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 393216
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": 1,
+							"message": {
+								"content": "OK",
+								"reasoning_content": null,
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795328853,
+					"id": "aecd22e5-943a-41f6-b474-4149d9d1ee22",
+					"metadata": {
+						"weight_version": "default",
+						"weight_versions": [
+							{
+								"end": 2,
+								"start": 0,
+								"version": "default"
+							}
+						]
+					},
+					"model": "deepseek-ai/deepseek-v4.1-flash-1017-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 2,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 7,
+						"prompt_tokens_details": null,
+						"total_tokens": 9
+					}
+				}
+			}
+		},
+		{
+			"name": "deepseek-ai/deepseek-v4.1-flash-1017-maas max_tokens of 0",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "deepseek-ai/deepseek-v4.1-flash-1017-maas",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 0
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "length",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": null,
+							"message": {
+								"content": "",
+								"reasoning_content": null,
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795328853,
+					"id": "507e79dd-51df-48d7-a834-ccb63dce9096",
+					"metadata": {
+						"weight_version": "default",
+						"weight_versions": [
+							{
+								"end": 0,
+								"start": 0,
+								"version": "default"
+							}
+						]
+					},
+					"model": "deepseek-ai/deepseek-v4.1-flash-1017-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 0,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 7,
+						"prompt_tokens_details": null,
+						"total_tokens": 7
+					}
+				}
+			}
+		},
+		{
+			"name": "zai-org/glm-5.2-maas max_tokens above the maximum",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "zai-org/glm-5.2-maas",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 1048577
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"code": 400,
+					"id": "ec833b2f-2582-4f5e-bba5-12ca490d6b44",
+					"message": "max_completion_tokens is too large: 1048577.This model supports at most 1048576 completion tokens.",
+					"model": "zai-org/glm-5.2-maas",
+					"object": "error",
+					"param": null,
+					"type": "BadRequestError"
+				}
+			}
+		},
+		{
+			"name": "zai-org/glm-5.2-maas max_tokens above the maximum, streamed",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "zai-org/glm-5.2-maas",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 1048577,
+					"stream": true
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": [
+					{
+						"error": {
+							"code": 400,
+							"message": "max_completion_tokens is too large: 1048577.This model supports at most 1048576 completion tokens.",
+							"status": "INVALID_ARGUMENT"
+						}
+					}
+				]
+			}
+		},
+		{
+			"name": "zai-org/glm-5.2-maas max_tokens at the deployment's limit",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "zai-org/glm-5.2-maas",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 1048576
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"code": 400,
+					"id": "181e25ba-3f03-4f46-96af-c7d8815db197",
+					"message": "Requested token count exceeds the model's maximum context length of 1048576 tokens. You requested a total of 1048595 tokens: 19 tokens from the input messages and 1048576 tokens for the completion. Please reduce the number of tokens in the input messages or the completion to fit within the limit.",
+					"model": "zai-org/glm-5.2-maas",
+					"object": "error",
+					"param": null,
+					"type": "BadRequestError"
+				}
+			}
+		},
+		{
+			"name": "zai-org/glm-5.2-maas max_tokens of 0",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "zai-org/glm-5.2-maas",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 0
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "length",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": null,
+							"message": {
+								"content": "",
+								"reasoning_content": null,
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795328854,
+					"id": "e0314cea-6e96-45e7-9c7a-1a9de6a98c9d",
+					"metadata": {
+						"weight_version": "default",
+						"weight_versions": [
+							{
+								"end": 0,
+								"start": 0,
+								"version": "default"
+							}
+						]
+					},
+					"model": "zai-org/glm-5.2-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 0,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 15,
+						"prompt_tokens_details": null,
+						"total_tokens": 15
+					}
+				}
+			}
+		}
+	]
+}

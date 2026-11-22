@@ -1491,6 +1491,7 @@ func HandleOpenAIChatCompletionStreaming(
 		ctx.SetValue(schemas.BifrostContextKeyStreamAccumulatedUsage, usage)
 
 		lastChunkTime := startTime
+		var toolCalls streamToolCalls
 
 		var finishReason *string
 		var messageID string
@@ -1657,6 +1658,7 @@ func HandleOpenAIChatCompletionStreaming(
 					response.Choices[i].ChatNonStreamResponseChoice = nil
 				}
 			}
+			toolCalls.renumber(response.Choices)
 
 			// Capture every frame read, on both ingresses. The fallback path cannot do
 			// this inside its spread loop: a usage-only frame has choices: [], and

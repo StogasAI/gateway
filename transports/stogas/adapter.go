@@ -178,6 +178,7 @@ func (DefaultAdapter) IngestChunk(state *State, chunk *schemas.BifrostStreamChun
 	switch {
 	case chunk.BifrostChatResponse != nil:
 		response := chunk.BifrostChatResponse
+		state.keepFirstStreamedToolCall(response)
 		if usage := response.Usage; usage != nil {
 			if err := ingestReportedUsage(state, usage); err != nil {
 				return err
@@ -255,6 +256,9 @@ func (DefaultAdapter) IngestResponse(state *State, resp *schemas.BifrostResponse
 		}
 	}
 	if bifrostErr == nil {
+		if resp != nil {
+			keepFirstToolCall(state, resp.ChatResponse)
+		}
 		if err := validateBifrostResponseShape(state, resp); err != nil {
 			return err
 		}

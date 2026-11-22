@@ -98,17 +98,20 @@ type State struct {
 	responsesNextSequence   int
 	chatToolCalls           map[uint16]providerChatToolCall
 	chatToolCallIDs         map[string]uint16
-	providerToolSet         *providerToolSet
-	responsesToolCallIDs    map[string]string
-	responsesToolCalls      int
-	responsesDeclaredCalls  int
-	responsesHostedCalls    int
-	responsesClientCalls    int
-	responsesItems          map[int]providerResponsesItem
-	textMaterial            textMaterial
-	textMaterialObserved    bool
-	reply                   replyClassification
-	responsesTextMaterial   map[int]textMaterial
+	// streamToolCall is the index of the one tool call that a stream delivers, once the stream
+	// starts it, to a client that asked for at most one (keepFirstStreamedToolCall).
+	streamToolCall         *uint16
+	providerToolSet        *providerToolSet
+	responsesToolCallIDs   map[string]string
+	responsesToolCalls     int
+	responsesDeclaredCalls int
+	responsesHostedCalls   int
+	responsesClientCalls   int
+	responsesItems         map[int]providerResponsesItem
+	textMaterial           textMaterial
+	textMaterialObserved   bool
+	reply                  replyClassification
+	responsesTextMaterial  map[int]textMaterial
 	// clientStopText is the text material when the first text after a client stopped arrived,
 	// which is what the client had received; clientStopTextTaken is set once it is kept.
 	clientStopText         textMaterial

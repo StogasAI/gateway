@@ -10,22 +10,20 @@ import (
 )
 
 // OpenAIFormatAdapter serves a model that takes OpenAI's format on a provider other than OpenAI,
-// such as Kimi on Azure or AWS. OpenAI's checks, holds and billing apply, and the provider runs no
-// hosted tool.
+// such as Kimi on Azure or AWS, or an open model on Google Cloud. OpenAI's checks, holds and
+// billing apply, and the provider runs no hosted tool.
 type OpenAIFormatAdapter struct {
 	OpenAIAdapter
 }
 
 // awsDroppedFields are the fields that Bedrock's Chat Completions API answers 200 without applying
-// for the models that it serves through an inference profile (captures
-// aws/chat-completions-request-fields and aws/chat-completions-tools). Each one decides what the
-// reply reports or how many tools the model calls in a turn, so a deployment that drops it cannot
-// serve the request. parallel_tool_calls reaches this check only as false, because true allows
-// what every provider allows. Bedrock applies all three for the models that run only in the Region
-// of each request (capture aws/chat-completions-in-region-fields). Routing leaves out an AWS
+// for the models that it serves through an inference profile (capture
+// aws/chat-completions-request-fields). Each one decides what the reply reports, so a deployment
+// that drops it cannot serve the request. Bedrock applies both for the models that run only in the
+// Region of each request (capture aws/chat-completions-in-region-fields). Routing leaves out an AWS
 // deployment whose record states no logit_bias, and every AWS deployment for web_search_options,
 // because none has search prices.
-var awsDroppedFields = []string{"logprobs", "parallel_tool_calls", "top_logprobs"}
+var awsDroppedFields = []string{"logprobs", "top_logprobs"}
 
 func (a OpenAIFormatAdapter) ValidateRequest(state *State) error {
 	if err := a.OpenAIAdapter.ValidateRequest(state); err != nil {
@@ -46,16 +44,22 @@ func (a OpenAIFormatAdapter) ValidateRequest(state *State) error {
 // SanitizeRequest sends reasoning off as reasoning_effort none, the one reasoning control of the
 // format, as Fireworks documents for the models it serves. Reasoning on leaves the model's default,
 // except on Bedrock, which turns on the reasoning of a model with only a switch at high and at no
-// other effort (capture aws/chat-completions-in-region-reasoning).
+// other effort (capture aws/chat-completions-in-region-reasoning). Google Cloud refuses none and
+// turns reasoning on and off through each open model's chat template. It also allows output up to
+// the context window, so a request that sets no output limit goes out with the limit of its hold.
 func (a OpenAIFormatAdapter) SanitizeRequest(state *State) error {
 	if err := a.DefaultAdapter.SanitizeRequest(state); err != nil {
 		return err
 	}
-	on := ""
-	if state.Resolution.Provider == catalog.ProviderAWS {
-		on = "high"
+	switch state.Resolution.Provider {
+	case catalog.ProviderAWS:
+		state.Resolution.SendReasoningSwitchAsEffort("high")
+	case catalog.ProviderGoogleCloud:
+		state.Resolution.SendReasoningSwitchToTemplate()
+		state.Resolution.SendOutputLimit()
+	default:
+		state.Resolution.SendReasoningSwitchAsEffort("")
 	}
-	state.Resolution.SendReasoningSwitchAsEffort(on)
 	return nil
 }
 
@@ -178,8 +182,14 @@ func (OpenAIFormatAdapter) ValidateRawResponsesToolType(state *State, tool map[s
 
 // providerName is the name of the deployment's provider in a message.
 func providerName(state *State) string {
-	if state != nil && state.Resolution != nil && state.Resolution.Provider == catalog.ProviderAWS {
+	if state == nil || state.Resolution == nil {
+		return "Azure"
+	}
+	switch state.Resolution.Provider {
+	case catalog.ProviderAWS:
 		return "AWS"
+	case catalog.ProviderGoogleCloud:
+		return "Google Cloud"
 	}
 	return "Azure"
 }

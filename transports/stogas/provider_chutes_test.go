@@ -36,7 +36,8 @@ func TestChutesChatWireUsesVerifiedOpenAICompatibleFields(t *testing.T) {
 		"stop":"DONE",
 		"response_format":{"type":"json_schema","json_schema":{"name":"answer","strict":true,"schema":{"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"],"additionalProperties":false}}},
 		"tools":[{"type":"function","function":{"name":"lookup","description":"Look up a value","parameters":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}}}],
-		"tool_choice":{"type":"function","function":{"name":"lookup"}}
+		"tool_choice":{"type":"function","function":{"name":"lookup"}},
+		"parallel_tool_calls":false
 	}`)
 
 	if err := state.Adapter.ValidateRequest(state); err != nil {
@@ -88,8 +89,9 @@ func TestChutesChatWireUsesVerifiedOpenAICompatibleFields(t *testing.T) {
 	if err := sonic.Unmarshal(body["stop"], &stops); err != nil || len(stops) != 1 || stops[0] != "DONE" {
 		t.Fatalf("stop = %s, want [DONE]", body["stop"])
 	}
-	// max_tokens leaves reasoning unbounded on some Standard chutes, so only max_completion_tokens limits output.
-	for _, name := range []string{"max_tokens", "metadata", "provider", "store", "extra_params"} {
+	// max_tokens leaves reasoning unbounded on some Standard chutes, so only max_completion_tokens
+	// limits output. The gateway itself keeps a reply to one tool call.
+	for _, name := range []string{"max_tokens", "metadata", "provider", "store", "extra_params", "parallel_tool_calls"} {
 		if _, exists := body[name]; exists {
 			t.Fatalf("Chutes wire contains field %q that it must not send: %s", name, encoded)
 		}
@@ -243,7 +245,6 @@ func TestChutesRejectsUnaccountedAndNonTextFeatures(t *testing.T) {
 		`"logprobs":true`,
 		`"modalities":["text","audio"]`,
 		`"n":2`,
-		`"parallel_tool_calls":false,"tools":[{"type":"function","function":{"name":"lookup"}}]`,
 		`"service_tier":"priority"`,
 		`"top_logprobs":1`,
 		`"web_search_options":{}`,
@@ -432,7 +433,6 @@ func TestChutesFieldPolicyIsClosedOverTheSharedChatSurface(t *testing.T) {
 		"modalities":                 `["text","audio"]`,
 		"moderation":                 `{"model":"omni-moderation-latest"}`,
 		"n":                          `2`,
-		"parallel_tool_calls":        `false,"tools":[{"type":"function","function":{"name":"lookup"}}]`,
 		"prompt_cache_isolation_key": `"tenant-a"`,
 		"prompt_cache_key":           `"tenant-a"`,
 		"prompt_cache_options":       `{"type":"ephemeral"}`,

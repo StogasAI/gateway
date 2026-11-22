@@ -44,9 +44,9 @@ func resolveGoogleState(t *testing.T, path, body string) (*State, error) {
 	return state, state.Adapter.SanitizeRequest(state)
 }
 
-// geminiBody prepares a client's request for Gemini on Google Cloud and returns the body that
-// Agent Platform receives.
-func geminiBody(t *testing.T, path, body string) []byte {
+// googleBody prepares a client's request for a Google Cloud deployment, Gemini or an open model,
+// and returns the body that Agent Platform receives.
+func googleBody(t *testing.T, path, body string) []byte {
 	t.Helper()
 	state, err := resolveGoogleState(t, path, body)
 	if err != nil {
@@ -191,7 +191,7 @@ func TestGeminiSendsWhatGoogleTook(t *testing.T) {
 			if test.took.Response.Status != http.StatusOK {
 				t.Fatalf("Agent Platform answered %d in the recording", test.took.Response.Status)
 			}
-			if sent := geminiBody(t, test.path, test.client); !sameJSON(t, sent, test.took.Request.Body) {
+			if sent := googleBody(t, test.path, test.client); !sameJSON(t, sent, test.took.Request.Body) {
 				t.Fatalf("sent %s, Agent Platform took %s", sent, test.took.Request.Body)
 			}
 		})
@@ -221,10 +221,9 @@ func TestGeminiRefusesWhatGoogleRefuses(t *testing.T) {
 		t.Fatalf("the recording holds %d calls in one turn, want 2", len(calls))
 	}
 	for name, client := range map[string]string{
-		"logprobs":                  `{"model":"google-cloud-gemini-3.8-flash","messages":[{"role":"user","content":"Say OK."}],"logprobs":true,"top_logprobs":2}`,
-		"top_logprobs":              `{"model":"google-cloud-gemini-3.8-flash","messages":[{"role":"user","content":"Say OK."}],"top_logprobs":2}`,
-		"parallel_tool_calls false": geminiAsk + `,"parallel_tool_calls":false}`,
-		"tool_choice none":          geminiAsk + `,"tool_choice":"none"}`,
+		"logprobs":         `{"model":"google-cloud-gemini-3.8-flash","messages":[{"role":"user","content":"Say OK."}],"logprobs":true,"top_logprobs":2}`,
+		"top_logprobs":     `{"model":"google-cloud-gemini-3.8-flash","messages":[{"role":"user","content":"Say OK."}],"top_logprobs":2}`,
+		"tool_choice none": geminiAsk + `,"tool_choice":"none"}`,
 		"a Word document": `{"model":"google-cloud-gemini-3.8-flash","messages":[{"role":"user","content":[` +
 			geminiRecordedPart(t, exchange(t, files, "docx")) + `,{"type":"text","text":"Summarize."}]}]}`,
 		"a function tool on Responses that Claude defines": `{"model":"google-cloud-gemini-3.8-flash","input":"Hi","tools":[{"type":"bash_20250124","name":"bash"}]}`,
@@ -245,7 +244,7 @@ func TestGeminiRefusesWhatGoogleRefuses(t *testing.T) {
 		})
 	}
 	// The deployments run at Standard only, so a body names no tier.
-	if body := geminiBody(t, geminiChatPath, `{"model":"google-cloud-gemini-3.8-flash","messages":[{"role":"user","content":"Say OK."}],"service_tier":"default"}`); strings.Contains(string(body), "serviceTier") {
+	if body := googleBody(t, geminiChatPath, `{"model":"google-cloud-gemini-3.8-flash","messages":[{"role":"user","content":"Say OK."}],"service_tier":"default"}`); strings.Contains(string(body), "serviceTier") {
 		t.Fatalf("sent %s", body)
 	}
 	// The gateway leaves out what a model refuses or ignores, and sends an effort as the nearest
@@ -263,7 +262,7 @@ func TestGeminiRefusesWhatGoogleRefuses(t *testing.T) {
 			var sent struct {
 				GenerationConfig map[string]json.RawMessage `json:"generationConfig"`
 			}
-			body := geminiBody(t, geminiChatPath, `{"model":"google-cloud-gemini-3.8-flash","messages":[{"role":"user","content":"Say OK."}],`+test.client+`}`)
+			body := googleBody(t, geminiChatPath, `{"model":"google-cloud-gemini-3.8-flash","messages":[{"role":"user","content":"Say OK."}],`+test.client+`}`)
 			if err := json.Unmarshal(body, &sent); err != nil {
 				t.Fatal(err)
 			}
@@ -293,7 +292,7 @@ func TestGeminiTakesSystemMessagesOnlyBeforeTheConversation(t *testing.T) {
 			t.Errorf("%s: error %v, want %q", test.path, err, test.want)
 		}
 	}
-	body := geminiBody(t, geminiChatPath, `{"model":"google-cloud-gemini-3.8-flash","messages":[{"role":"system","content":"Be brief."},{"role":"developer","content":"Answer in French."},{"role":"user","content":"Hi."}]}`)
+	body := googleBody(t, geminiChatPath, `{"model":"google-cloud-gemini-3.8-flash","messages":[{"role":"system","content":"Be brief."},{"role":"developer","content":"Answer in French."},{"role":"user","content":"Hi."}]}`)
 	var sent struct {
 		SystemInstruction struct {
 			Parts []struct {
@@ -323,7 +322,7 @@ func TestGeminiGetsAnEarlierRefusalAsText(t *testing.T) {
 				} `json:"parts"`
 			} `json:"contents"`
 		}
-		body := geminiBody(t, path, client)
+		body := googleBody(t, path, client)
 		if err := json.Unmarshal(body, &sent); err != nil || len(sent.Contents) != 3 || sent.Contents[1].Role != "model" ||
 			len(sent.Contents[1].Parts) != 1 || sent.Contents[1].Parts[0].Text != "I can't help with that." {
 			t.Fatalf("%s: sent %s", path, body)
@@ -356,7 +355,7 @@ func TestGeminiShowsThoughtSummariesAsAsked(t *testing.T) {
 				} `json:"thinkingConfig"`
 			} `json:"generationConfig"`
 		}
-		body := geminiBody(t, test.path, `{"model":"google-cloud-gemini-3.8-flash",`+test.client+`}`)
+		body := googleBody(t, test.path, `{"model":"google-cloud-gemini-3.8-flash",`+test.client+`}`)
 		if err := json.Unmarshal(body, &sent); err != nil || sent.GenerationConfig.ThinkingConfig.IncludeThoughts != test.shown {
 			t.Errorf("%s: sent %s", test.client, body)
 		}
@@ -487,7 +486,7 @@ func TestGeminiSendsToolCallsBackAsGoogleTookThem(t *testing.T) {
 		t.Fatalf("the client got %s", encoded)
 	}
 	took := exchange(t, tools, "the calls back with their signatures")
-	if sent := geminiBody(t, geminiChatPath, geminiCallsBack(t, "gemini-3.8-flash", message)); !sameJSON(t, sent, took.Request.Body) {
+	if sent := googleBody(t, geminiChatPath, geminiCallsBack(t, "gemini-3.8-flash", message)); !sameJSON(t, sent, took.Request.Body) {
 		t.Fatalf("sent %s, Agent Platform took %s", sent, took.Request.Body)
 	}
 }
@@ -511,7 +510,7 @@ func TestGeminiTakesCallsOfOtherProviders(t *testing.T) {
 		client := `{"model":"google-cloud-gemini-3.8-flash","messages":[{"role":"user","content":"What is the weather in Paris? Look it up."},` +
 			`{"role":"assistant","tool_calls":[{"type":"function","id":` + strconv.Quote(id) + `,"function":{"name":"get_weather","arguments":"{\"city\":\"Paris\"}"}}]},` +
 			`{"role":"tool","tool_call_id":` + strconv.Quote(id) + `,"content":"Sunny, 21 C"}],"max_completion_tokens":2000,"reasoning_effort":"low",` + geminiWeather + `}`
-		if sent := geminiBody(t, geminiChatPath, client); !sameJSON(t, sent, took.Request.Body) {
+		if sent := googleBody(t, geminiChatPath, client); !sameJSON(t, sent, took.Request.Body) {
 			t.Fatalf("%s: sent %s, Agent Platform took %s", label, sent, took.Request.Body)
 		}
 	}
@@ -564,13 +563,13 @@ func TestGeminiSendsSignaturesBackAsGoogleTookThem(t *testing.T) {
 	}
 	client := `{"model":"google-cloud-gemini-3.8-flash","messages":[` + question + `,` + string(encoded) + `,{"role":"user","content":"Name another one."}],"max_completion_tokens":2000,"reasoning_effort":"low"}`
 	took := exchange(t, signatures, "gemini-3.8-flash: the answer back with its signature")
-	if sent := geminiBody(t, geminiChatPath, client); !sameJSON(t, sent, took.Request.Body) {
+	if sent := googleBody(t, geminiChatPath, client); !sameJSON(t, sent, took.Request.Body) {
 		t.Fatalf("sent %s, Agent Platform took %s", sent, took.Request.Body)
 	}
 	calls := geminiClientReply(t, geminiAsk+`}`, exchange(t, signatures, "gemini-3.8-flash: calls at mode AUTO")).Choices[0].Message
 	for _, model := range []string{"gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"} {
 		took := exchange(t, signatures, model+": the calls of gemini-3.8-flash back")
-		if sent := geminiBody(t, geminiChatPath, geminiCallsBack(t, model, calls)); !sameJSON(t, sent, took.Request.Body) {
+		if sent := googleBody(t, geminiChatPath, geminiCallsBack(t, model, calls)); !sameJSON(t, sent, took.Request.Body) {
 			t.Fatalf("%s: sent %s, Agent Platform took %s", model, sent, took.Request.Body)
 		}
 	}
@@ -669,7 +668,7 @@ func TestGeminiStreamGivesSignaturesBack(t *testing.T) {
 			Parts []map[string]json.RawMessage `json:"parts"`
 		} `json:"contents"`
 	}
-	body := geminiBody(t, geminiChatPath, `{"model":"google-cloud-gemini-3.8-flash","messages":[{"role":"user","content":"What is 17*23? Answer with the number only."},`+string(message)+`,{"role":"user","content":"And 17*24?"}],"max_completion_tokens":4000,"reasoning_effort":"medium"}`)
+	body := googleBody(t, geminiChatPath, `{"model":"google-cloud-gemini-3.8-flash","messages":[{"role":"user","content":"What is 17*23? Answer with the number only."},`+string(message)+`,{"role":"user","content":"And 17*24?"}],"max_completion_tokens":4000,"reasoning_effort":"medium"}`)
 	if err := json.Unmarshal(body, &sent); err != nil || len(sent.Contents) != 3 || len(sent.Contents[1].Parts) != 1 ||
 		string(sent.Contents[1].Parts[0]["text"]) != strconv.Quote(content.String()) || string(sent.Contents[1].Parts[0]["thoughtSignature"]) != strconv.Quote(signature) {
 		t.Fatalf("sent %s", body)
@@ -710,7 +709,7 @@ func TestGeminiResponsesSendsCallsBackAsGoogleTookThem(t *testing.T) {
 		}
 	}
 	took := exchange(t, tools, "the calls back with their signatures")
-	if sent := geminiBody(t, geminiResponsesPath, request(strings.Join(input, ","))); !sameJSON(t, sent, took.Request.Body) {
+	if sent := googleBody(t, geminiResponsesPath, request(strings.Join(input, ","))); !sameJSON(t, sent, took.Request.Body) {
 		t.Fatalf("sent %s, Agent Platform took %s", sent, took.Request.Body)
 	}
 }

@@ -47,6 +47,15 @@ func TestErrorInSuccessfulChatBody(t *testing.T) {
 			wantStatusCode: 500,
 		},
 		{
+			// vLLM's and SGLang's shape, which Google Cloud's Chat Completions API for open models
+			// returns with a 200 (capture google-cloud/chat-completions-limits).
+			name:           "model server error body",
+			body:           `{"code":400,"message":"max_completion_tokens is too large: 1048577.","model":"zai-org/glm-5.2-maas","object":"error","param":null,"type":"BadRequestError"}`,
+			wantErr:        true,
+			wantMessage:    "max_completion_tokens is too large: 1048577.",
+			wantStatusCode: 400,
+		},
+		{
 			// Everything below must stay nil: these are the paths that work
 			// today and must not start erroring.
 			name: "ordinary successful completion",

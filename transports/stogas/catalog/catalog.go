@@ -181,12 +181,14 @@ func FilterExtraParams(provider schemas.ModelProvider, route Route, params map[s
 	return filtered
 }
 
-// allowedClientExtraParams names the client's fields that core's typed request lacks. On Responses,
-// those are Claude's own fields for every provider that serves Claude; the provider's validation
-// refuses each one that a model's format or hosting lacks.
+// allowedClientExtraParams names the client's fields that core's typed request lacks. On Chat
+// Completions, that is repetition_penalty for the providers that serve open models through their
+// own servers, which a deployment that does not apply it goes without. On Responses, those are
+// Claude's own fields for every provider that serves Claude; the provider's validation refuses
+// each one that a model's format or hosting lacks.
 func allowedClientExtraParams(provider schemas.ModelProvider, route Route) map[string]bool {
 	switch {
-	case provider == ProviderChutes && route == RouteChat:
+	case route == RouteChat && (provider == ProviderChutes || provider == ProviderGoogleCloud):
 		return map[string]bool{"repetition_penalty": true}
 	case route == RouteResponses && (provider == schemas.Anthropic || provider == schemas.Azure ||
 		provider == ProviderAWS || provider == ProviderGoogleCloud):

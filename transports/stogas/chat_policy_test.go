@@ -2110,15 +2110,18 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 			provider := schemas.ModelProvider(route.ProviderID)
 			cloudClaude := (provider == catalog.ProviderAWS || provider == catalog.ProviderGoogleCloud) && catalog.UsesClaudeWire(provider, source.ModelID)
 			usesAnthropicWire := provider == schemas.Anthropic || routeID == "azure-anthropic-messages" || cloudClaude
-			gemini := provider == catalog.ProviderGoogleCloud && !cloudClaude
-			// Bedrock's Chat Completions API and Gemini's API on Google Cloud, which serve the models
-			// of other authors, have core providers of their own.
+			openModel := routeID == string(catalog.CoreProviderGoogleCloudChatCompletions)
+			gemini := provider == catalog.ProviderGoogleCloud && !cloudClaude && !openModel
+			// Bedrock's Chat Completions API and Google Cloud's APIs for Gemini and for open models,
+			// which serve the models of other authors, have core providers of their own.
 			coreProvider := provider
 			switch {
 			case provider == catalog.ProviderAWS && !cloudClaude:
 				coreProvider = catalog.CoreProviderAWSChatCompletions
 			case gemini:
 				coreProvider = catalog.CoreProviderGoogleCloudGenerateContent
+			case openModel:
+				coreProvider = catalog.CoreProviderGoogleCloudChatCompletions
 			}
 			for _, interfaceName := range route.Interfaces {
 				var (
@@ -2237,7 +2240,7 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 							if bifrostErr != nil {
 								t.Fatalf("build Anthropic-family Responses wire request: %v", bifrostErr)
 							}
-						case provider == schemas.OpenAI || provider == schemas.Azure || provider == catalog.ProviderAWS || gemini:
+						case provider == schemas.OpenAI || provider == schemas.Azure || provider == catalog.ProviderAWS || gemini || openModel:
 							// The gateway writes these bodies itself, which can change what core
 							// converts, such as the effort of a model that Azure hosts for another author.
 							ctx.SetValue(schemas.BifrostContextKeyHTTPRequestType, request.RequestType)
@@ -2342,7 +2345,7 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 						switch {
 						case usesAnthropicWire:
 							wireEffort = wire.OutputConfig.Effort
-						case (provider == schemas.OpenAI || provider == schemas.Azure || provider == catalog.ProviderAWS) && interfaceName == "chat_completions":
+						case (provider == schemas.OpenAI || provider == schemas.Azure || provider == catalog.ProviderAWS || openModel) && interfaceName == "chat_completions":
 							wireEffort = wire.ReasoningEffort
 						case provider == schemas.OpenAI || provider == schemas.Azure:
 							wireEffort = wire.Reasoning.Effort

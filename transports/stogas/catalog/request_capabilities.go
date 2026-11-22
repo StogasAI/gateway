@@ -15,7 +15,8 @@ func requestCapabilities(raw map[string]json.RawMessage, route Route, shared Cap
 	// only tunes how a provider caches the prompt, and a deployment that does not take one never
 	// receives it (ResolvedRequest.KeepCarriedPreferences, ResolvedRequest.ToBifrost).
 	// parallel_tool_calls either allows parallel calls, the default that
-	// dropNoOpCompatibilityFields drops, or asks the provider for one call per turn.
+	// dropNoOpCompatibilityFields drops, or asks for one call per turn, which the gateway delivers
+	// itself from any deployment by keeping the first call of each reply (keepFirstToolCall).
 	var required Capabilities
 	if value, ok := raw["stream"]; ok && !shared.Streaming {
 		if err := json.Unmarshal(value, &required.Streaming); err != nil {

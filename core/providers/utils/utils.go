@@ -2828,6 +2828,20 @@ func rootErrorMessage(raw interface{}) string {
 	return strings.TrimSpace(message)
 }
 
+// googleErrorArray returns the message and status of the first error in Google's error format
+// inside an array, or "" when the body is not one.
+func googleErrorArray(raw interface{}) (message, status string) {
+	items, _ := raw.([]interface{})
+	if len(items) == 0 {
+		return "", ""
+	}
+	item, _ := items[0].(map[string]interface{})
+	fields, _ := item["error"].(map[string]interface{})
+	message, _ = fields["message"].(string)
+	status, _ = fields["status"].(string)
+	return strings.TrimSpace(message), status
+}
+
 // HandleProviderAPIError processes error responses from provider APIs.
 // It attempts to unmarshal the error response and returns a BifrostError
 // with the appropriate status code and error information, and the retry hint from the
@@ -2927,6 +2941,24 @@ func handleProviderAPIError(resp *fasthttp.Response, errorResp any) *schemas.Bif
 				RawResponse: rawErrorResponse,
 			},
 		}
+	}
+
+	// Google answers an OpenAI-compatible endpoint, such as the Chat Completions API of Agent
+	// Platform for open models, in its own error format inside an array, which no caller's error
+	// shape describes: [{"error":{"code":400,"message":"...","status":"INVALID_ARGUMENT"}}].
+	if message, status := googleErrorArray(rawErrorResponse); message != "" {
+		bifrostErr := &schemas.BifrostError{
+			IsBifrostError: false,
+			StatusCode:     &statusCode,
+			Error:          &schemas.ErrorField{Message: message},
+			ExtraFields: schemas.BifrostErrorExtraFields{
+				RawResponse: rawErrorResponse,
+			},
+		}
+		if status != "" {
+			bifrostErr.Error.Type = &status
+		}
+		return bifrostErr
 	}
 
 	// JSON parsing failed - now check if it's an HTML response (expensive operation)

@@ -241,10 +241,11 @@ func providerEndUserIDs(ctx *schemas.BifrostContext, provider schemas.ModelProvi
 }
 
 // otherModelFormat reports a deployment that takes OpenAI's format for a model of another author,
-// such as Grok, Kimi or Mistral, on Azure or AWS. Azure checks a request to such a model against
-// the model's own fields (capture azure/other-model-formats-request-fields): Grok, Kimi and Mistral
-// refused safety_identifier, and Mistral also refused store, user, a message's name, developer
-// messages and, for Mistral Large 3, max_completion_tokens.
+// such as Grok, Kimi or Mistral, on Azure or AWS, or an open model on Google Cloud. Azure checks a
+// request to such a model against the model's own fields (capture
+// azure/other-model-formats-request-fields): Grok, Kimi and Mistral refused safety_identifier, and
+// Mistral also refused store, user, a message's name, developer messages and, for Mistral Large 3,
+// max_completion_tokens.
 func otherModelFormat(resolution *catalog.ResolvedRequest) bool {
 	switch resolution.Provider {
 	case schemas.Azure:
@@ -255,6 +256,8 @@ func otherModelFormat(resolution *catalog.ResolvedRequest) bool {
 		return true
 	case catalog.ProviderAWS:
 		return resolution.CoreProvider() == catalog.CoreProviderAWSChatCompletions
+	case catalog.ProviderGoogleCloud:
+		return resolution.CoreProvider() == catalog.CoreProviderGoogleCloudChatCompletions
 	}
 	return false
 }
@@ -317,6 +320,11 @@ func chatProviderBody(ctx *schemas.BifrostContext, request *schemas.BifrostChatR
 		}
 		return restoreStrictTools(body, hosting, strict)
 	case schemas.OpenAI, catalog.CoreProviderAWSChatCompletions:
+		return prepareOpenAIChatBody(ctx, request, streaming)
+	case catalog.CoreProviderGoogleCloudChatCompletions:
+		// The request's extra fields reach the model's server: the chat template's reasoning switch
+		// and repetition_penalty, the one extra field that the catalog takes from a client there.
+		ctx.SetValue(schemas.BifrostContextKeyPassthroughExtraParams, true)
 		return prepareOpenAIChatBody(ctx, request, streaming)
 	case catalog.CoreProviderGoogleCloudGenerateContent:
 		return prepareGeminiChatBody(ctx, request)

@@ -524,6 +524,8 @@ func messageRefusal(bifrostErr *schemas.BifrostError) string {
 	case strings.HasPrefix(message, "prompt is too long: "),
 		strings.HasPrefix(message, "input is too long for requested model"),
 		strings.Contains(message, "this model's maximum context length is "),
+		// Google's Chat Completions API for open models.
+		strings.HasPrefix(message, "requested token count exceeds the model's maximum context length of "),
 		strings.HasPrefix(message, "the input (") && strings.Contains(message, " is longer than the model's context length"):
 		return "context_length_exceeded"
 	// Claude's filter of its own output answers with a generic 400 invalid_request_error.

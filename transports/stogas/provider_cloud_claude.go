@@ -8,8 +8,8 @@ import (
 )
 
 // CloudAdapter serves AWS and Google Cloud: Claude takes Anthropic's Messages API there, which
-// CloudClaudeAdapter serves, other models take OpenAI's format on AWS, and Gemini takes its own
-// API on Google Cloud.
+// CloudClaudeAdapter serves, Gemini takes its own API on Google Cloud, and other models take
+// OpenAI's format.
 type CloudAdapter struct {
 	DefaultAdapter
 }
@@ -18,7 +18,7 @@ func (a CloudAdapter) format(state *State) Adapter {
 	switch {
 	case stateUsesClaudeWire(state):
 		return CloudClaudeAdapter{AnthropicAdapter{a.DefaultAdapter}}
-	case state != nil && state.Resolution != nil && state.Resolution.Provider == catalog.ProviderGoogleCloud:
+	case stateRunsGemini(state):
 		return GeminiAdapter{OpenAIAdapter{a.DefaultAdapter}}
 	}
 	return OpenAIFormatAdapter{OpenAIAdapter{a.DefaultAdapter}}

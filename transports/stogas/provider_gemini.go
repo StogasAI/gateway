@@ -39,11 +39,6 @@ func (a GeminiAdapter) ValidateRequest(state *State) error {
 	if logprobs || topLogprobs > 0 {
 		return invalidRequest("logprobs is not supported for Gemini on Google Cloud")
 	}
-	// Gemini has no control that keeps a turn to one function call. parallel_tool_calls reaches
-	// this check only as false, because true allows what every provider allows.
-	if rawJSONValueSet(raw["parallel_tool_calls"]) {
-		return invalidRequest("parallel_tool_calls is not supported for Gemini on Google Cloud")
-	}
 	// Gemini declares functions only, and core leaves any other tool out.
 	for _, tool := range wire.RawTools() {
 		if rawString(tool["type"]) != string(schemas.ChatToolTypeFunction) {

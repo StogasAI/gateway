@@ -26,6 +26,7 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/awsauth"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"github.com/maximhq/bifrost/transports/stogas/catalog/catalogtest"
 	"github.com/maximhq/bifrost/transports/stogas/googleauth"
 )
 
@@ -365,6 +366,7 @@ func sigV4Authorization(t *testing.T, rawURL, amzDate, service, region string, b
 }
 
 func TestCloudClaudeRequestReachesEachOfferingWithItsOwnSignIn(t *testing.T) {
+	catalogtest.UseFallback(t)
 	ctx := context.Background()
 	body := []byte(`{"model":"global.anthropic.claude-fable-5-1","max_tokens":16}`)
 	tokens := googleTokenFunc(func(_ context.Context, credential googleauth.Credential) (string, error) {
@@ -439,6 +441,18 @@ func TestCloudClaudeRequestReachesEachOfferingWithItsOwnSignIn(t *testing.T) {
 			deployment: "google-cloud-gemini-3.8-flash-us",
 			url:        "https://aiplatform.us.rep.googleapis.com/v1/projects/stogas-test/locations/us/publishers/google/models/gemini-3.8-flash:generateContent",
 			headers:    map[string]string{}, auth: map[string]string{"Authorization": "Bearer ya29.test"},
+		},
+		{
+			name: "an open model on Google Cloud", provider: catalog.ProviderGoogleCloud, secret: googleSecret(t, ""),
+			deployment: "google-cloud-glm-5.2",
+			url:        "https://aiplatform.googleapis.com/v1/projects/stogas-test/locations/global/endpoints/openapi/chat/completions",
+			headers:    map[string]string{}, auth: map[string]string{"Authorization": "Bearer ya29.test"},
+		},
+		{
+			name: "an open model on Google Cloud streaming", provider: catalog.ProviderGoogleCloud, secret: googleSecret(t, ""),
+			deployment: "google-cloud-gpt-oss-120b", streaming: true,
+			url:     "https://aiplatform.googleapis.com/v1/projects/stogas-test/locations/global/endpoints/openapi/chat/completions",
+			headers: map[string]string{}, auth: map[string]string{"Authorization": "Bearer ya29.test"},
 		},
 		{
 			name: "Claude on Google Cloud", provider: catalog.ProviderGoogleCloud, secret: googleSecret(t, testWorkspaceID),

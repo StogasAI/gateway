@@ -162,6 +162,43 @@ func TestRecordedProviderRefusalsKeepTheirMeaning(t *testing.T) {
 			}
 		}
 	}
+	// Google refuses in its own error format, which holds its errors in an array, and DeepSeek
+	// V4.1 Flash and GLM-5.2 refuse a request that does not stream with a 200 that holds the model
+	// server's error. The client gets Google's message.
+	googleLimits := providerCapture(t, "google-cloud/chat-completions-limits")
+	for model := range googleOpenModels {
+		for name, want := range map[string]string{
+			"max_tokens at the deployment's limit":   "context_length_exceeded",
+			"max_tokens above the maximum":           "invalid_request",
+			"max_tokens above the maximum, streamed": "invalid_request",
+		} {
+			refusal := exchange(t, googleLimits, model+" "+name)
+			got := openai.ErrorInSuccessfulChatBody(refusal.Response.Body)
+			if refusal.Response.Status != http.StatusOK {
+				got = openai.ParseOpenAIError(refusal.errorReply(t))
+			}
+			if got == nil {
+				continue
+			}
+			var message string
+			var array []struct {
+				Error struct {
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			var inBand struct {
+				Message string `json:"message"`
+			}
+			if json.Unmarshal(refusal.Response.Body, &array) == nil && len(array) > 0 {
+				message = array[0].Error.Message
+			} else if json.Unmarshal(refusal.Response.Body, &inBand) == nil {
+				message = inBand.Message
+			}
+			if status := billing.NormalizeUpstreamStatus(got); status != want || message == "" || got.Error.Message != message {
+				t.Fatalf("%s %s = %s with message %q, want %s with %q", model, name, status, got.Error.Message, want, message)
+			}
+		}
+	}
 	for _, capture := range []string{"openai/encrypted-reasoning-replay", "azure/encrypted-reasoning-replay"} {
 		for _, name := range []string{"replay changed content", "replay another id", "replay without summary"} {
 			refusal := exchange(t, providerCapture(t, capture), name)
@@ -240,12 +277,13 @@ func TestRecordedReasoningStreamKeepsEachEventsEncryptedReasoning(t *testing.T) 
 // TestToolChoiceNoneReachesOnlyDeploymentsThatHoldTheModelToIt replays the recorded questions that
 // need get_weather under tool_choice none, fresh and after an earlier call (captures
 // aws/chat-completions-tool-choice-none, azure/other-model-formats-tool-choice-none,
-// chutes/tool-choice-none and google-cloud/generate-content-tool-choice-none). The gateway sends
-// tool_choice none with tools to each deployment of a model that answered thirty questions in
-// text, fifteen of them after an earlier call, and refuses it before it holds funds for each one of
-// a model that called the tool, wrote the call or answered fewer questions. Agent Platform and
-// Chutes hold no model to none: each recorded Gemini model called the tool, and most Chutes models,
-// a different few in each run, so the gateway refuses it on both routes.
+// chutes/tool-choice-none, google-cloud/generate-content-tool-choice-none and
+// google-cloud/chat-completions-tool-choice-none). The gateway sends tool_choice none with tools to
+// each deployment of a model that answered thirty questions in text, fifteen of them after an
+// earlier call, and refuses it before it holds funds for each one of a model that called the tool,
+// wrote the call or answered fewer questions. Agent Platform and Chutes hold no model to none: each
+// recorded Gemini and open model called the tool, and most Chutes models, a different few in each
+// run, so the gateway refuses it on these routes.
 func TestToolChoiceNoneReachesOnlyDeploymentsThatHoldTheModelToIt(t *testing.T) {
 	catalogtest.UseFallback(t)
 	// The catalog deployments of each recorded model on Bedrock and Azure: the profiles of every
@@ -268,12 +306,16 @@ func TestToolChoiceNoneReachesOnlyDeploymentsThatHoldTheModelToIt(t *testing.T) 
 		"mistral-large-4":                       {"azure-mistral-large-4", "azure-mistral-large-4-eu", "azure-mistral-large-4-us"},
 		"mistral-medium-3-5":                    {"azure-mistral-medium-3-5", "azure-mistral-medium-3-5-eu", "azure-mistral-medium-3-5-us"},
 	}
+	for model, deployment := range googleOpenModels {
+		deployments[model] = []string{deployment}
+	}
 	held := map[string]bool{}
 	leaked := map[string]int{}
 	models := map[string]int{}
 	for _, id := range []string{
 		"aws/chat-completions-tool-choice-none", "azure/other-model-formats-tool-choice-none",
 		"chutes/tool-choice-none", "google-cloud/generate-content-tool-choice-none",
+		"google-cloud/chat-completions-tool-choice-none",
 	} {
 		type answers struct {
 			text, afterCall int
@@ -284,7 +326,7 @@ func TestToolChoiceNoneReachesOnlyDeploymentsThatHoldTheModelToIt(t *testing.T) 
 			if strings.Contains(took.Name, "without tools") || took.Response.Status != http.StatusOK {
 				continue
 			}
-			// Google names the model in the path, and the others in the body.
+			// Gemini's requests name the model in the path, and the others in the body.
 			var request struct {
 				Model string `json:"model"`
 			}
@@ -319,8 +361,10 @@ func TestToolChoiceNoneReachesOnlyDeploymentsThatHoldTheModelToIt(t *testing.T) 
 		}
 		models[id] = len(asked)
 	}
-	if google := "google-cloud/generate-content-tool-choice-none"; leaked[google] != models[google] {
-		t.Fatalf("%d of %d Gemini models called the tool under none", leaked[google], models[google])
+	for _, google := range []string{"google-cloud/generate-content-tool-choice-none", "google-cloud/chat-completions-tool-choice-none"} {
+		if leaked[google] != models[google] {
+			t.Fatalf("%s: %d of %d models called the tool under none", google, leaked[google], models[google])
+		}
 	}
 	if chutes := "chutes/tool-choice-none"; 2*leaked[chutes] <= models[chutes] {
 		t.Fatalf("%d of %d Chutes models called the tool under none", leaked[chutes], models[chutes])

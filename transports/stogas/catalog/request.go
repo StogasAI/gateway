@@ -469,17 +469,12 @@ func (r *ResolvedRequest) ToBifrost(ctx *schemas.BifrostContext) (*schemas.Bifro
 	}
 }
 
-// CoreProvider is the core provider that runs the request: Provider, or the one that sends a cloud
-// deployment of a model other than Claude in that model's format.
+// CoreProvider is the core provider that runs the request: Provider, or for a cloud route that
+// serves models other than Claude in another format, the core provider named after that route.
 func (r *ResolvedRequest) CoreProvider() schemas.ModelProvider {
-	if UsesClaudeWire(r.Provider, r.Deployment.ModelID) {
-		return r.Provider
-	}
-	switch r.Provider {
-	case ProviderAWS:
-		return CoreProviderAWSChatCompletions
-	case ProviderGoogleCloud:
-		return CoreProviderGoogleCloudGenerateContent
+	switch core := schemas.ModelProvider(r.Deployment.RouteID); core {
+	case CoreProviderAWSChatCompletions, CoreProviderGoogleCloudGenerateContent, CoreProviderGoogleCloudChatCompletions:
+		return core
 	}
 	return r.Provider
 }
@@ -1903,7 +1898,7 @@ func extractExtraParams(rawData map[string]json.RawMessage, knownFields map[stri
 
 func typedOpenAIRequestFields(provider schemas.ModelProvider, route Route) map[string]bool {
 	fields := KnownFields(route)
-	if provider == ProviderChutes && route == RouteChat {
+	if allowedClientExtraParams(provider, route)["repetition_penalty"] {
 		fields = copyBoolMap(fields)
 		delete(fields, "repetition_penalty")
 	}
@@ -1976,6 +1971,48 @@ func (r *ResolvedRequest) SendReasoningSwitchAsEffort(on string) {
 	r.chat.ChatParameters.Reasoning.Enabled = nil
 }
 
+// SendReasoningSwitchToTemplate turns reasoning on or off through the chat template of an open
+// model, for a provider that serves open models through their own chat templates and refuses the
+// effort none. A template reads the switch as enable_thinking, as Qwen's and Gemma's do, or as
+// thinking, as DeepSeek's and GLM's do, so the switch goes out under both names, and a template
+// without it, such as gpt-oss's, ignores both. An effort turns reasoning on by itself for each
+// model that takes one, so the switch goes out to turn reasoning off, or on for a model without
+// efforts, such as Gemma 4 (capture google-cloud/chat-completions-reasoning).
+func (r *ResolvedRequest) SendReasoningSwitchToTemplate() {
+	_, effort := r.ReasoningEffort()
+	_, enabled := r.ReasoningEnabled()
+	off := r.ReasoningOff()
+	if !effort && !enabled || effort && !off {
+		return
+	}
+	r.chat.ChatParameters.Reasoning = nil
+	r.setTemplateThinking(!off)
+}
+
+// SendOutputLimit sends the output limit that the hold covers when the request sets none, for a
+// provider that would otherwise allow more output: Google's servers for open models take a
+// max_tokens up to the context window, above some deployments' limits (capture
+// google-cloud/chat-completions-limits). A limit that equals the context window would leave the
+// prompt no room, and the hold covers whatever output the prompt leaves.
+func (r *ResolvedRequest) SendOutputLimit() {
+	if r == nil || r.outputTokenLimit <= 0 || r.outputTokenLimit >= r.Deployment.ContextWindowTokens {
+		return
+	}
+	limit := r.outputTokenLimit
+	switch {
+	case r.chat != nil && r.chat.ChatParameters.MaxCompletionTokens == nil && r.chat.MaxTokens == nil:
+		r.chat.ChatParameters.MaxCompletionTokens = &limit
+	case r.responses != nil && r.responses.ResponsesParameters.MaxOutputTokens == nil:
+		r.responses.ResponsesParameters.MaxOutputTokens = &limit
+	}
+}
+
+// setTemplateThinking sets the reasoning switch of an open model's chat template, under both names
+// that templates read it by.
+func (r *ResolvedRequest) setTemplateThinking(on bool) {
+	r.SetExtraParam("chat_template_kwargs", map[string]interface{}{"enable_thinking": on, "thinking": on})
+}
+
 // PrepareChutesChatWire applies Chutes-specific output and reasoning fields.
 // The resolved output limit remains the billing hold limit. It goes out as
 // max_completion_tokens, which bounds reasoning and answer together on Chutes'
@@ -2004,14 +2041,14 @@ func (r *ResolvedRequest) PrepareChutesChatWire(
 	r.chat.ChatParameters.MaxCompletionTokens = &limit
 	r.chat.MaxTokens = nil
 	r.chat.ChatParameters.Reasoning = nil
+	// The gateway itself delivers one tool call to a client that asks for one, so Chutes needs no
+	// parallel_tool_calls, which no Chutes deployment is known to apply.
+	r.chat.ChatParameters.ParallelToolCalls = nil
 	if upstreamReasoningEffort != "" {
 		r.SetExtraParam("reasoning_effort", upstreamReasoningEffort)
 	}
 	if thinking != nil {
-		r.SetExtraParam("chat_template_kwargs", map[string]interface{}{
-			"enable_thinking": *thinking,
-			"thinking":        *thinking,
-		})
+		r.setTemplateThinking(*thinking)
 	}
 }
 

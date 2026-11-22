@@ -1,0 +1,2357 @@
+{
+	"shows": "Agent Platform's Chat Completions API takes a conversation with tool call IDs of every form, OpenAI's, Claude's and Kimi's included, for each open model.",
+	"recorded": "2026-11-22",
+	"exchanges": [
+		{
+			"name": "openai/gpt-oss-120b-maas nine letters and digits",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "openai/gpt-oss-120b-maas",
+					"max_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "a1B2c3D4e",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "a1B2c3D4e",
+							"content": "Sunny, 21 C"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": 200002,
+							"message": {
+								"content": "The weather in Paris is sunny, with a temperature around 21 °C.",
+								"reasoning_content": "We need to respond with the weather info. Probably a short answer.",
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795325702,
+					"id": "594df9c4-4823-4667-924a-c9fa4b2f1668",
+					"metadata": {
+						"weight_version": "default"
+					},
+					"model": "openai/gpt-oss-120b-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 40,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 163,
+						"prompt_tokens_details": {
+							"cached_tokens": 40
+						},
+						"total_tokens": 203
+					}
+				}
+			}
+		},
+		{
+			"name": "openai/gpt-oss-120b-maas OpenAI's ID",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "openai/gpt-oss-120b-maas",
+					"max_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "call_052aaaf1c18c423e986d0a89",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "call_052aaaf1c18c423e986d0a89",
+							"content": "Sunny, 21 C"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": 200002,
+							"message": {
+								"content": "The current weather in Paris is sunny with a temperature of about 21 °C.",
+								"reasoning_content": "We have the weather. Need answer.",
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795325702,
+					"id": "06ec2e35-b935-43e7-aab2-06fc052d186a",
+					"metadata": {
+						"weight_version": "default"
+					},
+					"model": "openai/gpt-oss-120b-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 35,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 163,
+						"prompt_tokens_details": {
+							"cached_tokens": 59
+						},
+						"total_tokens": 198
+					}
+				}
+			}
+		},
+		{
+			"name": "openai/gpt-oss-120b-maas Claude's ID",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "openai/gpt-oss-120b-maas",
+					"max_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "toolu_01A09q90qw90lq917835lq9",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "toolu_01A09q90qw90lq917835lq9",
+							"content": "Sunny, 21 C"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": 200002,
+							"message": {
+								"content": "The weather in Paris is sunny with a temperature of about 21 °C.",
+								"reasoning_content": "The user asks: \"What is the weather in Paris?\" The tool returned \"Sunny, 21 C\". We need to respond. Provide a brief answer.",
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795325703,
+					"id": "b522c414-1f96-4919-91d1-1fae36ba714e",
+					"metadata": {
+						"weight_version": "default"
+					},
+					"model": "openai/gpt-oss-120b-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 58,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 163,
+						"prompt_tokens_details": {
+							"cached_tokens": 40
+						},
+						"total_tokens": 221
+					}
+				}
+			}
+		},
+		{
+			"name": "openai/gpt-oss-120b-maas Kimi's ID",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "openai/gpt-oss-120b-maas",
+					"max_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "functions.get_weather:0",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "functions.get_weather:0",
+							"content": "Sunny, 21 C"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": 200002,
+							"message": {
+								"content": "The current weather in Paris is **sunny** with a temperature of **21 °C**.",
+								"reasoning_content": "We need to respond with the weather info. Probably just present the result: Sunny, 21°C.",
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795325703,
+					"id": "4bd35a4a-792c-4d26-bf4f-106a40eb14d3",
+					"metadata": {
+						"weight_version": "default"
+					},
+					"model": "openai/gpt-oss-120b-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 51,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 163,
+						"prompt_tokens_details": {
+							"cached_tokens": 59
+						},
+						"total_tokens": 214
+					}
+				}
+			}
+		},
+		{
+			"name": "openai/gpt-oss-120b-maas a short ID",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "openai/gpt-oss-120b-maas",
+					"max_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "call1",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "call1",
+							"content": "Sunny, 21 C"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": 200002,
+							"message": {
+								"content": "The current weather in Paris is sunny with a temperature of 21 °C.",
+								"reasoning_content": "The user asked: \"What is the weather in Paris?\" The tool returned \"Sunny, 21 C\". We just need to answer the user. Probably give weather info.",
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795325703,
+					"id": "cb28c0d5-b090-4180-8ded-1599a7f6a97b",
+					"metadata": {
+						"weight_version": "default"
+					},
+					"model": "openai/gpt-oss-120b-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 61,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 163,
+						"prompt_tokens_details": {
+							"cached_tokens": 40
+						},
+						"total_tokens": 224
+					}
+				}
+			}
+		},
+		{
+			"name": "openai/gpt-oss-120b-maas nine characters with an underscore",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "openai/gpt-oss-120b-maas",
+					"max_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "abc_defgh",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "abc_defgh",
+							"content": "Sunny, 21 C"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": 200002,
+							"message": {
+								"content": "The current weather in Paris is sunny with a temperature of about 21 °C. Enjoy the nice day!",
+								"reasoning_content": "The user asks: \"What is the weather in Paris?\" We have fetched weather: \"Sunny, 21 C\". We need to respond with that info. Probably include friendly tone.",
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795325704,
+					"id": "f3d6905f-2c1d-445b-a05d-2569366426d7",
+					"metadata": {
+						"weight_version": "default"
+					},
+					"model": "openai/gpt-oss-120b-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 69,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 163,
+						"prompt_tokens_details": {
+							"cached_tokens": 40
+						},
+						"total_tokens": 232
+					}
+				}
+			}
+		},
+		{
+			"name": "google/gemma-4-26b-a4b-it-maas nine letters and digits",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "google/gemma-4-26b-a4b-it-maas",
+					"max_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "a1B2c3D4e",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "a1B2c3D4e",
+							"content": "Sunny, 21 C"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": 106,
+							"message": {
+								"content": "The weather in Paris is currently sunny with a temperature of 21°C.",
+								"reasoning_content": null,
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795325704,
+					"id": "746cb555-c7fd-4411-bf01-7c9500923bdb",
+					"metadata": {
+						"weight_version": "default"
+					},
+					"model": "google/gemma-4-26b-a4b-it-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 18,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 99,
+						"prompt_tokens_details": {
+							"cached_tokens": 4
+						},
+						"total_tokens": 117
+					}
+				}
+			}
+		},
+		{
+			"name": "google/gemma-4-26b-a4b-it-maas OpenAI's ID",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "google/gemma-4-26b-a4b-it-maas",
+					"max_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "call_052aaaf1c18c423e986d0a89",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "call_052aaaf1c18c423e986d0a89",
+							"content": "Sunny, 21 C"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": 106,
+							"message": {
+								"content": "The weather in Paris is currently sunny and 21°C.",
+								"reasoning_content": null,
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795325704,
+					"id": "9bb67d85-b249-4987-be93-1dec680a6f71",
+					"metadata": {
+						"weight_version": "default"
+					},
+					"model": "google/gemma-4-26b-a4b-it-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 15,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 99,
+						"prompt_tokens_details": {
+							"cached_tokens": 4
+						},
+						"total_tokens": 114
+					}
+				}
+			}
+		},
+		{
+			"name": "google/gemma-4-26b-a4b-it-maas Claude's ID",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "google/gemma-4-26b-a4b-it-maas",
+					"max_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "toolu_01A09q90qw90lq917835lq9",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "toolu_01A09q90qw90lq917835lq9",
+							"content": "Sunny, 21 C"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": 106,
+							"message": {
+								"content": "The weather in Paris is currently sunny with a temperature of 21°C.",
+								"reasoning_content": null,
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795325705,
+					"id": "4062a130-9f6a-4c81-8c1c-3087a2502978",
+					"metadata": {
+						"weight_version": "default"
+					},
+					"model": "google/gemma-4-26b-a4b-it-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 18,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 99,
+						"prompt_tokens_details": {
+							"cached_tokens": 4
+						},
+						"total_tokens": 117
+					}
+				}
+			}
+		},
+		{
+			"name": "google/gemma-4-26b-a4b-it-maas Kimi's ID",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "google/gemma-4-26b-a4b-it-maas",
+					"max_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "functions.get_weather:0",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "functions.get_weather:0",
+							"content": "Sunny, 21 C"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": 106,
+							"message": {
+								"content": "The weather in Paris is currently sunny and 21°C.",
+								"reasoning_content": null,
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795325707,
+					"id": "041c429b-1a55-4331-9c86-5127d5b16f1c",
+					"metadata": {
+						"weight_version": "default"
+					},
+					"model": "google/gemma-4-26b-a4b-it-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 15,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 99,
+						"prompt_tokens_details": {
+							"cached_tokens": 4
+						},
+						"total_tokens": 114
+					}
+				}
+			}
+		},
+		{
+			"name": "google/gemma-4-26b-a4b-it-maas a short ID",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "google/gemma-4-26b-a4b-it-maas",
+					"max_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "call1",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "call1",
+							"content": "Sunny, 21 C"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": 106,
+							"message": {
+								"content": "The weather in Paris is currently sunny with a temperature of 21°C.",
+								"reasoning_content": null,
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795325707,
+					"id": "5926e105-11aa-4fd1-86ec-eb092bd6c772",
+					"metadata": {
+						"weight_version": "default"
+					},
+					"model": "google/gemma-4-26b-a4b-it-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 18,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 99,
+						"prompt_tokens_details": {
+							"cached_tokens": 4
+						},
+						"total_tokens": 117
+					}
+				}
+			}
+		},
+		{
+			"name": "google/gemma-4-26b-a4b-it-maas nine characters with an underscore",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "google/gemma-4-26b-a4b-it-maas",
+					"max_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "abc_defgh",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "abc_defgh",
+							"content": "Sunny, 21 C"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": 106,
+							"message": {
+								"content": "The weather in Paris is currently sunny with a temperature of 21°C.",
+								"reasoning_content": null,
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795325708,
+					"id": "c795ef62-7b66-4ed8-acd2-4acce1d25625",
+					"metadata": {
+						"weight_version": "default"
+					},
+					"model": "google/gemma-4-26b-a4b-it-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 18,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 99,
+						"prompt_tokens_details": {
+							"cached_tokens": 4
+						},
+						"total_tokens": 117
+					}
+				}
+			}
+		},
+		{
+			"name": "deepseek-ai/deepseek-v4.1-flash-1017-maas nine letters and digits",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "deepseek-ai/deepseek-v4.1-flash-1017-maas",
+					"max_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "a1B2c3D4e",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "a1B2c3D4e",
+							"content": "Sunny, 21 C"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": 1,
+							"message": {
+								"content": "It's currently sunny in Paris with a temperature of 21 °C (about 70 °F).",
+								"reasoning_content": null,
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795325709,
+					"id": "a59245cc-b92c-48c6-9810-b4f622405c1f",
+					"metadata": {
+						"weight_version": "default",
+						"weight_versions": [
+							{
+								"end": 22,
+								"start": 0,
+								"version": "default"
+							}
+						]
+					},
+					"model": "deepseek-ai/deepseek-v4.1-flash-1017-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 22,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 333,
+						"prompt_tokens_details": {
+							"cached_tokens": 256
+						},
+						"total_tokens": 355
+					}
+				}
+			}
+		},
+		{
+			"name": "deepseek-ai/deepseek-v4.1-flash-1017-maas OpenAI's ID",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "deepseek-ai/deepseek-v4.1-flash-1017-maas",
+					"max_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "call_052aaaf1c18c423e986d0a89",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "call_052aaaf1c18c423e986d0a89",
+							"content": "Sunny, 21 C"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": 1,
+							"message": {
+								"content": "It's sunny in Paris right now, at 21 °C.",
+								"reasoning_content": null,
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795325709,
+					"id": "a5bda980-1de3-4688-8bd6-c9a3b65a1f3a",
+					"metadata": {
+						"weight_version": "default",
+						"weight_versions": [
+							{
+								"end": 15,
+								"start": 0,
+								"version": "default"
+							}
+						]
+					},
+					"model": "deepseek-ai/deepseek-v4.1-flash-1017-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 15,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 333,
+						"prompt_tokens_details": {
+							"cached_tokens": 256
+						},
+						"total_tokens": 348
+					}
+				}
+			}
+		},
+		{
+			"name": "deepseek-ai/deepseek-v4.1-flash-1017-maas Claude's ID",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "deepseek-ai/deepseek-v4.1-flash-1017-maas",
+					"max_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "toolu_01A09q90qw90lq917835lq9",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "toolu_01A09q90qw90lq917835lq9",
+							"content": "Sunny, 21 C"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": 1,
+							"message": {
+								"content": "The weather in Paris is **sunny, 21 °C**.",
+								"reasoning_content": null,
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795325710,
+					"id": "00bf9755-b509-45dc-aa32-2d298b5b6479",
+					"metadata": {
+						"weight_version": "default",
+						"weight_versions": [
+							{
+								"end": 15,
+								"start": 0,
+								"version": "default"
+							}
+						]
+					},
+					"model": "deepseek-ai/deepseek-v4.1-flash-1017-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 15,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 333,
+						"prompt_tokens_details": {
+							"cached_tokens": 256
+						},
+						"total_tokens": 348
+					}
+				}
+			}
+		},
+		{
+			"name": "deepseek-ai/deepseek-v4.1-flash-1017-maas Kimi's ID",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "deepseek-ai/deepseek-v4.1-flash-1017-maas",
+					"max_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "functions.get_weather:0",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "functions.get_weather:0",
+							"content": "Sunny, 21 C"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": 1,
+							"message": {
+								"content": "It's currently sunny in Paris with a temperature of 21 °C (about 70 °F).",
+								"reasoning_content": null,
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795325711,
+					"id": "1cfb94b0-d6bc-4f69-b14e-a76ee5eb8a63",
+					"metadata": {
+						"weight_version": "default",
+						"weight_versions": [
+							{
+								"end": 22,
+								"start": 0,
+								"version": "default"
+							}
+						]
+					},
+					"model": "deepseek-ai/deepseek-v4.1-flash-1017-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 22,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 333,
+						"prompt_tokens_details": {
+							"cached_tokens": 256
+						},
+						"total_tokens": 355
+					}
+				}
+			}
+		},
+		{
+			"name": "deepseek-ai/deepseek-v4.1-flash-1017-maas a short ID",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "deepseek-ai/deepseek-v4.1-flash-1017-maas",
+					"max_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "call1",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "call1",
+							"content": "Sunny, 21 C"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": 1,
+							"message": {
+								"content": "The weather in Paris is sunny with a temperature of 21 °C.",
+								"reasoning_content": null,
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795325712,
+					"id": "354dfa5d-902e-4c7f-984d-b8e5fb49e31b",
+					"metadata": {
+						"weight_version": "default",
+						"weight_versions": [
+							{
+								"end": 16,
+								"start": 0,
+								"version": "default"
+							}
+						]
+					},
+					"model": "deepseek-ai/deepseek-v4.1-flash-1017-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 16,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 333,
+						"prompt_tokens_details": {
+							"cached_tokens": 256
+						},
+						"total_tokens": 349
+					}
+				}
+			}
+		},
+		{
+			"name": "deepseek-ai/deepseek-v4.1-flash-1017-maas nine characters with an underscore",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "deepseek-ai/deepseek-v4.1-flash-1017-maas",
+					"max_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "abc_defgh",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "abc_defgh",
+							"content": "Sunny, 21 C"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": 1,
+							"message": {
+								"content": "Currently in Paris it's sunny with a temperature of 21 °C.",
+								"reasoning_content": null,
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795325713,
+					"id": "4b9d1ad0-0b4b-42eb-a30c-9efde1360d44",
+					"metadata": {
+						"weight_version": "default",
+						"weight_versions": [
+							{
+								"end": 16,
+								"start": 0,
+								"version": "default"
+							}
+						]
+					},
+					"model": "deepseek-ai/deepseek-v4.1-flash-1017-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 16,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 333,
+						"prompt_tokens_details": {
+							"cached_tokens": 256
+						},
+						"total_tokens": 349
+					}
+				}
+			}
+		},
+		{
+			"name": "zai-org/glm-5.2-maas nine letters and digits",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "zai-org/glm-5.2-maas",
+					"max_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "a1B2c3D4e",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "a1B2c3D4e",
+							"content": "Sunny, 21 C"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": 154827,
+							"message": {
+								"content": "The weather in Paris is currently **sunny** with a temperature of **21°C**. ☀️",
+								"reasoning_content": "The function returned the weather for Paris: Sunny, 21°C.",
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795325714,
+					"id": "e295cc89-a858-4967-a3a6-3914165fda5d",
+					"metadata": {
+						"weight_version": "default"
+					},
+					"model": "zai-org/glm-5.2-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 38,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 188,
+						"prompt_tokens_details": null,
+						"total_tokens": 226
+					}
+				}
+			}
+		},
+		{
+			"name": "zai-org/glm-5.2-maas OpenAI's ID",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "zai-org/glm-5.2-maas",
+					"max_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "call_052aaaf1c18c423e986d0a89",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "call_052aaaf1c18c423e986d0a89",
+							"content": "Sunny, 21 C"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": 154827,
+							"message": {
+								"content": "The weather in Paris is currently **sunny** with a temperature of **21°C**. ☀️ It looks like a beautiful day!",
+								"reasoning_content": "The weather in Paris is sunny with a temperature of 21°C.",
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795325715,
+					"id": "04780c46-0fc9-4557-9b15-c4efde6ed87e",
+					"metadata": {
+						"weight_version": "default"
+					},
+					"model": "zai-org/glm-5.2-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 45,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 188,
+						"prompt_tokens_details": {
+							"cached_tokens": 128
+						},
+						"total_tokens": 233
+					}
+				}
+			}
+		},
+		{
+			"name": "zai-org/glm-5.2-maas Claude's ID",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "zai-org/glm-5.2-maas",
+					"max_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "toolu_01A09q90qw90lq917835lq9",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "toolu_01A09q90qw90lq917835lq9",
+							"content": "Sunny, 21 C"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": 154827,
+							"message": {
+								"content": "The weather in Paris is currently **sunny** with a temperature of **21°C**. It looks like a beautiful day! ☀️",
+								"reasoning_content": "The function returned the weather for Paris: Sunny, 21°C.",
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795325716,
+					"id": "fb1da64f-219a-42d6-825b-bb25cf6af151",
+					"metadata": {
+						"weight_version": "default"
+					},
+					"model": "zai-org/glm-5.2-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 45,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 188,
+						"prompt_tokens_details": {
+							"cached_tokens": 128
+						},
+						"total_tokens": 233
+					}
+				}
+			}
+		},
+		{
+			"name": "zai-org/glm-5.2-maas Kimi's ID",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "zai-org/glm-5.2-maas",
+					"max_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "functions.get_weather:0",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "functions.get_weather:0",
+							"content": "Sunny, 21 C"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": 154827,
+							"message": {
+								"content": "The weather in Paris is currently **sunny** with a temperature of **21°C**. ☀️",
+								"reasoning_content": "The weather in Paris is sunny with a temperature of 21°C. Let me provide this information to the user.",
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795325717,
+					"id": "72edeaef-15c1-471a-ba66-e096c81e7aa7",
+					"metadata": {
+						"weight_version": "default",
+						"weight_versions": [
+							{
+								"end": 47,
+								"start": 0,
+								"version": "default"
+							}
+						]
+					},
+					"model": "zai-org/glm-5.2-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 47,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 188,
+						"prompt_tokens_details": {
+							"cached_tokens": 128
+						},
+						"total_tokens": 235
+					}
+				}
+			}
+		},
+		{
+			"name": "zai-org/glm-5.2-maas a short ID",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "zai-org/glm-5.2-maas",
+					"max_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "call1",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "call1",
+							"content": "Sunny, 21 C"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": 154827,
+							"message": {
+								"content": "The weather in Paris is currently sunny with a temperature of 21°C (about 70°F). It's a beautiful day!",
+								"reasoning_content": null,
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795325717,
+					"id": "4ea716f6-7833-4903-a89d-0ce99ac45e4a",
+					"metadata": {
+						"weight_version": "default"
+					},
+					"model": "zai-org/glm-5.2-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 28,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 188,
+						"prompt_tokens_details": {
+							"cached_tokens": 128
+						},
+						"total_tokens": 216
+					}
+				}
+			}
+		},
+		{
+			"name": "zai-org/glm-5.2-maas nine characters with an underscore",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/endpoints/openapi/chat/completions",
+				"body": {
+					"model": "zai-org/glm-5.2-maas",
+					"max_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "abc_defgh",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "abc_defgh",
+							"content": "Sunny, 21 C"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"matched_stop": 154827,
+							"message": {
+								"content": "The weather in Paris is currently **sunny** with a temperature of **21°C**. It's a beautiful day! ☀️",
+								"reasoning_content": "The weather in Paris is sunny with a temperature of 21°C.",
+								"role": "assistant",
+								"tool_calls": null
+							}
+						}
+					],
+					"created": 1795325719,
+					"id": "18718964-af5f-4245-ac9b-c9f32dc90dff",
+					"metadata": {
+						"weight_version": "default"
+					},
+					"model": "zai-org/glm-5.2-maas",
+					"object": "chat.completion",
+					"usage": {
+						"completion_tokens": 44,
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"prompt_tokens": 188,
+						"prompt_tokens_details": {
+							"cached_tokens": 128
+						},
+						"total_tokens": 232
+					}
+				}
+			}
+		}
+	]
+}

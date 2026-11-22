@@ -17,6 +17,7 @@ var chutesAllowedChatFields = map[string]bool{
 	"messages":              true,
 	"metadata":              true,
 	"model":                 true,
+	"parallel_tool_calls":   true,
 	"presence_penalty":      true,
 	"prompt_cache_key":      true,
 	"provider":              true,

@@ -136,20 +136,17 @@ func TestAWSChatSendsWhatBedrockTook(t *testing.T) {
 }
 
 // TestAWSChatRefusesWhatBedrockLeavesUnapplied replays each recorded request that Bedrock answered
-// 200 without applying a field that decides what the reply holds or what the model may do: log
-// probabilities, a token bias, a web search, or one tool call per turn (captures
-// aws/chat-completions-request-fields and aws/chat-completions-tools). The gateway refuses each
-// before it holds funds. A field that only tunes sampling, or that no interface defines, never
-// reaches Bedrock.
+// 200 without applying a field that decides what the reply holds: log probabilities, a token bias
+// or a web search (capture aws/chat-completions-request-fields). The gateway refuses each before
+// it holds funds. A field that only tunes sampling, or that no interface defines, never reaches
+// Bedrock.
 func TestAWSChatRefusesWhatBedrockLeavesUnapplied(t *testing.T) {
 	catalogtest.UseFallback(t)
 	fields := providerCapture(t, "aws/chat-completions-request-fields")
-	tools := providerCapture(t, "aws/chat-completions-tools")
 	for _, recorded := range []providerExchange{
 		exchange(t, fields, "logit_bias with a key that names no token"),
 		exchange(t, fields, "logprobs"),
 		exchange(t, fields, "web_search_options"),
-		exchange(t, tools, "parallel_tool_calls false"),
 	} {
 		t.Run(recorded.Name, func(t *testing.T) {
 			if recorded.Response.Status != http.StatusOK {
@@ -660,10 +657,12 @@ func recordedChatText(t *testing.T, recorded providerExchange) (string, int) {
 // TestAWSChatInRegionServesWhatBedrockApplies replays the recorded requests to the models that
 // Bedrock runs in the Region of each request (capture aws/chat-completions-in-region-fields). The
 // gateway sends a request that the recording shows Bedrock applying as Bedrock took it, log
-// probabilities and one tool call per turn included, and refuses before it holds funds one that
-// Bedrock refused or left unapplied: n above 1, logit_bias where Bedrock refused it, and the
-// forced tool choices and JSON schema that gpt-oss-120b ignores. repetition_penalty, which Bedrock
-// ignores, never reaches it, and a call under tool_choice none fails the reply's checks.
+// probabilities included, and refuses before it holds funds one that Bedrock refused or left
+// unapplied: n above 1, logit_bias where Bedrock refused it, and the forced tool choices and JSON
+// schema that gpt-oss-120b ignores. parallel_tool_calls false reaches Bedrock as it took it, and
+// the gateway keeps one call of each reply (TestOneToolCallReachesTheClient). repetition_penalty,
+// which Bedrock ignores, never reaches it, and a call under tool_choice none fails the reply's
+// checks.
 func TestAWSChatInRegionServesWhatBedrockApplies(t *testing.T) {
 	catalogtest.UseFallback(t)
 	recorded := providerCapture(t, "aws/chat-completions-in-region-fields")
@@ -683,7 +682,8 @@ func TestAWSChatInRegionServesWhatBedrockApplies(t *testing.T) {
 			case "tool_choice required", "tool_choice naming the function":
 				return calls > 0
 			case "five cities with parallel_tool_calls false":
-				return calls == 1 && applied("tool_choice required")
+				// The request also requires a tool call.
+				return applied("tool_choice required")
 			case "response_format json_schema":
 				var reply struct {
 					City string `json:"city"`

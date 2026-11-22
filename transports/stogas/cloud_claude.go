@@ -320,7 +320,20 @@ func newCloudRequest(ctx context.Context, provider schemas.ModelProvider, organi
 		switch deployment.Hosting {
 		case hostingGoogle:
 			host, ok := vertexHosts[upstream.InferenceGeo]
-			if !ok || !vertexModelPattern.MatchString(upstream.Model) {
+			if !ok {
+				return cloudRequest{}, billing.ErrByokTarget
+			}
+			location := "https://" + host + "/v1/projects/" + credential.ProjectID + "/locations/" + upstream.InferenceGeo
+			// Agent Platform serves open models on one Chat Completions endpoint, which takes the
+			// publisher and model in the body.
+			if deployment.RouteID == string(catalog.CoreProviderGoogleCloudChatCompletions) {
+				if !vertexOpenModelPattern.MatchString(upstream.Model) {
+					return cloudRequest{}, billing.ErrByokTarget
+				}
+				request.url = location + "/endpoints/openapi/chat/completions"
+				break
+			}
+			if !vertexModelPattern.MatchString(upstream.Model) {
 				return cloudRequest{}, billing.ErrByokTarget
 			}
 			// Agent Platform takes Claude's Messages body raw and Gemini's generateContent body.
@@ -333,8 +346,7 @@ func newCloudRequest(ctx context.Context, provider schemas.ModelProvider, organi
 			case streaming:
 				method = ":streamGenerateContent?alt=sse"
 			}
-			request.url = "https://" + host + "/v1/projects/" + credential.ProjectID + "/locations/" + upstream.InferenceGeo +
-				"/publishers/" + publisher + "/models/" + upstream.Model + method
+			request.url = location + "/publishers/" + publisher + "/models/" + upstream.Model + method
 		case hostingAnthropic:
 			if credential.WorkspaceID == "" {
 				return cloudRequest{}, billing.ErrByokTarget
@@ -357,6 +369,10 @@ func newCloudRequest(ctx context.Context, provider schemas.ModelProvider, organi
 
 // vertexModelPattern keeps a catalog model name to one URL path segment.
 var vertexModelPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9.@-]{0,127}$`)
+
+// vertexOpenModelPattern is an open model's publisher and model, as Agent Platform's Chat
+// Completions API names it, such as openai/gpt-oss-120b-maas.
+var vertexOpenModelPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}/[a-z0-9][a-z0-9.@-]{0,127}$`)
 
 func staticHeaders(name, value string) schemas.RequestSigner {
 	return func([]byte) (map[string]string, *schemas.BifrostError) {

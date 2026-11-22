@@ -35,7 +35,12 @@ func ErrorInSuccessfulChatBody(body []byte) *schemas.BifrostError {
 func errorInValidatedChatBody(body []byte) *schemas.BifrostError {
 	errObj := gjson.GetBytes(body, "error")
 	if !errObj.Exists() || !errObj.IsObject() {
-		return nil
+		// vLLM and SGLang write an error as the whole body, marked by object "error", which Google
+		// Cloud's Chat Completions API for open models returns with a 200 for some models.
+		if gjson.GetBytes(body, "object").String() != "error" {
+			return nil
+		}
+		errObj = gjson.ParseBytes(body)
 	}
 	message := errObj.Get("message").String()
 	if message == "" {
