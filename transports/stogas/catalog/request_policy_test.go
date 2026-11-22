@@ -936,26 +936,33 @@ func TestPoliciesReadEachCredentialsKind(t *testing.T) {
 		})
 	}
 
+	// Each pair holds against the rules of its own credential, so a fallback
+	// to another kind of credential changes the limits that it holds.
 	const budget = `{"rules":{"managed_budget":{"when":"credential.kind == 'managed'","limits":{"spend":{"usd":"100"}}}}}`
 	for _, test := range []struct {
 		order []int
-		rules []string
+		rules [][]string
 	}{
-		{[]int{0, 1}, []string{"managed_budget"}},
-		{[]int{1, 0}, nil},
+		{[]int{0, 1}, [][]string{{"managed_budget"}, nil}},
+		{[]int{1, 0}, [][]string{nil, {"managed_budget"}}},
 	} {
 		request := input(budget, test.order...)
 		request.Body, request.Method, request.Path = []byte(`{"model":"chutes-kimi-k3","messages":[{"role":"user","content":"hi"}]}`), "POST", "/v1/chat/completions"
 		resolved, err := ResolveRequest(request)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var rules []string
-		for _, match := range resolved.ActivePolicyRules() {
-			rules = append(rules, match.Name)
-		}
-		if resolved.CredentialIndex != test.order[0] || !slices.Equal(rules, test.rules) {
-			t.Fatalf("credentials %v: credential %d with rules %v, want %d with %v", test.order, resolved.CredentialIndex, rules, test.order[0], test.rules)
+		for pair, want := range test.rules {
+			if pair > 0 {
+				resolved, err = resolved.NextPair(nil)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			var rules []string
+			for _, match := range resolved.ActivePolicyRules() {
+				rules = append(rules, match.Name)
+			}
+			if resolved.CredentialIndex != test.order[pair] || !slices.Equal(rules, want) {
+				t.Fatalf("credentials %v, pair %d: credential %d with rules %v, want %d with %v", test.order, pair, resolved.CredentialIndex, rules, test.order[pair], want)
+			}
 		}
 	}
 }

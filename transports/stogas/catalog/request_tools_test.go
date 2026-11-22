@@ -162,6 +162,37 @@ func TestPoliciesReadRequestToolsAndMessages(t *testing.T) {
 		})
 	}
 
+	// The MCP fields reach the policies that admins write to turn MCP off, allow servers, allow
+	// tools and require approval.
+	openai := map[string][]int{"openai": {0}}
+	const denyTool = `!request.mcpTools.exists(tool, tool in ['a.example/mcp#*', 'a.example/mcp#delete'])`
+	mcp := func(server, fields string) string {
+		return `{"model":"openai-gpt-5.6-sol","input":"hi","tools":[{"type":"mcp","server_label":"s","server_url":"https://` + server + `"` + fields + `}]}`
+	}
+	for _, test := range []struct {
+		name, filter, body string
+		allowed            bool
+	}{
+		{"MCP off", `!('mcp' in request.hostedTools)`, mcp("a.example/mcp", ""), false},
+		{"a denied server", `!('a.example/mcp' in request.mcpServers)`, mcp("a.example/mcp", ""), false},
+		{"another server", `!('a.example/mcp' in request.mcpServers)`, mcp("b.example/mcp", ""), true},
+		// A server that names no tools allows every tool, so the rule that the Docs give for one
+		// tool refuses that too.
+		{"a denied tool", denyTool, mcp("a.example/mcp", `,"allowed_tools":["delete"]`), false},
+		{"every tool of a server", denyTool, mcp("a.example/mcp", ""), false},
+		{"another tool", denyTool, mcp("a.example/mcp", `,"allowed_tools":["search"]`), true},
+		{"calls without approval", `size(request.mcpServersWithoutApproval) == 0`, mcp("a.example/mcp", `,"require_approval":"never"`), false},
+		{"approved calls", `size(request.mcpServersWithoutApproval) == 0`, mcp("a.example/mcp", ""), true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			resolved, err := ResolveRequest(RequestInput{Body: []byte(test.body), Method: "POST", Path: "/v1/responses",
+				Policy: compile(test.filter), AvailableCredentials: openai})
+			if allowed := err == nil; allowed != test.allowed || err != nil && PublicError(err).Code != "model_unavailable" {
+				t.Fatalf("resolved %v (%v), want allowed %v", resolved, err, test.allowed)
+			}
+		})
+	}
+
 	// A simulation names no tool or server, and sends no system message.
 	simulation := SimulateRouting(RequestInput{AvailableCredentials: anthropic, Policy: compile(`size(request.clientTools) == 0 && !request.systemMessages`)},
 		RouteResponses, deployment, "", "", []string{"function"}, nil)

@@ -429,6 +429,40 @@ func TestRoutingPolicyCanSelectACompatibleDeploymentVariant(t *testing.T) {
 	}
 }
 
+// A field without a value excludes the candidate, so a registered name that matches no catalog
+// fact would make every condition on it fail quietly. Each catalog field reads a value from some
+// deployment of the test catalog, except the limits and the meter that none of them states.
+// Request fields come from the request.
+func TestEveryCatalogFieldThatPoliciesNameReadsAValue(t *testing.T) {
+	snap := loadTestCatalog(t)
+	unread := map[string]bool{}
+	for _, path := range policy.FieldPaths() {
+		if !strings.HasPrefix(path, "request.") {
+			unread[path] = true
+		}
+	}
+	for _, deploymentID := range slices.Sorted(maps.Keys(snap.graph.Deployments)) {
+		for _, routeID := range sortedRouteIDs(snap.graph.Deployments[deploymentID]) {
+			deployment, _ := snap.deploymentFromCompiledAt(deploymentID, snap.graph.Routes[routeID], time.Time{})
+			values, ok := newResolvedPolicyValues(&ResolvedRequest{Deployment: deployment, credentialKind: CredentialStored})
+			if !ok {
+				t.Fatalf("deployment %s route %s is not readable by policies", deploymentID, routeID)
+			}
+			for path := range unread {
+				if _, ok := values.PolicyValue(path); ok {
+					delete(unread, path)
+				}
+			}
+		}
+	}
+	if got, want := slices.Sorted(maps.Keys(unread)), []string{
+		"deployment.inputLimits.documents.pages", "deployment.inputLimits.images.bytes", "deployment.inputLimits.images.pixels",
+		"deployment.inputLimits.requestBytes", "deployment.pricing.reasoning_tokens.per_mill_tokens",
+	}; !slices.Equal(got, want) {
+		t.Fatalf("fields without a value %q, want %q", got, want)
+	}
+}
+
 func TestResolvedPolicyValuesExposeTypedRegisteredCatalogAndRequestData(t *testing.T) {
 	loadTestCatalog(t)
 	resolution, err := ResolveRequest(RequestInput{
