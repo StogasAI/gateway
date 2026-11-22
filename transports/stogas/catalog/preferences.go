@@ -72,8 +72,10 @@ var preferences = []struct {
 	{"cache_control", func(r *ResolvedRequest) bool { return UsesClaudeWire(r.Provider, r.Deployment.ModelID) }, func(r *ResolvedRequest) {
 		r.clearParameters(func(p *schemas.ChatParameters) { p.CacheControl = nil }, nil)
 	}},
+	// Meta's Responses API takes OpenAI's retentions, and Google parses them for Meta's models
+	// (capture google-cloud/responses-fields).
 	{"prompt_cache_retention", func(r *ResolvedRequest) bool {
-		return r.usesOpenAIWire() && r.Deployment.Capabilities.ImplicitPromptCaching
+		return (r.usesOpenAIWire() || r.RunsMetaModel()) && r.Deployment.Capabilities.ImplicitPromptCaching
 	}, func(r *ResolvedRequest) {
 		r.clearParameters(func(p *schemas.ChatParameters) { p.PromptCacheRetention = nil }, func(p *schemas.ResponsesParameters) { p.PromptCacheRetention = nil })
 	}},
@@ -239,9 +241,13 @@ func (r *ResolvedRequest) KeepCarriedPreferences() {
 func (r *ResolvedRequest) keepCarriedResponsesMembers(raw map[string]json.RawMessage) {
 	params := &r.responses.ResponsesParameters
 	if params.Text != nil && params.Text.Verbosity != nil && !r.usesOpenAIWire() {
-		text := *params.Text
-		text.Verbosity = nil
-		params.Text = &text
+		// A text object that held only the verbosity is left out with it, as dropRawMember does.
+		if text := *params.Text; text.Format != nil {
+			text.Verbosity = nil
+			params.Text = &text
+		} else {
+			params.Text = nil
+		}
 		dropRawMember(raw, "text", "verbosity")
 	}
 	if params.Reasoning != nil && params.Reasoning.Context != nil && !r.takesResponsesControls() {

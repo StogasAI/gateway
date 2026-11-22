@@ -297,7 +297,20 @@ var modelCapabilities = schemas.ModelCapabilities{
 	SupportsAssistantPrefill:     schemas.Ptr(true),
 }
 
-func resolveModelCapabilities(schemas.ModelProvider, string) *schemas.ModelCapabilities {
+// resolveModelCapabilities also tells core that Meta's models reason, at their efforts. Core
+// judges a model on OpenAI's format by OpenAI's model names, so it would take them for models that
+// do not reason, leave their encrypted reasoning out of the next turn and move their efforts to
+// OpenAI's, minimal to low and max to xhigh. Core reads the record while the gateway builds the
+// body (PrepareProviderRequest), by the route's own provider and the catalog's model ID.
+func resolveModelCapabilities(provider schemas.ModelProvider, model string) *schemas.ModelCapabilities {
+	if provider == catalog.CoreProviderGoogleCloudMetaResponses {
+		if efforts, ok := catalog.RouteReasoningEfforts(string(provider), model); ok {
+			capabilities := modelCapabilities
+			capabilities.SupportsReasoning = schemas.Ptr(true)
+			capabilities.ReasoningEffortLevels = efforts
+			return &capabilities
+		}
+	}
 	return &modelCapabilities
 }
 

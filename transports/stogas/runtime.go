@@ -243,10 +243,10 @@ func confidentialProduction(config Config) bool {
 }
 
 // cloudConfig serves AWS or Google Cloud through the core provider of the format that a
-// deployment takes: Anthropic's for Claude, Gemini's generateContent for Gemini, and OpenAI's Chat
-// Completions for the other models. Each request names its own URL, so the base URL cannot
-// resolve: a request without one never reaches Anthropic, OpenAI or Google with a cloud
-// credential.
+// deployment takes: Anthropic's for Claude, Gemini's generateContent for Gemini, and OpenAI's for
+// the other models, which take Chat Completions, or Responses for Meta's. Each request names its
+// own URL, so the base URL cannot resolve: a request without one never reaches Anthropic, OpenAI
+// or Google with a cloud credential.
 func cloudConfig(config Config, format schemas.ModelProvider) schemas.ProviderConfig {
 	providerConfig := newProviderConfig("https://upstream-url-required.invalid", config.AllowPrivateProviderNetwork, false)
 	allowed := &schemas.AllowedRequests{ChatCompletion: true, ChatCompletionStream: true}
@@ -307,6 +307,11 @@ func newAccount(config Config, chutesE2EE *chutese2ee.Transport) *account {
 	googleCloudGenerateContentConfig.NetworkConfig.RequirePostQuantumTLS = requirePostQuantumTLS
 	googleCloudChatCompletionsConfig := cloudConfig(config, schemas.OpenAI)
 	googleCloudChatCompletionsConfig.NetworkConfig.RequirePostQuantumTLS = requirePostQuantumTLS
+	// Agent Platform serves Meta's Muse models on Responses alone, through which the gateway also
+	// serves Chat Completions.
+	googleCloudMetaResponsesConfig := cloudConfig(config, schemas.OpenAI)
+	googleCloudMetaResponsesConfig.CustomProviderConfig.AllowedRequests = &schemas.AllowedRequests{Responses: true, ResponsesStream: true}
+	googleCloudMetaResponsesConfig.NetworkConfig.RequirePostQuantumTLS = requirePostQuantumTLS
 
 	return &account{
 		keys: map[schemas.ModelProvider]schemas.Key{
@@ -329,6 +334,7 @@ func newAccount(config Config, chutesE2EE *chutese2ee.Transport) *account {
 			catalog.ProviderGoogleCloud:                    googleCloudConfig,
 			catalog.CoreProviderGoogleCloudGenerateContent: googleCloudGenerateContentConfig,
 			catalog.CoreProviderGoogleCloudChatCompletions: googleCloudChatCompletionsConfig,
+			catalog.CoreProviderGoogleCloudMetaResponses:   googleCloudMetaResponsesConfig,
 		},
 	}
 }
@@ -413,7 +419,7 @@ func newProviderConfig(baseURL string, allowPrivateNetwork, requirePostQuantumTL
 }
 
 func (a *account) GetConfiguredProviders() ([]schemas.ModelProvider, error) {
-	return []schemas.ModelProvider{schemas.OpenAI, schemas.Anthropic, schemas.Azure, catalog.ProviderChutes, catalog.ProviderAWS, catalog.CoreProviderAWSChatCompletions, catalog.ProviderGoogleCloud, catalog.CoreProviderGoogleCloudGenerateContent, catalog.CoreProviderGoogleCloudChatCompletions}, nil
+	return []schemas.ModelProvider{schemas.OpenAI, schemas.Anthropic, schemas.Azure, catalog.ProviderChutes, catalog.ProviderAWS, catalog.CoreProviderAWSChatCompletions, catalog.ProviderGoogleCloud, catalog.CoreProviderGoogleCloudGenerateContent, catalog.CoreProviderGoogleCloudChatCompletions, catalog.CoreProviderGoogleCloudMetaResponses}, nil
 }
 
 func (a *account) GetKeysForProvider(ctx context.Context, providerKey schemas.ModelProvider) ([]schemas.Key, error) {

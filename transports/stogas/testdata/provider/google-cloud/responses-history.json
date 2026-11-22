@@ -1,0 +1,1812 @@
+{
+	"shows": "On Agent Platform's Responses API for Meta's Muse models, each model gives the text that it writes before a tool call the commentary phase, and takes a conversation whose text before a call has that phase, as the gateway sends a Chat Completions conversation. Google takes that text without a phase too. Each model follows a system message, and Google takes a developer message after the question, which Muse Ember follows in some replies, and an earlier answer given as a string. Muse Ember takes back a function call and its result under an ID that another provider wrote: Kimi's, Claude's, and one of 64 bytes with spaces, punctuation and a letter outside ASCII.",
+	"recorded": "2026-11-22",
+	"exchanges": [
+		{
+			"name": "muse-ember-1.0 text before a call",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-ember-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						}
+					],
+					"instructions": "Before you call a tool, say in one short sentence what you will do.",
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_weather",
+							"description": "Returns a city's weather.",
+							"parameters": {
+								"type": "object",
+								"properties": {
+									"city": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"city"
+								],
+								"additionalProperties": false
+							}
+						}
+					],
+					"reasoning": {
+						"effort": "low",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795348471,
+					"error": null,
+					"id": "resp_528ac67d4f67ba4f",
+					"incomplete_details": null,
+					"instructions": "Before you call a tool, say in one short sentence what you will do.",
+					"max_output_tokens": 2000,
+					"model": "meta/muse-ember-1.0",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AiwokAGoEUL0nGGW7hLorulB9Ag-wIdDmeAa2UFw9sx-qPyFqbRYVEmMqYQoTCgw6KFE6ORHwdqYXkMMQxM77TRIwCijqwbWjmDqE9PDR4yRJb5DL2N-JC5Fv4iBUzIgK6t5JK0jxEWyRMki4EMyUxLsOGhgKEPeu-dFT6nE19IkxK16PBlAQ5oK0wwjLBCzRH9X5aYPkVgcSGtrzD_nVwquAsILTAFffarXGHqzguU3w7UI7Wj7vlJKboDDVwlx_5TZmkBttcgnpJijrYVe1WvfdhnjG2qCIcWlxLrnB6Wn3Lhpt6C1bLletsst6-RkUeIDSMTSMShHdFd5eQcs18VwozuT5tn2clSNSdW1n9DUnR-TpUNXsC7zZLmog6gPr2OIXNh-n-BknFm0kbSqrfbPVOtKxFinBGLaaf8vSk2HyerkheO3Lc1zGevnAxsa0M_LZhT6LWTGvke2G5XPOfUTmtXCMjK0GvIu8ZAaHJEeKBy2dzNGxhBeTKZY98NSA5cDlA50eNaPFtTXdjG2wK9nxZccc-7Nt5pkYvDl2U9YRCdJ4hnlsObcPfsMRi39MrGJtFY1b4QbftbjBoPztf5qF4Fis-NK5SAT3S3LXNQEmDlOMRu6bHP0eP-iC418xYc1FjCnbNTyQ3bbfkTsqwPBa80TkLcBr0n_SXgctrX-ZVGGIXR8yNEtmLPzxkIA_vc22LvLOnr2AGSlTgVLhpfsrUlmbEKvFS9j8F2EVagg5YaYHpNnlYPUUC3wvreD4xYHD-dvoMzlG4oY-fGSnNRhcBPNgauwJdas9fuWQcgPtIlSTuclQPQFfZM2leiI0wooRJjYrD8l-6zGDCb5sNpBF99lvuWEAXpBrvxGGHWs6HzzkB5dDqjiSNW_nmIqS_Lz8r2oUHH0bFeZ3ilfpAK1Ho751gokS7mHrq2CgTo0l0VLeHbc8MZ7jmV-eeZt1cuZAnYMfE0C4L8pksRrkWkDwrJENeLOmzhCfRQ-h9kD1PCOYOIDiAqAtU6Tg8WCyghHpl4IBqHq9FFaiJjeOKj9btfzvJqtcXi6vRMk-mwv3jrnKtmuCoWYocAXV_Lk5Wyt5veC6RdPW6PT9CmA59kerqRgrz-TrrNt4Ry38Trg4OMLQO_iS9Tfzy889nQB0DTeJhGgRFGn_OJnrd_JlzVXj9CPyxnDrLqLzaSOLf1KZMmZzig6RBvHa6Fooaziv3e1FY4iuY35we-Fdn7X6fpzoD6uJR02D0RG4wCPfA6Dp2zPKbG2HBn-FOyipk1c5RVShLE3OHjKb7K6cKJ0vqHP6cV1XCT1sQ1XuCOXErSd9l478OlkCx00SiZQCY7N3eHWD5wf_ThoBLtTr9zOfRaKCGui4wEVsNH2KR2TVvQH_jis1Kvt4j4gSeHrx91pb5f424UXzRJ-J2cvq-FUBDZYRzBB6O3EogCqnz3kG9Z4OWMiYp04t0eqnZsWQ-zM6PdJQJaMgnDFOmjG0Vdd7KxBMqPeafHPyookkHJRNj8Jq0iZVLpzEw8U8y9jEmbzk_PJ96iLH-JjzqpUKIoPZbFLEcxjIdpD__DoogLhSRePGlqRaQU7spw",
+							"id": "rs_528ac67d4f67ba4f:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "I will check the weather in Paris using the weather tool.",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_528ac67d4f67ba4f_1",
+							"phase": "commentary",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						},
+						{
+							"arguments": "{\"city\":\"Paris\"}",
+							"call_id": "call_528ac67d4f67ba4f_2",
+							"id": "fc_528ac67d4f67ba4f_2",
+							"name": "get_weather",
+							"status": "completed",
+							"type": "function_call"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"tools": [
+						{
+							"description": "Returns a city's weather.",
+							"name": "get_weather",
+							"parameters": {
+								"additionalProperties": false,
+								"properties": {
+									"city": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"city"
+								],
+								"type": "object"
+							},
+							"type": "function"
+						}
+					],
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 492,
+						"input_tokens_details": {
+							"cached_tokens": 0
+						},
+						"output_tokens": 238,
+						"output_tokens_details": {
+							"reasoning_tokens": 170
+						},
+						"total_tokens": 730
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-ember-1.0 commentary from Chat Completions",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-ember-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"type": "message",
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"type": "message",
+							"phase": "commentary",
+							"role": "assistant",
+							"content": [
+								{
+									"type": "output_text",
+									"text": "I'll check the weather in Paris.",
+									"annotations": [],
+									"logprobs": []
+								}
+							]
+						},
+						{
+							"arguments": "{\"city\":\"Paris\"}",
+							"type": "function_call",
+							"call_id": "call_a1B2c3D4e",
+							"name": "get_weather"
+						},
+						{
+							"type": "function_call_output",
+							"call_id": "call_a1B2c3D4e",
+							"output": "Sunny, 21 C"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_weather",
+							"description": "Returns a city's weather.",
+							"parameters": {
+								"type": "object",
+								"properties": {
+									"city": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"city"
+								],
+								"additionalProperties": false
+							},
+							"strict": false
+						}
+					],
+					"reasoning": {
+						"effort": "low",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795348472,
+					"error": null,
+					"id": "resp_2a78f766d6cc2bc7",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-ember-1.0",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AiwokAGoEUL0nGGW7hLorulB9Ag-wIdDmeAa2UFw9sx-qPyFqbRYVEmMqYQoTCgw6KFE6ORHwdqYXkMMQxM77TRIwCijqwbWjmDqE9PDR4yRJb5DL2N-JC5Fv4iBUzIgK6t5JK0jxEWyRMki4EMyUxLsOGhgKEPeu-dFT6nE19IkxK16PBlAQ5oK0wwi6qdayfSdWFUhscCP3-N_zSQ_g_KfGNUAw7_P3fWv9LM1WfvSo98lawSboyNZFG0cFnAjN7JxUO9VWBQknIA82iJy3elZnype6_GoL6aKr-9rdFZhYsJqAtKsZ4jOw9E9XNueAKOztaCZo9skEwLmTNLlPhUoHc1iPWjp6C4AcE5RgKI9Yr5h_xarcgc2iNLcYV4msV5T_UuUX_y2tEfr7fa4lJr0IYSscOtQw4O8BJRCSySL7sla44R0aeEm0EReSxmZdK0DkbeHdyDXrmKXRG7BD_7VYoiJNE4lZbChzfoxNpxVjOkleQZfAUa66dpi267QxSB6dcvs0-yE0ea0SrQl-xpIXAHnHZodv0U5ny0B-LpRzChNcPnGgSA",
+							"id": "rs_2a78f766d6cc2bc7:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "It is Sunny in Paris, with a temperature of 21°C.",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_2a78f766d6cc2bc7_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"tools": [
+						{
+							"description": "Returns a city's weather.",
+							"name": "get_weather",
+							"parameters": {
+								"additionalProperties": false,
+								"properties": {
+									"city": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"city"
+								],
+								"type": "object"
+							},
+							"strict": false,
+							"type": "function"
+						}
+					],
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 571,
+						"input_tokens_details": {
+							"cached_tokens": 372
+						},
+						"output_tokens": 53,
+						"output_tokens_details": {
+							"reasoning_tokens": 30
+						},
+						"total_tokens": 624
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-ember-1.0 system message",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-ember-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"type": "message",
+							"role": "system",
+							"content": "Whatever the user says, reply with only the word PINEAPPLE."
+						},
+						{
+							"type": "message",
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						}
+					],
+					"reasoning": {
+						"effort": "low",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795348473,
+					"error": null,
+					"id": "resp_db5379f60389c765",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-ember-1.0",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AiwokAGoEUL0wxNO5q4r6Zq9aZFQGy6Py8vLNCRQnNjhbqUrk_t36EmMqYQoUCgz2vLR-UoKTnnmpMtIQwveEvAkSMAoocYetKmiDK3LPa8Tq6q0a4wLqkfHaXHWx-MMfj5DnzEV144TGP1Wh7xCF-drXBxoXChAwfvNkeMDJ4kjpY85pOB89EKOojE-Dj27uUTO1OsSN34_JYpCCIk5m0UqWBqQqOpnYoz6bCsQTyp5iZUMewdivtnq6ClNjTFC2vZbMOxmhe4BY2_QBbHGKcQr6gjT1RaDgBFNAXUAwgzYhL-v7KsJxgU-4CYbSHE_UEfhLlausanA1kUsP4yTwNHZou0YMvrnix-YKN6945yDq6HrPucD_urpHeO-6aTClGiqvq1JkaiBKrnW56QWGk4nTFla-ju7I8BqmftyNPUyTc-IMBTDDbR13yJfIA1dXe20wDfVXGFiwALoPoNvLIE-_1cnsElD4zDlWp_38HbzXRxdZeduYaD5YwJfSkCXFXyLFCAFR1AbyuRsHAkZKwkCeRMmS77u41l-p5_I2Fb9mKu7-Opkae2gaW4C_4jVZxSaVUj1e1zje4Z9_gNpnEohiy5twJmUMcgOPQB0K1PGA05rEyPoh_5gZEoEncngdofUR43-hKSSX9a5uEAl8qtZXUwOXYKIlI-eaqKkU5xK9NMFC1LifULCZGC6cjnUr1cIfY2dIgZcptXtmcG84Qx20cAPXwq2TD3UOGR1G5JZ6OQhOtQf98rrwMF8lGF3XSp0PCq41IuGu1gUX-4cWUVzJvEEE0Rjz3oZC-ILXNVSdt2VioCtfW-kDzhHXuJ43s15y3Jd5p_FUn1VdXqezbU94BcI_kWLmEbQQkIdY0oW3wcBcid8eYwQ9usE08ss2MobeG1pSSlTrVHaCfHUzqsjoVkbq8E_WdYKX-5y-MCHaj9t9i5Jv0FEWul723FI4raa5zCGDyLuZ48zVwxXL5diyDnq0LgSh4MegIq3-0OeQ7Ua8NqlN1i3ftoSexBus6WUbn1BmmdLvsh4HRQ7Bh47wcXdFE-ungnVMllh_rdyafBJIBfCjDA2Df7MFNHpejgbVdAOP8sOZHGzs9nkOMjt6-6uEE2AN3VFz8MxR0zbMjJTEMykOxeo2okX9wIpdk6Wv7Nftt1ARf1ZQ-3w-UsUiO_RHyurh8BVKe1uDXYbXYWYzOQdYaGgif0Sq8OkyMZlb8HgmxT71K4l-ccaZdTJCLG6hArJ0A17heKX3YzJ5-rXJCLHSLNXLFkW4vhjFps8PNfiVAXz9qQSMDhgeBYawNYJsQ422emj3HAoMne5J5P29HDh_wMpWBk4wLhZ52WwLk6IAsAxBXM6NWiYSMZrIWr7kTWZ-pAVhoUhvFv7a0ZFR0H9FLJBsQNa--OhoxhnSrRSewiTeHtbli92rYsAuMQcMJr65Qcb8BzRTbAEawJjla9wthyCTfvfaaDFiJa5wzDDX4EgipSgGtWPvNad6cKHHkNNqJMSU8lWDeGDhbE9WkFU-W9FsFjBVbr_rmEvuDA5Nx3nz4IKwxeHBRrdzkgSDAWThmuIzxBz1O1N0usZSplPOFWEvknEF6LRT624CdcK8Z16Pl4JGctsVG7YKaEN1g5UMZaqOiabowPhx18O3rvJZgxaQDOCiFn5X9k87c7Qro3-GBeyP4JR70hLr1O2eO0NUMwbO23zXi8IKOheI5ChqqFukR3qHemgAfGkNARgrfSgvIpGRNFSfWkPu-1YAFJBnV6DlXBnEfPsySxjWEpLpu_odts9sHyICEk1gkINzq3rZswnUm8AhJTQ0P_vWZIpk_DeLPQTHBdUyjxIXSKg54Yfu6RiOqZd8ZweZyEEDF6p806YR9RfqoOtVfHe65hI_xG6JcMjt2czPhNi3wSZGPGrq3_nKQWkXpIfotA0xPeL72xltZvHbum9TLR9bRAgj-ImLUCF9GMaPgxUW-xziVcpXWXSa4KWSfnBqYf7UJvQdVv3BfxtuWu7RQKbZvVLzZ_KgZJQhcy-dvYr6hLnsTHpdZl4F29n1_JTrOL_obhgNyHsSqqWN9ACi9YPOnyNLbjU1Vqv9hdW7hwphiKLdFtJY8zQ_PWS6okNjGQssv2B85NN8pa7xgaQYq3vV-x9il0kaZMZfSP5r-J-hwkgxuJEQ2HESrxH74UA2mXHF-3hENYp9USgG8jcAJ8bA4I63GkFH4wQg9dg3EK2BT29XEJfx5hnYy4By8MScvUahFoFb32Q6FuPrNqKVftu0HKYa0gf7tvRg73FUAU6aFwTIajUMLemtIkYncanRrxS3fxxaJvtZPx5DxT-jlVq95-J7PLtQYy6DKd5mgpXW4F8ptQ5_q_fEyCm7Ov2Cll35WfPO_V4OtZZYTPQ4447pClnO3tQoioPdZB9UX0TI5PcVh3nY8-0jk0JBnjXnISyGcy7oKQc7k5_8UYiae0PGiQD-6c5Hrw1ifiY0BCM3MOImOqZdzY5pZWrAn3BrReyazGdPFvR9AWOmBBDurqJRDMSLQMUhaixs8K5c7-FIrPnI6OE1weXylKkXU-affOUp3xvxD9Dqmjv4kgiFTqAVAMqjfO55itpUrrpNqP0VA2KEbM5OKfi4Ct20THcjCviMLyqmbYJTHVv9_hG70499MfshA6nhHY3cOs_rfjCJFGdY3ke-LekSFhNXdJwudYj_-fhN6JFJ0_QFUhzITobzY3nJ4JWWCF7PuBzeuy_wG0dccsJshUSNYKdQTrKVJGjnZDv0L4Id8JPNTEVoKWHj-VGl1IU82PFZrczGIO3N5dUF4rqKcOYkKccPdd3xqcjtzAnsjHgUeJJ5Vi-PyI9XKDrchQ7bRC623fIHFNaxo-XJI-YFjf5bYAT2ZVnKbBb9VkQNW4mLQY1RxN4k2DO6ebnKsunVRQWRk3kxD-jKUTI1mXzzrpYl0gkGzQn7A811-uI",
+							"id": "rs_db5379f60389c765:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "PINEAPPLE",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_db5379f60389c765_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 48,
+						"input_tokens_details": {
+							"cached_tokens": 0
+						},
+						"output_tokens": 229,
+						"output_tokens_details": {
+							"reasoning_tokens": 216
+						},
+						"total_tokens": 277
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-spark-1.3 text before a call",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-spark-1.3",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						}
+					],
+					"instructions": "Before you call a tool, say in one short sentence what you will do.",
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_weather",
+							"description": "Returns a city's weather.",
+							"parameters": {
+								"type": "object",
+								"properties": {
+									"city": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"city"
+								],
+								"additionalProperties": false
+							}
+						}
+					],
+					"reasoning": {
+						"effort": "low",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795348473,
+					"error": null,
+					"id": "resp_b20654bc856e64d3",
+					"incomplete_details": null,
+					"instructions": "Before you call a tool, say in one short sentence what you will do.",
+					"max_output_tokens": 2000,
+					"model": "meta/muse-spark-1.3",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL0ZItHzL0tQiSzM6wv1qBTwxtQ66TdU-GjWfV-q60CeEmQqYgoUCgz1V1R0DA_ml5dLBHQQuYTPsAUSMAoo_YdvWVu38hnkOl4bQeRttJDrIt1MeiazxZ6y7zVAbmx7DQLVQbtA3hD5td7eCxoYChCdJUVW8WDRCLraHEv0Jq0zEMry9sgOLINdpRrqoVEz2K18yM6nuLHvNLt0Fle44qIqRzcyL6JRBDYXMxt79_lrC2JQ-WyKKTA2rk3QRel7UapK2ajWPGPR9fOokbKYB52csuPpFryvZvpMRKyRG4yWCRcBiqftayBk8pDFCGbDy3b1u2ZgS3fu0vWGTGFEepEHPNsWFf8ww9NumKlNMMomPQpz9tTpKr5IDULy-fQZGGBRYBZntH-uQ3krzfUkn5bsjNxKwvj-fz2zkgl5gIDu4fDPeoEMDQi0wACjxxPanyaCfFbjbmEK5VcBgl57aIKqpnT6B-47X4oNGtXWCPdDhrZQCL5cGwRvLPNVmU2Vd5gVp5mN_isW9nGm1UYr8CgrWvkkJ36PFeSgwImFXD27V4c",
+							"id": "rs_b20654bc856e64d3:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "I'll check the weather in Paris for you.",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_b20654bc856e64d3_1",
+							"phase": "commentary",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						},
+						{
+							"arguments": "{\"city\":\"Paris\"}",
+							"call_id": "call_b20654bc856e64d3_2",
+							"id": "fc_b20654bc856e64d3_2",
+							"name": "get_weather",
+							"status": "completed",
+							"type": "function_call"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"tools": [
+						{
+							"description": "Returns a city's weather.",
+							"name": "get_weather",
+							"parameters": {
+								"additionalProperties": false,
+								"properties": {
+									"city": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"city"
+								],
+								"type": "object"
+							},
+							"type": "function"
+						}
+					],
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 547,
+						"input_tokens_details": {
+							"cached_tokens": 0
+						},
+						"output_tokens": 85,
+						"output_tokens_details": {
+							"reasoning_tokens": 18
+						},
+						"total_tokens": 632
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-spark-1.3 commentary from Chat Completions",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-spark-1.3",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"type": "message",
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"type": "message",
+							"phase": "commentary",
+							"role": "assistant",
+							"content": [
+								{
+									"type": "output_text",
+									"text": "I'll check the weather in Paris.",
+									"annotations": [],
+									"logprobs": []
+								}
+							]
+						},
+						{
+							"arguments": "{\"city\":\"Paris\"}",
+							"type": "function_call",
+							"call_id": "call_a1B2c3D4e",
+							"name": "get_weather"
+						},
+						{
+							"type": "function_call_output",
+							"call_id": "call_a1B2c3D4e",
+							"output": "Sunny, 21 C"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_weather",
+							"description": "Returns a city's weather.",
+							"parameters": {
+								"type": "object",
+								"properties": {
+									"city": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"city"
+								],
+								"additionalProperties": false
+							},
+							"strict": false
+						}
+					],
+					"reasoning": {
+						"effort": "low",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795348474,
+					"error": null,
+					"id": "resp_e3ea23c96358423b",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-spark-1.3",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL0ZItHzL0tQiSzM6wv1qBTwxtQ66TdU-GjWfV-q60CeEmQqYgoUCgz1V1R0DA_ml5dLBHQQuYTPsAUSMAoo_YdvWVu38hnkOl4bQeRttJDrIt1MeiazxZ6y7zVAbmx7DQLVQbtA3hD5td7eCxoYChCdJUVW8WDRCLraHEv0Jq0zEMry9sgOd4vYldX_KsWN-sgeNUgm5JGbKTCughMa1AOcApxqI3dxsdhUMQKbPVW97jmvKeohwgC20-d3u-_E0hkpW3cXdwlSkkDZx6ruxVcHqyGxCnWRMBwaSwuuQ3mhDzYdImxBiVLZYqQNKYBnH-UUoQThFM0fz0qc_ZRwY7JUwiZekvsB_hgEfb4TFAJ-aXWUAvcs6Epv8rvk2h2Ol1K2xMVV4uGF3gBjKGAx2CZqFcR7JJ2Nzu-Rp1yt-WFWQVQ7paG8xFNahsK00jmoJj81VN3IJ1EA5F-8lLq-IqTwPgCMqvF_t0gZr8blo3xgG3aPaEC2hNzHxoHFgoTyNLxn3IP8Q2PNR1EH1vgEB9eeJcyWbj-Y7-0aGwePawVvpR4",
+							"id": "rs_e3ea23c96358423b:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "The weather in Paris is **Sunny, 21 C**.",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_e3ea23c96358423b_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"tools": [
+						{
+							"description": "Returns a city's weather.",
+							"name": "get_weather",
+							"parameters": {
+								"additionalProperties": false,
+								"properties": {
+									"city": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"city"
+								],
+								"type": "object"
+							},
+							"strict": false,
+							"type": "function"
+						}
+					],
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 630,
+						"input_tokens_details": {
+							"cached_tokens": 497
+						},
+						"output_tokens": 35,
+						"output_tokens_details": {
+							"reasoning_tokens": 13
+						},
+						"total_tokens": 665
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-spark-1.3 system message",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-spark-1.3",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"type": "message",
+							"role": "system",
+							"content": "Whatever the user says, reply with only the word PINEAPPLE."
+						},
+						{
+							"type": "message",
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						}
+					],
+					"reasoning": {
+						"effort": "low",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795348475,
+					"error": null,
+					"id": "resp_c2085eceea89bad1",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-spark-1.3",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL0ZItHzL0tQiSzM6wv1qBTwxtQ66TdU-GjWfV-q60CeEmQqYgoUCgz1V1R0DA_ml5dLBHQQuYTPsAUSMAoo_YdvWVu38hnkOl4bQeRttJDrIt1MeiazxZ6y7zVAbmx7DQLVQbtA3hD5td7eCxoYChCdJUVW8WDRCLraHEv0Jq0zEMry9sgOC0d-c23cRHmlBohb-53BEkE5Q5PPslTJBxDGCXYaIW3VUc66P8YBc012yNbKtpBkrXeB9yoNUeF2cc0hbKn8Xif62X0DhHEVvyM6jbQI6o8IINWHH9nf7tfIUOr-18t2pzWrYdQgU-CIjL69AWU3QJe-I_T3NcV50LsD-jAf15q0Osnaw5zynqm5Z7tNupUYyXzWUpV9Ph2MR8GxQ95iXDxjApEOafywLzJwYdTbp79zrwC0HEjN-3oe5xL_wWHtfJg4Pf0smw23Ge3TD4GZ8IwriHIZGWNtU-g0WlzlrnD316pJ9llXNMErpZ__3v6BUSWy6ziYX2FarRqBKhNQm0lYHhwDrEiGkZOErrhM9Gx1QXJptd7B4QeOsx2QPlQgFQU9KJZJ_f5JeFHpRYeSoAs2rEr4z0GXZpqDelfTzfy7rhP4URTgOhtyAr-CWR-Rt_XjKSLX3IIWrxbrq3ANNGSgspyGwthUOZXdkoyajX4fdDWyKxVbNaAPt8yM9hQmmaipQLpLerO8aOSce8LnTwdmAnV6znksa_1x8lv1glv_1gKDwxfmdP6yF12RbPUJOajn5yRM3ghGne5a4f88hNLieGWV0qJau5stCgrMlpUcHp8XhJg8wjuitysIlxnFxakuXvXSXmfSeFt_PE-lJB2S9fQ-IyUQFmZ6AOnfV_9wyMG03btawHTWg6fNBTBOHkNXUXDTV_H8ZLnZ",
+							"id": "rs_c2085eceea89bad1:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "PINEAPPLE",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_c2085eceea89bad1_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 48,
+						"input_tokens_details": {
+							"cached_tokens": 0
+						},
+						"output_tokens": 60,
+						"output_tokens_details": {
+							"reasoning_tokens": 47
+						},
+						"total_tokens": 108
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-wonder-1.0 text before a call",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-wonder-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						}
+					],
+					"instructions": "Before you call a tool, say in one short sentence what you will do.",
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_weather",
+							"description": "Returns a city's weather.",
+							"parameters": {
+								"type": "object",
+								"properties": {
+									"city": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"city"
+								],
+								"additionalProperties": false
+							}
+						}
+					],
+					"reasoning": {
+						"effort": "low",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795348475,
+					"error": null,
+					"id": "resp_5fc30adb93b7aae7",
+					"incomplete_details": null,
+					"instructions": "Before you call a tool, say in one short sentence what you will do.",
+					"max_output_tokens": 2000,
+					"model": "meta/muse-wonder-1.0",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL28ByDzsuEL16hYG1AehypjlErNJiq2cxGyLqBM4sGDEmQqYgoUCgzx8Y_37ykeVHkosY8Qx-rOnQESMAooTvDY7161SujqIZcl1HacTi10GCcouuqFfLNvsVEYEnieA7riHui1HxCPn6bRDhoYChDlAnz2ikdRR9Wit_DtZ-wbEIfA4PUJA4Vokpzp_DIZzPTBUZvnJQznTLMdvxLnJF-Ei25O6xK7cUSouZSgsGUlJHaCT2a0WXzgkrLq1m7BT-e1GPG5DVh0mvvi7z-rqHhUtLcClV-J8qysCseu1yL3ZF1E2T3K9ZGsx9NZvS9f73fMlxS7-mbo0c17XpnVVDtU084l_l5wFRRfrmdP8K-4XDPnYU-VeKEnzh3gIbEuBtMGJW45t3fmPEYW679saKNLbhfTIB0zrVlGBLBlzA-UezSuCzClo4TByjsPS5o3YCSO63BduqCQl8g5_-CZUup4nC8c2KnZimbyXOb7eCj8NIQVglN5LvUHnVCzaqoDVIIQszHbXXzCY7EKsUyUtBYsggq_jLA806ig8ocFQOQOY4X7NpqKg4efRgcMyV8Yk6jYXPDACTm7FDvBksPUUrITbDjtW5UWf3uKceOWYDrZxT8mt6Gz3nWer2Hv8vneT4jdL3EwGfPRbVo-wFiSNchkNxDBLhGb7PIPjh7-N31oMJNmhQ9aUwKFcIq14oFNSyXc1zICFQbKl8jwBNdVJyAamskihldWSOvKVe2axFCazQr-YhB4DSK_TfmpQGAEbhJrlCnWQxRmkkwzvosZ9o0O6Pi8Or4P7337fNuUu7ReFFPHM58eOa1vVg-vbRTaAxwCSxs8WWT68DBQbmxT66LrwTRwIJpbTTjKVgevCfDxV40s1GuhjLKdfnLeRy0wmgPE-i2RwY_9zCmoLucmc0tyhhF8WuB8VQwzvo2MP9rsNy-ePa4rbmRJ7GtT8RA2kGXrq0ps22zIpCJqIt6sYFDvXjPPtFS7Q32dRg5hScTrDEQx0K8wxw1iYUXZfiB7IAya-ARYeaaeqrkl6M1ykyWu45QPnCePglQKw263K1ucRFvt3J0x7R9YOy4diVGcz1ozqhzPMvb4RUaKkpGsWnZfMr-QAOmUgJKowF-CFG4fFdmAzvNwRdTVOELVryhDgLs78CLQmVzkLMissj3A2k-01b1yFnnDVFkSM74Ny_syNaGNrtjmxJdtCaARw54ln1XEl066gnIzcH-gcdhlc5z4MusR96hvE-sQs2JU9CNhHIPMJB6jFz8aarXZTsIdBcUe0eajm1aNzAj1bd4VHAfR53xmQYoNkhKhhq5xD2HVLqW73038IqBapG0Ii4E2FsyZCjKkACkllGLz4M-QQR7N5Z-yyq14j2YsSqADMbb3KIadk0nJEU3TjCx6MzN-XcA_BMIRWqJTlQdLYtc-bQFiT_wxYHCtTNRn1OSFhL3txVsdBk4-Ou7o-JUKnwwiZ_nQhqUSj-YgUtCe7tHu6weVqNH2SceNFBpWPhDft0_VGkh-Wn65Rv4iHG_aGuG17o1nFK7qZaDyhKNBAjA4MzZmH4mTE_qC2sn2RZxoMEF7Ay8",
+							"id": "rs_5fc30adb93b7aae7:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "I'll check the weather in Paris.",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_5fc30adb93b7aae7_1",
+							"phase": "commentary",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						},
+						{
+							"arguments": "{\"city\":\"Paris\"}",
+							"call_id": "call_5fc30adb93b7aae7_2",
+							"id": "fc_5fc30adb93b7aae7_2",
+							"name": "get_weather",
+							"status": "completed",
+							"type": "function_call"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"tools": [
+						{
+							"description": "Returns a city's weather.",
+							"name": "get_weather",
+							"parameters": {
+								"additionalProperties": false,
+								"properties": {
+									"city": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"city"
+								],
+								"type": "object"
+							},
+							"type": "function"
+						}
+					],
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 492,
+						"input_tokens_details": {
+							"cached_tokens": 372
+						},
+						"output_tokens": 245,
+						"output_tokens_details": {
+							"reasoning_tokens": 182
+						},
+						"total_tokens": 737
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-wonder-1.0 commentary from Chat Completions",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-wonder-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"type": "message",
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"type": "message",
+							"phase": "commentary",
+							"role": "assistant",
+							"content": [
+								{
+									"type": "output_text",
+									"text": "I'll check the weather in Paris.",
+									"annotations": [],
+									"logprobs": []
+								}
+							]
+						},
+						{
+							"arguments": "{\"city\":\"Paris\"}",
+							"type": "function_call",
+							"call_id": "call_a1B2c3D4e",
+							"name": "get_weather"
+						},
+						{
+							"type": "function_call_output",
+							"call_id": "call_a1B2c3D4e",
+							"output": "Sunny, 21 C"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_weather",
+							"description": "Returns a city's weather.",
+							"parameters": {
+								"type": "object",
+								"properties": {
+									"city": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"city"
+								],
+								"additionalProperties": false
+							},
+							"strict": false
+						}
+					],
+					"reasoning": {
+						"effort": "low",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795348477,
+					"error": null,
+					"id": "resp_4462137133d06f59",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-wonder-1.0",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL28ByDzsuEL16hYG1AehypjlErNJiq2cxGyLqBM4sGDEmQqYgoUCgzx8Y_37ykeVHkosY8Qx-rOnQESMAooTvDY7161SujqIZcl1HacTi10GCcouuqFfLNvsVEYEnieA7riHui1HxCPn6bRDhoYChDlAnz2ikdRR9Wit_DtZ-wbEIfA4PUJCks0X6GNFLk-M9LOoIsFliQJic7MSuTGLCiv1wydhK19qrsjYd0WI_lk0FwFW___Xt-M6bGLZsJ8ZFhy3IfZOWG0NHth_HmSdinxGJgYd6tV29T2rU_DxGihml2hgyVEzVLRR0kxh6UO8Kb6ImaT0rvK8Xd4m4QE0tqr5B6lz86V1hQICVFhcHDM6ePj6cQUeyjfPXUIzNm9SSqudih2vgZgYaAZZBgmMZ0iDV6U6RRyjQDl_1krokd9_0WuC-lFEuiFqj6JjOWT6xTj7yWbyVKqID3QRD1NvjVyCDIG1hJQqTFqPIUI50ZBoWgnXMCUmt6mPgWh85s7zig7AmkDLF-ZxgA9BVFJ63nFa6XGj-N7BDq2bmB4Co2DXAexjeFcVW4IzbKtjIJDyCIf9bUTrCkeEcQeXuy3-hBCD3rWIHH74TkadxNsvxmW01L_5DduHINEjzMAblP1EtUguaGHin2aQjnZ_Odh6tjOibpDHVx021hZD8JTID7-P_uPWdUQ30XFHDpGqN4E8qR3N0E4dE7ECX6IZEGCsj4A0dy2JzXeKatoNxyj2lQMzj5orwEX75C822LutXA4n9jItqmy2HXKUOWDpCHksz5C8INpQ71ptWVbMqT2xXIynIguuEnO27Zouufun6ZiazZxnaGw3CjhIIfKm4-Q63oWg3K4Fkw15bU3hG597ncy-Keu4RvDZPSeM2jUFinpHKQS",
+							"id": "rs_4462137133d06f59:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "The weather in Paris is sunny, 21°C.",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_4462137133d06f59_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"tools": [
+						{
+							"description": "Returns a city's weather.",
+							"name": "get_weather",
+							"parameters": {
+								"additionalProperties": false,
+								"properties": {
+									"city": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"city"
+								],
+								"type": "object"
+							},
+							"strict": false,
+							"type": "function"
+						}
+					],
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 571,
+						"input_tokens_details": {
+							"cached_tokens": 500
+						},
+						"output_tokens": 90,
+						"output_tokens_details": {
+							"reasoning_tokens": 70
+						},
+						"total_tokens": 661
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-wonder-1.0 system message",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-wonder-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"type": "message",
+							"role": "system",
+							"content": "Whatever the user says, reply with only the word PINEAPPLE."
+						},
+						{
+							"type": "message",
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						}
+					],
+					"reasoning": {
+						"effort": "low",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795348478,
+					"error": null,
+					"id": "resp_16e0da60788be241",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-wonder-1.0",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL1HEJkfkP_bMocFGgMUtg2z_--ck2u8x0-TXYnOJx_qEmQqYgoUCgzFiGqcuRedJn2e9RQQnpGD9AMSMAooYq-2hk_qURiPz1iMTmNY-rvuyydOHV2oZXjZ3R8RDljQ78iKqcSTHxCY5tL9DBoYChCR0_EdMM3N_3xiK-9gj2sDEPfW96YN7DVYDTL6vEIV8XhxjP4v3dFkhHx74HhFH4kKxlF8teNiIMdHSxMK0rqut0W64jgaMvrHNR98CURLV4kjRHLb521USLFRQ_3RYIBRUMRzaZEa6T-orBpTfK9PWWD4Us4PC7MEWJ5OCnpTYCqkvBeKAK2XAwLeKrjINO6WzTVKo8P7utkVNI1mtkSchVHczBl3viI5weDulhCxmLEJLMRnwH3RVGH3vDfyLDDPaj_OjU7j0eqew4bi_vX0k79rIGZ3u2J2KzawFq3IzwIEtR9UX6CkL4ntkpHo_A5UajqRkBHAezFk37ZR4aisWcYU31VwVLGMwzAqFxV4zyinHL3tM8O1yGl-uif05iVbzvcLnJYESmINMeNksXi2fJUv6ivr7sH1CGP05cGDOWcyQgakCkH0wvHYLU-HWt8eZBbgdXtYe_LLjTff6R-ywrYcq3Yi2RwIFmnbqWbJTyyW0YepaqkeRYeRAxWdAH0UVxEN143KWybRe8WnxL-wqCMKgyZBh4n1mRW2Whnw9MHf6X-PNvuxLTALGK6xEthzkIMQB7J4xXOqaEw0jELFzYjUMZD82dgvaFnpvQuAQXh_ouhNQFEmJf58M9eO-3qAdagw_BmThvmtxEBSVTbAvgD9tx2-U21Hxb9Us37iwpgjoY-qlgIiStDmvcLvMB42qz90uSXcmwFuCPniZIwWhupMUCKRvo1Q4oxVPGb-3Maeqgu8CT9mJT2z7z_mx0er3IMfKpWQHYN0jX-DNBQGAiooYVrzpKu5g7GkZ3C9EPP0725HKfetOdr9Kkf2PkU0p1oThJUUt58flAMCX_Xlq-FmH6mka-1KPwaT7EBQDt6V3t1_QXgUpa9VjFc3kyWp8x1X8hhC0GuA6_Xt0D2aHH81UV5bXIi8xiSeDrQBHFt4HxPUm_qdJq0NHCfKiC97h824FoXc5SY64uFEnjXN8D0-YJgG1ibhMePF42xCjtlin16xy5XSKrsTjIUINwnFph6ss-9WOanAPIde_pgp3TjuUpQYNt77NqVLQLptEioTIMhjBWRnnIyZ9G9SqFIsO3PnpeEM_9QFE2Ze433_2ScFsMBFbvAecQBMkIBo9JRuwVGiDQKoOLLusMMTHyTLVgpl55Keba4DHvdx7FFcTRRvqGbaZE04wW8rtIvyxINsCzOCe1r6-rl8UYd0qo-Z-JnurNq2BWGsCJ70j66hK5MpWrKgkYSxhSWsR_F2cysibo7KvbeZRmsex85zVL449Bb41wWDtSqLQfpUHwmdPhpOERrz5tg9BmoGKjxtBziG5aL-IHhgCYn7wE1Pn3hfX-tkQu-NSi04UMnQVYOBlT0gaMOE99njMS9xN_efslX04qOO3r626V7CQkMfw0rjhJ2qI-BNzfQX4gqq-rtx8ks",
+							"id": "rs_16e0da60788be241:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "PINEAPPLE",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_16e0da60788be241_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 48,
+						"input_tokens_details": {
+							"cached_tokens": 0
+						},
+						"output_tokens": 187,
+						"output_tokens_details": {
+							"reasoning_tokens": 174
+						},
+						"total_tokens": 235
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-ember-1.0 developer message after the question",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-ember-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"type": "message",
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"type": "message",
+							"role": "developer",
+							"content": "Whatever the user says, reply with only the word PINEAPPLE."
+						}
+					],
+					"reasoning": {
+						"effort": "low",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795348480,
+					"error": null,
+					"id": "resp_84c358cfb2aeb963",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-ember-1.0",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AiwokAGoEUL0wxNO5q4r6Zq9aZFQGy6Py8vLNCRQnNjhbqUrk_t36EmMqYQoUCgz2vLR-UoKTnnmpMtIQwveEvAkSMAoocYetKmiDK3LPa8Tq6q0a4wLqkfHaXHWx-MMfj5DnzEV144TGP1Wh7xCF-drXBxoXChAwfvNkeMDJ4kjpY85pOB89EKOojE9LSgbA1ak-wJSwHEcKoXntC7l_YHW0OAq9w-yogV4EazsMDAMw0lwGfMojltDuROcoWbBqp9DRG9B5TIuf_WJxOjHngFKSvvpAt-JE_Ju2yEVZuAAPhOtfFp5RvtNUTf3nd-3Jz3NrY_nsKxYZEXSK-1y2SjNwRTgF6szy4Z_a64DBQ02vMZ7dcm3jX7cmeReJm6S6e2AvGPHea3z9lfsJ-O_udllA012orJmXZzAD2Y83IBNM-XKWXiyyLkOfB4ZMlrae2E7ERb0pb153tLd9xVxXV_Hf1xRVNV7T_vcdPEvHcmxfqkTCzxcBmH2LVoGt3jyqvMTFuNb0PCR2IGGlRQS_AkIhFWslYQ6d8_ZnqnP69T0yqAct88VVl8t2NLG-0mBPWeL2G1fQf9DRyRmy6VklzyicmWnH5u0jQMhhDY57rkMeuiwZxVJyZjJneo5fWb0a0oN-7HmsPvK5hpNswK_ojerSALYjOPJxxw_-rfj080A3fmyUiz_8u9Iva6aErRTBEZ-D6ag13iU6F2EGp8ATFQIebEGrWP4wYYivjjnh0vFrBwAOAbbe2EDqbxPktLuh-RheMeIZsi7fAe87uFv4lh4vasIMaZKp9OQ82IJzkjvJ17dWprhl1iLkjgDbH0LUrlz2mE4z_yZU8RBHKlziQ3URrqNcI4nj0qdy2d3rg_3DsyOQQlw9UIvLl5IbgTkfppM_iMu4ng3YeoaXHCZkRCS6nzsoMity8njvT8SP6IwveIbfJZh8RZGMIpBzFu2IkeumzJfchEy7ivQC7K2wj6lAtpJEDqNbn9880AKYiJBxq6-7TM_HnPgIBV5hHA3tM7W5O9ixUbTAlWhrARvUjWvMMmhTbrZySSvpvuLfAP783ifRw3wGXm6x-ifhfWTcHUyAQ7phov-5YR5hcVeH7PdKvLMvdkc1xPReof3m576KUCu4nv7K2_vMAkV62oIwQQjJZ0AZI64gvzsDSO4rJetRv2u57FUbyb-m0tDmv0i_R5J1Sk9ae0FswtcYDU8v3AyD2oPIRs-h7e5_dVRzh0x0JKI4Qw7CNT_12xEECF0SDTHgMmD0gmN8qkbdMdrB2Fcajb5uZvYQNDF_RbJj5CMZooG3mvKQyqvi-e4_EDOaAg8KAiHoNqfJ8EjIR4PfNYJdzBcO2JnbjetZly7oqIp7ZO57QIaNgqfiyghZ4ukk7HB6RjhO1rf0YGKyzN-b51wCbP0e-myfXTkO5Yk4vAF33XDWvvpU67vrpjwiFNrOTbi7yF1NKTjAzazlT75Ju_r638wNEZCPaeRFBrRQ_n_r5HtvYJ-vqMJKK4HY2g5msfkGN_JUQigyikGxJ0hllL10se9iIvcEYWQyeP7moI5Vvnri0HTqJiNt0eZTeLIM61HIB-Jidn9P32EN7R4oGjLGKsKlNG7GHtpKCrDE-Pk1XFGxxHKFwrXPc0d90pDHYlD1vTYetB_dO2P5ZdL19HSL07H7RrteNl3yeXVhZUfBIusgHrl4FzAZqttb4bnWtFjuHxlLtLBhnOIwUxPiAeAOixhHuuzW-pkXnZRgtsGRDo3CFTVrTshHWH7MRDgxKhOPpSzqReb12rAMbfneH36TI8b_TKyYcUipxNtxSrOmtO5gGg-4G2r7EyFw1dwCPHgDFHKum3seCYyUWZ3hEDvBBn7EQ5PvKQzvGISE-ZISc4PvZDbCLx1k8k-YUG68d0rrtuWXRvnQpEaJM8F3Lk7TiMlbDp6Vi7w-tzP2ZZidSVYEeJM9VQNpjc_uJRRgQO8RYF4c9T0g_XTQfgrBQAyUz73gJ-gperFvU0t0dLrquOlVy6x19BYk-uWVuZ2kQF1WbdULYzFHc40roAPNzxVxhWlOjH1aeuRcH0ngCRV7k3ZE0B9WuLkV7QR0sS9Y4KS92MLn1JvIx2D1WGzTncQxVdVP4Ijqas4T9XL2HWsmTI8jmkaX31mGgynm3hSvsMN0gTvRsgA-B3dqFyUWxOxSVbxmTDA1u9mg0aLDdZhJVwCXsyfwi-O-bDNwg6Jn6hemV1MsrRkh4uc2HWVAF939aHKQYZDidWcp2E9wOALPNWOWYf6dKRWd_UG0AAHOuX6uQ1Pl_3OsiaBnOIlR_I1fNmaE5mY-2-Q7ExUx6bxHqJpXCK5QJj1epnyaj5giYiBemK_WrVELtd7Bs0PDE50Y839_D-Mdk4CWZeadyYxkWLyE3TOhnlOUPWhb8qNxg7gKBHSQQWKjHpyx-p2-75bZhuTq8o41-66BqynT8ATAsUub05r1xHIvo7n747A_JVJ84DVlD9p2hePd1MKbEHG_Qi8zFX6joLBvERVH-wESWFnQR5cgvuxuGfUf4t-HIh9_n2PtbW43YjsuDkvEpkteioecd32nr491z2xKfLDvPpExxeegQHnP1PMlL8cYVXiw6Rn2v2IERk_BUboe3qWHvHFvsQOcEq-d8YWAUATY0RcFYoPNf5kseu2DIyx-uOlSKorVi-mSQvBcdfvw5LpQNF-n6eBbJkID5yRlFxUA2cLhKEVtdLOeShJ17IpYcFY7YdTmpG0OiARyNaphr32qM5RxlUh_c80YixlLf0_9CSx1feAdG00sD0jiRzO2BYkjCZt_iSjJxbWkaL1k48ENkDmggJmkJ-6_bvy4xfkxY3GVz7ij30Nf7RquFvz3Fi5FafrQMr5dtqh1TSSNnmpSlsQFZ7Xc8jro6xV_fApsitbVvOAto3HmPBECNDJNb04mX4_elSxOifOGgloNvCIeBVnmE0g",
+							"id": "rs_84c358cfb2aeb963:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "PINEAPPLE",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_84c358cfb2aeb963_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 48,
+						"input_tokens_details": {
+							"cached_tokens": 0
+						},
+						"output_tokens": 243,
+						"output_tokens_details": {
+							"reasoning_tokens": 230
+						},
+						"total_tokens": 291
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-ember-1.0 earlier answer as a string",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-ember-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "My name is Ada."
+						},
+						{
+							"role": "assistant",
+							"content": "Hello, Ada."
+						},
+						{
+							"role": "user",
+							"content": "What is my name? Answer with the name only."
+						}
+					],
+					"reasoning": {
+						"effort": "low",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795348480,
+					"error": null,
+					"id": "resp_b7624d216022af33",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-ember-1.0",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AiwokAGoEUL0wxNO5q4r6Zq9aZFQGy6Py8vLNCRQnNjhbqUrk_t36EmMqYQoUCgz2vLR-UoKTnnmpMtIQwveEvAkSMAoocYetKmiDK3LPa8Tq6q0a4wLqkfHaXHWx-MMfj5DnzEV144TGP1Wh7xCF-drXBxoXChAwfvNkeMDJ4kjpY85pOB89EKOojE8EmFyccH-4JK4gw5PCyb5Oe7W7QZnTww3UwSE158VMufsnAdWxmEmeeXsOc_5VWZEwAxwyJvEbr3HNrbe14iLy2wU6wqTHCVht41_ddlSLJhBvHLrVWkg_Tcm9tVRznfSF4NAhE8CyM_WubH5hwlbS4Vm6awTdZrJEt1-9fXem5CFSb091sCfYH1S-AFfji0ecwCPLUDJ304nFRL5vquh8KSzkV0_-Vm3GNrfn_8gLgio9BJUGQ74ae912n48Vnic3oBNBNBhIYdNYM6H4wkM2uVjB_ha9INPfCOX3L_MXRsGWq-fehjxyoqDCH3d-sEy26-Kiy5ZSLfxpkZrr1SEQzMU6p0fTN0KwR1sFCAjfEqkWQVZGDsuppFh_LcdjHG8Ay7IafkCSZdT8O1dHOOtoO3X56rlwIVUG7MKwVXlFjdYsyElgA6MufGZ3yYIoBnwqNh928cuMOcXU6TvouODGm_tEEAebRw2NcASb22A0odwbYxgn4yjHzf9Ys2lma4qSkImroVH7xZCvlR4PflaBR4GuoMcz4PU0pBXFv4PyFw3PgJhLBv3FlNPyOsN0n2Zgj8AS3jl2kp_xGrvwWxS5khsYRRkE_tMH-L4votosd6K7oX71rYrUPx-5MhIa4s9itbynCu9eySSMdSWenUMktUEIhJbdbBvTd5eowx0qssLSLL0qbyQxnqw4dq4QbhSNaA-V_MCoWyk9BQqQv5sKcekKwhA7m07FhlPSD80zuo-qkrYeijRDEDPzhONKHz-L0ccs8XSJ6hPQttJec7YwdD_A0WJZCX1yByh7O-IuuEf4lmdGYLbkKa_n6uyOt2vpoYIBsS6hiwYqheqtTTdD0sdreoBYRUyHc_M9NBpFO9fiTTB0Y86wR7Qx2aNbOdWfm5oAmfOBFDyIKv8LqZj1bbua5k3eeMAeI9B1jTLn6gNxj_37I_6Gj0lXW4xFq91Bhjarqhl161RipVA_7d4tupcQlaYTs47v_Hl5XOGwnaaV6H72dgDiOb_3Ga6o32ZwmYyRy_xDtizEelaeXFauBzVdLuRSVEBDzk6M-kGp3QVxjRaYAslERCsCuybugfkorl_rK8LNjvmlVQuInTAkG0FnfYzGFV7_xeCZSwifpyCs-h991HevU4GIt-02Il6BAiKodQkn55Ny2pqCy2DUlHzG3jI0B80ACnIXJm7Pc1Iw0yTpATuCs4uRfP_M2zbMt1YLUgWLaqqVef-8zZKTwed7Y_hkOgthg1AOC-5gDBnZMq6STdcp9IMzS4PMerxRJG-RLaHHsbTDBfHbOnMteI1erCORnJOrZnct3ZFHsWVeQDuz8HFVNOjaypWW_jAsXG55V6s8QdBu09FySDzJZ6jrk_6NV5qj2sqUggH9s9N3XysZ41VCSo5sCg",
+							"id": "rs_b7624d216022af33:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "Ada",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_b7624d216022af33_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 38,
+						"input_tokens_details": {
+							"cached_tokens": 0
+						},
+						"output_tokens": 122,
+						"output_tokens_details": {
+							"reasoning_tokens": 112
+						},
+						"total_tokens": 160
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-ember-1.0 Kimi's call ID",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-ember-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"type": "message",
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"arguments": "{\"city\":\"Paris\"}",
+							"type": "function_call",
+							"call_id": "functions.get_weather:0",
+							"name": "get_weather"
+						},
+						{
+							"type": "function_call_output",
+							"call_id": "functions.get_weather:0",
+							"output": "Sunny, 21 C"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_weather",
+							"description": "Returns a city's weather.",
+							"parameters": {
+								"type": "object",
+								"properties": {
+									"city": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"city"
+								],
+								"additionalProperties": false
+							},
+							"strict": false
+						}
+					],
+					"reasoning": {
+						"effort": "low",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795348491,
+					"error": null,
+					"id": "resp_c778ec2547b7a89d",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-ember-1.0",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL2KHwzJuGQWNwZEt8spBAC6fu-5zaQT3JXlzvKlNQEqEmQqYgoUCgz0C66vLLqf3eEofHsQnsrikAISMAooiYwhyCXyPGyLOuZqcVkeWjFH7mtUgz5Eab0-G8aNz_pU2--9SXnxTRDd2ZrCBxoYChB9fC-ovEa4ebXVxZLqM4nuEJDElOYMUNHN4Ah_PYJLdjxnneLXvHgjZU17742Ryrz0oY8hsfsuzV_tyNeqcw-WMe3MRyBlJ93mk8fuVJ2kPdPGsRJwc8foetpbJPxe5xBUYYXCll8f9ar-bqOTnYbjimPMkKl1tBmGIFGM_Cw2o1SXKfhNdcOFYXPfOHpfH49XOZn729oDbmGsh1P7vXhgpMOXH-GIR6VXcSmCOMyxRPlac6GWXIwn4hXQBKvzUWWNw3OB4w7SGtxYwVaDLceUHX1xeXKUqALR8f_Mqm3lXrW2GO2zjhM93wYntPojJG3MFGCFumiJDEKnJmyBfSqZ0RgLHCi0UwStnlnePgsQGjagevuY0DSX91JR2ffJQ1UQCtnQB1w6UmKjjeVTBZJAmds",
+							"id": "rs_c778ec2547b7a89d:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "In Paris, it's Sunny with a temperature of 21°C.",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_c778ec2547b7a89d_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"tools": [
+						{
+							"description": "Returns a city's weather.",
+							"name": "get_weather",
+							"parameters": {
+								"additionalProperties": false,
+								"properties": {
+									"city": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"city"
+								],
+								"type": "object"
+							},
+							"strict": false,
+							"type": "function"
+						}
+					],
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 556,
+						"input_tokens_details": {
+							"cached_tokens": 500
+						},
+						"output_tokens": 37,
+						"output_tokens_details": {
+							"reasoning_tokens": 15
+						},
+						"total_tokens": 593
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-ember-1.0 Claude's call ID",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-ember-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"type": "message",
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"arguments": "{\"city\":\"Paris\"}",
+							"type": "function_call",
+							"call_id": "toolu_01A09q90qw90lq917835lq9",
+							"name": "get_weather"
+						},
+						{
+							"type": "function_call_output",
+							"call_id": "toolu_01A09q90qw90lq917835lq9",
+							"output": "Sunny, 21 C"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_weather",
+							"description": "Returns a city's weather.",
+							"parameters": {
+								"type": "object",
+								"properties": {
+									"city": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"city"
+								],
+								"additionalProperties": false
+							},
+							"strict": false
+						}
+					],
+					"reasoning": {
+						"effort": "low",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795348491,
+					"error": null,
+					"id": "resp_e8c3706ec76f1add",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-ember-1.0",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AiwokAGoEUL0nGGW7hLorulB9Ag-wIdDmeAa2UFw9sx-qPyFqbRYVEmMqYQoTCgw6KFE6ORHwdqYXkMMQxM77TRIwCijqwbWjmDqE9PDR4yRJb5DL2N-JC5Fv4iBUzIgK6t5JK0jxEWyRMki4EMyUxLsOGhgKEPeu-dFT6nE19IkxK16PBlAQ5oK0wwhExewS808rxyqhNeHyEFjn7iwu0mqKnUKyWynrOQO9I3CxEdTEgQkak-Evhn1bY2WP7x9YolHbwKIKJpAfELDI8uSRFDFH3XVHd0puHHPbOtVZHw45H7PJcJoPfbsmVdNpb8Msvw-7x4yj4f4FzCk-b6rHJ-AnFcH4iVYbtFYgmaaBaWHLHQMsmymo9z6tP0Zwh7mYRyeIgXZq2B3hIWPn7C-wWJyXI5CIDIgo3W4HVodMu15BDWdpqLiNxczVjSBVCq56NHjEdndW3y-Nx_u6GF6uUmfx3dLMzhkS7fCo0BL4Zmfgf_pf9HAxQJess3PmlVf0b6LGh2-ZqzZqdEpvEHZaopPAQw1TWhnmJ1CyFfp0bMGZb27k_8VSiplbR8wP5xgqBAcFi3J6xm_x47Ay5Jlqo7ChE5AwFfYllBnMohWx_Gz4KinRsNX71IWbSrHp8BnO20cTUbcecNBbbJDNGxUmw515lDIM6MRmmCqLrM3l9SyENmV2cCj5cwinqbNTkKBaH4fsx06zS-F9A6bo7P3i4XCph8m1YjS8XAhk3C3W-2L9Khj-oTNyEfwzTG_2WYrVS9CSmHu1CzcZPXq1DiO33bUEO6sRTDCYQArlsFVrOVZWUURU_beevlh6hZatN2RC-CeFkDNMN4N_7LD9wXb3y_HKL4wudVLpHwlYEk5nmmv-olDb10ybLp45l9HSLHUwZrhH-iCsQm0",
+							"id": "rs_e8c3706ec76f1add:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "In Paris it's currently **Sunny, 21°C**.",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_e8c3706ec76f1add_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"tools": [
+						{
+							"description": "Returns a city's weather.",
+							"name": "get_weather",
+							"parameters": {
+								"additionalProperties": false,
+								"properties": {
+									"city": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"city"
+								],
+								"type": "object"
+							},
+							"strict": false,
+							"type": "function"
+						}
+					],
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 556,
+						"input_tokens_details": {
+							"cached_tokens": 500
+						},
+						"output_tokens": 81,
+						"output_tokens_details": {
+							"reasoning_tokens": 60
+						},
+						"total_tokens": 637
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-ember-1.0 a call ID of 64 bytes",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-ember-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"type": "message",
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"arguments": "{\"city\":\"Paris\"}",
+							"type": "function_call",
+							"call_id": "call 1/2+3=4|x.y:z#äaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+							"name": "get_weather"
+						},
+						{
+							"type": "function_call_output",
+							"call_id": "call 1/2+3=4|x.y:z#äaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+							"output": "Sunny, 21 C"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_weather",
+							"description": "Returns a city's weather.",
+							"parameters": {
+								"type": "object",
+								"properties": {
+									"city": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"city"
+								],
+								"additionalProperties": false
+							},
+							"strict": false
+						}
+					],
+					"reasoning": {
+						"effort": "low",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795348492,
+					"error": null,
+					"id": "resp_84d8b589d4706e41",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-ember-1.0",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AiwokAGoEUL0sclyaFRvitLtw7yGY7t1GJSwcBHuvlYRcwJcRmfJxEmMqYQoUCgwJjb_U1YesZ1r3ogoQl5zuzAkSLwonDyjHFLL9NEGdMs5zZahmuEU1E9n6ef7khx6AFjB12CGcSHUIhEVrEMLd34cPGhgKELEW5LnlMZXa0-AR6HxKRLgQrJTF2AnB486EZosCZiHlC8h5ZGcGcoukqCHYqQJoV8zELf6O_9kutyj7jQFryTMIpDVizPYV-W16LbTC02vOEabcmjfpaheJrIqIHasScmjlknvLrTqJpPg02KJEqBOaygR7FigNP8_kgpMcdL9z-8_4DvtCUME8TV8TN9u65MGy9QAKZAhVhJ8-sh0hmpA29FQFIwjRQOtgmX3_V0PqDukbT_Y66izZUNVcHdNwXSQ3NTutCGaatzyFNaSefrvBidhrTMtPM-5Ae6318VFY0XKkvSgTuWhZ4LaM66xCb0eGCqtXT9s8YxNz7xj67PS8l7iEDaXiezFUnVAw7CD14a_d2ldtBOeIXIgATI1NMMPKMtZUSoOx9h80SHRvobavJw",
+							"id": "rs_84d8b589d4706e41:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "In Paris it's currently **Sunny, 21°C**.",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_84d8b589d4706e41_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"tools": [
+						{
+							"description": "Returns a city's weather.",
+							"name": "get_weather",
+							"parameters": {
+								"additionalProperties": false,
+								"properties": {
+									"city": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"city"
+								],
+								"type": "object"
+							},
+							"strict": false,
+							"type": "function"
+						}
+					],
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 556,
+						"input_tokens_details": {
+							"cached_tokens": 500
+						},
+						"output_tokens": 38,
+						"output_tokens_details": {
+							"reasoning_tokens": 17
+						},
+						"total_tokens": 594
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-ember-1.0 text without a phase",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-ember-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"type": "message",
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"type": "message",
+							"role": "assistant",
+							"content": [
+								{
+									"type": "output_text",
+									"text": "I'll check the weather in Paris.",
+									"annotations": [],
+									"logprobs": []
+								}
+							]
+						},
+						{
+							"arguments": "{\"city\":\"Paris\"}",
+							"type": "function_call",
+							"call_id": "call_a1B2c3D4e",
+							"name": "get_weather"
+						},
+						{
+							"type": "function_call_output",
+							"call_id": "call_a1B2c3D4e",
+							"output": "Sunny, 21 C"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_weather",
+							"description": "Returns a city's weather.",
+							"parameters": {
+								"type": "object",
+								"properties": {
+									"city": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"city"
+								],
+								"additionalProperties": false
+							},
+							"strict": false
+						}
+					],
+					"reasoning": {
+						"effort": "low",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795348553,
+					"error": null,
+					"id": "resp_bd1d3ad80cf170cf",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-ember-1.0",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AiwokAGoEUL0nGGW7hLorulB9Ag-wIdDmeAa2UFw9sx-qPyFqbRYVEmMqYQoTCgw6KFE6ORHwdqYXkMMQxM77TRIwCijqwbWjmDqE9PDR4yRJb5DL2N-JC5Fv4iBUzIgK6t5JK0jxEWyRMki4EMyUxLsOGhgKEPeu-dFT6nE19IkxK16PBlAQ5oK0wwghwMw3YbJYDr8gGd6koL2IbxSPam4X99SZbYuLDRnEZgh1Pyeguas-wAm08oSdrDsbZXxY7qc7XsxqxorCkNTlDv_A3dGV9XWLpUiMS6qhIDcSh667WtPgxC9NMBzo6H0qhPGfNaQoW-20hsif0WlZTB76YcLuA4GBAST-ESU_qzA24nzk6qn53qWMr4h8kVLmHaf_YrAAznOSFQRke0ATp7K6IbOnL0QqskwTxEGKi7vZ4NpybtDJZAvgNhvcwPLtm61_wCtGwK_vHu99KvRGqofkJceGWvPMpd8_x0DaHtpC7dfiR__fuSHqIDoy-B80uLkJMsmo3QkxPJfEWxEQyuRvEbzPYA7XM8cYSuCzZOypDoLl3TgtP17bHrwF9g0jIAbFvrPk8mtLFb6T7XT__VTilZAU6NjwcwBbDcSqXuTEhJX5lRzcdmMud-7jcvjPAZtrgtFHfe1D9g4Gr1kZwV322cXwmzJB8iJ3PpTJySoITxBQhaqvi4Biw57e5chl5MEG6UyBzv0aY_ISFVD_tYIk7WmvifrwklVwis9ws4kZhgc2ELgYjvC7ysKq6k2NLGBHPfpRHTaSzbv68AyDuyEi__qWscJtLEZI6tIzRTiBKRSw0o9y8mt2Qejvgim0L1jdHdlZzcZ9CsGNSo7pEu7RkPbf_7Wd0J1BHZnttlJGPpSxL1G3DGdPWX24BzF-ItIMZ-soRih5LDo",
+							"id": "rs_bd1d3ad80cf170cf:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "It's sunny in Paris, 21°C.",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_bd1d3ad80cf170cf_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"tools": [
+						{
+							"description": "Returns a city's weather.",
+							"name": "get_weather",
+							"parameters": {
+								"additionalProperties": false,
+								"properties": {
+									"city": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"city"
+								],
+								"type": "object"
+							},
+							"strict": false,
+							"type": "function"
+						}
+					],
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 569,
+						"input_tokens_details": {
+							"cached_tokens": 372
+						},
+						"output_tokens": 82,
+						"output_tokens_details": {
+							"reasoning_tokens": 64
+						},
+						"total_tokens": 651
+					}
+				}
+			}
+		}
+	]
+}

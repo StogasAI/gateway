@@ -336,6 +336,12 @@ func newCloudRequest(ctx context.Context, provider schemas.ModelProvider, organi
 			if !vertexModelPattern.MatchString(upstream.Model) {
 				return cloudRequest{}, billing.ErrByokTarget
 			}
+			// Meta's Muse models take Meta's Responses API under the publisher's path, with the
+			// model in the body.
+			if deployment.RouteID == string(catalog.CoreProviderGoogleCloudMetaResponses) {
+				request.url = location + "/publishers/meta/v1/responses"
+				break
+			}
 			// Agent Platform takes Claude's Messages body raw and Gemini's generateContent body.
 			publisher, method := "google", ":generateContent"
 			switch {

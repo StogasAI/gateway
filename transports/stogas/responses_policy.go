@@ -2172,9 +2172,15 @@ func validateResponsesToolCallInput(state *State, item map[string]json.RawMessag
 	if err := validateToolName(name, path+".name", maxName); err != nil {
 		return err
 	}
-	// The flattened tools keep no namespace, so a call to an undeclared one would lose its own.
-	if namespace != "" && responsesUsesAnthropicWire(state) && !responsesNamespaceDeclares(state, namespace, name) {
-		return invalidRequest(path + ".name must name a tool in namespace " + namespace + " in tools for Anthropic-format deployments")
+	// The flattened tools keep no namespace, so a call to an undeclared one would lose its own
+	// (PrepareProviderRequest).
+	if namespace != "" && !responsesNamespaceDeclares(state, namespace, name) {
+		switch {
+		case responsesUsesAnthropicWire(state):
+			return invalidRequest(path + ".name must name a tool in namespace " + namespace + " in tools for Anthropic-format deployments")
+		case state.Resolution.RunsMetaModel():
+			return invalidRequest(path + ".name must name a tool in namespace " + namespace + " in tools for Meta's models on Google Cloud")
+		}
 	}
 	payload, err := requiredInputString(item, payloadField, path, true)
 	if err != nil {

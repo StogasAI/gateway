@@ -1,0 +1,3699 @@
+{
+	"shows": "On Agent Platform's Responses API for Meta's Muse models, every model always reasons and refuses the effort none, Muse Ember takes the efforts minimal to max, and Muse Spark 1.3 and Muse Wonder take minimal to xhigh. Each model returns encrypted reasoning, takes its own back as the gateway sends it, and refuses another model's reasoning, reasoning as text and changed reasoning, and Google takes each conversation without its reasoning.",
+	"recorded": "2026-11-22",
+	"exchanges": [
+		{
+			"name": "muse-ember-1.0 unset",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-ember-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795343905,
+					"error": null,
+					"id": "resp_a49d3076f43ddbc3",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-ember-1.0",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AiwokAGoEUL0wxNO5q4r6Zq9aZFQGy6Py8vLNCRQnNjhbqUrk_t36EmMqYQoUCgz2vLR-UoKTnnmpMtIQwveEvAkSMAoocYetKmiDK3LPa8Tq6q0a4wLqkfHaXHWx-MMfj5DnzEV144TGP1Wh7xCF-drXBxoXChAwfvNkeMDJ4kjpY85pOB89EKOojE9qdBbdmKpWOwX3EKf7D6ZkYTPLUZAu34RMZasKEqCeUyr5idCaAyZ16mNGP0_rcVQMgdHeWJjzvHUghDAZlLpkNoBb_rS8vqO1fmvyM2mkOD0cUh_I8jslL38a0FVtnXoKH9PCS3QDBCjPEJHUu8vDiErUkilFVWB7tR-9cA4sCSDgnxMPPbv-FGtfZ1q46gywyT3dCgaiuPpD6-XpMSkMvCmR4ohMbeTFyZ7egAQvYcUOJKNhFgGZRxqPXTDlfbEzc5DMMuAAksGCRR0Vl4f5quwyixJnJ65QgXUXMxzdb3eTBTXW4SSMNr7cf_FDkl3AhWVV67G3Unf0ZNQtVyfMdPm2e6tsFM0R0PzyFKxgIhKAC-VzEtv2m4hkS7SSXoI-nkOjyjKNLdtG7eg9hWo-z5cWwmwGtt-y6vMyNyMCP4w8cVLfArtelAfRKZTICrqOHZg2NLNF6WMF5gxedmo4iN06kA780dyOtO5fbz1F38jixHSHKnguza7FsaF8NQIIcTmQI0P2CwALXaTR6oepN615HfmzJfk5yYtekau9cW-W-pMVE6nZlLfRy9AJm1mJq_0SM3qYQmnQ2QPhVsljg43CHDPnsmoPvcEa9qpL5h36FISLGrVHpqQDgqZap71AaV92EwG6gsYWR7O8cbhRa-_wAeQIhfnaIOLt2C4AEMGHWQjqFjGqzsGkvdoeTpuVE9MAo2kkJZIHeiUxfDCpP-1KQn9dyLbxiNd5uG6Wv1KUfN472PNKOELjeniiuDnZDFOLaD2ZiVU7COFNQXurzY-ypVOURnJztem9YKeimgAZXCSoPeldgxCqcIWHrIi0P7GPrLg-VDrsIR67WqeA8NBWOc7LkjNXNpD5u0VRxq94bk66boI7aIOODR1cq55JymheyO7fgunTUmJCFSvSfoZhhskX58ShuswH-eF5ozxES-aw4Q9xOAf9zdkgQtfln4An9tq6vE0kmEGbGiRMLQ7JNyElmzfUig2WfFqAHQ2tLzZYfazp7LLCrq-WjBdVCVl1iQ_Aw4WESZwgjXV7cQE2RTvQVVWYNzFw3VdzzTDwL76Z-OcrYYqEeGXvHvqib05z2WgyJfsHoBoSzL8VROrmLUqBZ1SBy9XOrw1b-F6or-dEfbXB0MktqiAwiqS8ezaHm2xu87lIELPACYOubv0Jyw6vGpOm-2NZg-ZiucJJINnfzbYV5w6-_saaY5Cy-zNiV9fxurVJ8O6-b0ZRAh9vrzET_yLqS4bdXNUQZ3rpWYLSlsAhxXIb5hy7kXvGSoQ8l_VL9uHZM6A-_1TjIK9H0nMIrO_2LWEOvZMsf9lFiGEr-Uf_HjpOq8JoM_6tSOOYj8h2FJDEvLtTAp327BvS9wGCxF9xNNgrg_9uGscPd15OOFcYmbMnsw",
+							"id": "rs_a49d3076f43ddbc3:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "OK",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_a49d3076f43ddbc3_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 11,
+						"input_tokens_details": {
+							"cached_tokens": 0
+						},
+						"output_tokens": 124,
+						"output_tokens_details": {
+							"reasoning_tokens": 114
+						},
+						"total_tokens": 135
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-ember-1.0 none",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-ember-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"reasoning": {
+						"effort": "none",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": null,
+						"message": "reasoning_effort 'none' is not supported for this model. Supported values: [minimal, low, medium, high, xhigh, max]",
+						"param": "reasoning.effort",
+						"type": "invalid_request_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-ember-1.0 minimal",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-ember-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"reasoning": {
+						"effort": "minimal",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795343906,
+					"error": null,
+					"id": "resp_b023a85095feefc9",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-ember-1.0",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AiwokAGoEUL0sclyaFRvitLtw7yGY7t1GJSwcBHuvlYRcwJcRmfJxEmMqYQoUCgwJjb_U1YesZ1r3ogoQl5zuzAkSLwonDyjHFLL9NEGdMs5zZahmuEU1E9n6ef7khx6AFjB12CGcSHUIhEVrEMLd34cPGhgKELEW5LnlMZXa0-AR6HxKRLgQrJTF2Ak0F3EZzQpejZl2dfYS--m0bXlb2BFKHhJKdBizDJLd1lVCniiU7utSHVHni9b4KBnpLiA3MNi_8MNeHWRfGmLCzQ1guAFgygcqScC_lWDehIFBnNw7Ml1FAeFW2Ye3evyCmpG1yNDASXpr9IPgzl3dZmvQqeG9Ae2g9YpRdcvbdzs7esYrc-5LcsevW2-ow-S7sXD0_pJR_6ukWrhpZiV3VasKaZhmQ3xLdUp037mlXr-0apT0oVp0bXDTiLzmPGUT_vygdNjjJnbZF2DTPXkG5VJ_49yW4IhbxrY1-vc87dI49st-_DcxATn1tEDzFIfsMMpDW4OvteIV9KGH13oa7J5Y3ymSAMkxyiCn4MW93mw0ISbuYxwYS_3D-A",
+							"id": "rs_b023a85095feefc9:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "OK",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_b023a85095feefc9_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 11,
+						"input_tokens_details": {
+							"cached_tokens": 0
+						},
+						"output_tokens": 33,
+						"output_tokens_details": {
+							"reasoning_tokens": 23
+						},
+						"total_tokens": 44
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-ember-1.0 low",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-ember-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"reasoning": {
+						"effort": "low",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795343906,
+					"error": null,
+					"id": "resp_db0c3c6a074617e7",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-ember-1.0",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL2KHwzJuGQWNwZEt8spBAC6fu-5zaQT3JXlzvKlNQEqEmQqYgoUCgz0C66vLLqf3eEofHsQnsrikAISMAooiYwhyCXyPGyLOuZqcVkeWjFH7mtUgz5Eab0-G8aNz_pU2--9SXnxTRDd2ZrCBxoYChB9fC-ovEa4ebXVxZLqM4nuEJDElOYM8lbRb8lg0zzfheyuN-TT0oZVldBCwcUVO6LjD8zYpAEav7bh0u5346q0b0v4SOSksIkssxMUQFWYHQHjHB9Yx7piVM64kZZFdXPiIDBGvmL2RPQBOA5-BkybQfgk_PxWkdbG7qkRFrWVtjUAObTD5qiyQAhFPak3FgmUlAKfxbi4EvO8l8MqdvchrJ2iOBII4cNEPenEtKZVyJ52YH8oZh11nysCZNvCLgiTPoC8xn2M-BM1EGRtvWUnC_0uDzMPXBQHl08pldPnJHQfIYgvpWd7BFNh7jLmZu8-Qn9dVDUNraNXEeIhzGKBkbolE0WfXMZo-KMjnBNQJ2yZ4dsLsjorOy3PpjiH5LMwTGozcNxtAsTnBo7c0jMRz_9NlCjRZUcWvCpt5_2fF4Dn83MO8zy4R173psHEwlEdB6K1gH-z5yCs4JhSpVk2Ef8eIKJxDmK0aC9VeZEOQicCbJA_zPFwkAvAmkxCgCn314XKpx2XozYzpv4E3hEqbXf7sbqjAiP8RJUqcGD17UpmIsWV8jzfPQXf41XqZ6qcpRlTMn2ZDqZ2I3turBGB4M40h6Iifx1f-YX30XfiQnQE-18bAOOsFaM5qlFkxA6RDXDLFCWHucWMRXhf0n2b08r75B-qD3GG-NVAJogYUYGnpwr-HbzT5ty1VHA1C42hVloygEJH8UfuDBk3GJn6zIWzRcX1J5YndjRVUU6m1aYv9qCXqVIpVOVuQGqqCuUh1jlj5eGfsioNDIHZJZkzrjeNLZZa-0DxysW_pjxvOQM8cfM65cM_gRXU0fk_jkiH-f7VwLg7QrzRejidgzbe1r9g_2WiAaDFNjERCOR7_nbzOm2BVmqzsg6SOp64abAJYxy918iZBKIUINcaa4sMh8u8xiAPINgPG1-tAo7i4HjdhaA6AhNJJISvyvd3lAMPSczXo4KdNRwYkPnhIM86ltXu1YJqRCFmYACjcReJHllfaCnJoOtLB8J4SjninPjEHHcsYJl4-2M8u8anI8xixjS5pCWX0kRrUaM4PuORnY0gMatX9O85M8KTxDWRT0AEfQoJ7A1bhjXRsJFjgKbKzsMDSegJQ16rPW7h3Gt0OYOsL5VvuoUiF4gvaM21yIrlcvF60f8irh1o-YxzboCiwymwA0qu4IOltPUCnauqO3mMwyLwChMhJSLjv25W3oPbJBuy3PVy7XAaJUyt75NfhlRAMSqsZSEHrJW6VoP8mvr1gqy01QCehhRmcbcINxXJLCjvOBowMjtfgkdMAsAikKwCf7U_mRAlHMTew0v6EnFNTvqluSwB0iBLb5nMMuleBIPY3cxAJg1ijbEqcu11VJNOehanY89GrXN_ff8Njx6iw-tiCvMqQYMTN8dnwklzcdu1pJrdi-lC1AwIPmoMUxc",
+							"id": "rs_db0c3c6a074617e7:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "OK",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_db0c3c6a074617e7_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 11,
+						"input_tokens_details": {
+							"cached_tokens": 0
+						},
+						"output_tokens": 137,
+						"output_tokens_details": {
+							"reasoning_tokens": 127
+						},
+						"total_tokens": 148
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-ember-1.0 medium",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-ember-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"reasoning": {
+						"effort": "medium",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795343907,
+					"error": null,
+					"id": "resp_9462e331245a3407",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-ember-1.0",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL2KHwzJuGQWNwZEt8spBAC6fu-5zaQT3JXlzvKlNQEqEmQqYgoUCgz0C66vLLqf3eEofHsQnsrikAISMAooiYwhyCXyPGyLOuZqcVkeWjFH7mtUgz5Eab0-G8aNz_pU2--9SXnxTRDd2ZrCBxoYChB9fC-ovEa4ebXVxZLqM4nuEJDElOYMzYxMis44nj0AALgNGCicJxSJsxzq71RtwzqX2ixf_Tf3v7rNAFPTP3puuH4BUeUU5JB23ZZjSRMjvNgKfnbEg3AXZ-LRHJfDD9r0_widyKxA7aylodGZZkzHeex38pJq0xmdaCfOndi5n4C3sV1Um_qaGGatmgK3Ifnhk5NKGP8ASlQEsYaAWJ51TFFVkfZOFtmsd5lhCWQTSQFOEMtgyK9Vo1vyxAmlonrpmWa8fQjZtx5dl22gQ3AzTlxk8iJ5F2ry7Z5EZkNwuJTV_K6YQsHKcr03jYJ5qhp9_5FDQzuR5hsRCSkhzg8Jeql59ISg0CxWBUNVFhjkpWL3FlBFbfq3aeQRPBMcUhBTeMdjya8HClqrUCgxfCBS0tF4rlqG2nU6PmQijTHMY_U7jyCuLLtLEKQc3h9FLl8c7znyAtayRNqS_0K__nfom8SsdJ2lMC_CsfLUig85MoMg96OGqkeYLaYJrOHXTaGH4pvx47kUqShRLcbVWjJsO_qUXtLQerugujC7oly2fgHYvO0jqBPwuE3l7cowvVMypLSQt650wY6TWlZAymNqoXMpZvDYYEd_sMw99YmKCYVGJCr-8KSTHXglQ71cjJlTQOKmjzE5xQ63SPjXGKeb6Q1mtc6w17vBnw9ikK18VZzod2nt3rbUKb2MyrOnXenhFHZMAxcM2vtfz-eNBsZj6qUsJD_qXruAVUXRAlWUWJEUsCG8dzwJinTYRuWoXIp9cftz1u6HQ0iM7duBP1XIG0LEn9vora_XXahNAuvn4LoPr7MFPi-moWADLW3VxCHqf0RXwG3BQeeFlj3l52bP_z_458cjbtUUfOIcboVgQyXUKAmXLAlgLUwezqEEbaMtXieIaeAsQJOvYQrGx4qJ4nw9tcpeHODB5AcjsLx5USFxCTQ5qtRsNspolNJgSvpj08146TWAsGovvkqcQ3zI0qTeztyXal3tgkD4Ji83E9SElujDAL8krkgF8XLbBvQyO21ip9xeJuy8Bqparp7eyQej-wbtIhwaLDy__517YZP1Bt1341a2JWmXWZ0mOjb72x2VLM6JHK7vDQZBNp1Mfolp7ZK8h8364QX3W7TI3fqTfFxKp87aWBwDovnM21a-iRYzIiIxOCk0OlUwUP0a3Pb760OSea71QZcmxufozsm94AOp1BBzfAftqQXLyJM9Kd0a1jfgLg-LWv_ODqy_NM6rmSvUwpzGE8zMpWoCbeSZ5EY8iVYysKaCyY5-WxVBHjBzWSulyG0EG_NWgdZ-9tAizpGYv3HVDuiizUg1fQNi1b5lCGBkwUfv77B4Nxt0wyG_QTVFI-_nb2ni8W243QIC95xRWz8ioF7eYlC6pPrF34dPMJYyIUFx5aSrH3VySxI8aY3Ct7eE72mOD2T5udM",
+							"id": "rs_9462e331245a3407:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "OK",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_9462e331245a3407_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 11,
+						"input_tokens_details": {
+							"cached_tokens": 0
+						},
+						"output_tokens": 137,
+						"output_tokens_details": {
+							"reasoning_tokens": 127
+						},
+						"total_tokens": 148
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-ember-1.0 high",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-ember-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"reasoning": {
+						"effort": "high",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795343968,
+					"error": null,
+					"id": "resp_37646ba02667effb",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-ember-1.0",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AiwokAGoEUL0sclyaFRvitLtw7yGY7t1GJSwcBHuvlYRcwJcRmfJxEmMqYQoUCgwJjb_U1YesZ1r3ogoQl5zuzAkSLwonDyjHFLL9NEGdMs5zZahmuEU1E9n6ef7khx6AFjB12CGcSHUIhEVrEMLd34cPGhgKELEW5LnlMZXa0-AR6HxKRLgQrJTF2Anzfuvjb4kXl5PdTs5dAy6XX-Imxx09Mlr8JmfiR9-XsEsZpc4yFpyZyRJIsRpLetvzHdwfhGEY5m95D8iDq-3HuSuyst9UklLLA42lLyB8fbIa-G9oskVTEnhSZV1Kv2ERIVPPLp-4GYMb4kjiOCQaAVrEMljQJV9arY4vRsoKYvSvB8VQVyIpP1uPQ4eiiq6w4BTRIpQL9A8nwT9qHGbrdmM7sh7-pRLjpeOQAyZrG7OHeEYf6pdz_ErpKhmwcPqrVmBZF8Ppv43j-93KIb2UHx3AQRN-uiT3e7AW_DTwXQdbhuoTz5FSUcX2AOyE8V-0YzhpvZRs_J6942WDwVvBLf4xdItUsZFeLC16BAGyAwa2qUi-vkcE9CHDE8Fi4Lho8fCaaTt9rqDJadylzyniacLpHWMXobbRxsr1sXXaaz_zpGEPSNHraK6OGrdqikYq83jxkJdlAlG3vELBPzcB4kDGVBYyhlxFq8UAjK5vGrNXxclJdAIFNwIOxP7J5sSwwpmVX8IB_vo23Be-fwKlw35zrgIQ6N9o292yeEZ11Iqxs-Sn0GRIYvOVLqf3XPUOpsrlO2a-BcjkDeBcMxJ7XR805fiBjGpLwRFXgDPuQh8XQHjAmyQM5PMZehW-lhhVKuTFtyQMs82bkxmiz98550_B2LBZNIe336lWlZmdV0obI7wkI3zi27ClLlXb9tcllKJEtXDTeKFOv-c7ALhijuhE1sRjuuAvbb-ks4JY635Zi64QlU0oC1l-027yiB5v0_KfJhkTPxfLto0XHQbeUA3oke9L_rb_yF7lkqSmsNUCCfFyyVMDqFgftze6E0315wy_UvUe21Jf_7-7ZVu8qjAYzIzmW-eD0HIYO_1HqBN45bYpgtyeM7nkeEqNjAXGsB8c5jmDkVKC9fS3PHGRmZnh0UJJFz7shCjxwB7twepMLA5SYn09UNmfHn4gNPUxKkktGl92VzUQSGOOnsS1aURm-pWdGyh6s5TMdZO-UZIJ4Iz-KCodrqER7wxpb4s250PQJFnXAxoy5SB3LWllqqjehD8kxkctYsyZqLB4XaIGK5zNbhcS3t97sl2oENs83O7AUsPXDivpkk6sIdW_M63ig13Ykyp7yngYa8ClgPJNCGU4CYD4SLFR42xW12himf8IekDwODslyv8Pin7fBgGOutWeyAG956E868iw7dKeFOLYdb4XaVVktnHSRJmA97C4PI-rI1jhNRTx51gAigLRAt-6uL5QRxADO6CITSWBE841Jx1auqdxZcW-lwQ5WosmGfcH9p486oBPYm_DLFwO_0QSfyY_fMiTyWZMagtu4nah-9THFwFq-k8VrxpdpwulaYXp7w2lpHVl5EHRcn1yw8R5gZqxTgTl00LQxE6S693ZO52wrCvfVw",
+							"id": "rs_37646ba02667effb:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "OK",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_37646ba02667effb_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 11,
+						"input_tokens_details": {
+							"cached_tokens": 0
+						},
+						"output_tokens": 133,
+						"output_tokens_details": {
+							"reasoning_tokens": 123
+						},
+						"total_tokens": 144
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-ember-1.0 xhigh",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-ember-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"reasoning": {
+						"effort": "xhigh",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795343969,
+					"error": null,
+					"id": "resp_e83ee4e6bfc6b2b5",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-ember-1.0",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL2KHwzJuGQWNwZEt8spBAC6fu-5zaQT3JXlzvKlNQEqEmQqYgoUCgz0C66vLLqf3eEofHsQnsrikAISMAooiYwhyCXyPGyLOuZqcVkeWjFH7mtUgz5Eab0-G8aNz_pU2--9SXnxTRDd2ZrCBxoYChB9fC-ovEa4ebXVxZLqM4nuEJDElOYMRp87T35UVD3XqLzkzE-HWSmaAoOoLDt-OUvGuIU-NgmKSsYqDC4_mt15KmI8-anoP8ZLWFSAfv87kG4OW-u-CpS46_A0O11az093hfgyIMt48MPax9uFoQt9TjhJUAAx1Nit7fseE5xzmpY5vjEIS7micUVk2OgnRzl6H3DwDnxm3s7IYo50cmClkDKOmTLdTPzzK8FXAHHazmAmw1uhFxrgS4_OgtwzGvh3FeaeULLVpHEY5TGQIchmMlh4leqhHAMI90sx-paytd_bn6dJ_5yr80VLLjWq_OVRFBL8evd2CyHYEok1NfWrxm7lhpOyLCIvhNR8OatboNlqMGRjhHl8ymIJRtEaFzCcObDognjGbjd0ECyAc5hOQctZBZXlzuP21s9JrOKPOm2etkBIZywl1h2IOLPLSftkq06m23SfvzPgR45ZDjAp966hAIIvP1JOndK6MoFHdUzg95inZCg-DgxmkDYnCi86BlkHMyrqEgghzAK_G2WHF9xlhZxIe_pxrGCekZcWjzsr3ob4u915LMe8dbynS9q3V3KmKPKN9yfjjZwJQwwG_izAp5JH1SegOa7liswEneUn-dBFkKemhIC9ohH6HxdDUxJVdmLCRxFVHAVql5FACLuGXODwYPcjGkOQ4X1PF50hf1CPFb_dlnT7aziG0SWOR6dlsivvp5m4DSwxEatrxdErX1ISKmeymLPndFKaTX-B23sDWCZIU9zJzYYH817-i_gMihPYq3I9BYCBNjmT6wIRmBfDg-rPayoNjSnfu6OhKUof08zMpqKBhxN93WGdX3gUi4lZd5qfBW2ObBNfvxFoEquPj3xnue_2MIpWZGWmxwb_Ka5boxWrtQJCzFAGK8KAHdj3FiRzUKzVOlWeV8SvLqXQG4elqGgL9-I82UN-rM04mIsWd9W3ergRnV9CGoPxVQh9jBQK3pSm9Q3XoJcq9-Ii3lXYIa_vr9QYaqO3gA8II8yPXcivOhnGwklj8Xa8pwooaj6eIBMR08BDIFpgE9dg_8HEfhbyL6aMi3F8z31RMIzbSccN1YpI-KALE6xeVQ1bXVYKYLzLW7m9nj2I-ksR47pW9U57WibpGCfs0nCSyXSqNPYZ-to0h5-v77EePfc2ODTDCPKrN9tLecXwwvZm51leO591LpzpM7gnmPU6H0Z0IzVwGiFwQoEv4yLLhp0BXeLCo_M2lLfqhw-xLLfTNuB1GX8jmaCBRNWfAm2dJgf0wCMNQUSztVcPb6ROKnJHMUFWQ9grwABENfOm9qStJGHnWmfNGoouwPkb5k1sLU3BS01S3WuyFWTBncqx-i2cjEuCZ704cynt2J87-MvnbiMndKThUIxTY9-zMUkjGE1WNCuPG06_P4d4YgRQcrTpZ5huzCt4Lk3kYr8",
+							"id": "rs_e83ee4e6bfc6b2b5:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "OK",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_e83ee4e6bfc6b2b5_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 11,
+						"input_tokens_details": {
+							"cached_tokens": 0
+						},
+						"output_tokens": 130,
+						"output_tokens_details": {
+							"reasoning_tokens": 120
+						},
+						"total_tokens": 141
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-ember-1.0 max",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-ember-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"reasoning": {
+						"effort": "max",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795343970,
+					"error": null,
+					"id": "resp_b860fa632ed39821",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-ember-1.0",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AiwokAGoEUL0sclyaFRvitLtw7yGY7t1GJSwcBHuvlYRcwJcRmfJxEmMqYQoUCgwJjb_U1YesZ1r3ogoQl5zuzAkSLwonDyjHFLL9NEGdMs5zZahmuEU1E9n6ef7khx6AFjB12CGcSHUIhEVrEMLd34cPGhgKELEW5LnlMZXa0-AR6HxKRLgQrJTF2AmrhtJ5lbsx53VWxC9mLwg6GAr1s3tsR9R__UsTGIjKaa5KoUfMDd5PaOl4j62BbJ8qkQJ-_1rOSdqq0uOA1m9VBBMqd7Y2ZoXseca06wO4WPA3eX36NSfesHO5b8ZnLzMpO-e1oPEjdLkZdiv1NGYv2QVsJmIRYKFXpyms9PgqQ8Cn-D_w6V2uLdMM02oqNx0w_tN5SbDaDn7lZ3iOpa8hgZMLAaTgHrcvHe0r5LEFtCSs-3f83VE5J0RKGdttUQt0nxCvNIO5gqG0KD7sfG-MK-HIATLpguKOHznz98B1ih1xiIffnXMbzVr2p2lDQzUGN8o7ID3kPIflv6tvVCNV2BRmaLwAxrfF1hRbJimY2uNw_RDvbwKXNfjxbChvbCC8tE6xa8HVRbx2Ivk_haNttHLRJewm57amMlrRTTWC5ZIjJL8MdynRd4b_H6YgwPexojSBCEABIopxd6izXMG62ZVpMWH9YO-7WdmT4gb1_SHVVPcDPUMgngfUTeJOVbd2wn2G2y71YhoAc3EbXd-hXljlNAz1AHdhBhKv1eyGLcyeaJHMNEbYEwtkVqdf0q4p4CWPl7rGQDFDbPeNbFilhlEQ8TDr5_868jvP9O-Wvdxyyms19mYsfPEyA4D5eM4TkNk9fmkmTzBOuje7BsmcMWOrRtqvdIHid7JUqIPjwQxmjny4wo5hZ7GTV03ebMk4qaed6dIsVMCVYr8",
+							"id": "rs_b860fa632ed39821:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "OK",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_b860fa632ed39821_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 11,
+						"input_tokens_details": {
+							"cached_tokens": 0
+						},
+						"output_tokens": 59,
+						"output_tokens_details": {
+							"reasoning_tokens": 49
+						},
+						"total_tokens": 70
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-spark-1.3 unset",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-spark-1.3",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795343970,
+					"error": null,
+					"id": "resp_347a6977f612ae9b",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-spark-1.3",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL0ZItHzL0tQiSzM6wv1qBTwxtQ66TdU-GjWfV-q60CeEmQqYgoUCgz1V1R0DA_ml5dLBHQQuYTPsAUSMAoo_YdvWVu38hnkOl4bQeRttJDrIt1MeiazxZ6y7zVAbmx7DQLVQbtA3hD5td7eCxoYChCdJUVW8WDRCLraHEv0Jq0zEMry9sgOIyRqeRr0pR4KCjg4K5os-Emvw8gVgrfWOBIDlUh-U9DA5W_9iO4UKp9Iq3ikHvV4aw2NEdH8eBnsjVlzqRUdKl8mrB1weDzy0ZCRWU4SDUZqJf6-uDJA9o8QeSWejiEoTC92Ggrca4cw7zm_EoqzgqKcSsrr3wQYyRQulTUnzP3EfG8dfhvIGiNUpjQFpjOYnbNy5sMITC_HSQvy8azd_zMm_pdKFowHFhg0B16D61IUoi5iP8uvj9VmXngCA7aKVt6YBYYoaxG9HknzVeNB41NsLLTB7DLvYJjDAWTGkiBa2ckyY8pLWBaZBQHQFdT8V0vGhj3_ruH4LXEarQZQZVWcg0pNgutv4yOZQUtaJ2WHasjDpuX35qgE7rtVS-_PdoSXXUV9A5xFdQ482u6-EHhSMowrseKaCOScPbl8UBGT54TE2xYsfD2_uzfuOuOZd1zooP8i4X_jzd1RDnOfDxj_TXXAKYR1qLYeyQIYKaTjnM2z7GnO2zWdu806kAXaE0rSH7cPMB4iK2T8NcH4vVUOHjNQIz8gQS6dlt9cwQ7dmO6835I15vrMasGGrLOaG2Du4ysWANA5N8a-JnFP8n29hlubzNMbgJj9sIsjhCVRSM2CpUkjxDsAJ8cgw8NMNWNZqKz1XCDIorYaXo23dCl-JKhfG6pp3lpfhAF6gAhl4xI-dAEuas2hoHrqN06YqZZR42BAOlilMETzymy70iDKHSPkttem0ho01K_I6Tyc01sWJ7hz6IS-YgHmvxw1JfiMZlrGlTbFf3-psseE9FPF0R0R60uz_11jF9q0OPJ2Vlyt5l_1NrwiDtM5Tl5fweDWxcNlsXN81HKL-7WYFRY_Qj1WtCrLX3khUm-oC6KzKd0yAWsDUB2XkaFvNDelPAr8yJWzZ8qX-ZRtWAJpTK6SeHGEuGzUnxl6aTqMnobdyitpHtF29bXKidL019cTeKsa7iKzUYNKwislZQ4YLSSo3csvliT6DSt9o7a7W7NuCz7G5zRzhh_8tk9zgvTbAeFDbp7oXnX6MgOxpeOLFNCnz0OyiNRXN6A6MmyiMRA83zG_xQMrQkqaB33SqHQIzl4IxzUU99Mm9wSNcTcjjv04wxHYZFOn-_uDs2M-LHs5--ZX9e1h_XyOn9hpq7jprpaLWFCCRPdRCqUvFJIHcAkQARbJhqMZOcewxK0GR1Bn-9ZKaqzR99e2ELGi-R9LUUjLP9GUz7sYFWN9Z54G_3vco3zdXHFbYWrXNheYCvx0IFf4_poOE8OuIJXNLZHAZ_I8ILDgPqLejWe9NHtnnkGW9p2U2EyYzdowSlc4F_QpaYvWqA-Mkwr4Eg_ihzs1FlEQU_d-PxnRZ3CqK0da2RspVvdi5ggZpT2SmE9DyQi9GYc2-rKkk94DSm3YIP541jq6xyvSaT4DScgw402uGHLTJ72Bv9r3MnMAFqVGtYpUFlJ1ja0gcED39VScOnq1_tvDK2wWKVJQ01GgJId_eD8SLUSXaQkw5g3f95ZOa2SB8cp18Rqp73BD35xSFRTapCKQGQSd1FdX8i0NiXQZ1fiR0PqG3NKU-BdeDG-W-GDSmSm__m4DwFSK4dR3A-LVQye0U_HqwtYI04ndPXrtK62D91KTvhp_d8rcy1Fyr85Mlwoml4KolYm62tPhNROTRzMsjGNrJJRNmOqVVNjuN6b9ctwR2lI-D11SXdS7899fAUxQoFAp8bwe7asOX-9nZAKicNUWa7uzxjOpFwupSO7bwGu-AKRLf-S0pX5g0L7RX2HFoHXEedXXWuA9qF3Sby4Ypq9UTZfKJQJUL3S5wEsYqG_pWxV5BlvFRqqz2ovldlkqnG1JS1AwPWBClySceUHteGyz_Tc1S3LHyyoGzBqycu3RddsiPMlUNO6OuAf_S37e6nbwSsLDaAef2PppS3HQ3fzmmsqY7eUbrjw8I6-FJIaLOu-je5wC_aREnBt7uO64SZYc9bAfNsDC6o7WD3enQF9jShzCFRvpTbWntcQf-BjdXwWUqdzakKMhkrn58YXunQvAYhvBWvepKnG2JShMlOaEYZeRpWF2SjYqyMddooliFCCCoovYwu-r3P7uVUzObu7D4qZ8Uu4YS2AAAuET-UqxO2zp63iRm8FgG3TeEbwMuDbNzYl2x9USecqn9qoluQoVvprcHlOXTvoJE-Uzh4kTncbfg5yjXTQ4k0bN4SeL-vembPZG-J5QLI_Du0FYN-mxdfNizvcm7tOdldNFp-gbQ9ZsouYBRPVT9GwyzyAhPXYSfO8xWygvh2FxzegNlZI1y24hmX25yjCOI5zQ6XL9v8pg84_mv7x2opXnHDJMSR2lpeXV3T1zytrsZ9sjRFb3vRXcVu9yoUMLFh8rlVy_7mbW18UmDzZONXVTB5R42dKCfxHm8TfzFy2THUFd4q8UR8Ve_BR3IbwHoPrU6wl8XCHdjSoxAOnQilcKgE2DQiM7neVWnJ9yiUQYNctGgbCMDBMqgE1hPTm8dzIQknPniU4FoXMtatOGjNsRCeWwnmySSzDlPQL4Gfqv__MzcwSV_SLE-gTni4NpPn8uFMaertaUBpKiH8TzgqP1q2mltzu91bvb1fe1F4DgvEbq-nQ2h6NrSa2CJboHSpOw2OCz4NCOLkMqgecSPwuzXD8n_xVqQMXt3o6lZiqqMg_JfLQDFa1JNGljqdRholP3CG3oBfoldayzlnYRKJKRr5Lo5Pm34vfhb_SE7GEhrZDzjgECQ0eSYjQZsBsJ0LFMp6U8AfA6DIlq",
+							"id": "rs_347a6977f612ae9b:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "OK",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_347a6977f612ae9b_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 11,
+						"input_tokens_details": {
+							"cached_tokens": 0
+						},
+						"output_tokens": 256,
+						"output_tokens_details": {
+							"reasoning_tokens": 246
+						},
+						"total_tokens": 267
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-spark-1.3 none",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-spark-1.3",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"reasoning": {
+						"effort": "none",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": null,
+						"message": "reasoning_effort 'none' is not supported for this model. Supported values: [minimal, low, medium, high, xhigh, max]",
+						"param": "reasoning.effort",
+						"type": "invalid_request_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-spark-1.3 minimal",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-spark-1.3",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"reasoning": {
+						"effort": "minimal",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795343972,
+					"error": null,
+					"id": "resp_6dd654347dbb95bf",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-spark-1.3",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL0DcIKPm6u6SOXmAj8kbzt4kityoI2KPbnEsAjXYkCwEmQqYgoUCgw9TnoxepNbk88gZSYQr6uEqwQSMAooOBusgQn09O1suLPK5Xafpz9GzOli-qh9dMXesrPPTIC8XmdMKNjJXhC-hYHuCRoYChB3l1AVVUDHsBqqYkxPMJUVEMT19YsLrPqnR45pj06V1UvtfA5_KuNlR6X-8Hau1KKCFK1DpzN8J6YcdpzdjoV6QlCzY5_FfGgKHu_3SeX8hrRXTgQMgXiLb0MUnk4n5LtzTvAyom3p3bCeA-tyjxCaO-K-IKtiWjHB406eC2Dxn_bYSLnclsRPEUdN23n3a1UoWg3DJXMz4kIY66Wuuf5IqC2rQYXdqJqADbG7G8xXgMS5ZamLEioW3jYXhn3cZzG1rf-RiMs1nY-3vB80qBtDE3NoTqv8nDy_KkLGYXX9a_KFh_OwbkqgVzmyI0lIJ6IO2d6GQYeu8TpQIi6aFwkQ5TlZrTNsCgARGTLKd-f6AyWgOTgew-k0NUL4TLCk7QKBzRE9YEpmr2QvbCc1I7Kq-Po",
+							"id": "rs_6dd654347dbb95bf:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "OK",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_6dd654347dbb95bf_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 11,
+						"input_tokens_details": {
+							"cached_tokens": 0
+						},
+						"output_tokens": 55,
+						"output_tokens_details": {
+							"reasoning_tokens": 45
+						},
+						"total_tokens": 66
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-spark-1.3 low",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-spark-1.3",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"reasoning": {
+						"effort": "low",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795343973,
+					"error": null,
+					"id": "resp_d8cd0e4f3ed3a47b",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-spark-1.3",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL20-5RZmzKQhIWwX8_SeG22fX1Z-VuA6j8A8oo3j4fTEmQqYgoUCgz-OVIG3KwiteGqGKAQw-aOjwMSMAoooGfljKvEW0PuASiIvd4d11e1KD984ta7Je1_XvYooCKIO81kflZFahCBpLuwCxoYChASs2fhnnpbDWlI6eVS13G3EIDLxdMPQUXq7A5MhZJT9nwu7u_07zqJ33BzTaOKNfUFf5yp5ElGoHTYOyKvkI5pMd9szaJaShdtMGSTdhAXrBw8HJjl535CXVviKMfH4FOeeeywZxLhaP4FU7acj5UmRdNC90z5hI3nfcjT6v2srk1wnRBFLJtFEO0x7KOuzjAVWxYTby_nUC6lodlqhxDcKWyN8WjsCfFcoLc_dxOJFTTaTO8dh3ZkpSJf0R2vLw6165dW-MM3C78DcPr_nnLuPCV7uWTt1OvWnkCzNrdCVDnQBcdJmhuHKKn7Ueb8f5jX33KAelyvoO1asmOv3rzo4PkyXXH-e-huv6rZPT18tiQRWey0_91bQwdyAgf8uHH5IrocqaROtUGIrNnVLI60cxE",
+							"id": "rs_d8cd0e4f3ed3a47b:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "OK",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_d8cd0e4f3ed3a47b_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 11,
+						"input_tokens_details": {
+							"cached_tokens": 0
+						},
+						"output_tokens": 51,
+						"output_tokens_details": {
+							"reasoning_tokens": 41
+						},
+						"total_tokens": 62
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-spark-1.3 medium",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-spark-1.3",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"reasoning": {
+						"effort": "medium",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795343974,
+					"error": null,
+					"id": "resp_0f4aa85da5a356e3",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-spark-1.3",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL0DcIKPm6u6SOXmAj8kbzt4kityoI2KPbnEsAjXYkCwEmQqYgoUCgw9TnoxepNbk88gZSYQr6uEqwQSMAooOBusgQn09O1suLPK5Xafpz9GzOli-qh9dMXesrPPTIC8XmdMKNjJXhC-hYHuCRoYChB3l1AVVUDHsBqqYkxPMJUVEMT19YsLuPReO99L3RvG-YgIKfUnhXSeuThiKWZ5SsyNbkSK_em9-H42wm1YnwXdIUjLbOEV8TISulngTcSrlRhURMUCPTaMx7TQBnOwSJhO6wwbqFBRjyau4R47AHqoQvN4JdPYoPAdtANftVOL4ohCP1atuaYjf9bkcKcY_JUwTgNFLnUrp7j_juXMVikJwMTCvr6fOXnZEj7-htAI7sOmFkVf5rdpqW-AHYwY_yofm7wVzev1wgySU_GSg7r2rYb0SGiQ04h6HC6u2cMZy9dzdgZ39xUqnhMLq1KSDBCD0iexJTMOhzy8aLTv5VBdaGbeBC2xL7wZX7knjWRvIY8zkqa3tVJ8ExUT-4MksJ0dVL3Epd4eKHhnBCTW3bDIEyXPez_9GcUJpo-a-xQoq9TuP6IkhEmx9QyuZe_NGn3VXeDPTYbk_lRSFUxCjCVZzUeVl4D1lPTyB99CaR4hncah1KIbCp8Ynvz-CWuqt-7uPVB1aDtTfoTcv0JFXqj4vBXX_Gi6z_fJNi6_xNeTpNgE9dehVCk884hun5GsnGg7Vvh8nKUVvBbdq5E6vX9GmQN2S7qhZCSPa3q3Uxxd9ct6BPiIQP0BuR_rRKyUg4qEUliFp4X3RGAhK-qDa3uXrWtjzaMTJBvTSMFsY1CJQjvcWkKb6w0okM0oNucmTl24oGXQSgzSfqR99GzW-B9SUuqzcGGglESm_dwFj5cJu1X5-rF8_WrFOZ3X9GKiisqepetiKlKd5aP2fMvcbPsY-Vhot2TpiIbRpwB-TvPp9KV4iY-ySfr4-D3n-tx9VKUNoQRdgYAgVjJ5VHXT_w-rlL-basiWz5-p6cLpaTxa4KEgGJff-Dw-YsomJGpgJ09a06mz97ittM1oIIyAsSd_dZoe2zrlyVDLo-f_ULjOP1eDUOfM5Il71x1Ntex2BCkXpbFSaQIH0hWvxSZn7VYul3ARuAI7o1pEz9qhniqY8Sn0AoEAcpJ_ZdQBVpaasuw2rzUyNO03bT2coMwFGicvFmxdxaoe2ZsafHkVL_SykN3F3aEcrZn-YOgjYSRva85oFkMwH0LKIzJag9V-mxciPwlDYNemzJYs2-zL-BQULomRdkdfR7AqGlxlhcm9RUh0KlZqqWZcR3QhF26nwEG6ZFIsmIHctt7CwWNTPLpliH_ykg4klFjvw6dMguBP4HU40AHRbn_Lg9tGrXk2I3WgtDuSfzfUxJMETeQ2T-ZXU0wNdzMTpjqSttf4xqZAJg42vilHJr85P_s31tgvrDVonHZIm7oklaTIwMm84-TgtwPRy0yT8_ByaF9LaAsVIk0qfxxZGZlnY-nHQifLAxHcGiW0XdNcBhmD7JwHPZjJG17ME1rHER1jeeEinCACO1k-7tsQUEF15IBDh-KmBcu45aUrjRxT0i1JsF1xYHWA3wO2LWGrfeRmcQB0aVBoNmFtGCNghsX_mpHCXeSKafExyzrP-PHfgwrFn_PeuseJCMgq5sqiNGhTI8EEmqKyBWEUcln-jdGoLGcq9tPHCVqmwyEQcTjg-9-MZzN8cls_6WpSG-G6DCubxJ0_KHEZwNNkUEa4a7JQgEEgQhO6cqN6roAVediIceDnvTQB7YVd3veKehURpdX5d12GFvpwZnXrI2iZq8yToCDDl-TyFHqRZRdY9vmTO5C3Dv4M2g-DJ4aDoGtedUS_HZZz9Fl6iJ36J4wt_XrJNQB8yTvocOTkQ40hBONMLTy5x7-cvy3QoOXUmtRsgfVgX9BgrsXFqPcdgUVdgB0c0rmNQ0fEjnqZ-XTDcuu2q5KfF9qQwoD2nxMPxrekOhNLszn2XzZ3lmUGmlHSfhUzzU_M28YS64spuPKJj9T1trvN6EGuqmvuGZD8G83c5zL_AGSXJFn5vypzEIeg91CLffzguA-zbsKvxIkiEtLwu2ai5k_Qy6PT4P9k9vS1aTW8Fy8cEEA9WKUpCovcavUZoqT8Af7bXBspuVvmlamCa95RAtMcJ4iHE6N33nQ664gT16eFLhvAXSfUb9FXtt86JnFByP-IZgNAv8rLw-L0Um78yz4eWmt9xoC6stNFLvdTEhilqBWdn5dRisJCTPKe0ohLTH_dMI5RxRrnGa0gI4PmmattTxGx2dXWFq2_dgEVBieaZgPP0v_N5xqhVXynZH9OTy3K0_H4mKqpJHUIxcjZRrOF61lmIkQiS-Od97hMgRA9N3FEKie7LbzkHoYn8tIKbLwJQ9l8gljI8t-e1v9QioVzfbUp0Ju8fn9rG20LsuLrpKjo6jLtNvMJwQi1W4gA7_0BkwAjFHWtKDCrbx9SLT9UdcBCpvznocU3NjC-wob9vIeRC6vBRXJikX_VMZALevlLK77s_KMUaGYOGLhSIZUAMDMndnCVZsMRviVXZ96ofgGdhT4uE3ZwPH8Mb7DxyorCmt2dLDgxR0qlvn2zjEhII0vCsIYyVBGjmey2eUD1fkl1wqMlgiRcSTtqWDkH5SlWKi3jCAokJbmxbsiVt1Zh3q7MzwZ8xrQNBVft0pDwYAH1CyBeosKvWXRoWhdzq7m4D-RxTnWPCECmiCdVOsNjjFecrrN7bsDXHLSrnt81QOTEGCOlRJIoaOhkHakVMs0iKIEuSKrbS_rSDJVkaCOueGMyjAA2WKslkW05cVunsm-wIckztnhmzUZhKz92VKHGWzgf8-UfbyVa3HIBEmrIoVwA7Oc3dX0ASCvzdGIkSo_KCnEKWUarQFdeSFrho1dcMQKTBf-YAjx4vFbhZ8lmsu2fztnC",
+							"id": "rs_0f4aa85da5a356e3:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "OK",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_0f4aa85da5a356e3_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 11,
+						"input_tokens_details": {
+							"cached_tokens": 0
+						},
+						"output_tokens": 251,
+						"output_tokens_details": {
+							"reasoning_tokens": 241
+						},
+						"total_tokens": 262
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-spark-1.3 high",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-spark-1.3",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"reasoning": {
+						"effort": "high",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795343976,
+					"error": null,
+					"id": "resp_9b5a7a6dc2606473",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-spark-1.3",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL0ZItHzL0tQiSzM6wv1qBTwxtQ66TdU-GjWfV-q60CeEmQqYgoUCgz1V1R0DA_ml5dLBHQQuYTPsAUSMAoo_YdvWVu38hnkOl4bQeRttJDrIt1MeiazxZ6y7zVAbmx7DQLVQbtA3hD5td7eCxoYChCdJUVW8WDRCLraHEv0Jq0zEMry9sgObCaBqZKp37ovFCVR0zke8tzuXKoUcUQxhnZKnjHse9pjWDBAbxArqMFwqxkkEWj-8PwSpiUR7t2uEV-n2f4Pxd3G6kDW-yF53C-E8C-i4e_NCz6ZdVoXRztb4fCQKfsw37HDebcaHL7ieVs_PQAU1dhe9fhoUVNujehOpR1mpGQmYnZEEflnPIrbCIkf1mm-ApXVfJesxxZibW_LKmREvoU3yRhNcAXBxW4lGc_kDSdlYYCG8a3SZnm3owqWmVsEwOyZnNjLy_nuJnQ2BXALkGK3A-IyLD_ZRgQmBAUw5DG9baN4LpSKWc0wiPTQFBVNzkD99kvM12Z5-_NQROOXnLgE7oG70LjXQga_Gs0WXMEGEyghUFtVNu7J01-T8BkiS7CvDYZRq6PP34OfQKGZCJoFaDbk7reqvbP_KL2DfJIX8bZjxxh3loawUpz-JYseE_C99Rj5QSB0eUYpvu3o5nft7Aebk9q0Mm_ye1sm1B9dC1yrbv5SWsOk2vh0OY9Et5XV2e8yuPldbRPpM3ULY1yKc8FP4LysxtHV3mDMUecmVql-ObB7SQ_b8qDlLIHOFULtZpSLcc0yK5Qq9x7uKQ7yV_YcZB-yzjUTVYGlHPrJ1EkiVCeIh3CsC18XrP1J65Er0woHgbYPiFVboeI95Q4XyPxFvwHHuEvo-s-ZTZDuMu6PRM3zLXkX2MK0XA0uDRKqz8Ny5YLwPLGPU28Chd9ttlERAB8ZpRwgZXvc_jZgnIv9vbYDP2NVI9K7APasQV-DmA2kFS_I2_1m2xJx_X8J7ycLYeoU229TxFcOxpqAgtvytK-z1kyeaX1JpTtyby0tCn2XifNABLAelRo19sQwcaZDQA35-xx3qeRkcfd7MfNQjMYBxLYDT66915FzqHVTePNUUzv1qjl3sbcnyDhH2Hnt_3FcZWVx-MPGw67S35hOyEx48G03Yrd8WAsqRAHHa04ZXWQFlZWKLafbzRSxjYfWAUb8Q13VzYGHsto_60G0PdVtYAd9voMoBZdT8zXIDowLxQP4DhDzSODgVBNXfEjbwXHxosmutdm465zZCzH2zLQXBnN06GynV_IRho9iMiJMgl88cv0ij1A_-ws53V8us_DTBoHsWE8yS9buR0WezE7rD8Vjwv_60rdLzXc4PsxSqmoKNFyI5Ee09qPOo9AKS0Fw2ORFbG8H2beCN7EAtLn1KDahzdiOGW1zkJsw1G92ziGOSYfSYXaDBGg9eYPVvAggkxVy8lWlZXdo1sag1gHqR_IFmIBN75jsMpBDyt0iu0lZfONuzb8chTjnr4vqYYvqOrbLUrUaHP_Nhp2mKYE9rvLMXrstd9dsYswzjCrArkYBm83Z-VJ_hK6dDTCcGvX_Nowoe0yjRwKTOpCOYFhDV3HV_EYpr2G9BTmiaE1QQV_1UXJvbZdT6cFBcMGTKqPTV7N-mm-fIewRjOPO5nSh36fHOBXzm3Gub0IcFhRpXt_eo2MBWLfVDETqd8ihfV3eR3xdqdig9QmPEhvItmPxXP0VBzcdC8RYCQPhH3SNeMu9UEvaUmnzbEPn7knNisKdLY0ZY6P4-gloKEe9qpd1XeyUlqPflINa8mjwtXOeuTE-x0f0jaC9MHoOeMpMiagjUcSb5TX55kdOjUa5RcAXivHOQvHSZWzBipdSsk-0RoXt3C8WDgii8vmFUoz8NqITfPJob68_7kniipcW9d_SDu0r3SYywwDyljEHaJ_ZIxDoGkyRllqyAn9wBec0no0oFUhw86NRzdCTPZAGLBP_fZo2quO8PyzlxKJ_qBWke1hTx0SquaBLWGZ6tLOWEdKuiFT8PfrVymWl4aDorf5iYKUx6Tm0t9uLy-RKZGVmlZTcmTfrYgRhN9elObbxrJ2b2ydTBeM2FE545XkYK9-I2scxmBqYzQNya1KlN0OdRyUd2gIQQSnZotb_3DQwRlBPIUQWhFNJZFMMy85Ng0XPhxxhqoZt3sqEmGOIxzC-UQyV8CmK_Uhp16AofKTPlIurIp5WTom5It10RWMcNEBUfxXAxRfAv3uikqqC4Oq0Et7mJYLEBFDMNFTjs3cWFXRIUFQMw97pFV4gD-neI-HbjgnSzx0l4x22G3DWsgikPmxSIdKgOAeRJR7OauxmYKjEQuUPLhcYwi5Dalk-oAoviFx1WfFDkXikKy4a2w9xTWCaQVv8yANqrjJ1qZ91R00hJnFkhEmLXj8f_lV-qCkK7KNJMoxDWYzVbmk48wmmpvEsO_ZxtcLcoxFYanubvxEukMbl-cUyzZaJNDLI213UGHMry1qDCMe5gVF66cyMQR6t7u_7TApO2N6_Msn3A_5uLIETpvloCqS6vKGZhy5h2_EbIrWws_lhgvUlAyvv78x9YBo06vwUAdvkJIa24hilRTpJkrsiBX0SWiOxodsDz23aJ86gEzQf7WI0R8NXJiu-RbOZKdRzlWPHWnOY0PKNrFMUe0VUJHJ-QEjO_-JV-_HS80HCafVrzv2Qt5glQTNy6l44gbRj2M2pEiYnnBXYrpp6O3VetdbhEwlDMhV_cw6MrRWDbbzbQhk0XbAfijg8nV5860m0qo_mlWLBURplzA6lt9IzWHGodRxlv6Snth3bhILsoDcC3YZ4baXq_jUdq851G0HRx5bouQBtFB01qGwKWGIoKUlDM9l4-xnbH0lLrJupWugoZGYFbQItb4LJ_6Z9gNv5OjOI8r32YSkCU82Opx4NaG61YHef8qdv3ZIY8hrgEtH1X5qQUapjZqvAOh0m",
+							"id": "rs_9b5a7a6dc2606473:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "OK",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_9b5a7a6dc2606473_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 11,
+						"input_tokens_details": {
+							"cached_tokens": 0
+						},
+						"output_tokens": 299,
+						"output_tokens_details": {
+							"reasoning_tokens": 289
+						},
+						"total_tokens": 310
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-spark-1.3 xhigh",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-spark-1.3",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"reasoning": {
+						"effort": "xhigh",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795343977,
+					"error": null,
+					"id": "resp_6353afdaacd896af",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-spark-1.3",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL20-5RZmzKQhIWwX8_SeG22fX1Z-VuA6j8A8oo3j4fTEmQqYgoUCgz-OVIG3KwiteGqGKAQw-aOjwMSMAoooGfljKvEW0PuASiIvd4d11e1KD984ta7Je1_XvYooCKIO81kflZFahCBpLuwCxoYChASs2fhnnpbDWlI6eVS13G3EIDLxdMPEzIOjGGMso8IY5rgp6WC8_uRxtLr5A0BVrPVBn83lkgNkhqpWfnxVmafT0HR_b9XQ7MGL-_075KaaDfrAKKzzFyZdAOSlgMSvDq_klUf2dtibRZE3GZOoONGdxqn4dD60t311uRHsCfaQm-IxSdMlyL8FQuEuFVpQruxdN2y7t6QnvjZ7ngckqviFy8VD_QdJ0ui3DK5wb5lTC-OdJi8R5mqh8dgtsxXn2_wc_pve1LLyp1-C2uGluahR7rH8VgFeYuDeK4GWk4hewC0IQWgVOvlLL76vlg4gzJLI7UTzNB8I4wHwxqCbOwaW9cWEOxMqh0w7Gkow1pRGqWPpQV8XUcoeY2Mobaopc0EkpqWTQtxhMGIxCPVtHS5luCFQ5-28jZA27XHBT4jtYdfc8H1_xPUERFSd8G8u2ujfMFAOW8mR6kKNDy-WFcc0uruumaHvuEr3lVvw6ACrkv4mWwwAXGN9Wkq7HaGQf8DCXkec6mWB9Ma3F6NIHNOujSdxSCFOBQL60JjMopb3esVMXE8AanWstvWmVpzBHdaXytRTZypJqqLfLRXk5-kg1I-nI_6EIv-Asd5oQ7cqVzOD2QYHPhqqrdBR91L1p4thQC2rrbrYCzl2KMXXSOZ_yKcBv2xwDM_oBTIbIEa8BvFo_6U9z-X-0nJxfBJiyq3w86ccGi9uHehOzLhV11phHwcGac_YF0Ghp-FSuX60RToZq87DzX7mygMpviykov5fYpO46kY4uDVIcQwPTTTSn3x9d_sYVqprVhngY9J36ZJaUZlDVqJXOGY-r6g9nrrnu0I3jci4u6WJcoQzQ3y516Szw8JbSh-rIYmIOWdW4huE5_uyzhzGBdaLsISmyqxjgRrenhSZgp_atfJAyUmCK2yGG-a910vtmzxi8dIiXrzBa6za1OknB5O5peUIV9wD8cq6wXDwbmU_2dInEgGsTgTrY1hfDZfdfkZYKU_QETbTp7ggfnGs8y5cOgp6UYQTbAvDFclcX0oLlbcG9Xc3x5MMw9sGasSpFryWOyqIGWblW01Tyt2zBR92d239rAaN9CdTyej7olaGWjBzhpDDQ0kRz33lH7pK3q5uzEiq83dtvijFBEEGfzPn0s3P-RtBn2eVsk4w2M5kIFVU_lO_saiBQ6TSc06YhYaBp1HX6Vv2tzZzG78TR7RywVOwrZNXRrIU7UDeP8U9bgnb05ZMHZKKDclpaDuzSz7UNis5Zy8B07yyt65PDyW16IVcc92awWDFdj8kGKlW8ETL8j-mt7J53qvC2mev4ROO444dLWRsOM8KPG5lQklF8t93M1oZ8sBZ-_GwUtXuxPhAa_es-gHaAHHxXoJ4hHY_GHu7lVokNgRGGGISgklI30TPIOHFjz__P8rmKe-qWrF7FEdlMU",
+							"id": "rs_6353afdaacd896af:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "OK",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_6353afdaacd896af_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 11,
+						"input_tokens_details": {
+							"cached_tokens": 0
+						},
+						"output_tokens": 239,
+						"output_tokens_details": {
+							"reasoning_tokens": 229
+						},
+						"total_tokens": 250
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-spark-1.3 max",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-spark-1.3",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"reasoning": {
+						"effort": "max",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": null,
+						"message": "reasoning_effort 'max' is not supported for this model. Supported values: [minimal, low, medium, high, xhigh]",
+						"param": "reasoning.effort",
+						"type": "invalid_request_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-wonder-1.0 unset",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-wonder-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795343979,
+					"error": null,
+					"id": "resp_ff10e943c51d6573",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-wonder-1.0",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL1HEJkfkP_bMocFGgMUtg2z_--ck2u8x0-TXYnOJx_qEmQqYgoUCgzFiGqcuRedJn2e9RQQnpGD9AMSMAooYq-2hk_qURiPz1iMTmNY-rvuyydOHV2oZXjZ3R8RDljQ78iKqcSTHxCY5tL9DBoYChCR0_EdMM3N_3xiK-9gj2sDEPfW96YNCwRywr_dJm06jBi2k6UqIA7Qm2kNp1a91E3XPZcbAWw1O6Ba4zvlznvC53np3_wemimmCJRd7eEqiLrLki8faS8csgyBRbDFdLaQhlIXsXYHRi4JOXZ6XeJmZVQCHpG-TKtaGP_my6JiI3hJ83QGsmhRoTrwxlLeaxlE17jC-wYuhEtyfNwtByFEbb7iz7yp5I-OUr9VMb2jRb7LUQR_6PP3QXF224qHNLlbungCTUyIQjhoYl510Hft9j_AjJeBdVwgtQ3iVegJNNtIPS0bCyyNUSIcBuCmDS_XpDhfnuGRRea4lTSbznh3F46KS6xoD1Q72dmT-5WGn3laGKJXn4Pp2XJVoG3kI866FHpJXgo2rHxIloPHgF8-_7U",
+							"id": "rs_ff10e943c51d6573:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "OK",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_ff10e943c51d6573_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 11,
+						"input_tokens_details": {
+							"cached_tokens": 0
+						},
+						"output_tokens": 40,
+						"output_tokens_details": {
+							"reasoning_tokens": 30
+						},
+						"total_tokens": 51
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-wonder-1.0 none",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-wonder-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"reasoning": {
+						"effort": "none",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": null,
+						"message": "reasoning_effort 'none' is not supported for this model. Supported values: [minimal, low, medium, high, xhigh, max]",
+						"param": "reasoning.effort",
+						"type": "invalid_request_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-wonder-1.0 minimal",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-wonder-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"reasoning": {
+						"effort": "minimal",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795343980,
+					"error": null,
+					"id": "resp_a178d24b21ae39a5",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-wonder-1.0",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL1HEJkfkP_bMocFGgMUtg2z_--ck2u8x0-TXYnOJx_qEmQqYgoUCgzFiGqcuRedJn2e9RQQnpGD9AMSMAooYq-2hk_qURiPz1iMTmNY-rvuyydOHV2oZXjZ3R8RDljQ78iKqcSTHxCY5tL9DBoYChCR0_EdMM3N_3xiK-9gj2sDEPfW96YNfKLErcodyOUR68NU7tJ68HObrTdbQmZqUX6vx6Z13TBD0duCWHhceihraHWIsbipv_48634-PJKEa7UyFNuJ4iKaZQPeySQkE_NsIt1GdPr7vamDvRxTQrVg777HPcXdpHztTG2gm6L-VOjopC9toiIopOZI5k8os_Dkq0oU50v1czR_TlWRIvWxX2FXtFpoovkRCBU5Ol7X10LmhlUXRuMjupuERjLBWEjD9HQ_1Efvhb83TsCACO1vF_SF1cfsu92n4_FkzFKOUez9KICBWK8c99Axjiwwj9e98sMWVII2cBy9XTxOB79rdIivYx7-1QR1oPxiQTx4Yto-hZp3rJvEepNQVTUQXFjD7RYqpVOFOXl_-pCLoBu5sNE",
+							"id": "rs_a178d24b21ae39a5:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "OK",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_a178d24b21ae39a5_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 11,
+						"input_tokens_details": {
+							"cached_tokens": 0
+						},
+						"output_tokens": 14,
+						"output_tokens_details": {
+							"reasoning_tokens": 4
+						},
+						"total_tokens": 25
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-wonder-1.0 low",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-wonder-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"reasoning": {
+						"effort": "low",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795343990,
+					"error": null,
+					"id": "resp_e8c884b001b14295",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-wonder-1.0",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL28ByDzsuEL16hYG1AehypjlErNJiq2cxGyLqBM4sGDEmQqYgoUCgzx8Y_37ykeVHkosY8Qx-rOnQESMAooTvDY7161SujqIZcl1HacTi10GCcouuqFfLNvsVEYEnieA7riHui1HxCPn6bRDhoYChDlAnz2ikdRR9Wit_DtZ-wbEIfA4PUJDyrmu9E5Ix2bTpzsqiaN7FOLtnpXRuuoWZ6gGJPb3592Iy4OuHZWOdDRg-yxM-x_3co0VU-AdmDQ6mQtzwCtkiJii76cspW_VpCD9w9HdFPpoGA6DPfbam5g64oBSJNmFKxcfyBP6xSLjvLWXC-UKQY3VPsxyDCHlurvZu65MCMJzwrV-mW53Sw3BX4ZPcABhvTThzzJ3lAd0qGly52Dsy2p-FmML14SGbWmHbbdQftUHdLoxw56zDGRBR_-A1aY4DxscwQdXhdqPvgfWTftsdp4vF7EqSyfSmEISqy0WRmTiANdP9y9868vK3RE0U633KcsgSh8V0rbpHfBYBhOaHyqmwctrYCmuoFZK1QcqZvwRC8xS6Dd5jcd1F9_dLZLEv7hJw14i9jvZ4dcL8eGRtHb-1jTT4IlaE2I5doAzGHFnoJRgpBtSw9AWeOCSbiKcrrvFBNQ5mnSQpgbha90_vot5YW4gHLBMCasKcJhcQdID_DDH2VbJt-Bh-Y-TTp-ygiL29OxLtX-Ti0PjaCU8NXaB7v4xQS5QXpDbB3QW3s-E2ZOunoRmsSg2gA0HPZ-isZpY_p-5qNZgU_eNYZqxKfsMUmwJexqbaDXdW2VMQfnJMFKNQg--ii9Zi6Gzzev3o5a9TbIk5Thp5Qi-4kbl8r84y8pTN-cQYDgDglSUcGCb2Os32P7oWHHBVye_C6IZFDVi_7PSkU3q0kq",
+							"id": "rs_e8c884b001b14295:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "OK",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_e8c884b001b14295_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 11,
+						"input_tokens_details": {
+							"cached_tokens": 0
+						},
+						"output_tokens": 75,
+						"output_tokens_details": {
+							"reasoning_tokens": 65
+						},
+						"total_tokens": 86
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-wonder-1.0 medium",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-wonder-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"reasoning": {
+						"effort": "medium",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795344001,
+					"error": null,
+					"id": "resp_aa1038185fffe605",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-wonder-1.0",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL2Q1DfraaxMKS4WU8lMKmWyBlxzbyrk6l8DSIZx4BPLEmQqYgoUCgwcQVN_YvE6kvm9kkYQlJLCzwkSMAooImpuXsUqwuz_aUVrzbmJTJS8foq39P9UY9zpBs6oMGCxcDK9-Yo-ThCm0qf0AxoYChCUMPvCJ_NeU096j7gAUC1gEI6a7L0Fvu2KRI36-gaQTEKrMGiivimoNZbht6HMwKd1CCLSdhqDmCzOa89HWkc7HmcdbCOi_vwHiTYWGFnI7Tixg7V0viyt-7zx-BEIRMSKYMouS7U-MRI5c6xOmSoQ3pc-KEtTqnOUwszNfcjWIJSL0hKKKQYqK91_vEM2jij7hlQQcB2K8eBbgSLeXCTXU2X6IHAxOcBOm2UOqKyloJmGVH_CTQP3D38gDp4BVI5K-ZN9YeZZvQ_ORNpt31_kW64mKZ1Z__85gUmtlZX9b8VPyI2GTQJF0ghYFY6AhhYMd72B6L5DHzDKM-TsAbM9DYEEPfAkAOGR3gCMIp0E1QI8wlSIJ3xMhDWPEMfDxgM1DhvSp54oW4k9EkhAt-_rivR_Xw3Oukb5txrFnPxEtlZBkDk_xDysCOMTApyFNKOtNe9Gi1h_oHHispa3Bsl2zhu9wLcDsT_ygoEV3WvAFsoyh331SsMF9dtw6yw8EVCf-8tmzleSBBPps9bVtQ_CYcJouGgEaLz20FpK3Xkr4DV7hA7NZ5qm3ogIMk3AB8CWGC6OnsL-lF6Z8ZYwDIq9Z91OdMBKCLDDmx-TTeiG3XKSx8TGLZO82ok0bdsMluTF4ulsq7_xe0SDAE3tJm0zroOZvQTtkQuqk5R3T53fktyknrGNaC9c3Lm7POucEg3h1kY0L4pkoqcOzdiZQuZZ23h5dOFNvoO14Ek4xlMQaGU6",
+							"id": "rs_aa1038185fffe605:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "OK",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_aa1038185fffe605_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 11,
+						"input_tokens_details": {
+							"cached_tokens": 0
+						},
+						"output_tokens": 109,
+						"output_tokens_details": {
+							"reasoning_tokens": 99
+						},
+						"total_tokens": 120
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-wonder-1.0 high",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-wonder-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"reasoning": {
+						"effort": "high",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795344063,
+					"error": null,
+					"id": "resp_a12168721e26f075",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-wonder-1.0",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL3Bf4IlbDZ80E_uFue_ajLPWXphijkuutXUGhmPeghrEmQqYgoUCgzLXqeGhD8Nrts5IA0QhZbB5wkSMAooPSoviFKtbqVZPQW3fR6UJUmznXqZ-ormNVYRedmWhs1x9YldKQnOSxDioKvJAxoYChCo_QnL9wA-scqkQqV7YatiEMHVo-kMT5cWex_vsGENVNgaIH3QbLIYeP0w_7W7L6IUJCjHdk93vEmTD1ZG8owI_otz8cdVbQLXBF_V9qkNOPXB407IsWQaOmCT7ZXJO-VpOpelcECuOp_cdwODTi2K4an0S3z89MeceDIID9QlZFwjGuf4f_N6KW6d0XKatFkcXZRJgEy3NPonJvBLCw2Lsalc4tk8bdmGUGWVrtZVLUJPE5O13g5KQrrhtTacsvogK1Y6U_Pqg14esROKuKPerhM6gZb_cU3NfF6nA7-OUN4QArdAkKvBElnah9FOcIeBCGqoYJY3RgUkNWptop76_wDsi1PPnyQaMAFXmPtTJUJLwlqUGl_dp4YvFs-2MhMJtT1uBZHsomliy5t14nBTQMAPKWYcBFegzPN4xVTBLULNGPWw3drMwG_VqTThV4gt5jwGPTevO5A4Fkuf6TpM5Nf73ObtaLHhrEOcG-dtWjBtK9CggyU1WJxYJxtWiRkKSAdwsdtow9K7DpxZ93AfQ_8_Qyy-NpuDkZ0h2-cI6uYBKVuiwopxkw7lioX9Sej7uXi-YTf-cYXEewwTqsSW2G70yy4owCWzOSGy8ItXg_vGAEKv-GkMVTbqK8HLkO2z40C9l7f86qIMbKwHag4lZmDoBUN19tuWgWOvlM1GnkuaM4Uge9NwWc6S5CBpLoTl3kvkv-BoM9lYBpCDBDFPDn1wQ97_NmqKGZvioT5jM_GduSeYZ9PgkFnSAOH5CvZFkIAKLV9cp-CjM0nanhcJj9aYdgMeF1nbH-38nz3D0IhcErfVMd2yHh7HVuN4e8ByyXS6k_hgQxuU88xItcQ3j6hhhwd00rakkD_PG_NFMQXQvtJAZIthOrxXo-KDahraY-3Aj53dNulJ9xbBWecGY6s4Xni2UmsJSmJOmno9Uxe1BzRTgalmGNFjJ7LG2H8URS_iQYKz_K5o2q7Z5JH5hUdmihcd8TTO2X3TX_4z48gwkmD2ICu81GHUQvoTvnzYkkwiz7lpeZBoXFA1R6_SvYMbeR78iOPVJIgdMu7i8E-HGG0Gc1QhF0C8OJBZaN8YImmeMd2f_y-b4FhZCUtuMpYqsLHmKX3Y_3mLn0gh8Fz2ls2-8uPtmM90r89ZjHoU20mcBbejCWZqsNfoiIKevM-W59YeTY-F_b2ifbm0f3i0x_21jtO8s1XebxwZpG7yxzfVupdyPgG_a5I6iCviT_RYg19IgpUVA_gurMlo5WD7xcq5Go6wPxx0x_K1CtMRy1edh2zOrmHJMEqrCaa47A3f-2093tnl_da87JyORaWT2tXCxZa9PXh43bpU6CpOe5GWhMyn5PXPMTMb5ndfK2Qdl1tkWHbM00rB4ICVXw_A2AyzcGc7YsJK_7JcKa6Rs4kHeDybTAQVX4s4Pq2xIv4",
+							"id": "rs_a12168721e26f075:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "OK",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_a12168721e26f075_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 11,
+						"input_tokens_details": {
+							"cached_tokens": 0
+						},
+						"output_tokens": 180,
+						"output_tokens_details": {
+							"reasoning_tokens": 170
+						},
+						"total_tokens": 191
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-wonder-1.0 xhigh",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-wonder-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"reasoning": {
+						"effort": "xhigh",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795344066,
+					"error": null,
+					"id": "resp_0a4f982ec7f3fa6f",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-wonder-1.0",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL3Bf4IlbDZ80E_uFue_ajLPWXphijkuutXUGhmPeghrEmQqYgoUCgzLXqeGhD8Nrts5IA0QhZbB5wkSMAooPSoviFKtbqVZPQW3fR6UJUmznXqZ-ormNVYRedmWhs1x9YldKQnOSxDioKvJAxoYChCo_QnL9wA-scqkQqV7YatiEMHVo-kMjMRYR29MP7RXb_a34gdpNBTV1awufJQF-IuzjOjmQ-PBOmto0yriHBQhgclMebYXE_TR8RQk8_m8ERglEZokaL78TnP6dbBeB3XCe_9svRxS_fdGpCq2Bg47T8NDkW6HJhLPgYVvRJbDLYbhBOgFNOmbQSEZwyUtAXYrvge9oMjSqUbY-FQQljmliDd7aeR-5uthWyl-2jgLuWoTFP1xK0LDU-RevJSt0N3m_UqbUdOMt8EVCs20KdeX0UIv4OCeZMJSrz5xpmW-cjXdv0wi14Xk4cbxh96oJ95Q8uIbplRpiQCWVrXF9xMq7d9lfz2t2yfmaWHTrZsXojQ6cRd5kAk0L5Pg5IZSE4NRXdGmrDxoFh--q4IOaEmNssxeu8BC43E9VTQOAnxjycfKLWQPeQqW_qwOwprjWygZn2rLN827KcDap-SCGK1aueesQF5ExVCbxDN_n1FbX1uM42vmnlt4jW5bPZEIR35lP3xHG9KqBE2TZLmW_G30_iakHhtLzJPyU1Sp8x1EQhpyXpoTnEEMGSKnYob6R_XnD7IyUrY4lP7MqWkXFJ7PwZJ_Y_nYmxbHHXOOuiAN1Nz_9BmHlNocZhreTfBW9FeThmOlPizeI5SXcMOZi57-_dc4eYs6WXF-YFg38TUKhqqmsZGlaIWRNSnycwDmCAZq-X4hRs_k3qILKWYX2GNQvtDjwtgUbvZXx3sEsRUfmr-e",
+							"id": "rs_0a4f982ec7f3fa6f:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "OK",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_0a4f982ec7f3fa6f_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 11,
+						"input_tokens_details": {
+							"cached_tokens": 0
+						},
+						"output_tokens": 93,
+						"output_tokens_details": {
+							"reasoning_tokens": 83
+						},
+						"total_tokens": 104
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-wonder-1.0 max",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-wonder-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"reasoning": {
+						"effort": "max",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": null,
+						"message": "reasoning_effort 'max' is not supported for this model. Supported values: [minimal, low, medium, high, xhigh]",
+						"param": "reasoning.effort",
+						"type": "invalid_request_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-ember-1.0 call",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-ember-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Work out 37*43 - 19*29 in your head first, then call get_secret_number, then tell me the secret number plus your result."
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_secret_number",
+							"description": "Returns the secret number.",
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"reasoning": {
+						"effort": "low",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795344067,
+					"error": null,
+					"id": "resp_c0fbc43f1a11e073",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-ember-1.0",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL2KHwzJuGQWNwZEt8spBAC6fu-5zaQT3JXlzvKlNQEqEmQqYgoUCgz0C66vLLqf3eEofHsQnsrikAISMAooiYwhyCXyPGyLOuZqcVkeWjFH7mtUgz5Eab0-G8aNz_pU2--9SXnxTRDd2ZrCBxoYChB9fC-ovEa4ebXVxZLqM4nuEJDElOYMq6t4assoy4GIICpWbycCD9aAHN_3WOB0uYXG-k1nwh3oHzYnHEJhX-T8_0nEQ_gzxJOQRucsPjglY71CuMmZ0NfDSl4Ur5AZy5Py4M8o-Z4rEZDaRwQPfhHeu-pzhB5IJ25TAWwWyLBGvMlPI-XMy6EgnF-nChWBwGLqny57dNx_A6i6gy1FG19uXMFIJ-Cq9Z_WpXbHx2R-P_75TD-Zs8Lqr2zvsjOQYBDmEQ64vkUaUWEnbFjwnLQFGv5Zs-l6VP7B0ZPXHueR-ZdOW0nzpiskgCs9KjJTpZfPyzkQIFTHMx5SkiZ5O_3KnBxPcOAHqWYbJslX2EkWJ9ApL49yc3PNuaNSOQ8zFbbtdLWMXFX-mq3bdpypHD7DNGHb0sfile5nWKNcyyi7anKmrMDScvsYWOj51gOL6s2l3s2g0EsnCdhseXk_dVv5ltele6mBta-QIXb4ACdOS52COXNtTdPvBtYqH9lD8ASB2O3B1qJb8o8ceFc7AS2LpVifOxXXTlrMTZdZL6uvgYuHfC-uFvpfZItJuoITDJis_FntXfuut46MszlOM-qLlGWxSdan-28fb02as8MQE6WJwJAninLqo29dG2qr1D8IWfZQeVzTr_HSuFhDYJuav-YOxs5S2v-LGxwxnmIuE4JuUq_L73fHWxS_pYlio_WeVVG_hShEaJDWMdp31Q7K_5GHluJaWlGBqmuP3CPR623W",
+							"id": "rs_c0fbc43f1a11e073:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "37×43 − 19×29 = 1040 in my head. Now I'll call for the secret number.",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_c0fbc43f1a11e073_1",
+							"phase": "commentary",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						},
+						{
+							"arguments": "{}",
+							"call_id": "call_c0fbc43f1a11e073_2",
+							"id": "fc_c0fbc43f1a11e073_2",
+							"name": "get_secret_number",
+							"status": "completed",
+							"type": "function_call"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"tools": [
+						{
+							"description": "Returns the secret number.",
+							"name": "get_secret_number",
+							"parameters": {
+								"additionalProperties": false,
+								"properties": {},
+								"type": "object"
+							},
+							"strict": true,
+							"type": "function"
+						}
+					],
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 498,
+						"input_tokens_details": {
+							"cached_tokens": 0
+						},
+						"output_tokens": 172,
+						"output_tokens_details": {
+							"reasoning_tokens": 104
+						},
+						"total_tokens": 670
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-spark-1.3 call",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-spark-1.3",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Work out 37*43 - 19*29 in your head first, then call get_secret_number, then tell me the secret number plus your result."
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_secret_number",
+							"description": "Returns the secret number.",
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"reasoning": {
+						"effort": "low",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795344068,
+					"error": null,
+					"id": "resp_5598c036a6f152dd",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-spark-1.3",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL0DcIKPm6u6SOXmAj8kbzt4kityoI2KPbnEsAjXYkCwEmQqYgoUCgw9TnoxepNbk88gZSYQr6uEqwQSMAooOBusgQn09O1suLPK5Xafpz9GzOli-qh9dMXesrPPTIC8XmdMKNjJXhC-hYHuCRoYChB3l1AVVUDHsBqqYkxPMJUVEMT19YsLAzx_MiO8uiLIBz4vvJX7a0LWATJUm1Xy0wiAiy4-B9TZ-sDL42MG4xFYFMOzEA1XjwkKQZbQjHCnlCIvbTUPkv1jQ0nhxqFPGKZ4fGyh5tpe9aE3rz6QZHALF_2mpE_E4NeUMLU_-xKBs_-bvN-LR-FtwHlZcfeZJAIcBURxTztMVqSUMaui-hNmqv5ha2HeThPSduGYLBpTGdBxrhjhkbf1VnyEckO6LJXE_FkLk3Ta-4X83_opY9U7ML2uB3d8uInLL_j86eXRFeFBYw5aK6JLCrrii1nnugRyFae5uY0_g1HAAiEw_TOgRWqDehD2UzC-_4et--x2ts9jWjo0LiMT-DDR20p1FTfK6fhPUOpGRy-4tEkBScyXgkO-PZWEoewq2HWt7PoKLp12afG9EoUQXwSp4mbPIK1NFh3TJfoOcSNuIApiGQVYhqVBCgFEs-hG0AU7E9vHFUtLFCr-l-I-Vc_PjqkAFZzlNGc1OgWxVqjz6waSHOn666cYkerwUZChNI_tXsMSvILF3Btb0qKbWFRzd8Uctvq9PlBoUVLf_aqVVhMmmaJplbsN-_6TUvSyLYieJQCCQFw-Lwc8sLSIQ6vcfx24plrAq9GZ_nCSigvtJI5vdU0FxWtZhpKdaA6ScJlC5YFl2yVsq_hHcehFoAU3sw2dGDpFUXq6gGbiDsTYYX0Fp47MGnhttwQR91f4xGatKFvYGXe6",
+							"id": "rs_5598c036a6f152dd:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "I'll work out that arithmetic and retrieve the secret number.",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_5598c036a6f152dd_1",
+							"phase": "commentary",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						},
+						{
+							"arguments": "{}",
+							"call_id": "call_5598c036a6f152dd_2",
+							"id": "fc_5598c036a6f152dd_2",
+							"name": "get_secret_number",
+							"status": "completed",
+							"type": "function_call"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"tools": [
+						{
+							"description": "Returns the secret number.",
+							"name": "get_secret_number",
+							"parameters": {
+								"additionalProperties": false,
+								"properties": {},
+								"type": "object"
+							},
+							"strict": true,
+							"type": "function"
+						}
+					],
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 552,
+						"input_tokens_details": {
+							"cached_tokens": 113
+						},
+						"output_tokens": 157,
+						"output_tokens_details": {
+							"reasoning_tokens": 100
+						},
+						"total_tokens": 709
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-wonder-1.0 call",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-wonder-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Work out 37*43 - 19*29 in your head first, then call get_secret_number, then tell me the secret number plus your result."
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_secret_number",
+							"description": "Returns the secret number.",
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"reasoning": {
+						"effort": "low",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795344079,
+					"error": null,
+					"id": "resp_0a6118dbe919bb77",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-wonder-1.0",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL3Bf4IlbDZ80E_uFue_ajLPWXphijkuutXUGhmPeghrEmQqYgoUCgzLXqeGhD8Nrts5IA0QhZbB5wkSMAooPSoviFKtbqVZPQW3fR6UJUmznXqZ-ormNVYRedmWhs1x9YldKQnOSxDioKvJAxoYChCo_QnL9wA-scqkQqV7YatiEMHVo-kMUc6UdapbTh0zsWaCc06DnTjXufldJCRH-MM3Q73IobB0KcP1SxdNce_um9cnHbbKRQCy9HTrxs6IzLXP_CW2ZP_ybMk16R0e9B455gVBy3EVH4zD34iVJXxA-47hczsB0SMaS2mH7zFjzlvGvJ6UaQhLhdsr3ZVvY1R0JENr-wdcq2TMUeKrYejaQw3syBlqXJlTklW0xJQ1jAhsJoCFmfkxRR-9zYfRilok8FEXDCi4otKmnooEPoGY0LvjpC72lbcZB8tWVddeV_TgAgULnZg2GuBLD-ovyTgFTiJ8EJ8iZ-igqyOsiEg60kPusOSBttPCW0_lcjRGK3Bx3DWKqWKUgGi0T6FhNRUWLTo3fO4mZN-dsXTnElOqv6J7CHyR1FtqUSS-KtYJlR88GTJH4kTZLR6syugpM_Vg8ePmsMwv4nWab2ELBpsxMGRBD628eCfYZSeh6EVoe23emgyQQLoE2kgckcnjBdhH_38Y8Xs0AXnTIzjsxxIxIs4NRrRjAU-4RBupVbzZoKP8zq7NeyPBihEV1VuN6AabARbBXmLEYOt5gbFrmt5uCEOnS2Z3pt7IEX0Aubae2SqElre7V2pUxUGVlnDQbPAAK7htz9ehxWHsJryWwzQpRyWya5KCuPajPjT1TOOI1R2nEs0bjxOvg_MIBHyDuTIyyX9LWG0ICixDTci0PU2fv8-F1WEPGYa6Qk8slk223VUY",
+							"id": "rs_0a6118dbe919bb77:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "37×43 = 1591 and 19×29 = 551, so the difference is 1040. Now I'll fetch the secret number to add it.",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_0a6118dbe919bb77_1",
+							"phase": "commentary",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						},
+						{
+							"arguments": "{}",
+							"call_id": "call_0a6118dbe919bb77_2",
+							"id": "fc_0a6118dbe919bb77_2",
+							"name": "get_secret_number",
+							"status": "completed",
+							"type": "function_call"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"tools": [
+						{
+							"description": "Returns the secret number.",
+							"name": "get_secret_number",
+							"parameters": {
+								"additionalProperties": false,
+								"properties": {},
+								"type": "object"
+							},
+							"strict": true,
+							"type": "function"
+						}
+					],
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 498,
+						"input_tokens_details": {
+							"cached_tokens": 0
+						},
+						"output_tokens": 201,
+						"output_tokens_details": {
+							"reasoning_tokens": 123
+						},
+						"total_tokens": 699
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-ember-1.0 own reasoning",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-ember-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Work out 37*43 - 19*29 in your head first, then call get_secret_number, then tell me the secret number plus your result."
+						},
+						{
+							"id": "rs_c0fbc43f1a11e073:rs_0",
+							"type": "reasoning",
+							"summary": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL2KHwzJuGQWNwZEt8spBAC6fu-5zaQT3JXlzvKlNQEqEmQqYgoUCgz0C66vLLqf3eEofHsQnsrikAISMAooiYwhyCXyPGyLOuZqcVkeWjFH7mtUgz5Eab0-G8aNz_pU2--9SXnxTRDd2ZrCBxoYChB9fC-ovEa4ebXVxZLqM4nuEJDElOYMq6t4assoy4GIICpWbycCD9aAHN_3WOB0uYXG-k1nwh3oHzYnHEJhX-T8_0nEQ_gzxJOQRucsPjglY71CuMmZ0NfDSl4Ur5AZy5Py4M8o-Z4rEZDaRwQPfhHeu-pzhB5IJ25TAWwWyLBGvMlPI-XMy6EgnF-nChWBwGLqny57dNx_A6i6gy1FG19uXMFIJ-Cq9Z_WpXbHx2R-P_75TD-Zs8Lqr2zvsjOQYBDmEQ64vkUaUWEnbFjwnLQFGv5Zs-l6VP7B0ZPXHueR-ZdOW0nzpiskgCs9KjJTpZfPyzkQIFTHMx5SkiZ5O_3KnBxPcOAHqWYbJslX2EkWJ9ApL49yc3PNuaNSOQ8zFbbtdLWMXFX-mq3bdpypHD7DNGHb0sfile5nWKNcyyi7anKmrMDScvsYWOj51gOL6s2l3s2g0EsnCdhseXk_dVv5ltele6mBta-QIXb4ACdOS52COXNtTdPvBtYqH9lD8ASB2O3B1qJb8o8ceFc7AS2LpVifOxXXTlrMTZdZL6uvgYuHfC-uFvpfZItJuoITDJis_FntXfuut46MszlOM-qLlGWxSdan-28fb02as8MQE6WJwJAninLqo29dG2qr1D8IWfZQeVzTr_HSuFhDYJuav-YOxs5S2v-LGxwxnmIuE4JuUq_L73fHWxS_pYlio_WeVVG_hShEaJDWMdp31Q7K_5GHluJaWlGBqmuP3CPR623W"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "37×43 − 19×29 = 1040 in my head. Now I'll call for the secret number.",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_c0fbc43f1a11e073_1",
+							"phase": "commentary",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						},
+						{
+							"arguments": "{}",
+							"id": "fc_c0fbc43f1a11e073_2",
+							"type": "function_call",
+							"call_id": "call_c0fbc43f1a11e073_2",
+							"name": "get_secret_number"
+						},
+						{
+							"type": "function_call_output",
+							"call_id": "call_c0fbc43f1a11e073_2",
+							"output": "41"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_secret_number",
+							"description": "Returns the secret number.",
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"reasoning": {
+						"effort": "low",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795344080,
+					"error": null,
+					"id": "resp_720f57499401c19b",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-ember-1.0",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AiwokAGoEUL0nGGW7hLorulB9Ag-wIdDmeAa2UFw9sx-qPyFqbRYVEmMqYQoTCgw6KFE6ORHwdqYXkMMQxM77TRIwCijqwbWjmDqE9PDR4yRJb5DL2N-JC5Fv4iBUzIgK6t5JK0jxEWyRMki4EMyUxLsOGhgKEPeu-dFT6nE19IkxK16PBlAQ5oK0wwg0Qp43tUDA1lXlzrkwj8kwi8XQVPaurEAWZ2CWwDKZeGkaQjq5m2JvG4AYQ4RndcTfPpHv5yoC7eo8RI18Wx3tlv-sFs4E9GlWtVrP6eAA8Fsek-kIFt27ax9rgLsoG-cxHAa3Az6Dzv7r9eiepjtMpxO_fPJ_MY8HGbxkAw6QejCAm1iiSfJxlMf7s3XRWx2FzqFt7hbhPsUjsd887AiYOyD-0ymspNAAXMM8EQa9QWmFYEzzcUZ9L9ABWk0npcfR9qqTertP_w_AiigcCE4i5Lv8ZwacWTBhbPPy_Yu_TzepHiTY-P2FQbaADQjM5hqHXH83GEZheG5rZt8WarC3-JdphDEHgiGNGTAbUoBU8qefGImWkVlhwTTfhw",
+							"id": "rs_720f57499401c19b:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "37*43 - 19*29\n\n= 1591 - 551\n= 1040\n\nSecret number: 41\n\n1040 + 41 = **1081**",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_720f57499401c19b_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"tools": [
+						{
+							"description": "Returns the secret number.",
+							"name": "get_secret_number",
+							"parameters": {
+								"additionalProperties": false,
+								"properties": {},
+								"type": "object"
+							},
+							"strict": true,
+							"type": "function"
+						}
+					],
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 695,
+						"input_tokens_details": {
+							"cached_tokens": 0
+						},
+						"output_tokens": 83,
+						"output_tokens_details": {
+							"reasoning_tokens": 36
+						},
+						"total_tokens": 778
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-ember-1.0 without its reasoning",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-ember-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Work out 37*43 - 19*29 in your head first, then call get_secret_number, then tell me the secret number plus your result."
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "37×43 − 19×29 = 1040 in my head. Now I'll call for the secret number.",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_c0fbc43f1a11e073_1",
+							"phase": "commentary",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						},
+						{
+							"arguments": "{}",
+							"id": "fc_c0fbc43f1a11e073_2",
+							"type": "function_call",
+							"call_id": "call_c0fbc43f1a11e073_2",
+							"name": "get_secret_number"
+						},
+						{
+							"type": "function_call_output",
+							"call_id": "call_c0fbc43f1a11e073_2",
+							"output": "41"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_secret_number",
+							"description": "Returns the secret number.",
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"reasoning": {
+						"effort": "low",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795344081,
+					"error": null,
+					"id": "resp_3b43e3cf82c8242f",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-ember-1.0",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AiwokAGoEUL0nGGW7hLorulB9Ag-wIdDmeAa2UFw9sx-qPyFqbRYVEmMqYQoTCgw6KFE6ORHwdqYXkMMQxM77TRIwCijqwbWjmDqE9PDR4yRJb5DL2N-JC5Fv4iBUzIgK6t5JK0jxEWyRMki4EMyUxLsOGhgKEPeu-dFT6nE19IkxK16PBlAQ5oK0wwhgNJgiH6ehXqGMka6YSRjJfNaGvy7w7tnO2Rae5d6C68jwQmHPj8XYbNssPfdKR4vMiqbwobeGwlSSnRqxHERgrF1f9S8su7CFS_xEVc4JzKdOn-P8quQW_yPnH0GohS5BgEOwR70dmGF2fdhEHUwLZGTLgx6d7-130dKJGohy44EXcy8f4r8gUEpxTiY8UXXwtsuNNjhXTDF6kJhad5YVRjBGg9M4Fm05_lHBe8ZJZK8w7TlXFCS8OpqsHbPen-4PVkEaIhM92dU7n0mKhBgwLGTRnQF4XQEh1W5MiuarOVDqc9fc5AmxQyto63SwpcCdVzGh_Wh-wd2ocuywiioAGjyaHlc4-zhZJkRtbfQQt75eyNnwkx3EzoMWHVpV9ol2fKcDb44pp9DDZwKlmeEHYql_F4VoRS_zJXidQuxf3R6cUzsqIjYpkuigfzvEVzokwIPaRe1PwLaGxTj65Able-oS_926m1OcYy-rKGe5BaD7M0wSIPe7un3UnoyulRNEYtO4d3gri0hh9WnWGaZz2PNF2WalM5C-5onwK3BKAijyCig2vma66_xGQVLDJqYkshxbTSiMT0XU3O_JR6lJNZUG2cSwVSLjS_N89vjYRa6mCwboJFzt3U3ikuaDCicxi4ZAn5Ok5r26ZnfN06SUgAVNKsAB5SBuXRJ0GQd8z_mrJZwz7kTMJlfjiXO2f1RCMJNLuMoRP1kwDig",
+							"id": "rs_3b43e3cf82c8242f:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "37 × 43 = 1,591\n19 × 29 = 551\n1,591 − 551 = 1,040\n\nThe secret number is 41.\n\n1,040 + 41 = **1,081**",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_3b43e3cf82c8242f_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"tools": [
+						{
+							"description": "Returns the secret number.",
+							"name": "get_secret_number",
+							"parameters": {
+								"additionalProperties": false,
+								"properties": {},
+								"type": "object"
+							},
+							"strict": true,
+							"type": "function"
+						}
+					],
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 585,
+						"input_tokens_details": {
+							"cached_tokens": 372
+						},
+						"output_tokens": 166,
+						"output_tokens_details": {
+							"reasoning_tokens": 108
+						},
+						"total_tokens": 751
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-ember-1.0 reasoning to muse-spark-1.3",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-spark-1.3",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Work out 37*43 - 19*29 in your head first, then call get_secret_number, then tell me the secret number plus your result."
+						},
+						{
+							"id": "rs_c0fbc43f1a11e073:rs_0",
+							"type": "reasoning",
+							"summary": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL2KHwzJuGQWNwZEt8spBAC6fu-5zaQT3JXlzvKlNQEqEmQqYgoUCgz0C66vLLqf3eEofHsQnsrikAISMAooiYwhyCXyPGyLOuZqcVkeWjFH7mtUgz5Eab0-G8aNz_pU2--9SXnxTRDd2ZrCBxoYChB9fC-ovEa4ebXVxZLqM4nuEJDElOYMq6t4assoy4GIICpWbycCD9aAHN_3WOB0uYXG-k1nwh3oHzYnHEJhX-T8_0nEQ_gzxJOQRucsPjglY71CuMmZ0NfDSl4Ur5AZy5Py4M8o-Z4rEZDaRwQPfhHeu-pzhB5IJ25TAWwWyLBGvMlPI-XMy6EgnF-nChWBwGLqny57dNx_A6i6gy1FG19uXMFIJ-Cq9Z_WpXbHx2R-P_75TD-Zs8Lqr2zvsjOQYBDmEQ64vkUaUWEnbFjwnLQFGv5Zs-l6VP7B0ZPXHueR-ZdOW0nzpiskgCs9KjJTpZfPyzkQIFTHMx5SkiZ5O_3KnBxPcOAHqWYbJslX2EkWJ9ApL49yc3PNuaNSOQ8zFbbtdLWMXFX-mq3bdpypHD7DNGHb0sfile5nWKNcyyi7anKmrMDScvsYWOj51gOL6s2l3s2g0EsnCdhseXk_dVv5ltele6mBta-QIXb4ACdOS52COXNtTdPvBtYqH9lD8ASB2O3B1qJb8o8ceFc7AS2LpVifOxXXTlrMTZdZL6uvgYuHfC-uFvpfZItJuoITDJis_FntXfuut46MszlOM-qLlGWxSdan-28fb02as8MQE6WJwJAninLqo29dG2qr1D8IWfZQeVzTr_HSuFhDYJuav-YOxs5S2v-LGxwxnmIuE4JuUq_L73fHWxS_pYlio_WeVVG_hShEaJDWMdp31Q7K_5GHluJaWlGBqmuP3CPR623W"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "37×43 − 19×29 = 1040 in my head. Now I'll call for the secret number.",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_c0fbc43f1a11e073_1",
+							"phase": "commentary",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						},
+						{
+							"arguments": "{}",
+							"id": "fc_c0fbc43f1a11e073_2",
+							"type": "function_call",
+							"call_id": "call_c0fbc43f1a11e073_2",
+							"name": "get_secret_number"
+						},
+						{
+							"type": "function_call_output",
+							"call_id": "call_c0fbc43f1a11e073_2",
+							"output": "41"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_secret_number",
+							"description": "Returns the secret number.",
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"reasoning": {
+						"effort": "low",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": "invalid_reasoning_replay",
+						"message": "The request contains invalid encrypted reasoning.",
+						"param": null,
+						"type": "invalid_request_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-ember-1.0 conversation to muse-spark-1.3",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-spark-1.3",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Work out 37*43 - 19*29 in your head first, then call get_secret_number, then tell me the secret number plus your result."
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "37×43 − 19×29 = 1040 in my head. Now I'll call for the secret number.",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_c0fbc43f1a11e073_1",
+							"phase": "commentary",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						},
+						{
+							"arguments": "{}",
+							"id": "fc_c0fbc43f1a11e073_2",
+							"type": "function_call",
+							"call_id": "call_c0fbc43f1a11e073_2",
+							"name": "get_secret_number"
+						},
+						{
+							"type": "function_call_output",
+							"call_id": "call_c0fbc43f1a11e073_2",
+							"output": "41"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_secret_number",
+							"description": "Returns the secret number.",
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"reasoning": {
+						"effort": "low",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795344082,
+					"error": null,
+					"id": "resp_64bddb6a662d172f",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-spark-1.3",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL3XVFqlFo-vOYAlhpTKm1lngQl3IULxT4G9AJTlnv7FEmQqYgoUCgxud-Zht2t6yjZFIbsQpKnytAoSMAooKQeRu6JbPOViBA49LLHSynZzSA51qnnPKvBJDYZaUbwy0-fT9A32cRDYrfjFBBoYChBeQC_A5K-NX76W7LKzqrlCEKGKn48NoIDp9yLCQnKRdGzNjPO5yGGh4ODwT4EQoaQJsxheRfK5pynnY-kqBHhLRQ03g3715UyO3LF-74L_rvUdK5xlnStvaj0Q4QvGePSzLhK3ADpE2e450yP1dTfXianpjrj3Ssq7717vEX7MAyK4tSX40uVfMAGe7j9GBDXGZKnMZ2mVpIVVfPaVEEpkv9Im5ZXP2D8QWZFDMvYjkj1HOAxyKivJ2HBtWCBnC8QFs00JNXTxMhOwdTHsIbjEGPS32qbOnlcoACxImab-VU5sEw_R-b1uuuwDToAnYv6hmpWxpkmIev_wGWmSX152IGqO6oWZB7lM26JJRFmUN_xL97e-ZH9BOPR28T1kmWitcMt6wLLi87O-1utHugchaxg",
+							"id": "rs_64bddb6a662d172f:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "In my head:\n\n37*43 = 1591\n19*29 = 551\n1591 - 551 = **1040**\n\nThen I called get_secret_number and got **41**.\n\n41 + 1040 = **1081**\n",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_64bddb6a662d172f_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"tools": [
+						{
+							"description": "Returns the secret number.",
+							"name": "get_secret_number",
+							"parameters": {
+								"additionalProperties": false,
+								"properties": {},
+								"type": "object"
+							},
+							"strict": true,
+							"type": "function"
+						}
+					],
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 643,
+						"input_tokens_details": {
+							"cached_tokens": 497
+						},
+						"output_tokens": 127,
+						"output_tokens_details": {
+							"reasoning_tokens": 68
+						},
+						"total_tokens": 770
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-spark-1.3 own reasoning",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-spark-1.3",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Work out 37*43 - 19*29 in your head first, then call get_secret_number, then tell me the secret number plus your result."
+						},
+						{
+							"id": "rs_5598c036a6f152dd:rs_0",
+							"type": "reasoning",
+							"summary": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL0DcIKPm6u6SOXmAj8kbzt4kityoI2KPbnEsAjXYkCwEmQqYgoUCgw9TnoxepNbk88gZSYQr6uEqwQSMAooOBusgQn09O1suLPK5Xafpz9GzOli-qh9dMXesrPPTIC8XmdMKNjJXhC-hYHuCRoYChB3l1AVVUDHsBqqYkxPMJUVEMT19YsLAzx_MiO8uiLIBz4vvJX7a0LWATJUm1Xy0wiAiy4-B9TZ-sDL42MG4xFYFMOzEA1XjwkKQZbQjHCnlCIvbTUPkv1jQ0nhxqFPGKZ4fGyh5tpe9aE3rz6QZHALF_2mpE_E4NeUMLU_-xKBs_-bvN-LR-FtwHlZcfeZJAIcBURxTztMVqSUMaui-hNmqv5ha2HeThPSduGYLBpTGdBxrhjhkbf1VnyEckO6LJXE_FkLk3Ta-4X83_opY9U7ML2uB3d8uInLL_j86eXRFeFBYw5aK6JLCrrii1nnugRyFae5uY0_g1HAAiEw_TOgRWqDehD2UzC-_4et--x2ts9jWjo0LiMT-DDR20p1FTfK6fhPUOpGRy-4tEkBScyXgkO-PZWEoewq2HWt7PoKLp12afG9EoUQXwSp4mbPIK1NFh3TJfoOcSNuIApiGQVYhqVBCgFEs-hG0AU7E9vHFUtLFCr-l-I-Vc_PjqkAFZzlNGc1OgWxVqjz6waSHOn666cYkerwUZChNI_tXsMSvILF3Btb0qKbWFRzd8Uctvq9PlBoUVLf_aqVVhMmmaJplbsN-_6TUvSyLYieJQCCQFw-Lwc8sLSIQ6vcfx24plrAq9GZ_nCSigvtJI5vdU0FxWtZhpKdaA6ScJlC5YFl2yVsq_hHcehFoAU3sw2dGDpFUXq6gGbiDsTYYX0Fp47MGnhttwQR91f4xGatKFvYGXe6"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "I'll work out that arithmetic and retrieve the secret number.",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_5598c036a6f152dd_1",
+							"phase": "commentary",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						},
+						{
+							"arguments": "{}",
+							"id": "fc_5598c036a6f152dd_2",
+							"type": "function_call",
+							"call_id": "call_5598c036a6f152dd_2",
+							"name": "get_secret_number"
+						},
+						{
+							"type": "function_call_output",
+							"call_id": "call_5598c036a6f152dd_2",
+							"output": "41"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_secret_number",
+							"description": "Returns the secret number.",
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"reasoning": {
+						"effort": "low",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795344083,
+					"error": null,
+					"id": "resp_382426b7a090b711",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-spark-1.3",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL20-5RZmzKQhIWwX8_SeG22fX1Z-VuA6j8A8oo3j4fTEmQqYgoUCgz-OVIG3KwiteGqGKAQw-aOjwMSMAoooGfljKvEW0PuASiIvd4d11e1KD984ta7Je1_XvYooCKIO81kflZFahCBpLuwCxoYChASs2fhnnpbDWlI6eVS13G3EIDLxdMP5dLbFATk0ol7YmH7A7I_01JiD5sF0qrdyicIkHI3v3L04Ikn_Dn6fGaoHLA_CUibpMvoz4QrX82I-vOHRJDlDUicBMBGcV-RzT8M6CTHh3fpapJcgWb_pr2ixAneU9dnfgSe6UDYairnFphq3jhgBSN1YbolN86CDvlynR8AKLFvLthuRk-_jOMWmx1E88Aebw52noLZlmxHz6UrfhYEOqhDU8YSWeqRIkhYUhtZ3nDBySRr4zHrbMPSJfelsit9p7PeF1EzUf0yE5TIFUtDNaIrZ7LqmZ9t81YXefXOCb0TRqu31PBUx4stqtv-D7Rw7crtlQFszgJNJqhQ3PUEJ2OYnDzzWTyFE49FGg0hE3apdRylC_IKGwyUuOY",
+							"id": "rs_382426b7a090b711:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "37*43 - 19*29 = 1591 - 551 = 1040\n\nSecret number is 41.\n\n1040 + 41 = **1081**\n",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_382426b7a090b711_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"tools": [
+						{
+							"description": "Returns the secret number.",
+							"name": "get_secret_number",
+							"parameters": {
+								"additionalProperties": false,
+								"properties": {},
+								"type": "object"
+							},
+							"strict": true,
+							"type": "function"
+						}
+					],
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 736,
+						"input_tokens_details": {
+							"cached_tokens": 0
+						},
+						"output_tokens": 75,
+						"output_tokens_details": {
+							"reasoning_tokens": 30
+						},
+						"total_tokens": 811
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-spark-1.3 without its reasoning",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-spark-1.3",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Work out 37*43 - 19*29 in your head first, then call get_secret_number, then tell me the secret number plus your result."
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "I'll work out that arithmetic and retrieve the secret number.",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_5598c036a6f152dd_1",
+							"phase": "commentary",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						},
+						{
+							"arguments": "{}",
+							"id": "fc_5598c036a6f152dd_2",
+							"type": "function_call",
+							"call_id": "call_5598c036a6f152dd_2",
+							"name": "get_secret_number"
+						},
+						{
+							"type": "function_call_output",
+							"call_id": "call_5598c036a6f152dd_2",
+							"output": "41"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_secret_number",
+							"description": "Returns the secret number.",
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"reasoning": {
+						"effort": "low",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795344084,
+					"error": null,
+					"id": "resp_5a11db5db7b62ef1",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-spark-1.3",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL3XVFqlFo-vOYAlhpTKm1lngQl3IULxT4G9AJTlnv7FEmQqYgoUCgxud-Zht2t6yjZFIbsQpKnytAoSMAooKQeRu6JbPOViBA49LLHSynZzSA51qnnPKvBJDYZaUbwy0-fT9A32cRDYrfjFBBoYChBeQC_A5K-NX76W7LKzqrlCEKGKn48NfSPprQdayV9I5JEP_1GKhdnTdWMUvn4Y6RuKOwo9L2VCun2JXxEHLJL4jMdxpZbB_J5CanEBCX3OLzrv93LIeujoqxBVsqgZHrjp0fdlVws9V4_URL6Sw6_ufUJZi-lBtNZ64g8QiqapSJbDes9kBSnGlh5kHLDpQdLrvU2cCnnuxVMP2se3tUv93DxVGW0dEodbHwhJXyxwpRx5p6j1lMu9tkvyRb4TngCQdxHAbF7T77Cht-R8V7RhB6gQZ2umC8y-gwtcqO7uGL4FqgeN0fwWiLllV-5BBPwVfCzLzhyvER0KwaMJ3nARjeQtHCTke8fdGCRFLbU32_uaKXGjxGJTYJ1S4c2-DEQ669VeDMrlHwJnbIiI7RF61SZU0Yw-63_T1HvSicJ4WUVMuEjowmnlvOtTs_lk6td7zMrlXLOUY9_gM6huxsNg1FVjJNRo8NP6KdaK1d6epbHoXO2XVwbUNHGCos4SZKH2ArjysGqtRTU1rCKykv7krnkcIgSz3qE6NEKCQbp2-F8DjzOgnJz7w5pz6Rllqi-APRUZ8pTfy5RmPAJYHarK_s2YEhrAzHSi-1450t8kfFZIRUe-dPFmlLBZNAUaG1Ww5aC5xgzyNkkLY1-KFPe5_SrC0Cnsy4sOZ9XOobj7pGSiEm-0jJIt2tCJ7XrtDo2JDmtd3h25upJUo2q8Nw2wFhY8zpCeSsmLkT5CFihKuAMm66Z1zsa-GpOudA6WbB9V_16YOwFHcFFMghDiVBIXjTKCx-g5DZFZWQQXy4GvcrtICJdgP-Dbx7XnKPYcmYWc2tFTuUK2TXYAUNHZ2Y1ZvFAQG-45WTh073f2FbnXcpcHenRVKBBfs64moRJ8N1znrib1x_s_Xo7eBfgYBYD5XIDfIV0wpxhIoA1tL3aEzl1JfaPgDYNpHGbgKY3cYKOF444T17E_r5cfQFzloIk3RfGjlRZqeKGsZlE7Bqv57UXWo3YfcAWQAP_I0uF5FaZqulMCE3NzyLL0tF-kTHraA73o9_j3HK41TO1zQjSXR8fnuCiMK_fSAUWuy2AIwJ2mBSWJ8s6czIFTpzzJHp6RYWs-7G11MkgR-gH7ZLxWg_diJGPuYS3fSz0Q_CA-rAfCu8NfuDC0EJ7NGVRs2zqFjuDjO-uJWH2SpdRKNpa7k7SanP-oZB9ZlfhK0DO85ir_Pgxx-OeoEZtMW47iK74Qi0JM6naKhmnlB2i7DJGXYeoCol94dTFS_1tLDfdfYSmoWZkeAex2T9JurvRve6HVF_tNJHApUJDxOQnJ0T_Q3Pej1yrOYvmqNMAnOhKU06dPJj7M25UZP_wqDPqTLK3jLNi4u9a1KvGsAmPr_s1LFL1zRk0jLRVIE8nHCBahJfm7qVaRuCx61fDqwhAitk_iTio",
+							"id": "rs_5a11db5db7b62ef1:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "37*43 = 1591\n19*29 = 551\n1591 - 551 = 1040\n\nSecret number is 41.\n\n41 + 1040 = **1081**\n",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_5a11db5db7b62ef1_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"tools": [
+						{
+							"description": "Returns the secret number.",
+							"name": "get_secret_number",
+							"parameters": {
+								"additionalProperties": false,
+								"properties": {},
+								"type": "object"
+							},
+							"strict": true,
+							"type": "function"
+						}
+					],
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 630,
+						"input_tokens_details": {
+							"cached_tokens": 497
+						},
+						"output_tokens": 229,
+						"output_tokens_details": {
+							"reasoning_tokens": 179
+						},
+						"total_tokens": 859
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-spark-1.3 reasoning to muse-wonder-1.0",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-wonder-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Work out 37*43 - 19*29 in your head first, then call get_secret_number, then tell me the secret number plus your result."
+						},
+						{
+							"id": "rs_5598c036a6f152dd:rs_0",
+							"type": "reasoning",
+							"summary": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL0DcIKPm6u6SOXmAj8kbzt4kityoI2KPbnEsAjXYkCwEmQqYgoUCgw9TnoxepNbk88gZSYQr6uEqwQSMAooOBusgQn09O1suLPK5Xafpz9GzOli-qh9dMXesrPPTIC8XmdMKNjJXhC-hYHuCRoYChB3l1AVVUDHsBqqYkxPMJUVEMT19YsLAzx_MiO8uiLIBz4vvJX7a0LWATJUm1Xy0wiAiy4-B9TZ-sDL42MG4xFYFMOzEA1XjwkKQZbQjHCnlCIvbTUPkv1jQ0nhxqFPGKZ4fGyh5tpe9aE3rz6QZHALF_2mpE_E4NeUMLU_-xKBs_-bvN-LR-FtwHlZcfeZJAIcBURxTztMVqSUMaui-hNmqv5ha2HeThPSduGYLBpTGdBxrhjhkbf1VnyEckO6LJXE_FkLk3Ta-4X83_opY9U7ML2uB3d8uInLL_j86eXRFeFBYw5aK6JLCrrii1nnugRyFae5uY0_g1HAAiEw_TOgRWqDehD2UzC-_4et--x2ts9jWjo0LiMT-DDR20p1FTfK6fhPUOpGRy-4tEkBScyXgkO-PZWEoewq2HWt7PoKLp12afG9EoUQXwSp4mbPIK1NFh3TJfoOcSNuIApiGQVYhqVBCgFEs-hG0AU7E9vHFUtLFCr-l-I-Vc_PjqkAFZzlNGc1OgWxVqjz6waSHOn666cYkerwUZChNI_tXsMSvILF3Btb0qKbWFRzd8Uctvq9PlBoUVLf_aqVVhMmmaJplbsN-_6TUvSyLYieJQCCQFw-Lwc8sLSIQ6vcfx24plrAq9GZ_nCSigvtJI5vdU0FxWtZhpKdaA6ScJlC5YFl2yVsq_hHcehFoAU3sw2dGDpFUXq6gGbiDsTYYX0Fp47MGnhttwQR91f4xGatKFvYGXe6"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "I'll work out that arithmetic and retrieve the secret number.",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_5598c036a6f152dd_1",
+							"phase": "commentary",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						},
+						{
+							"arguments": "{}",
+							"id": "fc_5598c036a6f152dd_2",
+							"type": "function_call",
+							"call_id": "call_5598c036a6f152dd_2",
+							"name": "get_secret_number"
+						},
+						{
+							"type": "function_call_output",
+							"call_id": "call_5598c036a6f152dd_2",
+							"output": "41"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_secret_number",
+							"description": "Returns the secret number.",
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"reasoning": {
+						"effort": "low",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": "invalid_reasoning_replay",
+						"message": "The request contains invalid encrypted reasoning.",
+						"param": null,
+						"type": "invalid_request_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-spark-1.3 conversation to muse-wonder-1.0",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-wonder-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Work out 37*43 - 19*29 in your head first, then call get_secret_number, then tell me the secret number plus your result."
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "I'll work out that arithmetic and retrieve the secret number.",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_5598c036a6f152dd_1",
+							"phase": "commentary",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						},
+						{
+							"arguments": "{}",
+							"id": "fc_5598c036a6f152dd_2",
+							"type": "function_call",
+							"call_id": "call_5598c036a6f152dd_2",
+							"name": "get_secret_number"
+						},
+						{
+							"type": "function_call_output",
+							"call_id": "call_5598c036a6f152dd_2",
+							"output": "41"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_secret_number",
+							"description": "Returns the secret number.",
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"reasoning": {
+						"effort": "low",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795344116,
+					"error": null,
+					"id": "resp_e208b61bfa7b156b",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-wonder-1.0",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL3Bf4IlbDZ80E_uFue_ajLPWXphijkuutXUGhmPeghrEmQqYgoUCgzLXqeGhD8Nrts5IA0QhZbB5wkSMAooPSoviFKtbqVZPQW3fR6UJUmznXqZ-ormNVYRedmWhs1x9YldKQnOSxDioKvJAxoYChCo_QnL9wA-scqkQqV7YatiEMHVo-kMjFYqxdaUjZbslJBywMbeVp9ySFvLVS78Us-8RHkKUlHucb5xlY8ofMX08oKbCj2Mx9EsaAz_PWS-nDB3Rp9Jxw9IHGMww62gQzxFqTK0l_tycZ0gbBB4xAUEcswDKuuDOsJ0I_z3dVZodeD_WEQWLwdDp7uLkynyNkiBX4ojhyCOD32odiaC8n23-Zy_oIME3RMkeLi2kJ7Jx8vWvVMooxbFmnJp85F44l8dspmTTod13X4DAKgNjtaLW1i3tDCEMABLcYnI_vtX1gNS96z6QMc8PNFF4VP0axkF-HJimNJPgef0y2XpuwqA-wrv566NMO2cZpw8AazvYW4M6SHDbdV3kLLqzZtdLT57Ig6lIlr5cUyOYjJ0DF-tN57055_YQ3Bb7b-fLBjlqBINs_nuFzb32fCjuWVuggN9bXqo041p_wyyzBBQACOQ1QWxSPxZdBD_QH0PfB4vSUPrW4zqOH6wbM4zaHiEKMTAdO7s-vglSiqWzrLQfz-35h2V_H30LFwAjB_85MnC-xOOE87gr2PGxCP3dDbkgQ8OsH5likESyCYp6vFNoWMWL1Bc7ci0tnkKfKuHJNWksHo9nmR0ffi543hkoCnP8RvbOeczjUQH6QlVS6DdybZhkTaHPFn9vyBTxGgIIKz78YbeeEPxMMb5TUxBoZ-LyGYnly_bBp0n-Cn7a6iA1HENVTQjby1-37yi5eJFdJH8pwVhlU27tq_Lhj5_yQpEying3TFfNyQGXTaX0k0F42TweAT-nRRaXRGxYvdYKflVF0lSgGksdIHRQ6yp1ejTXqQezsUh1QOELMLEnvYcwUm06osCDgRTmnr9nqhc6H2g4xqVsOKrQDOUr1CAjbXVJRfMnSMS2CKsZNBKnM0hcZGg4D0uMhO8fr9kfHpdPNLYp3YUDWkAk-MQDeznGFwU5f1Lqb54jrFKSiVdjIoFRIM8ZIAzfvRZdvP4Uk2uM1axHYuUc8A845Tm5w87kiqeGEqlQ3KQPJeSb8HutJUem_0idlWHSpnCGdnoUg4pHf5X1EQLLZdtSQkyqyjKTF4feQcyB_ASQoQUjQRTj9P_4tq4uonPBcHSQQMkjYtS60xMgbrXA263-bGiaQxvj2AeKhN1CBXiMfll6rAL9MnBs8nfj43yLhaQV9N1lONEiVI95KlWiBYjjYzkleiDeorJj0hRQ8SixLzuQa4j8B5BMvuscNqxQQ3bmWpLfWDoI_ztPcwkL0pUZmX09SNdvALNSE2EVp0xcM6yllQvDiJMxftwMwPLljrIVlHyLoFKC53_y7pL3CMuNLMJDG1U9DCqtfntbs_FL4THfuBLbPtaqqPrmJn3gDy-c53hOIYDc7dcXuhCbjqpJQkT2k5bPHTuJygInTQb_Q4cNixCDo_7LF5A9zw",
+							"id": "rs_e208b61bfa7b156b:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "37 × 43 = 1,591  \n19 × 29 = 551  \n1,591 − 551 = 1,040\n\nThe secret number is 41.\n\n1,040 + 41 = **1,081**",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_e208b61bfa7b156b_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"tools": [
+						{
+							"description": "Returns the secret number.",
+							"name": "get_secret_number",
+							"parameters": {
+								"additionalProperties": false,
+								"properties": {},
+								"type": "object"
+							},
+							"strict": true,
+							"type": "function"
+						}
+					],
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 572,
+						"input_tokens_details": {
+							"cached_tokens": 0
+						},
+						"output_tokens": 196,
+						"output_tokens_details": {
+							"reasoning_tokens": 138
+						},
+						"total_tokens": 768
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-wonder-1.0 own reasoning",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-wonder-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Work out 37*43 - 19*29 in your head first, then call get_secret_number, then tell me the secret number plus your result."
+						},
+						{
+							"id": "rs_0a6118dbe919bb77:rs_0",
+							"type": "reasoning",
+							"summary": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL3Bf4IlbDZ80E_uFue_ajLPWXphijkuutXUGhmPeghrEmQqYgoUCgzLXqeGhD8Nrts5IA0QhZbB5wkSMAooPSoviFKtbqVZPQW3fR6UJUmznXqZ-ormNVYRedmWhs1x9YldKQnOSxDioKvJAxoYChCo_QnL9wA-scqkQqV7YatiEMHVo-kMUc6UdapbTh0zsWaCc06DnTjXufldJCRH-MM3Q73IobB0KcP1SxdNce_um9cnHbbKRQCy9HTrxs6IzLXP_CW2ZP_ybMk16R0e9B455gVBy3EVH4zD34iVJXxA-47hczsB0SMaS2mH7zFjzlvGvJ6UaQhLhdsr3ZVvY1R0JENr-wdcq2TMUeKrYejaQw3syBlqXJlTklW0xJQ1jAhsJoCFmfkxRR-9zYfRilok8FEXDCi4otKmnooEPoGY0LvjpC72lbcZB8tWVddeV_TgAgULnZg2GuBLD-ovyTgFTiJ8EJ8iZ-igqyOsiEg60kPusOSBttPCW0_lcjRGK3Bx3DWKqWKUgGi0T6FhNRUWLTo3fO4mZN-dsXTnElOqv6J7CHyR1FtqUSS-KtYJlR88GTJH4kTZLR6syugpM_Vg8ePmsMwv4nWab2ELBpsxMGRBD628eCfYZSeh6EVoe23emgyQQLoE2kgckcnjBdhH_38Y8Xs0AXnTIzjsxxIxIs4NRrRjAU-4RBupVbzZoKP8zq7NeyPBihEV1VuN6AabARbBXmLEYOt5gbFrmt5uCEOnS2Z3pt7IEX0Aubae2SqElre7V2pUxUGVlnDQbPAAK7htz9ehxWHsJryWwzQpRyWya5KCuPajPjT1TOOI1R2nEs0bjxOvg_MIBHyDuTIyyX9LWG0ICixDTci0PU2fv8-F1WEPGYa6Qk8slk223VUY"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "37×43 = 1591 and 19×29 = 551, so the difference is 1040. Now I'll fetch the secret number to add it.",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_0a6118dbe919bb77_1",
+							"phase": "commentary",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						},
+						{
+							"arguments": "{}",
+							"id": "fc_0a6118dbe919bb77_2",
+							"type": "function_call",
+							"call_id": "call_0a6118dbe919bb77_2",
+							"name": "get_secret_number"
+						},
+						{
+							"type": "function_call_output",
+							"call_id": "call_0a6118dbe919bb77_2",
+							"output": "41"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_secret_number",
+							"description": "Returns the secret number.",
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"reasoning": {
+						"effort": "low",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795344128,
+					"error": null,
+					"id": "resp_287242b42f4412bd",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-wonder-1.0",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL1HEJkfkP_bMocFGgMUtg2z_--ck2u8x0-TXYnOJx_qEmQqYgoUCgzFiGqcuRedJn2e9RQQnpGD9AMSMAooYq-2hk_qURiPz1iMTmNY-rvuyydOHV2oZXjZ3R8RDljQ78iKqcSTHxCY5tL9DBoYChCR0_EdMM3N_3xiK-9gj2sDEPfW96YN2on8ZHmoFq6pfY-bKv3WwanI28hNye8fpcqs64TIhBClXKqwOPLOhl28-eWQJnzbFOXb5Q1QQd3PL-mdZDTY7q2C1AWfiZUh3i0eaAhEWvxJGGmbK9JeUkl1WebYoYawFiETaQ7lkafOGsBNRz_EpPHhwZwBuFoI3zBC-2BGYOIFsYzpc4KvLJ_iDxHZLdTri5LrqQ7bP6f1Lfpc18Q8tvNZtFxgvJzMZ2EjLq94uHDYn9DJBzGZN04Gg_gBotQiPK_UppCVK0nS9gMfKsL3q5QBrEuDk2mQBSbCwxqwciSUKjc7uSxRYDfhFw5aK53q3pc5hsu4GyyBtRPUOQDhlmuwTRF3sfHhSaqYXclnBOCYqbOuHrNxMEq7HAo",
+							"id": "rs_287242b42f4412bd:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "My calculation: \n- 37 × 43 = 1591\n- 19 × 29 = 551\n- 1591 − 551 = **1040**\n\nThe secret number is **41**.\n\n1040 + 41 = **1081**",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_287242b42f4412bd_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"tools": [
+						{
+							"description": "Returns the secret number.",
+							"name": "get_secret_number",
+							"parameters": {
+								"additionalProperties": false,
+								"properties": {},
+								"type": "object"
+							},
+							"strict": true,
+							"type": "function"
+						}
+					],
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 724,
+						"input_tokens_details": {
+							"cached_tokens": 372
+						},
+						"output_tokens": 109,
+						"output_tokens_details": {
+							"reasoning_tokens": 46
+						},
+						"total_tokens": 833
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-wonder-1.0 without its reasoning",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-wonder-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Work out 37*43 - 19*29 in your head first, then call get_secret_number, then tell me the secret number plus your result."
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "37×43 = 1591 and 19×29 = 551, so the difference is 1040. Now I'll fetch the secret number to add it.",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_0a6118dbe919bb77_1",
+							"phase": "commentary",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						},
+						{
+							"arguments": "{}",
+							"id": "fc_0a6118dbe919bb77_2",
+							"type": "function_call",
+							"call_id": "call_0a6118dbe919bb77_2",
+							"name": "get_secret_number"
+						},
+						{
+							"type": "function_call_output",
+							"call_id": "call_0a6118dbe919bb77_2",
+							"output": "41"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_secret_number",
+							"description": "Returns the secret number.",
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"reasoning": {
+						"effort": "low",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795344159,
+					"error": null,
+					"id": "resp_a38e2e87d74e7d9b",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-wonder-1.0",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL3Bf4IlbDZ80E_uFue_ajLPWXphijkuutXUGhmPeghrEmQqYgoUCgzLXqeGhD8Nrts5IA0QhZbB5wkSMAooPSoviFKtbqVZPQW3fR6UJUmznXqZ-ormNVYRedmWhs1x9YldKQnOSxDioKvJAxoYChCo_QnL9wA-scqkQqV7YatiEMHVo-kMMMtndMg1Xb6QNRNNg8gvQsEeA9bpkcnP-8MVOdsdaXQ9n6ofE8GMP__8MjHnhYcLasZQRhbNlcyS8Xa8mNmN5XPNJHxJLeSI7BbG9Gv_qYcBt7Vm5hs0GkPMaAb74pZqdvfeenblH7-V5VcSkG0AXDNhrIF6qffA_PcJPN4wWRGiaOSSBG99F7CrvzQ05Q8GVkX6yjhiRl7u5OI-xYN9e50DqmxQKBn1NKzb6JEuQKAAaYFdqERE8PnH7LDHodA2owuI4C9aIGS8UPhY8xA5wwKIjV9vuWCFaTBnkrvwmS7AcQSgwKQDt5zUdpHoNfi4Ohnal1DvkYd8wVKEQ5oelfmtqZ00jZAv9eLaTO_tewWbuc1--9rpAvf6BKNVC5SNzj50WvpytgiJWBPtrZTwLGrjPrJuS90qGazn1cm8tWCyh3KRd_ynaotUZwujdBSq46J0rAQjFkJeuZFM-9cBtwk-jt34VeGmOMDoY038ShIlOuZweq9TmSmuru80Sfgd41eQQPC4p5wGELvKJCuxReG2Q8s2x9YO8mHo2wPO0Odla_RXkohvPKGnnVh93YsORu5pHJhx-JRll6KjY9WJrzTWnQ_MTVgSE-9BYY0PxQcfg_APOQBQSpewIgZLkuKd8OOdAICSYqxQVw3L0OXyhcnnSoUzG57K2ej9jtcrUFoAK2ydyGbhLZAcZxM3hLviYWlAZ5U4uMGVJfIr",
+							"id": "rs_a38e2e87d74e7d9b:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "My calculation:\n37 × 43 = 1,591\n19 × 29 = 551\n1,591 − 551 = 1,040\n\nSecret number: 41\n\n1,040 + 41 = **1,081**",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_a38e2e87d74e7d9b_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"tools": [
+						{
+							"description": "Returns the secret number.",
+							"name": "get_secret_number",
+							"parameters": {
+								"additionalProperties": false,
+								"properties": {},
+								"type": "object"
+							},
+							"strict": true,
+							"type": "function"
+						}
+					],
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 595,
+						"input_tokens_details": {
+							"cached_tokens": 500
+						},
+						"output_tokens": 181,
+						"output_tokens_details": {
+							"reasoning_tokens": 121
+						},
+						"total_tokens": 776
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-wonder-1.0 reasoning to muse-ember-1.0",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-ember-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Work out 37*43 - 19*29 in your head first, then call get_secret_number, then tell me the secret number plus your result."
+						},
+						{
+							"id": "rs_0a6118dbe919bb77:rs_0",
+							"type": "reasoning",
+							"summary": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL3Bf4IlbDZ80E_uFue_ajLPWXphijkuutXUGhmPeghrEmQqYgoUCgzLXqeGhD8Nrts5IA0QhZbB5wkSMAooPSoviFKtbqVZPQW3fR6UJUmznXqZ-ormNVYRedmWhs1x9YldKQnOSxDioKvJAxoYChCo_QnL9wA-scqkQqV7YatiEMHVo-kMUc6UdapbTh0zsWaCc06DnTjXufldJCRH-MM3Q73IobB0KcP1SxdNce_um9cnHbbKRQCy9HTrxs6IzLXP_CW2ZP_ybMk16R0e9B455gVBy3EVH4zD34iVJXxA-47hczsB0SMaS2mH7zFjzlvGvJ6UaQhLhdsr3ZVvY1R0JENr-wdcq2TMUeKrYejaQw3syBlqXJlTklW0xJQ1jAhsJoCFmfkxRR-9zYfRilok8FEXDCi4otKmnooEPoGY0LvjpC72lbcZB8tWVddeV_TgAgULnZg2GuBLD-ovyTgFTiJ8EJ8iZ-igqyOsiEg60kPusOSBttPCW0_lcjRGK3Bx3DWKqWKUgGi0T6FhNRUWLTo3fO4mZN-dsXTnElOqv6J7CHyR1FtqUSS-KtYJlR88GTJH4kTZLR6syugpM_Vg8ePmsMwv4nWab2ELBpsxMGRBD628eCfYZSeh6EVoe23emgyQQLoE2kgckcnjBdhH_38Y8Xs0AXnTIzjsxxIxIs4NRrRjAU-4RBupVbzZoKP8zq7NeyPBihEV1VuN6AabARbBXmLEYOt5gbFrmt5uCEOnS2Z3pt7IEX0Aubae2SqElre7V2pUxUGVlnDQbPAAK7htz9ehxWHsJryWwzQpRyWya5KCuPajPjT1TOOI1R2nEs0bjxOvg_MIBHyDuTIyyX9LWG0ICixDTci0PU2fv8-F1WEPGYa6Qk8slk223VUY"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "37×43 = 1591 and 19×29 = 551, so the difference is 1040. Now I'll fetch the secret number to add it.",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_0a6118dbe919bb77_1",
+							"phase": "commentary",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						},
+						{
+							"arguments": "{}",
+							"id": "fc_0a6118dbe919bb77_2",
+							"type": "function_call",
+							"call_id": "call_0a6118dbe919bb77_2",
+							"name": "get_secret_number"
+						},
+						{
+							"type": "function_call_output",
+							"call_id": "call_0a6118dbe919bb77_2",
+							"output": "41"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_secret_number",
+							"description": "Returns the secret number.",
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"reasoning": {
+						"effort": "low",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": "invalid_reasoning_replay",
+						"message": "The request contains invalid encrypted reasoning.",
+						"param": null,
+						"type": "invalid_request_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-wonder-1.0 conversation to muse-ember-1.0",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-ember-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Work out 37*43 - 19*29 in your head first, then call get_secret_number, then tell me the secret number plus your result."
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "37×43 = 1591 and 19×29 = 551, so the difference is 1040. Now I'll fetch the secret number to add it.",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_0a6118dbe919bb77_1",
+							"phase": "commentary",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						},
+						{
+							"arguments": "{}",
+							"id": "fc_0a6118dbe919bb77_2",
+							"type": "function_call",
+							"call_id": "call_0a6118dbe919bb77_2",
+							"name": "get_secret_number"
+						},
+						{
+							"type": "function_call_output",
+							"call_id": "call_0a6118dbe919bb77_2",
+							"output": "41"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_secret_number",
+							"description": "Returns the secret number.",
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"reasoning": {
+						"effort": "low",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795344161,
+					"error": null,
+					"id": "resp_c70001aa5f48df5d",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 2000,
+					"model": "meta/muse-ember-1.0",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL2KHwzJuGQWNwZEt8spBAC6fu-5zaQT3JXlzvKlNQEqEmQqYgoUCgz0C66vLLqf3eEofHsQnsrikAISMAooiYwhyCXyPGyLOuZqcVkeWjFH7mtUgz5Eab0-G8aNz_pU2--9SXnxTRDd2ZrCBxoYChB9fC-ovEa4ebXVxZLqM4nuEJDElOYMc5ckzISAWaD5EdFjE-06zxQj-CuIJY3jaRae1M-ppgmdKCoMIHuplhOfLEysnAxsqqK4yrJ3ZnoFbUHYU-_QEK9ixLPPoV6lHyFKJZGedCVQvjb8Gg4vM-JdVE0fLszoIufE8cMEvpxLOiruaqz2BHVxO5lxDyz3phG2L0sR7SDEyJH8AsQirDgYyaBx4imJNTtOeWlPUN6vyvLwTXhVV-u0GcqDUshopTA3z6OcwSjNrc6DoZrISgrxXc5RGDZYzlRRIy9qSAGV8C5P--lp5dwenuXwGqmf7YHWQKZmhhAqfUjz14cFMJiEeO97LEcu1lQ38dBlEtRHmQ3GgVv9XD5gd7MgAA6MkepG3L3rnhLH2JbAugV-Ggt5oNvrF130s7zZ0zM875DkqO-Z5eXMl1swWAa8SJAM2u8UmHFxL0jHlUjt2wrajQwUc4u6ndtYo9E00uaoeU2BE8zuAtP21PcsHutEzP9ixVsSITCbC5UjNjAKteiDEB0DOB2BIZjb90zJVy56NDV4SLdQiZSfQWlGUPD9ntFT_kp0XM7xqTZ1M71xx1q7E7sH2GmlRtISaeipIw6i_VzbLKfDThzEnJ4l2YO4-owvsKCflQj_ohHA4Qv0zASgU4PjbNvuslsQ-IUiEHWMtfzP_qT7ynYlF_3LFIxd3Da6eOe86A_AbsUsZUcB_yytqeYPiIG6ovNBgHT_tMLxo5OCpjTY",
+							"id": "rs_c70001aa5f48df5d:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "My calculation first:\n\n* $37 \\times 43 = 1591$\n* $19 \\times 29 = 551$\n* $1591 - 551 = 1040$\n\nThe secret number is $41$.\n\n$1040 + 41 = 1081$",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_c70001aa5f48df5d_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"tools": [
+						{
+							"description": "Returns the secret number.",
+							"name": "get_secret_number",
+							"parameters": {
+								"additionalProperties": false,
+								"properties": {},
+								"type": "object"
+							},
+							"strict": true,
+							"type": "function"
+						}
+					],
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 595,
+						"input_tokens_details": {
+							"cached_tokens": 372
+						},
+						"output_tokens": 164,
+						"output_tokens_details": {
+							"reasoning_tokens": 98
+						},
+						"total_tokens": 759
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-ember-1.0 reasoning as text",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-ember-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Work out 37*43 - 19*29 in your head first, then call get_secret_number, then tell me the secret number plus your result."
+						},
+						{
+							"id": "rs_c0fbc43f1a11e073:rs_0",
+							"type": "reasoning",
+							"summary": [
+								{
+									"type": "summary_text",
+									"text": "I worked out 1040 first, then called the tool."
+								}
+							]
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "37×43 − 19×29 = 1040 in my head. Now I'll call for the secret number.",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_c0fbc43f1a11e073_1",
+							"phase": "commentary",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						},
+						{
+							"arguments": "{}",
+							"id": "fc_c0fbc43f1a11e073_2",
+							"type": "function_call",
+							"call_id": "call_c0fbc43f1a11e073_2",
+							"name": "get_secret_number"
+						},
+						{
+							"type": "function_call_output",
+							"call_id": "call_c0fbc43f1a11e073_2",
+							"output": "41"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_secret_number",
+							"description": "Returns the secret number.",
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"reasoning": {
+						"effort": "low",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": "invalid_reasoning_replay",
+						"message": "Reasoning input must contain only encrypted_content.",
+						"param": null,
+						"type": "invalid_request_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-ember-1.0 changed reasoning",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-ember-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 2000,
+					"input": [
+						{
+							"role": "user",
+							"content": "Work out 37*43 - 19*29 in your head first, then call get_secret_number, then tell me the secret number plus your result."
+						},
+						{
+							"id": "rs_c0fbc43f1a11e073:rs_0",
+							"type": "reasoning",
+							"summary": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL2KHwzJuGQWNwZEt8spBAC6fu-5zaQT3JXlzvKlNQEqEmQqYgoUCgz0C66vLLqf3eEofHsQnsrikAISMAooiYwhyCXyPGyLOuZqcVkeWjFH7mtUgz5Eab0-G8aNz_pU2--9SXnxTRDd2ZrCBxoYChB9fC-ovEa4ebXVxZLqM4nuEJDElOYMq6t4assoy4GIICpWbycCD9aAHN_3WOB0uYXG-k1nwh3oHzYnHEJhX-T8_0nEQ_gzxJOQRucsPjglY71CuMmZ0NfDSl4Ur5AZy5Py4M8o-Z4rEZDaRwQPfhHeu-pzhB5IJ25TAWwWyLBGvMlPI-XMy6EgnF-nChWBwGLqny57dNx_A6i6gy1FG19uXMFIJ-Cq9Z_WpXbHx2R-P_75TD-Zs8Lqr2zvsjOQYBDmEQ64vkUaUWEnbFjwnLQFGv5Zs-l6VPAB0ZPXHueR-ZdOW0nzpiskgCs9KjJTpZfPyzkQIFTHMx5SkiZ5O_3KnBxPcOAHqWYbJslX2EkWJ9ApL49yc3PNuaNSOQ8zFbbtdLWMXFX-mq3bdpypHD7DNGHb0sfile5nWKNcyyi7anKmrMDScvsYWOj51gOL6s2l3s2g0EsnCdhseXk_dVv5ltele6mBta-QIXb4ACdOS52COXNtTdPvBtYqH9lD8ASB2O3B1qJb8o8ceFc7AS2LpVifOxXXTlrMTZdZL6uvgYuHfC-uFvpfZItJuoITDJis_FntXfuut46MszlOM-qLlGWxSdan-28fb02as8MQE6WJwJAninLqo29dG2qr1D8IWfZQeVzTr_HSuFhDYJuav-YOxs5S2v-LGxwxnmIuE4JuUq_L73fHWxS_pYlio_WeVVG_hShEaJDWMdp31Q7K_5GHluJaWlGBqmuP3CPR623W"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "37×43 − 19×29 = 1040 in my head. Now I'll call for the secret number.",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_c0fbc43f1a11e073_1",
+							"phase": "commentary",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						},
+						{
+							"arguments": "{}",
+							"id": "fc_c0fbc43f1a11e073_2",
+							"type": "function_call",
+							"call_id": "call_c0fbc43f1a11e073_2",
+							"name": "get_secret_number"
+						},
+						{
+							"type": "function_call_output",
+							"call_id": "call_c0fbc43f1a11e073_2",
+							"output": "41"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"name": "get_secret_number",
+							"description": "Returns the secret number.",
+							"parameters": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							},
+							"strict": true
+						}
+					],
+					"reasoning": {
+						"effort": "low",
+						"summary": null
+					}
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": "invalid_reasoning_replay",
+						"message": "The request contains invalid encrypted reasoning.",
+						"param": null,
+						"type": "invalid_request_error"
+					}
+				}
+			}
+		}
+	]
+}

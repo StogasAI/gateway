@@ -85,11 +85,13 @@ func PrepareProviderRequest(ctx *schemas.BifrostContext, state *State, request *
 		sanitizeResponsesProviderFields(ctx, responses, customerAccount, otherFormat, store)
 		applyRequiredResponsesOutputLimit(ctx, resolution, responses)
 		// Every interface takes the tools of the namespace functions as top-level tools. Anthropic's
-		// has no namespaces, so their tools get flat names, which core turns back into the namespace
-		// and name in the reply through the map that the request carries.
+		// has no namespaces, and Meta's Muse models on Google Cloud take them but return a call to
+		// one under the name namespace.name, which no client tool can have (capture
+		// google-cloud/responses-tools). Their tools get flat names, which core turns back into the
+		// namespace and name in the reply through the map that the request carries.
 		anthropicWire := usesAnthropicWireFormat(ctx, resolution.CoreProvider(), resolution.Model)
 		var err error
-		if anthropicWire {
+		if anthropicWire || resolution.RunsMetaModel() {
 			responses, err = catalog.FlattenNamespaces(ctx, responses)
 		} else {
 			responses, err = catalog.UnwrapDefaultNamespace(responses)
@@ -212,7 +214,10 @@ func sanitizeResponsesProviderFields(ctx *schemas.BifrostContext, request *schem
 	}
 	request.Params.User, request.Params.SafetyIdentifier = providerEndUserIDs(ctx, request.Provider, request.Model, customerAccount, otherFormat, request.Params.User, request.Params.SafetyIdentifier)
 	request.Params.Store = nil
-	if request.Provider == schemas.OpenAI || (request.Provider == schemas.Azure && !schemas.IsAnthropicModelFamily(ctx, request.Model)) {
+	// Meta's Responses API stores a reply by default, as OpenAI's does. Google takes store false for
+	// Meta's models and refuses true (capture google-cloud/responses-fields).
+	if request.Provider == schemas.OpenAI || request.Provider == catalog.CoreProviderGoogleCloudMetaResponses ||
+		request.Provider == schemas.Azure && !schemas.IsAnthropicModelFamily(ctx, request.Model) {
 		request.Params.Store = schemas.Ptr(store)
 	}
 }
@@ -222,8 +227,9 @@ func sanitizeResponsesProviderFields(ctx *schemas.BifrostContext, request *schem
 // instead of the whole account, so only the customer's own account receives
 // them: on our managed accounts, a client could name another customer's users.
 // Anthropic's one field, metadata.user_id, is filled by core from user, so
-// safety_identifier takes it when both are set. Chutes documents no such field, Azure's other
-// model formats refuse them, and Bedrock's Chat Completions API documents neither.
+// safety_identifier takes it when both are set. Meta documents both for its Muse models, Chutes
+// documents no such field, Azure's other model formats refuse them, and Bedrock's Chat Completions
+// API documents neither.
 func providerEndUserIDs(ctx *schemas.BifrostContext, provider schemas.ModelProvider, model string, customerAccount, otherFormat bool, user, safetyIdentifier *string) (*string, *string) {
 	switch {
 	case !customerAccount:
@@ -233,7 +239,7 @@ func providerEndUserIDs(ctx *schemas.BifrostContext, provider schemas.ModelProvi
 			return safetyIdentifier, nil
 		}
 		return user, nil
-	case provider == schemas.OpenAI || provider == schemas.Azure && !otherFormat:
+	case provider == schemas.OpenAI || provider == catalog.CoreProviderGoogleCloudMetaResponses || provider == schemas.Azure && !otherFormat:
 		return user, safetyIdentifier
 	default:
 		return nil, nil
@@ -375,7 +381,7 @@ func responsesProviderBody(ctx *schemas.BifrostContext, request *schemas.Bifrost
 			}
 		}
 		return restoreStrictTools(body, hosting, strict)
-	case schemas.OpenAI:
+	case schemas.OpenAI, catalog.CoreProviderGoogleCloudMetaResponses:
 		return prepareOpenAIResponsesBody(ctx, request, streaming)
 	case schemas.Azure:
 		if schemas.IsAnthropicModelFamily(ctx, request.Model) {

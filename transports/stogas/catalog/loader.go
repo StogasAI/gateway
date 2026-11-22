@@ -86,6 +86,10 @@ var compiledRouteContracts = map[string]struct {
 		providerID: "google-cloud",
 		interfaces: []string{"chat_completions", "responses"},
 	},
+	"google-cloud-agent-platform-meta-responses": {
+		providerID: "google-cloud",
+		interfaces: []string{"responses"},
+	},
 	"google-cloud-anthropic-managed-messages": {
 		providerID: "google-cloud",
 		interfaces: []string{"chat_completions", "responses"},
@@ -1221,7 +1225,8 @@ func validateAzureUpstreamSelector(deploymentID string, deployment *compiledDepl
 // cloudRoutes are the routes of AWS and Google Cloud, with whether Anthropic runs the model there,
 // behind the cloud's sign-in and billing, in place of the cloud's own company, and whether the
 // route serves Claude, over Anthropic's Messages API, or other models: Gemini in its own format on
-// Google Cloud, and the rest in OpenAI's. Each product has its own endpoint and sign-in.
+// Google Cloud, and the rest in OpenAI's, on Chat Completions or, for Meta's Muse models on Google
+// Cloud, on Responses. Each product has its own endpoint and sign-in.
 var cloudRoutes = map[string]struct{ anthropicRuns, claude bool }{
 	"aws-bedrock-chat-completions":                 {anthropicRuns: false, claude: false},
 	"aws-bedrock-messages":                         {anthropicRuns: false, claude: true},
@@ -1229,6 +1234,7 @@ var cloudRoutes = map[string]struct{ anthropicRuns, claude bool }{
 	"google-cloud-agent-platform-chat-completions": {anthropicRuns: false, claude: false},
 	"google-cloud-agent-platform-generate-content": {anthropicRuns: false, claude: false},
 	"google-cloud-agent-platform-messages":         {anthropicRuns: false, claude: true},
+	"google-cloud-agent-platform-meta-responses":   {anthropicRuns: false, claude: false},
 	"google-cloud-anthropic-managed-messages":      {anthropicRuns: true, claude: true},
 }
 

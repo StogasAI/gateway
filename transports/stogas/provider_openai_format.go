@@ -10,8 +10,8 @@ import (
 )
 
 // OpenAIFormatAdapter serves a model that takes OpenAI's format on a provider other than OpenAI,
-// such as Kimi on Azure or AWS, or an open model on Google Cloud. OpenAI's checks, holds and
-// billing apply, and the provider runs no hosted tool.
+// such as Kimi on Azure or AWS, or an open model or Meta's Muse on Google Cloud. OpenAI's checks,
+// holds and billing apply, and the provider runs no hosted tool.
 type OpenAIFormatAdapter struct {
 	OpenAIAdapter
 }
@@ -45,8 +45,9 @@ func (a OpenAIFormatAdapter) ValidateRequest(state *State) error {
 // format, as Fireworks documents for the models it serves. Reasoning on leaves the model's default,
 // except on Bedrock, which turns on the reasoning of a model with only a switch at high and at no
 // other effort (capture aws/chat-completions-in-region-reasoning). Google Cloud refuses none and
-// turns reasoning on and off through each open model's chat template. It also allows output up to
-// the context window, so a request that sets no output limit goes out with the limit of its hold.
+// turns reasoning on and off through each open model's chat template, and Meta's Muse models always
+// reason. Google allows output up to the context window, so a request that sets no output limit goes
+// out with the limit of its hold.
 func (a OpenAIFormatAdapter) SanitizeRequest(state *State) error {
 	if err := a.DefaultAdapter.SanitizeRequest(state); err != nil {
 		return err
@@ -55,7 +56,9 @@ func (a OpenAIFormatAdapter) SanitizeRequest(state *State) error {
 	case catalog.ProviderAWS:
 		state.Resolution.SendReasoningSwitchAsEffort("high")
 	case catalog.ProviderGoogleCloud:
-		state.Resolution.SendReasoningSwitchToTemplate()
+		if state.Resolution.CoreProvider() == catalog.CoreProviderGoogleCloudChatCompletions {
+			state.Resolution.SendReasoningSwitchToTemplate()
+		}
 		state.Resolution.SendOutputLimit()
 	default:
 		state.Resolution.SendReasoningSwitchAsEffort("")
@@ -166,16 +169,22 @@ func bedrockReasoningText(reasoning string) (*string, []schemas.ChatReasoningDet
 
 func (OpenAIFormatAdapter) ValidateRawResponsesToolType(state *State, tool map[string]json.RawMessage) error {
 	toolType := catalog.CanonicalResponsesToolType(rawString(tool["type"]))
+	// Google Cloud refuses custom tools for Meta's Muse models (capture google-cloud/responses-tools).
+	meta := state != nil && state.Resolution.RunsMetaModel()
 	switch toolType {
 	case schemas.ResponsesToolTypeFunction, schemas.ResponsesToolTypeCustom, schemas.ResponsesToolTypeNamespace:
 		// Anthropic's client tools read as functions, which only Claude takes.
-		if _, anthropicTool := catalog.AnthropicClientToolName(rawString(tool["type"])); !anthropicTool {
+		_, anthropicTool := catalog.AnthropicClientToolName(rawString(tool["type"]))
+		if !anthropicTool && !(meta && toolType == schemas.ResponsesToolTypeCustom) {
 			return nil
 		}
 	}
 	// The catalog offers no hosted tool on these routes.
 	if err := hostedToolOffered(state, tool); err != nil {
 		return err
+	}
+	if meta {
+		return invalidRequest("Only function and namespace tools are supported for Meta's models on Google Cloud")
 	}
 	return invalidRequest("Only function, custom, and namespace tools are supported for " + providerName(state) + " deployments")
 }

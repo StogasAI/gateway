@@ -124,14 +124,18 @@ func attachmentError(provider schemas.ModelProvider, deployment Deployment, atta
 		return attachmentRefusal(attachment.Path, " "+modality+" input is not supported by "+subject)
 	}
 	// A Claude file ID names a file in the Files API of Anthropic's own platform, which Claude that
-	// a cloud hosts, on Azure too, lacks. Agent Platform has no Files API for Gemini either, and core
-	// leaves a file ID out of a Gemini body.
+	// a cloud hosts, on Azure too, lacks. Agent Platform has no Files API for its other models either:
+	// core leaves a file ID out of a Gemini body, and Google refuses one for Meta's Muse models
+	// (capture google-cloud/responses-files).
 	if attachment.ID != "" && (claude && deployment.Hosting != CompanyAnthropic || provider == ProviderGoogleCloud && !claude) {
 		return attachmentRefusal(attachment.Path, " file IDs are not supported by "+subject)
 	}
 	// A model that AWS or Google runs fetches no URL: Bedrock takes an image only inline or from S3
-	// (capture aws/chat-completions-files).
-	if CloudRunsModel(provider, deployment) && attachment.URL != "" && !strings.HasPrefix(attachment.URL, "data:") {
+	// (capture aws/chat-completions-files), and Agent Platform refuses an image URL for open models
+	// (capture google-cloud/chat-completions-files). Google fetches images and PDFs by URL for Meta's
+	// Muse models (capture google-cloud/responses-files).
+	if CloudRunsModel(provider, deployment) && deployment.RouteID != string(CoreProviderGoogleCloudMetaResponses) &&
+		attachment.URL != "" && !strings.HasPrefix(attachment.URL, "data:") {
 		return attachmentRefusal(attachment.Path, " URLs are not supported by "+subject+"; send the content inline")
 	}
 	// Bedrock's Chat Completions API reads a file's type from its filename alone, and refuses a file

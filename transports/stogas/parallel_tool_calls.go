@@ -2,14 +2,14 @@ package stogas
 
 import "github.com/maximhq/bifrost/core/schemas"
 
-// A request with parallel_tool_calls false asks for at most one tool call per turn. OpenAI's models
-// and Claude keep to it, while other models ignore it or have no such control: Gemma 4 and
-// DeepSeek V4.1 Flash on Google Cloud call several tools at once (capture
-// google-cloud/chat-completions-fields), as Kimi K3 does on Bedrock (capture
-// aws/chat-completions-tools), and Gemini has no such setting. So the gateway delivers only the
-// first tool call of each Chat Completions reply, as vLLM does for the models that it serves, and
-// every deployment can serve the request. A reply in another interface comes from a model that
-// keeps to the field itself.
+// A request with parallel_tool_calls false asks for at most one tool call per turn. OpenAI's
+// models, Claude and Meta's Muse models keep to it (capture google-cloud/responses-fields), while
+// other models ignore it or have no such control: Gemma 4 and DeepSeek V4.1 Flash on Google Cloud
+// call several tools at once (capture google-cloud/chat-completions-fields), as Kimi K3 does on
+// Bedrock (capture aws/chat-completions-tools), and Gemini has no such setting. So the gateway
+// delivers only the first tool call of each Chat Completions reply, as vLLM does for the models
+// that it serves, and every deployment can serve the request. A reply in another interface comes
+// from a model that keeps to the field itself.
 
 // keepFirstToolCall leaves a reply with its first tool call when the client asked for one.
 func keepFirstToolCall(state *State, response *schemas.BifrostChatResponse) {

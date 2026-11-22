@@ -207,6 +207,15 @@ func TestRecordedProviderRefusalsKeepTheirMeaning(t *testing.T) {
 			}
 		}
 	}
+	// Agent Platform refuses Meta's reasoning that another model wrote, that a client changed or
+	// that it sends as text.
+	museReasoning := providerCapture(t, "google-cloud/responses-reasoning")
+	for _, name := range []string{"muse-ember-1.0 reasoning to muse-spark-1.3", "muse-ember-1.0 changed reasoning", "muse-ember-1.0 reasoning as text"} {
+		refusal := exchange(t, museReasoning, name)
+		if got := billing.NormalizeUpstreamStatus(openai.ParseOpenAIError(refusal.errorReply(t))); got != "invalid_request" {
+			t.Fatalf("%s = %s, want invalid_request", name, got)
+		}
+	}
 	otherAccount := providerCapture(t, "openai/encrypted-reasoning-other-account")
 	for _, name := range []string{"openai reasoning sent to azure", "azure reasoning sent to openai"} {
 		refusal := exchange(t, otherAccount, name)
@@ -277,13 +286,14 @@ func TestRecordedReasoningStreamKeepsEachEventsEncryptedReasoning(t *testing.T) 
 // TestToolChoiceNoneReachesOnlyDeploymentsThatHoldTheModelToIt replays the recorded questions that
 // need get_weather under tool_choice none, fresh and after an earlier call (captures
 // aws/chat-completions-tool-choice-none, azure/other-model-formats-tool-choice-none,
-// chutes/tool-choice-none, google-cloud/generate-content-tool-choice-none and
-// google-cloud/chat-completions-tool-choice-none). The gateway sends tool_choice none with tools to
-// each deployment of a model that answered thirty questions in text, fifteen of them after an
-// earlier call, and refuses it before it holds funds for each one of a model that called the tool,
-// wrote the call or answered fewer questions. Agent Platform and Chutes hold no model to none: each
-// recorded Gemini and open model called the tool, and most Chutes models, a different few in each
-// run, so the gateway refuses it on these routes.
+// chutes/tool-choice-none, google-cloud/generate-content-tool-choice-none,
+// google-cloud/chat-completions-tool-choice-none and google-cloud/responses-tools). The gateway
+// sends tool_choice none with tools to each deployment of a model that answered thirty questions in
+// text, fifteen of them after an earlier call, and refuses it before it holds funds for each one of
+// a model that called the tool, wrote the call or answered fewer questions. Agent Platform holds
+// none of Gemini and the open models to none, and Chutes most of its models, a different few in
+// each run, so the gateway refuses it on these routes. Of Meta's models on Agent Platform, only
+// Muse Spark 1.3 answered every question in text.
 func TestToolChoiceNoneReachesOnlyDeploymentsThatHoldTheModelToIt(t *testing.T) {
 	catalogtest.UseFallback(t)
 	// The catalog deployments of each recorded model on Bedrock and Azure: the profiles of every
@@ -309,13 +319,16 @@ func TestToolChoiceNoneReachesOnlyDeploymentsThatHoldTheModelToIt(t *testing.T) 
 	for model, deployment := range googleOpenModels {
 		deployments[model] = []string{deployment}
 	}
+	for _, muse := range googleMuse {
+		deployments[muse.model] = []string{muse.deployment}
+	}
 	held := map[string]bool{}
 	leaked := map[string]int{}
 	models := map[string]int{}
 	for _, id := range []string{
 		"aws/chat-completions-tool-choice-none", "azure/other-model-formats-tool-choice-none",
 		"chutes/tool-choice-none", "google-cloud/generate-content-tool-choice-none",
-		"google-cloud/chat-completions-tool-choice-none",
+		"google-cloud/chat-completions-tool-choice-none", "google-cloud/responses-tools",
 	} {
 		type answers struct {
 			text, afterCall int
@@ -323,7 +336,9 @@ func TestToolChoiceNoneReachesOnlyDeploymentsThatHoldTheModelToIt(t *testing.T) 
 		}
 		asked := map[string]*answers{}
 		for _, took := range providerCapture(t, id) {
-			if strings.Contains(took.Name, "without tools") || took.Response.Status != http.StatusOK {
+			// The capture of Meta's models holds other tool requests too.
+			if strings.Contains(took.Name, "without tools") || took.Response.Status != http.StatusOK ||
+				id == "google-cloud/responses-tools" && !strings.Contains(took.Name, " none ") {
 				continue
 			}
 			// Gemini's requests name the model in the path, and the others in the body.
@@ -417,8 +432,9 @@ func toolChoiceNoneRequest(deployment string) catalog.RequestInput {
 var writtenCall = regexp.MustCompile(`[<>=.:\[\]{|_]get_weather|get_weather[<>{\[\]|]|get_weather[\s\S]{0,100}?(?:\bcity\b["']?\s*[:=>]|=["']?city\b)`)
 
 // toolCallUnderNone reports whether a recorded reply under tool_choice none calls a tool or writes
-// the call into its answer. Gemini answers in parts, and Mistral Medium 3.5 on Azure writes the call
-// as a part that refers to the tool by name, followed by the arguments.
+// the call into its answer. Gemini answers in parts, Meta's models in Responses output items, and
+// Mistral Medium 3.5 on Azure writes the call as a part that refers to the tool by name, followed
+// by the arguments.
 func toolCallUnderNone(t *testing.T, recorded providerExchange) bool {
 	t.Helper()
 	var reply struct {
@@ -437,6 +453,12 @@ func toolCallUnderNone(t *testing.T, recorded providerExchange) bool {
 				ToolCalls []json.RawMessage `json:"tool_calls"`
 			} `json:"message"`
 		} `json:"choices"`
+		Output []struct {
+			Type    string `json:"type"`
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"output"`
 	}
 	if err := json.Unmarshal(recorded.Response.Body, &reply); err != nil {
 		t.Fatalf("%s: %v", recorded.Name, err)
@@ -444,6 +466,16 @@ func toolCallUnderNone(t *testing.T, recorded providerExchange) bool {
 	for _, candidate := range reply.Candidates {
 		for _, part := range candidate.Content.Parts {
 			if part.FunctionCall != nil || !part.Thought && writtenCall.MatchString(part.Text) {
+				return true
+			}
+		}
+	}
+	for _, item := range reply.Output {
+		if item.Type == "function_call" {
+			return true
+		}
+		for _, part := range item.Content {
+			if item.Type == "message" && writtenCall.MatchString(part.Text) {
 				return true
 			}
 		}

@@ -473,7 +473,8 @@ func (r *ResolvedRequest) ToBifrost(ctx *schemas.BifrostContext) (*schemas.Bifro
 // serves models other than Claude in another format, the core provider named after that route.
 func (r *ResolvedRequest) CoreProvider() schemas.ModelProvider {
 	switch core := schemas.ModelProvider(r.Deployment.RouteID); core {
-	case CoreProviderAWSChatCompletions, CoreProviderGoogleCloudGenerateContent, CoreProviderGoogleCloudChatCompletions:
+	case CoreProviderAWSChatCompletions, CoreProviderGoogleCloudGenerateContent, CoreProviderGoogleCloudChatCompletions,
+		CoreProviderGoogleCloudMetaResponses:
 		return core
 	}
 	return r.Provider
@@ -481,10 +482,11 @@ func (r *ResolvedRequest) CoreProvider() schemas.ModelProvider {
 
 // takesPromptCacheKey reports whether the deployment takes a prompt cache key, which selects the
 // cache that the provider looks a request's prefix up in: a deployment that caches implicitly on
-// OpenAI, or on Azure in a model format that was measured to keep one cache for each key. Claude
-// caches only what a request marks, and no other provider documents the key. ToBifrost leaves the
-// key out of a copy of the parameters, which can belong to the typed request that other pairs
-// share.
+// OpenAI, on Azure in a model format that was measured to keep one cache for each key, or one of
+// Meta's Muse models, whose requests with one key Meta sends to the servers that hold their prefix
+// (capture google-cloud/responses-caching). Claude caches only what a request marks, and no other
+// provider documents the key. ToBifrost leaves the key out of a copy of the parameters, which can
+// belong to the typed request that other pairs share.
 func (r *ResolvedRequest) takesPromptCacheKey() bool {
 	if !r.Deployment.Capabilities.ImplicitPromptCaching {
 		return false
@@ -493,7 +495,7 @@ func (r *ResolvedRequest) takesPromptCacheKey() bool {
 		format := r.Deployment.Upstream.ModelFormat
 		return format == "OpenAI" || format == "DeepSeek"
 	}
-	return r.Provider == schemas.OpenAI
+	return r.Provider == schemas.OpenAI || r.RunsMetaModel()
 }
 
 // RunsOpenAIModel reports whether the deployment runs one of OpenAI's own models: on OpenAI, or on
@@ -505,6 +507,12 @@ func (r *ResolvedRequest) RunsOpenAIModel() bool {
 // RunsGeminiModel reports whether the deployment runs Gemini, which takes Gemini's own API.
 func (r *ResolvedRequest) RunsGeminiModel() bool {
 	return r.CoreProvider() == CoreProviderGoogleCloudGenerateContent
+}
+
+// RunsMetaModel reports whether the deployment runs one of Meta's Muse models, which take Meta's
+// Responses API.
+func (r *ResolvedRequest) RunsMetaModel() bool {
+	return r != nil && r.CoreProvider() == CoreProviderGoogleCloudMetaResponses
 }
 
 // Retries is how many more times this pair may be called after a failure
@@ -708,13 +716,17 @@ func (r *ResolvedRequest) SetWireModel(model string) error {
 }
 
 // ReportedModel is the model that the provider must report serving: the catalog's upstream
-// model, also once the wire names a customer's deployment.
+// model, also once the wire names a customer's deployment. Agent Platform reports Meta's models
+// under their publisher, as meta/muse-spark-1.3 (capture google-cloud/responses-reasoning).
 func (r *ResolvedRequest) ReportedModel() string {
 	if r == nil {
 		return ""
 	}
 	if r.reportedModel != "" {
 		return r.reportedModel
+	}
+	if r.RunsMetaModel() {
+		return "meta/" + r.Model
 	}
 	return r.Model
 }
@@ -2021,14 +2033,26 @@ func (r *ResolvedRequest) SendReasoningSwitchToTemplate() {
 
 // SendOutputLimit sends the output limit that the hold covers when the request sets none, for a
 // provider that would otherwise allow more output: Google's servers for open models take a
-// max_tokens up to the context window, above some deployments' limits (capture
-// google-cloud/chat-completions-limits). A limit that equals the context window would leave the
-// prompt no room, and the hold covers whatever output the prompt leaves.
+// max_tokens up to the context window, above some deployments' limits, and so does Agent
+// Platform's Responses API for Muse Ember (captures google-cloud/chat-completions-limits and
+// google-cloud/responses-limits). A limit that equals the context window would leave the prompt no
+// room, and the hold covers whatever output the prompt leaves. The prompt and the output share the
+// context window, and Google refuses a limit that leaves the prompt too little room, so the limit
+// is at most the room that the prompt's estimate leaves, which a real prompt leaves at least.
+// Where that room is under the 16 tokens that OpenAI's and Meta's Responses APIs take at least, the
+// request goes without a limit: the prompt then nearly fills the window, and the hold still covers
+// the deployment's whole output limit.
 func (r *ResolvedRequest) SendOutputLimit() {
 	if r == nil || r.outputTokenLimit <= 0 || r.outputTokenLimit >= r.Deployment.ContextWindowTokens {
 		return
 	}
 	limit := r.outputTokenLimit
+	if estimate, ok := r.EstimatedInputTokens(); ok {
+		limit = min(limit, r.Deployment.ContextWindowTokens-estimate)
+	}
+	if limit < openaiprovider.MinMaxCompletionTokens {
+		return
+	}
 	switch {
 	case r.chat != nil && r.chat.ChatParameters.MaxCompletionTokens == nil && r.chat.MaxTokens == nil:
 		r.chat.ChatParameters.MaxCompletionTokens = &limit

@@ -3,6 +3,7 @@ package catalog
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
 	"strings"
 
 	"github.com/bytedance/sonic"
@@ -27,13 +28,17 @@ const (
 	// GeminiReasoning is Gemini's thought signatures, each of a function call or of the text of a
 	// reply, which only the provider account that produced them takes back (BindGeminiSignature).
 	GeminiReasoning
+	// MetaReasoning is the encrypted reasoning of Meta's Muse models, which only the model and the
+	// provider account that produced it take back (BindEncryptedReasoning).
+	MetaReasoning
 )
 
 // ReadsReasoning reports whether the deployment takes back reasoning history of the format. The
 // gateway leaves out the history that the deployment does not take back, as Anthropic leaves out
 // thinking that the current model cannot read, so that a conversation can move to another model or
-// account. Of OpenAI's encrypted reasoning and Gemini's signatures, it takes back only what its own
-// account produced (BindEncryptedReasoning, BindGeminiSignature).
+// account. Of OpenAI's and Meta's encrypted reasoning and Gemini's signatures, it takes back only
+// what its own account produced, and of Meta's only what its own model produced
+// (BindEncryptedReasoning, BindGeminiSignature).
 func (r *ResolvedRequest) ReadsReasoning(format ReasoningFormat) bool {
 	if r == nil {
 		return false
@@ -49,6 +54,8 @@ func (r *ResolvedRequest) ReadsReasoning(format ReasoningFormat) bool {
 		// read, as Flash-Lite models do with those of other models
 		// (testdata/provider/google-cloud/generate-content-thought-signatures.json).
 		return r.RunsGeminiModel()
+	case MetaReasoning:
+		return r.RunsMetaModel()
 	case PlainReasoning:
 		// The other models return reasoning as text, and Azure's and Chutes' take it back after an
 		// answer and beside a tool call (testdata/provider/azure/open-model-reasoning-history.json,
@@ -57,9 +64,11 @@ func (r *ResolvedRequest) ReadsReasoning(format ReasoningFormat) bool {
 		// (testdata/provider/azure/open-model-reasoning-tool-loop.json). Azure's Mistral models refuse
 		// it in an assistant message under either name
 		// (testdata/provider/azure/other-model-formats-request-fields.json) and return none to take
-		// back. Gemini continues from its signatures, and core sends it no reasoning text.
+		// back. Gemini continues from its signatures, and core sends it no reasoning text. Meta's Muse
+		// models refuse reasoning that is not their own encrypted reasoning
+		// (testdata/provider/google-cloud/responses-reasoning.json).
 		return !UsesClaudeWire(r.Provider, r.Deployment.ModelID) && !r.RunsOpenAIModel() && !r.RunsGeminiModel() &&
-			!(r.Provider == schemas.Azure && r.Deployment.Upstream.ModelFormat == "Mistral AI")
+			!r.RunsMetaModel() && !(r.Provider == schemas.Azure && r.Deployment.Upstream.ModelFormat == "Mistral AI")
 	}
 	return false
 }
@@ -75,6 +84,14 @@ const encryptedReasoningPrefix = "openai:"
 // a model on another one continues without it.
 const geminiSignaturePrefix = "gemini:"
 
+// metaReasoningPrefix starts the encrypted reasoning of Meta's Muse models in the same form, whose
+// account tag also names the model (boundAccount): each Muse model refused the reasoning of the
+// others with invalid_reasoning_replay (capture google-cloud/responses-reasoning).
+const metaReasoningPrefix = "meta:"
+
+// boundFormats are the formats of reasoning that the gateway binds.
+var boundFormats = [...]ReasoningFormat{EncryptedReasoning, GeminiReasoning, MetaReasoning}
+
 // boundReasoningPrefix is the prefix of the reasoning of a format that the gateway binds.
 func boundReasoningPrefix(format ReasoningFormat) string {
 	switch format {
@@ -82,13 +99,45 @@ func boundReasoningPrefix(format ReasoningFormat) string {
 		return encryptedReasoningPrefix
 	case GeminiReasoning:
 		return geminiSignaturePrefix
+	case MetaReasoning:
+		return metaReasoningPrefix
 	}
 	return ""
 }
 
+// boundFormat is the format of reasoning that the gateway bound, by its prefix, or 0.
+func boundFormat(content string) ReasoningFormat {
+	for _, format := range boundFormats {
+		if strings.HasPrefix(content, boundReasoningPrefix(format)) {
+			return format
+		}
+	}
+	return 0
+}
+
 // boundReasoning reports whether content has the prefix of reasoning that the gateway binds.
 func boundReasoning(content string) bool {
-	return strings.HasPrefix(content, encryptedReasoningPrefix) || strings.HasPrefix(content, geminiSignaturePrefix)
+	return boundFormat(content) != 0
+}
+
+// boundAccount is the account that reasoning of a bound format names: the pair's account, and for
+// Meta's reasoning also the upstream model, which alone takes it back.
+func (r *ResolvedRequest) boundAccount(format ReasoningFormat) string {
+	if format == MetaReasoning && r.accountTag != "" {
+		return r.accountTag + "." + r.Deployment.Upstream.Model
+	}
+	return r.accountTag
+}
+
+// encryptedFormat is the format of the encrypted reasoning that the deployment returns in a
+// Responses reply, or 0 for none that the gateway binds: Claude's blocks bind themselves.
+func (r *ResolvedRequest) encryptedFormat() ReasoningFormat {
+	for _, format := range [...]ReasoningFormat{EncryptedReasoning, MetaReasoning} {
+		if r.ReadsReasoning(format) {
+			return format
+		}
+	}
+	return 0
 }
 
 // SetAccountTag names the provider account that the pair's credential reaches
@@ -115,14 +164,18 @@ func (r *ResolvedRequest) RebindAccount(tag string) bool {
 }
 
 // BindEncryptedReasoning returns encrypted reasoning that the deployment returned, bound to the
-// account that produced it, so that a later request sends it only to that account
-// (KeepReadableHistory). Without an account, it returns the content as it is, which no
-// deployment takes back.
+// account that produced it, and Meta's also to the model, so that a later request sends it only to
+// that account and model (KeepReadableHistory). Without an account, it returns the content as it
+// is, which no deployment takes back.
 func (r *ResolvedRequest) BindEncryptedReasoning(content string) string {
-	if r == nil || r.accountTag == "" || content == "" || strings.HasPrefix(content, encryptedReasoningPrefix) || !r.ReadsReasoning(EncryptedReasoning) {
+	if r == nil || r.accountTag == "" || content == "" || boundReasoning(content) {
 		return content
 	}
-	return encryptedReasoningPrefix + r.accountTag + ":" + content
+	format := r.encryptedFormat()
+	if format == 0 {
+		return content
+	}
+	return boundReasoningPrefix(format) + r.boundAccount(format) + ":" + content
 }
 
 // BindGeminiSignature returns a thought signature that the deployment returned, bound to the account
@@ -138,13 +191,12 @@ func (r *ResolvedRequest) BindGeminiSignature(signature string) (string, bool) {
 // IntactEncryptedReasoning reports whether encrypted content that a client sent back keeps the
 // form that BindEncryptedReasoning or BindGeminiSignature gave it, when it has that form's prefix.
 func IntactEncryptedReasoning(content string) bool {
-	for _, format := range []ReasoningFormat{EncryptedReasoning, GeminiReasoning} {
-		if prefix := boundReasoningPrefix(format); strings.HasPrefix(content, prefix) {
-			_, _, bound := cutBoundReasoning(content, prefix)
-			return bound
-		}
+	format := boundFormat(content)
+	if format == 0 {
+		return true
 	}
-	return true
+	_, _, bound := cutBoundReasoning(content, boundReasoningPrefix(format))
+	return bound
 }
 
 // cutBoundReasoning returns the account tag and the provider's content of reasoning that the
@@ -166,7 +218,7 @@ func (r *ResolvedRequest) ownBoundReasoning(content *string, format ReasoningFor
 		return "", false
 	}
 	account, provider, ok := cutBoundReasoning(*content, boundReasoningPrefix(format))
-	if !ok || account != r.accountTag || !r.ReadsReasoning(format) {
+	if !ok || r.accountTag == "" || account != r.boundAccount(format) || !r.ReadsReasoning(format) {
 		return "", false
 	}
 	return provider, true
@@ -174,8 +226,8 @@ func (r *ResolvedRequest) ownBoundReasoning(content *string, format ReasoningFor
 
 // OpenRouter names the provider whose reasoning an entry holds in its format: Claude's is
 // openRouterClaudeFormat, and an absent format or "unknown" names none. The gateway's own replies
-// carry no format, and its markers, the account binding of OpenAI's encrypted reasoning and of
-// Gemini's signatures and the Claude block in encrypted content, decide before any format.
+// carry no format, and its markers, the account binding of OpenAI's and Meta's encrypted reasoning
+// and of Gemini's signatures and the Claude block in encrypted content, decide before any format.
 const openRouterClaudeFormat = "anthropic-claude-v1"
 
 // otherProviderFormat reports whether an OpenRouter format names a provider other than Claude, such
@@ -187,12 +239,13 @@ func otherProviderFormat(format string) bool {
 // chatReasoningDetailFormat is the format of a Chat Completions reasoning detail. Claude's thinking
 // is signed text and its redacted thinking is encrypted data without an ID. OpenAI's encrypted
 // reasoning keeps the ID of its item or the account that BindEncryptedReasoning bound it to, so a
-// client can drop the ID, which OpenAI takes it back without. Gemini's signatures keep the account
-// that BindGeminiSignature bound them to. OpenRouter's format overrides the
-// shape: its Claude data may carry an ID, and another provider's data may lack one. Text without a
-// signature is plain. Signed or encrypted reasoning of another provider's format, and a detail of
-// another type, have no format, and no deployment takes them back: redaction leaves signed and
-// encrypted reasoning as the client sent it, so it may reach only the provider that checks it.
+// client can drop the ID, which OpenAI takes it back without. Meta's encrypted reasoning keeps the
+// account and model, and Gemini's signatures the account, that the gateway bound them to.
+// OpenRouter's format overrides the shape: its Claude data may carry an ID, and another provider's
+// data may lack one. Text without a signature is plain. Signed or encrypted reasoning of another
+// provider's format, and a detail of another type, have no format, and no deployment takes them
+// back: redaction leaves signed and encrypted reasoning as the client sent it, so it may reach
+// only the provider that checks it.
 func chatReasoningDetailFormat(detail schemas.ChatReasoningDetails) ReasoningFormat {
 	format := ""
 	if detail.Format != nil {
@@ -208,11 +261,12 @@ func chatReasoningDetailFormat(detail schemas.ChatReasoningDetails) ReasoningFor
 		}
 		return ClaudeReasoning
 	case schemas.BifrostReasoningDetailsTypeEncrypted:
+		if detail.Data != nil {
+			if bound := boundFormat(*detail.Data); bound != 0 {
+				return bound
+			}
+		}
 		switch {
-		case detail.Data != nil && strings.HasPrefix(*detail.Data, geminiSignaturePrefix):
-			return GeminiReasoning
-		case detail.Data != nil && strings.HasPrefix(*detail.Data, encryptedReasoningPrefix):
-			return EncryptedReasoning
 		case format == openRouterClaudeFormat:
 			return ClaudeReasoning
 		case otherProviderFormat(format):
@@ -226,14 +280,16 @@ func chatReasoningDetailFormat(detail schemas.ChatReasoningDetails) ReasoningFor
 }
 
 // responsesReasoningFormat is the format of a Responses reasoning item. Its encrypted content holds
-// a Claude block or OpenAI's encrypted reasoning, and an item without it holds plain reasoning
-// text in its content. An item with neither has no format, and no deployment takes it back: a
+// a Claude block, Gemini's signature, or OpenAI's or Meta's encrypted reasoning, and an item
+// without it holds plain reasoning text in its content. An item with neither has no format, and no deployment takes it back: a
 // summary is what a client shows, not reasoning that a model continues from.
 func responsesReasoningFormat(item *schemas.ResponsesMessage) ReasoningFormat {
 	if reasoning := item.ResponsesReasoning; reasoning != nil && reasoning.EncryptedContent != nil && *reasoning.EncryptedContent != "" {
 		switch content := *reasoning.EncryptedContent; {
 		case strings.HasPrefix(content, geminiSignaturePrefix):
 			return GeminiReasoning
+		case strings.HasPrefix(content, metaReasoningPrefix):
+			return MetaReasoning
 		case anthropicprovider.HoldsThinkingBlock(content):
 			return ClaudeReasoning
 		}
@@ -482,8 +538,8 @@ func (r *ResolvedRequest) readableResponsesInput(input []schemas.ResponsesMessag
 	return kept
 }
 
-// readableResponsesItem returns an input item as the deployment gets it, OpenAI's encrypted
-// reasoning with the provider's own content, whether the deployment gets it at all, and whether
+// readableResponsesItem returns an input item as the deployment gets it, bound reasoning with the
+// provider's own content, whether the deployment gets it at all, and whether
 // either differs from the item. A reasoning item goes without its summary, which no provider reads
 // back: OpenAI and Azure bill encrypted reasoning the same with its summary as returned, empty or
 // changed (testdata/provider/openai/encrypted-reasoning-summary.json), Claude's block comes back
@@ -502,7 +558,7 @@ func (r *ResolvedRequest) readableResponsesItem(item schemas.ResponsesMessage, s
 		return item, true, false
 	}
 	format := responsesReasoningFormat(&item)
-	bound := format == EncryptedReasoning || format == GeminiReasoning
+	bound := slices.Contains(boundFormats[:], format)
 	switch {
 	case bound:
 	case !r.ReadsReasoning(format):
@@ -574,7 +630,7 @@ func (r *ResolvedRequest) readableChatMessages(messages []openaiprovider.OpenAIM
 }
 
 // readableAssistantReasoning is the assistant message with only the reasoning details that the
-// deployment takes back, OpenAI's encrypted reasoning with the provider's own content, and whether
+// deployment takes back, bound reasoning with the provider's own content, and whether
 // it differs. The reasoning text goes with the details: it stays when the deployment takes every
 // detail or, for a message without details, plain reasoning.
 func (r *ResolvedRequest) readableAssistantReasoning(message *openaiprovider.OpenAIChatAssistantMessage) (*openaiprovider.OpenAIChatAssistantMessage, bool) {
@@ -585,7 +641,7 @@ func (r *ResolvedRequest) readableAssistantReasoning(message *openaiprovider.Ope
 	unbound := false
 	for _, detail := range message.ReasoningDetails {
 		switch format := chatReasoningDetailFormat(detail); {
-		case format == EncryptedReasoning || format == GeminiReasoning:
+		case slices.Contains(boundFormats[:], format):
 			content, ok := r.ownBoundReasoning(detail.Data, format)
 			if !ok {
 				continue

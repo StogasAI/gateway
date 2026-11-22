@@ -26,12 +26,13 @@ import (
 // reasoning history (chatThroughResponses).
 //
 // bridgedProviders names, for each interface, the providers whose deployments serve it through the
-// other. Chutes, Azure, AWS and Google Cloud serve Responses through Chat Completions. OpenAI's only deployment without
-// Responses is its search model, whose searches only Chat Completions' web_search_options prices.
-// OpenAI and Azure serve Chat Completions through Responses, for the deployments that take only
-// Responses, such as Pro, and for requests with tools, summarized reasoning or reasoning history.
+// other. Chutes, Azure, AWS and Google Cloud serve Responses through Chat Completions. OpenAI's only
+// deployment without Responses is its search model, whose searches only Chat Completions'
+// web_search_options prices. OpenAI and Azure serve Chat Completions through Responses, for the
+// deployments that take only Responses, such as Pro, and for requests with tools, summarized
+// reasoning or reasoning history, and Google Cloud for Meta's Muse models, which take only Responses.
 var bridgedProviders = map[Route]map[schemas.ModelProvider]bool{
-	RouteChat:      {schemas.OpenAI: true, schemas.Azure: true},
+	RouteChat:      {schemas.OpenAI: true, schemas.Azure: true, ProviderGoogleCloud: true},
 	RouteResponses: {ProviderChutes: true, schemas.Azure: true, ProviderAWS: true, ProviderGoogleCloud: true},
 }
 
@@ -272,6 +273,9 @@ func (r *ResolvedRequest) translateToResponses() error {
 	}
 	converted := chat.ToResponsesRequest()
 	textToolOutputs(converted.Input)
+	if r.RunsMetaModel() {
+		commentaryBeforeCalls(converted.Input)
+	}
 	params := converted.Params
 	params.Reasoning = deploymentReasoning(params.Reasoning, r.Deployment)
 	params.Include = r.includeEncryptedReasoning(params.Include)
@@ -305,10 +309,25 @@ const responsesIncludeEncryptedReasoning = "reasoning.encrypted_content"
 // the deployment takes back. The gateway stores no reply, so a client continues the model's
 // reasoning in a later turn only by sending that content back.
 func (r *ResolvedRequest) includeEncryptedReasoning(include []string) []string {
-	if !r.ReadsReasoning(EncryptedReasoning) || slices.Contains(include, responsesIncludeEncryptedReasoning) {
+	if r.encryptedFormat() == 0 || slices.Contains(include, responsesIncludeEncryptedReasoning) {
 		return include
 	}
 	return append(slices.Clip(include), responsesIncludeEncryptedReasoning)
+}
+
+// commentaryBeforeCalls gives the text of each assistant message that calls tools the commentary
+// phase, which Meta's Muse models give the text that they write before a call and read back
+// (capture google-cloud/responses-history). Chat Completions has no phase, and one of its assistant
+// messages holds a turn's text and its calls, so text beside calls is commentary, and text without
+// them is the final answer, which has no phase.
+func commentaryBeforeCalls(input []schemas.ResponsesMessage) {
+	for index := 1; index < len(input); index++ {
+		message := &input[index-1]
+		if message.Role != nil && *message.Role == schemas.ResponsesInputMessageRoleAssistant && message.Phase == nil &&
+			input[index].Type != nil && *input[index].Type == schemas.ResponsesMessageTypeFunctionCall {
+			message.Phase = schemas.Ptr("commentary")
+		}
+	}
 }
 
 // textToolOutputs gives each tool output whose parts are all text as their text in order, which

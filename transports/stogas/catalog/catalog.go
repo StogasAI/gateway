@@ -22,6 +22,23 @@ func init() {
 	active.Store(snap)
 }
 
+// RouteReasoningEfforts returns the reasoning efforts in canonical order that a deployment of the
+// model takes on the route, or false where the route serves no deployment of the model.
+func RouteReasoningEfforts(routeID, modelID string) ([]string, bool) {
+	state := activeState()
+	if state == nil {
+		return nil, false
+	}
+	for _, id := range state.graph.Routes[routeID].DeploymentIDs {
+		if deployment := state.graph.Deployments[id]; deployment != nil && deployment.ModelID == modelID {
+			if served, ok := deployment.Routes[routeID]; ok {
+				return served.ReasoningEfforts, true
+			}
+		}
+	}
+	return nil, false
+}
+
 // activeState returns the state of the active catalog in effect now.
 func activeState() *snapshot {
 	return stateAt(time.Now())

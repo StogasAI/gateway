@@ -1,0 +1,670 @@
+{
+	"shows": "On Agent Platform's Responses API for Meta's Muse models, Google refuses a max_output_tokens under 16 and one that equals the context window, and takes 16, a request without one, and for Muse Ember one above its output limit of 524,288 tokens.",
+	"recorded": "2026-11-22",
+	"exchanges": [
+		{
+			"name": "muse-ember-1.0 max_output_tokens of 15",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-ember-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 15,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": "invalid_request",
+						"message": "`max_output_tokens` The number must be `>= 16`.",
+						"param": "max_output_tokens",
+						"type": "invalid_request_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-ember-1.0 max_output_tokens of 16",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-ember-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 16,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795344229,
+					"error": null,
+					"id": "resp_3a5f89692827f8d5",
+					"incomplete_details": {
+						"reason": "max_output_tokens"
+					},
+					"instructions": null,
+					"max_output_tokens": 16,
+					"model": "meta/muse-ember-1.0",
+					"object": "response",
+					"output": [],
+					"parallel_tool_calls": true,
+					"status": "incomplete",
+					"store": false,
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 11,
+						"input_tokens_details": {
+							"cached_tokens": 0
+						},
+						"output_tokens": 16,
+						"output_tokens_details": {
+							"reasoning_tokens": 14
+						},
+						"total_tokens": 27
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-ember-1.0 max_output_tokens at the context window",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-ember-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 1048576,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": "invalid_request",
+						"message": "The request contains invalid parameters. Check the request body for any errors or inconsistencies.",
+						"param": null,
+						"type": "invalid_request_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-spark-1.3 max_output_tokens of 15",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-spark-1.3",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 15,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": "invalid_request",
+						"message": "`max_output_tokens` The number must be `>= 16`.",
+						"param": "max_output_tokens",
+						"type": "invalid_request_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-spark-1.3 max_output_tokens of 16",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-spark-1.3",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 16,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795344230,
+					"error": null,
+					"id": "resp_b201042c60fb6ec3",
+					"incomplete_details": {
+						"reason": "max_output_tokens"
+					},
+					"instructions": null,
+					"max_output_tokens": 16,
+					"model": "meta/muse-spark-1.3",
+					"object": "response",
+					"output": [],
+					"parallel_tool_calls": true,
+					"status": "incomplete",
+					"store": false,
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 11,
+						"input_tokens_details": {
+							"cached_tokens": 0
+						},
+						"output_tokens": 16,
+						"output_tokens_details": {
+							"reasoning_tokens": 14
+						},
+						"total_tokens": 27
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-spark-1.3 max_output_tokens at the context window",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-spark-1.3",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 1048576,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": "invalid_request",
+						"message": "The request contains invalid parameters. Check the request body for any errors or inconsistencies.",
+						"param": null,
+						"type": "invalid_request_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-wonder-1.0 max_output_tokens of 15",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-wonder-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 15,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": "invalid_request",
+						"message": "`max_output_tokens` The number must be `>= 16`.",
+						"param": "max_output_tokens",
+						"type": "invalid_request_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-wonder-1.0 max_output_tokens of 16",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-wonder-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 16,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795344231,
+					"error": null,
+					"id": "resp_8bcef2102240cb85",
+					"incomplete_details": {
+						"reason": "max_output_tokens"
+					},
+					"instructions": null,
+					"max_output_tokens": 16,
+					"model": "meta/muse-wonder-1.0",
+					"object": "response",
+					"output": [],
+					"parallel_tool_calls": true,
+					"status": "incomplete",
+					"store": false,
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 11,
+						"input_tokens_details": {
+							"cached_tokens": 0
+						},
+						"output_tokens": 16,
+						"output_tokens_details": {
+							"reasoning_tokens": 14
+						},
+						"total_tokens": 27
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-wonder-1.0 max_output_tokens at the context window",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-wonder-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 1048576,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": "invalid_request",
+						"message": "The request contains invalid parameters. Check the request body for any errors or inconsistencies.",
+						"param": null,
+						"type": "invalid_request_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-ember-1.0 max_output_tokens above the deployment's limit",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-ember-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 524289,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795344292,
+					"error": null,
+					"id": "resp_65f41939b0f5b557",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 524289,
+					"model": "meta/muse-ember-1.0",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AiwokAGoEUL0nGGW7hLorulB9Ag-wIdDmeAa2UFw9sx-qPyFqbRYVEmMqYQoTCgw6KFE6ORHwdqYXkMMQxM77TRIwCijqwbWjmDqE9PDR4yRJb5DL2N-JC5Fv4iBUzIgK6t5JK0jxEWyRMki4EMyUxLsOGhgKEPeu-dFT6nE19IkxK16PBlAQ5oK0wwjog9Nh0HpowxakWoNQ2dFYScMYbNzVLdsWEpdcBc2cBNGCntXqR6XThGBGexEaTf3Q3XKX_-L2QD7Zf-Vb1dgqYU5A8g5hbB8L3jVTtY69vQ-TtXyOry3r0ViK5aQl7c8qZJ69FfagWCc3zxa3J6n3MYKJmp3whDH_4HS_R9834cVtXuwXqHRbiFE_vg88l6hltdihy_wQZmAwpj-W7zXR8h7ZFT8TBCsL3F-uIy8a4SPf6asyoAJUHe0DsjX-ywuuUp8AKRWbWshWG2kwv7kYIuU37RqCd53tJ9rkss6wJe7gNcW0ca5y_Uij-ovHETyJd4OSHt_LBLxUIPy82Kp6YGVk_glmY99MLTm-HHbOheYHg1R2mbESVP_YiQ",
+							"id": "rs_65f41939b0f5b557:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "OK",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_65f41939b0f5b557_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 11,
+						"input_tokens_details": {
+							"cached_tokens": 0
+						},
+						"output_tokens": 30,
+						"output_tokens_details": {
+							"reasoning_tokens": 20
+						},
+						"total_tokens": 41
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-ember-1.0 without a limit",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-ember-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"max_output_tokens": 524288,
+					"input": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795344293,
+					"error": null,
+					"id": "resp_e7ebfab027b73c4f",
+					"incomplete_details": null,
+					"instructions": null,
+					"max_output_tokens": 524288,
+					"model": "meta/muse-ember-1.0",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL2KHwzJuGQWNwZEt8spBAC6fu-5zaQT3JXlzvKlNQEqEmQqYgoUCgz0C66vLLqf3eEofHsQnsrikAISMAooiYwhyCXyPGyLOuZqcVkeWjFH7mtUgz5Eab0-G8aNz_pU2--9SXnxTRDd2ZrCBxoYChB9fC-ovEa4ebXVxZLqM4nuEJDElOYMIzRVUPFqHp675B1j_gnr4rI1H31SRls7DQgKeknoxeQnrISQV9SU8_8B9mFnQDuJlcDjYPXdz0d1oOWbp5__LqRrHd00cA-bIkzO-D4--9hTDb6cmYTGKA4ugKqJCwZmyWhPmg-7nVWqmV6aSFZkEDLMKrL6_q0JDweqxajiUGu0n-DE4Xvcj4591-USCQnrIYK9oKcs0tOCVR-DCEIIDv8vIQWatrw7Q5ToWiRQ5DLwdo4TcT7cytjXUspkvhmdm1-SC167tOnRBnumrIqPLLs02HbUUX9zip-2-P2B5opULmHiqxUow9TPLsXcV7KY9KVrOfJdQHroUY2yAnCO8rCgXw3ilNYJsCcRhIJuAVyFdR-t_4IfcLVPnWlgFIb3BzQraYwJiqKStor5nmzShmi48coD-W_cHm1Af2-fayjpEEvUV2qG4H60a7_LLHxrdnrVyO2TgD8uyh6wTvZKp8pj6OPF5a_nqSmfXCg5uBJaINUWAXq6DnenpNNCMNjBECJCQjNa46KHkVth7BZXK_2EDsP76_sxAT4gb-k6MO5YmPRCFNOrfCQCHPINvAzuGFKZwHpeG9_r199OSBmt9osZffZhlag1ayCtmyG5SHtx2OUfEs-jTk36fvPG84tEH6BeU-YKG6DA_lfcMk2PO_3hfoJ-Hu2J5pwaf4KxRjfIhcL76HzOzBXPlon__Jc07wpCNV3zgVqejVjCRrrtqbOCrrlrh07F6gPr2ljRWZaAR7pZYXHiVPrXmkz8uX7KtdMLiMcujp_hfqkgCq7CJ98ZOpoITVwEx5xedHTtM_4y4zC1kdVLFjv2AMWjnhxErSpDxMw_ODN9cLPOrwBGyBBwCklyJtHMC7lcwEIqPrm2TZoRdk-a-CpQNRo8gbhW1CAkuCPZ8fSyhWZkXkF4Thcs7wDIBhLWI50CJyRnDrF54GFpq2AT-a-L45dataerrXy7b6VIDo4j5JqRl-Ou9ovRLGohT33WkdbNVd44HjZfSi2QeuN4aa7CLEoLNDgvPnX5B-2tZ7H5jVcFe8yo3v7y9YDom0rcwji3CZPGq3NRmkDZiJNQ2Zhsq95hGng34k2Gor2dJ6Cx9gRfmayK_-3A4KlIOYNbWkOJHsfGP7UOTSWVLQ9wm1yL4zGBt4usQAru8ihsD7Ubk_GsC9PzuXtphVCHttaBXCJkTEVRUegVOwQSE1BqIHjcBPxJau9jAbT24Y0H3DrTSDRVtqgjB4n4quyr15X-hsXPyRn6loJDRCCA7RBgmtRNiKLg3ZwFa634IQq9CXaYIQD8_262KEnEi56AZDhWQZgLMoKhCGMaDXqj8AM-Ctz5EEcR7G2CRnwGu1BCuewdP2eB9lYssIhAwPsVbMDauFtUT1zlI88WL4RexYUIweWdvTw",
+							"id": "rs_e7ebfab027b73c4f:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "OK",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_e7ebfab027b73c4f_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 11,
+						"input_tokens_details": {
+							"cached_tokens": 0
+						},
+						"output_tokens": 124,
+						"output_tokens_details": {
+							"reasoning_tokens": 114
+						},
+						"total_tokens": 135
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-spark-1.3 without a limit",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-spark-1.3",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795344293,
+					"error": null,
+					"id": "resp_3e98ec844b3d2191",
+					"incomplete_details": null,
+					"instructions": null,
+					"model": "meta/muse-spark-1.3",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL0DcIKPm6u6SOXmAj8kbzt4kityoI2KPbnEsAjXYkCwEmQqYgoUCgw9TnoxepNbk88gZSYQr6uEqwQSMAooOBusgQn09O1suLPK5Xafpz9GzOli-qh9dMXesrPPTIC8XmdMKNjJXhC-hYHuCRoYChB3l1AVVUDHsBqqYkxPMJUVEMT19YsLa1s79nbXBVLYpVsk9AhGr-bZMF448rROBTFZlX8PzXgax7-N2939G8S85qq5wWJJepUQiNjqFHgksiVsBpa7xtg4pa-lqB8CSUu9KtiwLtitSVwN3Z63laGCfa_Dqj27Hefq5Hpk5XRqBLoj_2VX9-5anQIPpawysoEo5b10YsYuswR3FEaIppD_iV4_xRKvDeVKIko8AEAixpjtjStla1-MWqO2UdQOpLPOWVS36AOEplRgPauV1LECuzTckRR36-HHTTBf5yEzvFdqBgsuWzgiO_9bvCUqnGgxGPfBpUQ0dqusU3VLn6okadx4xk80RUk4QZv4Jc6pxYStXd7BAgw35No3whcFuGyh7Fu02BWXu2IudoNpUzJkv_H2Atrg_TBQ-Ykh2pPPDF_cmLupNclIZqNdGPuwU2pJew7p0ZrPgC2qJgyZ3tvJJFLqTiOfh0_dw0qv9Q2VjZXe16KWnjzemC1Wr7KfW5mEbK4u6DV6L0PsIAVcUqrkoFlLdhbEYoYCgzvL5eehQltq8GxX71yWpchjz_7zwwf5U-CFtVnEh7Tb8alZszSm10Umxp6THFdyHu9_lr8Qso5UEPWDA5v61vntjUjixU7stM5195cHwREykks6JImH9kztNrJquu2U5BIMc9U8Yb6lpVI8QMQiIS6xBfYAv1sSd7CdhB-aQMNlgsICBWSnOGjg8VZi8x3eybbL4nFhBMA1KT9btW-oqETAYu0bnfstymtEx5xGU8tLH03KJkUehVjjw5CPYGkEeKWSeVzw8wFGDSz-P6eNRq0DV_0_J4Tj1_U9CYBKx6qLl6R0mEyptFF--UqsHNURaXAgRkH6hWsTtD0w_I7O5uEfsAp3guP6Is2rpAlsPGirP_8OfC9c1eWjrdorx_nP04u_KSYVyAeKph24oFaA7NodHzS_KAKkhaU0MnBzeuPYdetWZxeOMY_z0OKoqN4_Ooh_Q7aC-vs6RD-keguRUFaI6vs_eUhr3ZScNcVwVXcTpMNtJgUlI_eqTOAuzMXX0ZOU7RLHaZHt96crUd3QpRBwFCM3rLDcKKriF-zv0BPpFhWyb45ed1DVIlkFs1qPpICSsss0oYfoCHHpt9x6g-OFh46LzJsFFskrRqT14j3x_gM4MI2rc9eyJsP7qTobHzK_aEVq-6hq6EqqpufTG8ypnjVBAPbmd6vSIPePGZhY2sV6TBZ2HsJlpxZNHJ97YpcKEdgbFX7m75ZSEKP85rOcDL1E1jhTuQlbpOEeY1xM64CXmyjSPYPxNuJt658Qr_DJZT6R7wlvzEq8qFSfAUZYnwrI3GrGKK-N5PG_fMPFFaW9Fapu-XdJ3N-dBisrjEdEjnuSiXAmuz8Mo8fCWgIWmhLRZKFegdqMo6P4zGEHa-GsBFqlp1PTg47vBkkSk_jvLLXP7QNun9ATevaTnhj5HbDZaYNf_Xu-GTHTxa09MWWZB9fIjdc-awb0B1wDaWVW6pxEUoU8p2uLgmRDVlkcOFvzTCwAxRuZXC3gfXxX23cOYFEL-iB4y_RogHSeIJSpgCN4Q50nA2tbK9yOxwzyDAfMOvmNvxRW5x8fWHCoBoOWyR3FQgV8yNpd2Xht2iSB6TctT3C8AgsXHNW_7ZgV94EvINEd_jwxlYFha_OLxvuLfNGVs30W3Dqsl8pBG4RUACv0_HTPDbmqxdztDa8eOLZLLSAnKiKY921NAwW6Q735x6_iBSO83daPZkZEbMbpL2xXcNVNiogQOBOYOMznplrt1a7Mgrbd6BZjRX-2mwcdvOhAvnZJJN0KvoA78xTYjBicvotez3ocXQw0H2tzK_bT9MsJSywY4C3PWqzNNgEeL8-N-ax6B5Lky9eCGOlSQLeiO_PCBAlZNDvTZ7nocsthcQCnZhjDVd_DiK14ZQRiwV-kORYcHd-Lv6fktpQGO6Vx1lhKoE5pwW8hwGFZmePk_Mh3zVHwmmunUauHDJ-J4zbEdviBSy_HESQFQPNA3aqcHYhEBs0nmG3WwJ_qFw22nTz9ZzZ9iiydsrPi-G2kDsiYGguV5iRT9os5YcRqa-McVqJcN6hesyGatm__-rZuQqPP0Av-C3JOUnY3UUsGQC3ovJIxKgOEbhoIFV5cQsCz_qc5Ew_ZNNHRE1uCMAArMTaaIAgb2fik2mYczffFXWT0s6--gJzgYBkXRXOsU03abUrAGyGyOs6cqdvfeIgOhyE8z9aAL31QbGI9Ve8cvpYrN4HPDD5Ualmh4mesG2VNOUMe_BKE0tZedod4rlnt_0HfihM2m_brBqoyGW93KCUoYZPBBOamdBLminsImXkKuAVbNc3qA5eRR-lYNx6FZdJKk2Ywzm91-0TN-Ib38aQ5s4jHLcOy5BW2YgDKsac-q-MbaNlYJMMWMCtlVjv3KkXlFXj7oGGHJd8V3zlZgufnsQ7PCkVPqq15bHGl9yCecny5BP4KqbGHR01k3eYKAGVFTYSizvpjRyYuAiQxCDTnAAFmc5-uaIxB6-UutSh-Fv_wVTx90XkFmcmiD7p9t4cGUnP2XYMaDIIgD_kMsmzlseYDMGfcj0ku8LXesRqkblU1oYSEJVQLgFuYg2T3QpWx-lbP_GGz7Nr_ZvQl7a6Xh5obgNWUx9H12fGFjgt2W6bM8EqCBniSP7cowj0Q4oEsmiXpZqdqNQ8m_0vwXoqvc0KsanYdQfq1wtCKxTJRqc8xsM5lQJwOFoED9CtFdloxger6AwQmFQvqBWWLqBLEtrM4y10k8V9vNJGutcrCYX4U",
+							"id": "rs_3e98ec844b3d2191:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "OK",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_3e98ec844b3d2191_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 11,
+						"input_tokens_details": {
+							"cached_tokens": 0
+						},
+						"output_tokens": 236,
+						"output_tokens_details": {
+							"reasoning_tokens": 226
+						},
+						"total_tokens": 247
+					}
+				}
+			}
+		},
+		{
+			"name": "muse-wonder-1.0 without a limit",
+			"provider": "google-cloud",
+			"request": {
+				"path": "/locations/global/publishers/meta/v1/responses",
+				"body": {
+					"model": "muse-wonder-1.0",
+					"store": false,
+					"include": [
+						"reasoning.encrypted_content"
+					],
+					"input": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"created_at": 1795344295,
+					"error": null,
+					"id": "resp_e4e5914ff903c113",
+					"incomplete_details": null,
+					"instructions": null,
+					"model": "meta/muse-wonder-1.0",
+					"object": "response",
+					"output": [
+						{
+							"content": [],
+							"encrypted_content": "AAl7InYiOiIzIn0AjAokAGoEUL28ByDzsuEL16hYG1AehypjlErNJiq2cxGyLqBM4sGDEmQqYgoUCgzx8Y_37ykeVHkosY8Qx-rOnQESMAooTvDY7161SujqIZcl1HacTi10GCcouuqFfLNvsVEYEnieA7riHui1HxCPn6bRDhoYChDlAnz2ikdRR9Wit_DtZ-wbEIfA4PUJrnmRiiX_mMznQE3auE_nCSLsXZdfiTX_5UWF4YKHSDkDMtiVOE__i0HIIgE-79ZuUW84gOExfWSN2CGY0Dh1oDkjeUonzdmuZSiox-38HVkkagb18VlkCyYuDyzQbqGpUvpJ0JcekdzVMXudVKqccQaeaA29-n1iYz2-m36aFw6sjQrDsrMnIiO6j84Ciw4-r-5I0vHrJy1sZv1QMV2kkJ42G-zSmU1jo5FepoWaGQWRsNGNBB3ozrkRomwMThSLP3y40BKBoccETViP0cyAMELi0BbNAvhl86DhU00C9RsLLuG-XJBjTY04cEgct6cEdaw1wPVIQZP9p-jJAjSiRKol73T27seGJflIoE_xvOXYRdTXu2JBoqGEkwM7GpJyjtjcbKLvVe0GRVP-LUP7QAvbTTRnglF8sqVpApLQ71K_2Hv41dkPpSdqwMetVL8AJ4XjmAp64xJA7Qf4z7K-iViClK6RxujtlY_0-1W846yjv73olLiCOcpH2drvDGm6meTdh1wnlzaRz92A24ep-pfl80omCxMm3l54nxIpeNgxa7xKpExaCY1ISBF93Nulde4CcOp05PqxVGjkiRByL1d2Cv1IMRsjfQhJtP9wf7L1pFeDgaDfJbQmbj-y-Pj1vb8SifWFwgJRQCocjC_pcgJ3iKpbFAA-fgl_Ms4v7m4iZf96Wns_HQoHQFVl2a3-wp-_kCgJhmfN97eIquKR3LEIwa7qJ8h1SLbIff5SoSiVlHFkSJiUJ5tN-6_peBBlMZWiDkQAeT2rHqAQaCqC6fVgoz5MKWfg2uxwF4sukF88DNRE-U66PmW-fNJ0js2EH_pP44nUEKoHanQF1ukpVs3lYxvyOkAJuq2Ve6M8NYQmXijyCX__EfHJbMvY0IzA9Fz1V3rYsuaKikkwds79yDbDDhPkGoJYuTsPpvi0fwCbIyZ6SVklSdrXs6dhTEfGilUcId7YwQ0SEIpSbG4brshiSpFNcqdZolwju4pECm3Sql_MHt_eNSq7gqyMfyQXGv2FqU5UCpID6n7rvBSvoPh_kOyjgF-ShrqBm2Z3maymju6EnrkYI1PK_6HC6qZkQthrCt8L8xx_7ZBLmadeFIjGa6IFGy40Ywb12B37qMqRrPHYyaOIDsSY-tDMcwa2hJjNHrThGZxRCHn-1EzLFGloTVlugubY97vQxjuGOAN7PN5cUNGcaXqR_16_7a3Wybo_H7RiwzLm66sMRkDUuoQhvu0D7qxM8ElxpFnZ5UwS2i-tM-6GCMFvYMPahCCgdiNbId1nmJ5swutLVujfN-Jq1rzX6RTD5lvK1SYoQqpoioNAwMv0j1iIIkojJ7X37l-eU30iRTTutu-jup7v155uHHyFvyuwIUab80wKwrmN56dncPO750HePRs",
+							"id": "rs_e4e5914ff903c113:rs_0",
+							"status": "completed",
+							"summary": [],
+							"type": "reasoning"
+						},
+						{
+							"content": [
+								{
+									"annotations": [],
+									"logprobs": [],
+									"text": "OK",
+									"type": "output_text"
+								}
+							],
+							"id": "msg_e4e5914ff903c113_1",
+							"role": "assistant",
+							"status": "completed",
+							"type": "message"
+						}
+					],
+					"parallel_tool_calls": true,
+					"status": "completed",
+					"store": false,
+					"usage": {
+						"extra_properties": {
+							"google": {
+								"traffic_type": "ON_DEMAND"
+							}
+						},
+						"input_tokens": 11,
+						"input_tokens_details": {
+							"cached_tokens": 0
+						},
+						"output_tokens": 135,
+						"output_tokens_details": {
+							"reasoning_tokens": 125
+						},
+						"total_tokens": 146
+					}
+				}
+			}
+		}
+	]
+}
