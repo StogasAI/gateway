@@ -2038,7 +2038,7 @@ func (provider *OpenAIProvider) Responses(ctx *schemas.BifrostContext, key schem
 		provider.GetProviderKey(),
 		nil,
 		nil,
-		nil,
+		providerUtils.ContextBodySigner(ctx),
 		provider.logger,
 	)
 }
@@ -2241,7 +2241,7 @@ func (provider *OpenAIProvider) ResponsesStream(ctx *schemas.BifrostContext, pos
 		nil,
 		nil,
 		nil,
-		nil,
+		providerUtils.ContextBodySigner(ctx),
 		provider.logger,
 		postHookSpanFinalizer,
 	)

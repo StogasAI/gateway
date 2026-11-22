@@ -455,6 +455,18 @@ func TestCloudClaudeRequestReachesEachOfferingWithItsOwnSignIn(t *testing.T) {
 			headers: map[string]string{}, auth: map[string]string{"Authorization": "Bearer ya29.test"},
 		},
 		{
+			name: "a Muse model on Google Cloud", provider: catalog.ProviderGoogleCloud, secret: googleSecret(t, ""),
+			deployment: "google-cloud-muse-spark-1.3",
+			url:        "https://aiplatform.googleapis.com/v1/projects/stogas-test/locations/global/publishers/meta/v1/responses",
+			headers:    map[string]string{}, auth: map[string]string{"Authorization": "Bearer ya29.test"},
+		},
+		{
+			name: "a Muse model on Google Cloud streaming", provider: catalog.ProviderGoogleCloud, secret: googleSecret(t, ""),
+			deployment: "google-cloud-muse-wonder-1.0", streaming: true,
+			url:     "https://aiplatform.googleapis.com/v1/projects/stogas-test/locations/global/publishers/meta/v1/responses",
+			headers: map[string]string{}, auth: map[string]string{"Authorization": "Bearer ya29.test"},
+		},
+		{
 			name: "Claude on Google Cloud", provider: catalog.ProviderGoogleCloud, secret: googleSecret(t, testWorkspaceID),
 			deployment: "google-cloud-claude-fable-5-1-anthropic-hosted", streaming: true,
 			url:     "https://claude.googleapis.com/v1/projects/stogas-test/locations/global/workspaces/" + testWorkspaceID + "/invoke/v1/messages",
