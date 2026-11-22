@@ -57,8 +57,9 @@ type HostedToolDataHandling struct {
 	TEEVerified        *bool        `json:"teeVerified,omitzero"`
 	// SharedWith lists the companies that the tool sends request content to.
 	SharedWith []string `json:"sharedWith,omitzero"`
-	// WithoutCertifications lists the deployment's certifications that do not cover the tool.
-	WithoutCertifications []string `json:"withoutCertifications,omitzero"`
+	// Certifications lists the deployment's certifications that cover the tool, empty when none
+	// does. Nil keeps them all.
+	Certifications []string `json:"certifications,omitzero"`
 }
 
 // Stated is a tool's retention or training use, which the catalog can state as unknown. Unset
@@ -120,7 +121,7 @@ func (d Deployment) EffectiveDataHandling(options []HeldOption, tools []HostedTo
 		}
 	}
 	if network {
-		d.join(&handling, unknownDestination(handling.Certifications))
+		d.join(&handling, unknownDestination)
 	}
 	// The joined facts keep what a deployment's own must (validateDeploymentDataHandling): a tool
 	// that keeps or trains on content ends zero data retention whether or not its record says so,
@@ -162,45 +163,42 @@ func (d Deployment) join(handling *DataHandling, effect HostedToolDataHandling) 
 	if len(effect.SharedWith) > 0 {
 		handling.SharedWith = slices.Compact(slices.Sorted(slices.Values(slices.Concat(handling.SharedWith, effect.SharedWith))))
 	}
-	if len(effect.WithoutCertifications) > 0 {
+	if effect.Certifications != nil {
 		handling.Certifications = slices.DeleteFunc(slices.Clone(handling.Certifications), func(id string) bool {
-			return slices.Contains(effect.WithoutCertifications, id)
+			return !slices.Contains(effect.Certifications, id)
 		})
 	}
 }
 
 // unknownDestination is what sending content to a third party that the request names does, as the
-// catalog states it for a remote MCP server: nothing is known of it, and none of the deployment's
-// certifications covers it.
-func unknownDestination(certifications []string) HostedToolDataHandling {
-	unknown := false
-	return HostedToolDataHandling{
-		ProcessingLocation: "unknown", StorageLocation: "unknown",
-		RetentionDays: Stated[int]{Set: true}, TrainingUse: Stated[bool]{Set: true},
-		ZeroDataRetention: &unknown, EndToEndEncrypted: &unknown, TEE: &unknown, TEEVerified: &unknown,
-		SharedWith: []string{HostingUnknown}, WithoutCertifications: certifications,
-	}
+// catalog states it for a remote MCP server: nothing is known of it, and no certification covers it.
+var unknownDestination = HostedToolDataHandling{
+	ProcessingLocation: "unknown", StorageLocation: "unknown",
+	RetentionDays: Stated[int]{Set: true}, TrainingUse: Stated[bool]{Set: true},
+	ZeroDataRetention: new(false), EndToEndEncrypted: new(false), TEE: new(false), TEEVerified: new(false),
+	SharedWith: []string{HostingUnknown}, Certifications: []string{},
 }
 
 func isTrue(value *bool) bool  { return value != nil && *value }
 func isFalse(value *bool) bool { return value != nil && !*value }
 
-// validateHostedTools checks a deployment's tools on one route: each is known and sets only facts
-// that it can make worse, web search and file search price exactly the call meters of their wire,
-// so no call bills at zero, and nothing else prices them. Code interpreter, a hosted shell and image
-// generation price nothing, so each serves only customers' own credentials and bills its tokens
-// alone: OpenAI bills containers to the account by the session, which no request's reply reports
-// (ProviderState.Container), and images at the image model's prices, whose cached part no reply
-// reports (the loader's refusal of a managed offer). validateLocations checks the tools' locations.
-func validateHostedTools(owner string, claudeWire bool, tools map[HostedTool]HostedToolOffer, deployment Pricing) error {
+// validateHostedTools checks a deployment's tools on one route: each is known, sets only facts that
+// it can make worse and lists only certifications of the route, web search and file search price
+// exactly the call meters of their wire, so no call bills at zero, and nothing else prices them.
+// Code interpreter, a hosted shell and image generation price nothing, so each serves only
+// customers' own credentials and bills its tokens alone: OpenAI bills containers to the account by
+// the session, which no request's reply reports (ProviderState.Container), and images at the image
+// model's prices, whose cached part no reply reports (the loader's refusal of a managed offer).
+// validateLocations checks the tools' locations.
+func validateHostedTools(owner string, claudeWire bool, route compiledDeploymentRoute, deployment Pricing) error {
 	required, foreign := webSearchMeters(claudeWire)
-	for tool, offer := range tools {
+	for tool, offer := range route.HostedTools {
 		if hostedToolRank(tool) < 0 {
 			return fmt.Errorf("%s offers unknown hosted tool %q", owner, tool)
 		}
 		effect := offer.DataHandling
-		if !certificationsInOrder(effect.WithoutCertifications) {
-			return fmt.Errorf("%s has an invalid list of certifications that do not cover %s", owner, tool)
+		if !certificationsInOrder(effect.Certifications) || !allIn(effect.Certifications, route.DataHandling.Certifications) {
+			return fmt.Errorf("%s has an invalid list of certifications that cover %s", owner, tool)
 		}
 		if effect.RetentionDays.Set && effect.RetentionDays.Value != nil && *effect.RetentionDays.Value < 0 ||
 			isFalse(effect.TrainingUse.Value) || isTrue(effect.ZeroDataRetention) || isTrue(effect.EndToEndEncrypted) ||

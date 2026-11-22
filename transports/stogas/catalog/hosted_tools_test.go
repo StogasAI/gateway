@@ -71,7 +71,7 @@ func TestEffectiveDataHandlingOnlyWorsens(t *testing.T) {
 			HostedToolWebSearch: {DataHandling: HostedToolDataHandling{ProcessingLocation: "DE", RetentionDays: Stated[int]{Set: true, Value: days(30)}}},
 			HostedToolWebFetch: {DataHandling: HostedToolDataHandling{ProcessingLocation: "unknown", StorageLocation: "unknown",
 				RetentionDays: Stated[int]{Set: true}, ZeroDataRetention: &no, TrainingUse: Stated[bool]{Set: true, Value: &yes}, EndToEndEncrypted: &no, TEE: &no, TEEVerified: &no,
-				SharedWith: []string{"anthropic", "openai", "unknown"}, WithoutCertifications: []string{"hipaa-eligible", "fedramp-high"}}},
+				SharedWith: []string{"anthropic", "openai", "unknown"}, Certifications: []string{"soc2-type2", "iso-27001", "fedramp-high"}}},
 			HostedToolMCP: {DataHandling: HostedToolDataHandling{TrainingUse: Stated[bool]{Set: true}}},
 		},
 	}
@@ -97,10 +97,16 @@ func TestEffectiveDataHandlingOnlyWorsens(t *testing.T) {
 		!slices.Equal(fetch.SharedWith, []string{"anthropic", "openai", "unknown"}) || !slices.Equal(search.SharedWith, []string{"openai"}) {
 		t.Fatalf("web fetch: %+v", fetch)
 	}
-	// A tool that an audit or agreement does not cover takes it from the request, and from no other.
+	// A request keeps the certifications that cover each tool that it lists, and a tool's list adds
+	// none: no list keeps them all, and an empty one keeps none.
 	if !slices.Equal(fetch.Certifications, []string{"soc2-type2", "iso-27001"}) ||
 		!slices.Equal(search.Certifications, deployment.DataHandling.Certifications) || len(deployment.DataHandling.Certifications) != 3 {
 		t.Fatalf("certifications: web fetch %v, web search %v, deployment %v", fetch.Certifications, search.Certifications, deployment.DataHandling.Certifications)
+	}
+	uncovered := deployment
+	uncovered.HostedTools = map[HostedTool]HostedToolOffer{HostedToolWebSearch: {DataHandling: HostedToolDataHandling{Certifications: []string{}}}}
+	if got := uncovered.EffectiveDataHandling(nil, []HostedTool{HostedToolWebSearch}, false, false); len(got.Certifications) != 0 {
+		t.Fatalf("a tool that no certification covers kept %v", got.Certifications)
 	}
 	// Unknown training use replaces false and ends zero data retention, and never replaces true.
 	if got := deployment.EffectiveDataHandling(nil, []HostedTool{HostedToolMCP}, false, false); got.TrainingUse != nil || got.ZeroDataRetention {

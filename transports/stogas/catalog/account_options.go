@@ -100,7 +100,8 @@ func (o AccountOption) set(handling *DataHandling) {
 }
 
 // grant adds each granted certification whose -eligible entry the facts still list, so a hosted
-// tool that an agreement leaves out, which removes that entry, also keeps the grant away.
+// tool that an agreement does not cover, whose list leaves that entry out, also keeps the grant
+// away.
 func grant(handling *DataHandling, options []AccountOption) {
 	for _, option := range options {
 		for _, id := range option.Grants {

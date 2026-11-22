@@ -348,7 +348,8 @@ func TestOpenAIContainerNetworkReadsAsUnknownDestination(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			handling := customerFileSearchState(t, test.request).Resolution.EffectiveDataHandling()
 			unknown := handling.ProcessingLocation == "unknown" && handling.StorageLocation == "unknown"
-			shared := slices.Contains(handling.SharedWith, "unknown") && handling.RetentionDays == nil && handling.TrainingUse == nil
+			shared := slices.Contains(handling.SharedWith, "unknown") && handling.RetentionDays == nil && handling.TrainingUse == nil &&
+				len(handling.Certifications) == 0
 			if unknown != test.location || shared != test.share {
 				t.Fatalf("data handling %+v", handling)
 			}

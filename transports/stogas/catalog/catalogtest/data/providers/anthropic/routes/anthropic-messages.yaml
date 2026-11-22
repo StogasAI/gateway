@@ -45,4 +45,4 @@ routes:
         retentionDays: null
         zeroDataRetention: false
         sharedWith: [unknown]
-        withoutCertifications: [hipaa-eligible]
+        certifications: [soc2-type2, iso-27001, iso-42001]

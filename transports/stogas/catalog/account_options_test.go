@@ -23,7 +23,7 @@ func TestAccountOptionsSetFactsBeforeToolsJoin(t *testing.T) {
 		AccountOptions: []AccountOption{zeroRetention, agreement},
 		HostedTools: map[HostedTool]HostedToolOffer{
 			HostedToolWebSearch: {DataHandling: HostedToolDataHandling{RetentionDays: Stated[int]{Set: true, Value: days(30)}}},
-			HostedToolWebFetch:  {DataHandling: HostedToolDataHandling{WithoutCertifications: []string{"hipaa-eligible"}}},
+			HostedToolWebFetch:  {DataHandling: HostedToolDataHandling{Certifications: []string{"soc2-type2"}}},
 		},
 	}
 	held := []HeldOption{{ID: "business-associate-agreement", Declared: true}, {ID: "zero-data-retention"}, {ID: "another-provider-option"}}

@@ -1088,7 +1088,7 @@ func validateCompiledDeployment(graph compiledGraph, selectors selectorRegistry,
 		if err := validateDeploymentPricing(owner, providerID, deployment.ModelID, route); err != nil {
 			return err
 		}
-		if err := validateHostedTools(owner, UsesClaudeWire(schemas.ModelProvider(providerID), deployment.ModelID), route.HostedTools, deployment.Pricing); err != nil {
+		if err := validateHostedTools(owner, UsesClaudeWire(schemas.ModelProvider(providerID), deployment.ModelID), route, deployment.Pricing); err != nil {
 			return err
 		}
 		if err := validateReasoningEfforts(owner, route.ReasoningEfforts); err != nil {

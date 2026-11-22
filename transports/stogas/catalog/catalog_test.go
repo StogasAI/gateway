@@ -1866,10 +1866,14 @@ func TestSnapshotValidationChecksTheCompanies(t *testing.T) {
 			route := graph["deployments"].(map[string]any)["anthropic-claude-opus-5"].(map[string]any)["routes"].(map[string]any)["anthropic-messages"].(map[string]any)
 			delete(route["dataHandling"].(map[string]any), "certifications")
 		}, "certifications"},
-		{"a hosted tool that removes a certification twice", func(_, graph map[string]any) {
+		{"a hosted tool that lists a certification twice", func(_, graph map[string]any) {
 			route := graph["deployments"].(map[string]any)["anthropic-claude-opus-5"].(map[string]any)["routes"].(map[string]any)["anthropic-messages"].(map[string]any)
-			route["hostedTools"].(map[string]any)["web_fetch"].(map[string]any)["dataHandling"].(map[string]any)["withoutCertifications"] = []any{"hipaa-eligible", "hipaa-eligible"}
-		}, "has an invalid list of certifications that do not cover web_fetch"},
+			route["hostedTools"].(map[string]any)["web_fetch"].(map[string]any)["dataHandling"].(map[string]any)["certifications"] = []any{"soc2-type2", "soc2-type2"}
+		}, "has an invalid list of certifications that cover web_fetch"},
+		{"a hosted tool covered by a certification that its deployment lacks", func(_, graph map[string]any) {
+			route := graph["deployments"].(map[string]any)["anthropic-claude-opus-5"].(map[string]any)["routes"].(map[string]any)["anthropic-messages"].(map[string]any)
+			route["hostedTools"].(map[string]any)["web_fetch"].(map[string]any)["dataHandling"].(map[string]any)["certifications"] = []any{"soc2-type2", "pci-dss"}
+		}, "has an invalid list of certifications that cover web_fetch"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var whole map[string]any
