@@ -965,6 +965,11 @@ type Origin struct {
 	Rule   string
 }
 
+// OriginScope is the scope of the policy at origin.
+func (c *Config) OriginScope(origin Origin) Scope {
+	return c.sources[origin.Source].Scope
+}
+
 func (c *Config) origin(index int) Origin {
 	if entry := c.sources[index]; entry.rule != "" {
 		return Origin{Source: entry.policy, Rule: entry.rule}

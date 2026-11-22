@@ -1103,14 +1103,23 @@ func planRoutes(input RequestInput, route Route, rawData map[string]json.RawMess
 	if err != nil {
 		return nil, err
 	}
-	selections = filterRoutingSelectionsByPolicy(selections, input.Policy, input.trace)
+	selections, routedOut := filterRoutingSelectionsByPolicy(selections, input.Policy, input.trace)
 	if len(selections) == 0 {
 		// The variant, a credential or the key's allowed nodes left no deployment. Try the
-		// model's other variants to find which field to name.
-		return nil, base.variant.unavailable(func(other variant) bool {
+		// model's other variants to find which field to name, and otherwise name the policies
+		// whose lists removed the deployments.
+		err := base.variant.unavailable(func(other variant) bool {
 			inVariant, _, err := routingSelectionsForRequest(input.now, route, base.Model, other, throughResponses, input.AvailableCredentials, nil)
-			return err == nil && len(filterRoutingSelectionsByPolicy(inVariant, input.Policy, nil)) > 0
+			if err != nil {
+				return false
+			}
+			admitted, _ := filterRoutingSelectionsByPolicy(inVariant, input.Policy, nil)
+			return len(admitted) > 0
 		})
+		if errors.Is(err, ErrModelUnavailable) && len(routedOut) > 0 {
+			return nil, routingRefusal(routedOut)
+		}
+		return nil, err
 	}
 	selections, err = filterProviderSelections(input.now, selections, providerPreference)
 	if err != nil {

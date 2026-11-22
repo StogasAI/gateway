@@ -242,6 +242,31 @@ func TestRoutingPolicyIntersectsClientAndEveryCatalogNodeRestriction(t *testing.
 	}
 }
 
+// A request that routing removes entirely names the policies that removed it, in the order that
+// they compose, so the client knows that a policy, not the model or a credential, left nothing.
+func TestRoutingRefusalNamesThePolicies(t *testing.T) {
+	loadTestCatalog(t)
+	compile := func(raw string) *policy.Source {
+		source, err := policy.CompileSource([]byte(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return source
+	}
+	config, err := policy.ComposeSources([]policy.ScopedSource{
+		{Scope: policy.OrganizationScope, Value: compile(`{"routing":{"providers":{"deny":["openai"]}}}`)},
+		{Scope: policy.KeyScope, Value: compile(`{"routing":{"providers":{"allow":["openai"]}}}`)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = resolvePolicyChat(t, config, "")
+	want := "The routing lists and filters of the organization and key policies leave no deployment for this request. Change the request or the policies."
+	if public := PublicError(err); public.Code != ErrModelUnavailable.Code || public.Message != want {
+		t.Fatalf("refusal = %+v, want %q", public, want)
+	}
+}
+
 func TestRoutingListsPrecedeServiceTierCompatibility(t *testing.T) {
 	loadTestCatalog(t)
 	config := policyConfig(2)

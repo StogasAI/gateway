@@ -44,10 +44,13 @@ func TestRoutingSendsProviderStateOnlyThroughCustomerAccounts(t *testing.T) {
 			want: ProviderState{Fields: []string{"store"}, Store: true, Keeps: true}},
 		{name: "a policy that checks input", body: `"conversation":"conv_1"`, policy: `{"input":{"asciiOnly":true}}`,
 			wantErr: "conversation names content that your provider account holds, which input.asciiOnly cannot check. Send the whole conversation in input."},
+		// A refusal names the policy, and the rule in it, whose routing left nothing.
 		{name: "a policy that refuses stored content", body: `"store":true`, policy: `{"routing":{"filter":"!request.store"}}`,
-			wantErr: ErrModelUnavailable.Message},
+			wantErr: "The routing lists and filters of the organization policy leave no deployment for this request. Change the request or the policy."},
+		{name: "a rule that refuses stored content", body: `"store":true`, policy: `{"rules":{"no-stored-replies":{"when":"provider.id == 'openai'","routing":{"filter":"!request.store"}}}}`,
+			wantErr: `Rule "no-stored-replies" of the organization policy leaves no deployment for this request. Change the request or the rule.`},
 		{name: "a policy that refuses held input", body: `"previous_response_id":"resp_1","store":false`, policy: `{"routing":{"filter":"!request.storedInput"}}`,
-			wantErr: ErrModelUnavailable.Message},
+			wantErr: "The routing lists and filters of the organization policy leave no deployment for this request."},
 		{name: "a policy that lets a reply be stored", body: `"store":true`, policy: `{"routing":{"filter":"request.store && !request.storedInput"}}`,
 			want: ProviderState{Fields: []string{"store"}, Store: true, Keeps: true}},
 	} {

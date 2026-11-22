@@ -166,8 +166,10 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 	}
 	// When no credential serves any candidate, the request says so. Once one
 	// pair passes this check, a policy may be what removed the rest, so the
-	// request keeps the general error and the simulator names each cause.
+	// request names the policies whose routing lists or filters removed a pair,
+	// and the simulator names each cause.
 	targetRemoved, targetPassed := false, false
+	var routedOut []routingOrigin
 	// A pair whose policy skips missing encryption keys leaves before it
 	// takes a place among the deployment's pairs. Its candidate stays pending
 	// for later credentials that share its policy.
@@ -311,8 +313,10 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 				return nil, policyEvaluationError(err, original, pair, variants.selections)
 			}
 			if !policyAllowsSelection(value.Config, selection) {
+				origin := listsOrigin(value.Config, selection.deployment)
+				routedOut = appendRoutingOrigin(routedOut, value.Config, origin)
 				if trace != nil {
-					trace.removePair(selection, index, original, RemovedCandidate{Reason: RemovedLists, Origin: listsOrigin(value.Config, selection.deployment)})
+					trace.removePair(selection, index, original, RemovedCandidate{Reason: RemovedLists, Origin: origin})
 				}
 				continue
 			}
@@ -321,12 +325,13 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 				return nil, err
 			}
 			if failed >= 0 {
+				var origin *policy.Origin
+				if found, ok := value.Config.FilterOrigin(failed); ok {
+					origin = &found
+				}
+				routedOut = appendRoutingOrigin(routedOut, value.Config, origin)
 				if trace != nil {
-					entry := RemovedCandidate{Reason: RemovedFilter, Expression: value.Config.Routing.Query.Filters[failed].Source, Unknown: !known}
-					if origin, ok := value.Config.FilterOrigin(failed); ok {
-						entry.Origin = &origin
-					}
-					trace.removePair(selection, index, original, entry)
+					trace.removePair(selection, index, original, RemovedCandidate{Reason: RemovedFilter, Expression: value.Config.Routing.Query.Filters[failed].Source, Unknown: !known, Origin: origin})
 				}
 				continue
 			}
@@ -419,6 +424,9 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 			return nil, err
 		}
 		return nil, ErrByokTargetUnavailable
+	}
+	if len(candidates.filtered) == 0 && len(routedOut) > 0 {
+		return nil, routingRefusal(routedOut)
 	}
 	ordered, ties, err := candidates.finish(preference)
 	if err != nil {

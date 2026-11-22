@@ -162,16 +162,23 @@ func filterProviderSelections(now time.Time, selections []routingSelection, pref
 	return kept, nil
 }
 
-func filterRoutingSelectionsByPolicy(selections []routingSelection, config *policy.Config, trace *routingTrace) []routingSelection {
+// filterRoutingSelectionsByPolicy keeps the selections that config's routing lists admit, and
+// names the policies whose lists removed the others.
+func filterRoutingSelectionsByPolicy(selections []routingSelection, config *policy.Config, trace *routingTrace) ([]routingSelection, []routingOrigin) {
 	filtered := selections[:0]
+	var routedOut []routingOrigin
 	for _, selection := range selections {
 		if policyAllowsSelection(config, selection) {
 			filtered = append(filtered, selection)
-		} else if trace != nil {
-			trace.removeSelection(selection, RemovedLists, listsOrigin(config, selection.deployment))
+			continue
+		}
+		origin := listsOrigin(config, selection.deployment)
+		routedOut = appendRoutingOrigin(routedOut, config, origin)
+		if trace != nil {
+			trace.removeSelection(selection, RemovedLists, origin)
 		}
 	}
-	return filtered
+	return filtered, routedOut
 }
 
 func policyAllowsSelection(config *policy.Config, selection routingSelection) bool {
@@ -220,6 +227,55 @@ func policyEvaluationError(err error, config *policy.Config, pair *PlannedPair, 
 		public.Message = fmt.Sprintf("The %s policy exceeded its expression work limit on the %d deployments of the %d models that can serve this request. Request one of the models, or reduce the cost of the policy's conditions, filters and sort expressions.", scope, len(deployments), len(models))
 	}
 	return &WorkLimitError{APIError: public, Origin: origin, Pair: pair}
+}
+
+// routingOrigin names a policy, and the rule in it, whose routing lists or filters removed a pair.
+type routingOrigin struct {
+	scope policy.Scope
+	rule  string
+}
+
+func appendRoutingOrigin(origins []routingOrigin, config *policy.Config, origin *policy.Origin) []routingOrigin {
+	if origin == nil {
+		return origins
+	}
+	entry := routingOrigin{config.OriginScope(*origin), origin.Rule}
+	if slices.Contains(origins, entry) {
+		return origins
+	}
+	return append(origins, entry)
+}
+
+// routingRefusal is the error for a request whose every pair the routing lists or filters of
+// policies removed. It names them, so the client knows that a policy, not the model or a
+// credential, left nothing. Key readers see these policies' routing in plain text, rule names
+// included, so naming them reveals nothing new.
+func routingRefusal(origins []routingOrigin) APIError {
+	public := ErrModelUnavailable
+	if len(origins) == 1 && origins[0].rule != "" {
+		public.Message = fmt.Sprintf("Rule %q of the %s policy leaves no deployment for this request. Change the request or the rule.", origins[0].rule, origins[0].scope)
+		return public
+	}
+	// Scopes read in the order that they compose, from the organization's policy to the request's.
+	order := []policy.Scope{policy.OrganizationScope, policy.FolderScope, policy.GrantScope, policy.RoleScope, policy.MemberScope, policy.CredentialScope, policy.KeyScope, policy.RequestScope}
+	var scopes []string
+	for _, scope := range order {
+		if slices.ContainsFunc(origins, func(origin routingOrigin) bool { return origin.scope == scope }) {
+			scopes = append(scopes, string(scope))
+		}
+	}
+	for _, origin := range origins {
+		if !slices.Contains(scopes, string(origin.scope)) {
+			scopes = append(scopes, string(origin.scope))
+		}
+	}
+	if len(scopes) == 1 {
+		public.Message = fmt.Sprintf("The routing lists and filters of the %s policy leave no deployment for this request. Change the request or the policy.", scopes[0])
+		return public
+	}
+	named := strings.Join(scopes[:len(scopes)-1], ", ") + " and " + scopes[len(scopes)-1]
+	public.Message = fmt.Sprintf("The routing lists and filters of the %s policies leave no deployment for this request. Change the request or the policies.", named)
+	return public
 }
 
 type routingCandidates struct {
