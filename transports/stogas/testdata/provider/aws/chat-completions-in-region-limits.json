@@ -1,0 +1,662 @@
+{
+	"shows": "On Bedrock's Chat Completions API, the largest max_tokens of gpt-oss-120b, DeepSeek V3.2, Qwen3 32B, Nemotron 3 Super and Mistral Large 3 is 131,072, 163,840, 32,768, 262,144 and 262,144 tokens, which Bedrock counts the prompt against for all but gpt-oss-120b, and Bedrock refuses 0.",
+	"recorded": "2026-11-20",
+	"exchanges": [
+		{
+			"name": "openai.gpt-oss-120b-1:0 max_tokens above the maximum",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "openai.gpt-oss-120b-1:0",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 131073
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "'max_tokens' (131073) exceeds model maximum (131072)",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "openai.gpt-oss-120b-1:0 max_tokens at the maximum",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "openai.gpt-oss-120b-1:0",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 131072
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "<reasoning>The user says \"Say OK.\" We just need to respond with \"OK\". Probably just that.</reasoning>OK.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176087,
+					"id": "chatcmpl-8468ff75-a0d1-4acb-b9f9-417d6b28fcea",
+					"model": "openai.gpt-oss-120b-1:0",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 32,
+						"prompt_tokens": 70,
+						"total_tokens": 102
+					}
+				}
+			}
+		},
+		{
+			"name": "openai.gpt-oss-120b-1:0 max_tokens that leaves room for the prompt",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "openai.gpt-oss-120b-1:0",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 130072
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "<reasoning>User just says \"Say OK.\" They likely want a simple \"OK\". Should respond with \"OK\".</reasoning>OK.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176087,
+					"id": "chatcmpl-845664ff-14c9-43c5-8fd1-7883330292c6",
+					"model": "openai.gpt-oss-120b-1:0",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 33,
+						"prompt_tokens": 70,
+						"total_tokens": 103
+					}
+				}
+			}
+		},
+		{
+			"name": "openai.gpt-oss-120b-1:0 max_tokens of 0",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "openai.gpt-oss-120b-1:0",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 0
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "ErrorEvent { error: APIError { type: \"BadRequestError\", code: Some(400), message: \"max_tokens must be at least 1, got 0. (parameter=max_tokens, value=0)\", param: None } }",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "deepseek.v3.2 max_tokens above the maximum",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "deepseek.v3.2",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 163841
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "'max_tokens' (163841) exceeds model maximum (163840)",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "deepseek.v3.2 max_tokens at the maximum",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "deepseek.v3.2",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 163840
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "ErrorEvent { error: APIError { type: \"BadRequestError\", code: Some(400), message: \"This model's maximum context length is 163840 tokens. However, you requested 163840 output tokens and your prompt contains 57 characters (more than 0 characters, which is the upper bound for 0 input tokens). Please reduce the length of the input prompt or the number of requested output tokens. (parameter=input_text, value=57)\", param: None } }",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "deepseek.v3.2 max_tokens that leaves room for the prompt",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "deepseek.v3.2",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 162840
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "OK.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176087,
+					"id": "chatcmpl-4f62dff2-29f2-4e70-9929-3a08b72aa05b",
+					"model": "deepseek.v3.2",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 3,
+						"prompt_tokens": 7,
+						"total_tokens": 10
+					}
+				}
+			}
+		},
+		{
+			"name": "deepseek.v3.2 max_tokens of 0",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "deepseek.v3.2",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 0
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "ErrorEvent { error: APIError { type: \"BadRequestError\", code: Some(400), message: \"max_tokens must be at least 1, got 0. (parameter=max_tokens, value=0)\", param: None } }",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "qwen.qwen3-32b-v1:0 max_tokens above the maximum",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "qwen.qwen3-32b-v1:0",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 32769
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "'max_tokens' (32769) exceeds model maximum (32768)",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "qwen.qwen3-32b-v1:0 max_tokens at the maximum",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "qwen.qwen3-32b-v1:0",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 32768
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "ErrorEvent { error: APIError { type: \"BadRequestError\", code: Some(400), message: \"This model's maximum context length is 32768 tokens. However, you requested 32768 output tokens and your prompt contains 76 characters (more than 0 characters, which is the upper bound for 0 input tokens). Please reduce the length of the input prompt or the number of requested output tokens. (parameter=input_text, value=76)\", param: None } }",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "qwen.qwen3-32b-v1:0 max_tokens that leaves room for the prompt",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "qwen.qwen3-32b-v1:0",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 31768
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "OK.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176088,
+					"id": "chatcmpl-f3f913e9-68b7-43de-b54b-b8b6a7384761",
+					"model": "qwen.qwen3-32b-v1:0",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 3,
+						"prompt_tokens": 15,
+						"total_tokens": 18
+					}
+				}
+			}
+		},
+		{
+			"name": "qwen.qwen3-32b-v1:0 max_tokens of 0",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "qwen.qwen3-32b-v1:0",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 0
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "ErrorEvent { error: APIError { type: \"BadRequestError\", code: Some(400), message: \"max_tokens must be at least 1, got 0. (parameter=max_tokens, value=0)\", param: None } }",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "nvidia.nemotron-super-3-120b max_tokens above the maximum",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "nvidia.nemotron-super-3-120b",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 262145
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "'max_tokens' (262145) exceeds model maximum (262144)",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "nvidia.nemotron-super-3-120b max_tokens at the maximum",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "nvidia.nemotron-super-3-120b",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 262144
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "ErrorEvent { error: APIError { type: \"BadRequestError\", code: Some(400), message: \"This model's maximum context length is 262144 tokens. However, you requested 262144 output tokens and your prompt contains 102 characters (more than 0 characters, which is the upper bound for 0 input tokens). Please reduce the length of the input prompt or the number of requested output tokens. (parameter=input_text, value=102)\", param: None } }",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "nvidia.nemotron-super-3-120b max_tokens that leaves room for the prompt",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "nvidia.nemotron-super-3-120b",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 261144
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "OK",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176089,
+					"id": "chatcmpl-66663dc0-cb73-4059-bfd7-dc5c42655d31",
+					"model": "nvidia.nemotron-super-3-120b",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 2,
+						"prompt_tokens": 19,
+						"total_tokens": 21
+					}
+				}
+			}
+		},
+		{
+			"name": "nvidia.nemotron-super-3-120b max_tokens of 0",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "nvidia.nemotron-super-3-120b",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 0
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "ErrorEvent { error: APIError { type: \"BadRequestError\", code: Some(400), message: \"max_tokens must be at least 1, got 0. (parameter=max_tokens, value=0)\", param: None } }",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "mistral.mistral-large-3-675b-instruct max_tokens above the maximum",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 262145
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "'max_tokens' (262145) exceeds model maximum (262144)",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "mistral.mistral-large-3-675b-instruct max_tokens at the maximum",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 262144
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "ErrorEvent { error: APIError { type: \"BadRequestError\", code: Some(400), message: \"This model's maximum context length is 262144 tokens. However, you requested 262144 output tokens and your prompt contains 6 input tokens, for a total of 262150 tokens. Please reduce the length of the input prompt or the number of requested output tokens. (parameter=input_tokens, value=6)\", param: None } }",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "mistral.mistral-large-3-675b-instruct max_tokens that leaves room for the prompt",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 261144
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "OK.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176090,
+					"id": "chatcmpl-40e82988-2358-4ffd-b233-dd80576f149e",
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 3,
+						"prompt_tokens": 6,
+						"total_tokens": 9
+					}
+				}
+			}
+		},
+		{
+			"name": "mistral.mistral-large-3-675b-instruct max_tokens of 0",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 0
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "ErrorEvent { error: APIError { type: \"BadRequestError\", code: Some(400), message: \"max_tokens must be at least 1, got 0. (parameter=max_tokens, value=0)\", param: None } }",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		}
+	]
+}

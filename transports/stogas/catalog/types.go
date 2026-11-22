@@ -178,6 +178,8 @@ const CompanyAmazon = "amazon"
 // requests are shared with.
 const HostingUnknown = "unknown"
 
+// Upstream selects what a deployment sends to its provider. Regions are the Bedrock Regions of a
+// model that runs only in the Region of each request.
 type Upstream struct {
 	Model          string
 	ModelFormat    string
@@ -185,6 +187,7 @@ type Upstream struct {
 	ChuteID        string
 	GPUCount       *int
 	InferenceGeo   string
+	Regions        []string
 	ReasoningMode  string
 	ServiceTier    string
 	DeploymentType string
@@ -280,6 +283,9 @@ type compiledDeploymentRoute struct {
 	Capabilities   Capabilities `json:"capabilities"`
 	ChainHash      string       `json:"chainHash"`
 	DataHandling   DataHandling `json:"dataHandling"`
+	// DocumentFormats are the route's document formats that the provider reads for the deployment's
+	// model, which can be fewer than the route's.
+	DocumentFormats DocumentFormats `json:"documentFormats"`
 	// HostedTools are the tools that the route runs for this deployment, each with its call meters.
 	HostedTools map[HostedTool]HostedToolOffer `json:"hostedTools"`
 	// InputLimits are the provider's limits on a request and its files. The provider enforces
@@ -337,7 +343,10 @@ type Capabilities struct {
 	Streaming               bool `json:"streaming"`
 	StructuredOutputs       bool `json:"structuredOutputs"`
 	SystemMessages          bool `json:"systemMessages"`
-	ToolChoice              bool `json:"toolChoice"`
+	// ToolChoice says that the model calls the tool that tool_choice requires or names, and
+	// ToolChoiceNone that it calls none and writes no call under tool_choice none.
+	ToolChoice     bool `json:"toolChoice"`
+	ToolChoiceNone bool `json:"toolChoiceNone"`
 	// ToolResultImages and ToolResultDocuments say that a tool result takes the images and the
 	// documents that a user message takes.
 	ToolResultImages    bool `json:"toolResultImages"`
@@ -345,15 +354,16 @@ type Capabilities struct {
 }
 
 type compiledUpstream struct {
-	Model          string `json:"model"`
-	ModelFormat    string `json:"modelFormat,omitempty"`
-	ModelVersion   string `json:"modelVersion,omitempty"`
-	ChuteID        string `json:"chuteId,omitempty"`
-	GPUCount       *int   `json:"gpuCount,omitempty"`
-	InferenceGeo   string `json:"inferenceGeo,omitempty"`
-	ReasoningMode  string `json:"reasoningMode,omitempty"`
-	ServiceTier    string `json:"serviceTier"`
-	DeploymentType string `json:"deploymentType,omitempty"`
+	Model          string   `json:"model"`
+	ModelFormat    string   `json:"modelFormat,omitempty"`
+	ModelVersion   string   `json:"modelVersion,omitempty"`
+	ChuteID        string   `json:"chuteId,omitempty"`
+	GPUCount       *int     `json:"gpuCount,omitempty"`
+	InferenceGeo   string   `json:"inferenceGeo,omitempty"`
+	Regions        []string `json:"regions,omitempty"`
+	ReasoningMode  string   `json:"reasoningMode,omitempty"`
+	ServiceTier    string   `json:"serviceTier"`
+	DeploymentType string   `json:"deploymentType,omitempty"`
 }
 
 type compiledModel struct {

@@ -1,0 +1,1164 @@
+{
+	"shows": "On Bedrock's Chat Completions API, gpt-oss-120b, DeepSeek V3.2, Qwen3 32B, Nemotron 3 Super and Mistral Large 3 answer 200 for a PDF, text or Markdown file that the model never sees. Bedrock refuses an image for all but Mistral Large 3, which reads an inline image and refuses an image URL and an image in a tool message.",
+	"recorded": "2026-11-20",
+	"exchanges": [
+		{
+			"name": "openai.gpt-oss-120b-1:0 pdf",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "openai.gpt-oss-120b-1:0",
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "file",
+									"file": {
+										"filename": "note.pdf",
+										"file_data": "data:application/pdf;base64,JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCAzMDAgMTAwXSAvQ29udGVudHMgNCAwIFIgL1Jlc291cmNlcyA8PCAvRm9udCA8PCAvRjEgNSAwIFIgPj4gPj4gPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCA0NyA+PgpzdHJlYW0KQlQgL0YxIDEyIFRmIDIwIDUwIFRkIChUaGUgY29kZSBpcyA0NDE3LikgVGogRVQKZW5kc3RyZWFtCmVuZG9iago1IDAgb2JqCjw8IC9UeXBlIC9Gb250IC9TdWJ0eXBlIC9UeXBlMSAvQmFzZUZvbnQgL0hlbHZldGljYSA+PgplbmRvYmoKeHJlZgowIDYKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwNTggMDAwMDAgbiAKMDAwMDAwMDExNSAwMDAwMCBuIAowMDAwMDAwMjQxIDAwMDAwIG4gCjAwMDAwMDAzMzggMDAwMDAgbiAKdHJhaWxlcgo8PCAvU2l6ZSA2IC9Sb290IDEgMCBSID4+CnN0YXJ0eHJlZgo0MDgKJSVFT0YK"
+									}
+								},
+								{
+									"type": "text",
+									"text": "What is the code in the file? Answer with it only."
+								}
+							]
+						}
+					],
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "<reasoning>The user asks: \"What is the code in the file? Answer with it only.\"\n\nWe have no context about which file. Possibly it's a previous conversation? There's no file provided. Could be a trick, they expect some placeholder? But we have no file info.\n\nWe must respond with nothing? Or indicate we need the file. According to policy, we should ask for clarification. The user wants the code in the file, but we don't have it. So respond asking for the file or content.\n\nWe must comply with policies: ask for clarification.</reasoning>Could you please provide the file or its contents so I can share the code?",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176090,
+					"id": "chatcmpl-db051019-3322-44f2-949c-cf623552706c",
+					"model": "openai.gpt-oss-120b-1:0",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 137,
+						"prompt_tokens": 80,
+						"total_tokens": 217
+					}
+				}
+			}
+		},
+		{
+			"name": "openai.gpt-oss-120b-1:0 txt",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "openai.gpt-oss-120b-1:0",
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "file",
+									"file": {
+										"filename": "note.txt",
+										"file_data": "data:text/plain;base64,VGhlIGNvZGUgaXMgNTUyMy4="
+									}
+								},
+								{
+									"type": "text",
+									"text": "What is the code in the file? Answer with it only."
+								}
+							]
+						}
+					],
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "<reasoning>The user asks: \"What is the code in the file? Answer with it only.\" We need context: what file? No file provided. Perhaps they are referencing earlier conversation? There's none. According to policy, we must ask clarifying question. But they're asking for code in \"the file\". Without specifying, we cannot. We should ask for clarification.</reasoning>I’m not sure which file you’re referring to—could you please provide the file or more details about it?",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176092,
+					"id": "chatcmpl-528a57ec-1b37-45ec-9b82-6b223976715f",
+					"model": "openai.gpt-oss-120b-1:0",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 105,
+						"prompt_tokens": 80,
+						"total_tokens": 185
+					}
+				}
+			}
+		},
+		{
+			"name": "openai.gpt-oss-120b-1:0 md",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "openai.gpt-oss-120b-1:0",
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "file",
+									"file": {
+										"filename": "note.md",
+										"file_data": "data:text/markdown;base64,IyBDb2RlCgpUaGUgY29kZSBpcyA2NjMxLg=="
+									}
+								},
+								{
+									"type": "text",
+									"text": "What is the code in the file? Answer with it only."
+								}
+							]
+						}
+					],
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "<reasoning>The user asks: \"What is the code in the file? Answer with it only.\" No file given. Possibly context missing. Could be a trick: They want the contents of some file? But no file attached. As ChatGPT, can't see file. Should respond that I need the file. But the instruction: \"Answer with it only.\" Probably they expect the assistant to ask for clarification or mention that file not provided. According to policies, we should ask for clarification.</reasoning>I’m not able to see the file you’re referring to. Could you please provide its contents or upload the file?",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176094,
+					"id": "chatcmpl-834235e3-ddf7-40df-a01b-b5aec8ef41e7",
+					"model": "openai.gpt-oss-120b-1:0",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 130,
+						"prompt_tokens": 80,
+						"total_tokens": 210
+					}
+				}
+			}
+		},
+		{
+			"name": "openai.gpt-oss-120b-1:0 inline image",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "openai.gpt-oss-120b-1:0",
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "image_url",
+									"image_url": {
+										"url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAyUlEQVR4nO2ZQRKEIAwE5/+fZo+7tadgkEmgpzxLt6OCotE8Gs2DgDs04A4NuEMD7tDA/wVR6CjXQJD7BRPZ0BdpyE+fc1AJ+oSDSqAnNFSLft7hNoEN9JMOqkg/46Ci9GGHSwQs9DEHBBo0YLx/Ag4I0AC3EA8xbyFeo0xkzMQsJc5ejSJQoIH238QnCLT/L7TZIU502b/REwTa7w+8p/GM4uI9soUOmfGzAkmN/Mgr8H/Pt4n7O+BoHgTcoQF3aMAdGnBHboBsPhOLC++0el++AAAAAElFTkSuQmCC"
+									}
+								},
+								{
+									"type": "text",
+									"text": "What color is the shape in this image? Answer in one word."
+								}
+							]
+						}
+					],
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Model does not support image modality",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "deepseek.v3.2 pdf",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "deepseek.v3.2",
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "file",
+									"file": {
+										"filename": "note.pdf",
+										"file_data": "data:application/pdf;base64,JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCAzMDAgMTAwXSAvQ29udGVudHMgNCAwIFIgL1Jlc291cmNlcyA8PCAvRm9udCA8PCAvRjEgNSAwIFIgPj4gPj4gPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCA0NyA+PgpzdHJlYW0KQlQgL0YxIDEyIFRmIDIwIDUwIFRkIChUaGUgY29kZSBpcyA0NDE3LikgVGogRVQKZW5kc3RyZWFtCmVuZG9iago1IDAgb2JqCjw8IC9UeXBlIC9Gb250IC9TdWJ0eXBlIC9UeXBlMSAvQmFzZUZvbnQgL0hlbHZldGljYSA+PgplbmRvYmoKeHJlZgowIDYKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwNTggMDAwMDAgbiAKMDAwMDAwMDExNSAwMDAwMCBuIAowMDAwMDAwMjQxIDAwMDAwIG4gCjAwMDAwMDAzMzggMDAwMDAgbiAKdHJhaWxlcgo8PCAvU2l6ZSA2IC9Sb290IDEgMCBSID4+CnN0YXJ0eHJlZgo0MDgKJSVFT0YK"
+									}
+								},
+								{
+									"type": "text",
+									"text": "What is the code in the file? Answer with it only."
+								}
+							]
+						}
+					],
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "I cannot view or access any files. You would need to provide the actual code content for me to answer that question. Please share the code directly.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176094,
+					"id": "chatcmpl-ef06a531-1876-4a69-bc22-0b704897ef20",
+					"model": "deepseek.v3.2",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 31,
+						"prompt_tokens": 17,
+						"total_tokens": 48
+					}
+				}
+			}
+		},
+		{
+			"name": "deepseek.v3.2 txt",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "deepseek.v3.2",
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "file",
+									"file": {
+										"filename": "note.txt",
+										"file_data": "data:text/plain;base64,VGhlIGNvZGUgaXMgNTUyMy4="
+									}
+								},
+								{
+									"type": "text",
+									"text": "What is the code in the file? Answer with it only."
+								}
+							]
+						}
+					],
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "Since I cannot view or access the content of any specific file on your system, I cannot provide the code inside it. Please provide the code directly, and I’d be happy to help review or explain it.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176095,
+					"id": "chatcmpl-fcb356e4-534a-47dc-955d-41752c40fe72",
+					"model": "deepseek.v3.2",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 44,
+						"prompt_tokens": 17,
+						"total_tokens": 61
+					}
+				}
+			}
+		},
+		{
+			"name": "deepseek.v3.2 md",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "deepseek.v3.2",
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "file",
+									"file": {
+										"filename": "note.md",
+										"file_data": "data:text/markdown;base64,IyBDb2RlCgpUaGUgY29kZSBpcyA2NjMxLg=="
+									}
+								},
+								{
+									"type": "text",
+									"text": "What is the code in the file? Answer with it only."
+								}
+							]
+						}
+					],
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "I'm unable to see or access the file you're referring to. To provide the code, you'll need to share the contents of the file with me directly, either by pasting the code here or uploading it through a supported method in our chat interface.\n\nPlease share the file's contents, and I'll be happy to work with it!",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176097,
+					"id": "chatcmpl-6eec816c-6608-426c-a308-0f1537895ace",
+					"model": "deepseek.v3.2",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 70,
+						"prompt_tokens": 17,
+						"total_tokens": 87
+					}
+				}
+			}
+		},
+		{
+			"name": "deepseek.v3.2 inline image",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "deepseek.v3.2",
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "image_url",
+									"image_url": {
+										"url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAyUlEQVR4nO2ZQRKEIAwE5/+fZo+7tadgkEmgpzxLt6OCotE8Gs2DgDs04A4NuEMD7tDA/wVR6CjXQJD7BRPZ0BdpyE+fc1AJ+oSDSqAnNFSLft7hNoEN9JMOqkg/46Ci9GGHSwQs9DEHBBo0YLx/Ag4I0AC3EA8xbyFeo0xkzMQsJc5ejSJQoIH238QnCLT/L7TZIU502b/REwTa7w+8p/GM4uI9soUOmfGzAkmN/Mgr8H/Pt4n7O+BoHgTcoQF3aMAdGnBHboBsPhOLC++0el++AAAAAElFTkSuQmCC"
+									}
+								},
+								{
+									"type": "text",
+									"text": "What color is the shape in this image? Answer in one word."
+								}
+							]
+						}
+					],
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Model does not support image modality",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "qwen.qwen3-32b-v1:0 pdf",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "qwen.qwen3-32b-v1:0",
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "file",
+									"file": {
+										"filename": "note.pdf",
+										"file_data": "data:application/pdf;base64,JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCAzMDAgMTAwXSAvQ29udGVudHMgNCAwIFIgL1Jlc291cmNlcyA8PCAvRm9udCA8PCAvRjEgNSAwIFIgPj4gPj4gPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCA0NyA+PgpzdHJlYW0KQlQgL0YxIDEyIFRmIDIwIDUwIFRkIChUaGUgY29kZSBpcyA0NDE3LikgVGogRVQKZW5kc3RyZWFtCmVuZG9iago1IDAgb2JqCjw8IC9UeXBlIC9Gb250IC9TdWJ0eXBlIC9UeXBlMSAvQmFzZUZvbnQgL0hlbHZldGljYSA+PgplbmRvYmoKeHJlZgowIDYKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwNTggMDAwMDAgbiAKMDAwMDAwMDExNSAwMDAwMCBuIAowMDAwMDAwMjQxIDAwMDAwIG4gCjAwMDAwMDAzMzggMDAwMDAgbiAKdHJhaWxlcgo8PCAvU2l6ZSA2IC9Sb290IDEgMCBSID4+CnN0YXJ0eHJlZgo0MDgKJSVFT0YK"
+									}
+								},
+								{
+									"type": "text",
+									"text": "What is the code in the file? Answer with it only."
+								}
+							]
+						}
+					],
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "The code in the file is:\n\n```python\nprint(\"Hello, World!\")\n```",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176099,
+					"id": "chatcmpl-27ca2dec-bf3f-499b-81f6-91f0e11b50c1",
+					"model": "qwen.qwen3-32b-v1:0",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 18,
+						"prompt_tokens": 25,
+						"total_tokens": 43
+					}
+				}
+			}
+		},
+		{
+			"name": "qwen.qwen3-32b-v1:0 txt",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "qwen.qwen3-32b-v1:0",
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "file",
+									"file": {
+										"filename": "note.txt",
+										"file_data": "data:text/plain;base64,VGhlIGNvZGUgaXMgNTUyMy4="
+									}
+								},
+								{
+									"type": "text",
+									"text": "What is the code in the file? Answer with it only."
+								}
+							]
+						}
+					],
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "I cannot access files or their contents. Please provide the content of the file or ask a related question.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176100,
+					"id": "chatcmpl-04e3a962-4a02-4cb4-8a22-d1365b546975",
+					"model": "qwen.qwen3-32b-v1:0",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 22,
+						"prompt_tokens": 25,
+						"total_tokens": 47
+					}
+				}
+			}
+		},
+		{
+			"name": "qwen.qwen3-32b-v1:0 md",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "qwen.qwen3-32b-v1:0",
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "file",
+									"file": {
+										"filename": "note.md",
+										"file_data": "data:text/markdown;base64,IyBDb2RlCgpUaGUgY29kZSBpcyA2NjMxLg=="
+									}
+								},
+								{
+									"type": "text",
+									"text": "What is the code in the file? Answer with it only."
+								}
+							]
+						}
+					],
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "I cannot access or view files outside of what's provided in the conversation. Could you share the contents of the file or provide more context?",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176100,
+					"id": "chatcmpl-5ad6290d-0416-4c8a-8a63-faf0f2444125",
+					"model": "qwen.qwen3-32b-v1:0",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 29,
+						"prompt_tokens": 25,
+						"total_tokens": 54
+					}
+				}
+			}
+		},
+		{
+			"name": "qwen.qwen3-32b-v1:0 inline image",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "qwen.qwen3-32b-v1:0",
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "image_url",
+									"image_url": {
+										"url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAyUlEQVR4nO2ZQRKEIAwE5/+fZo+7tadgkEmgpzxLt6OCotE8Gs2DgDs04A4NuEMD7tDA/wVR6CjXQJD7BRPZ0BdpyE+fc1AJ+oSDSqAnNFSLft7hNoEN9JMOqkg/46Ci9GGHSwQs9DEHBBo0YLx/Ag4I0AC3EA8xbyFeo0xkzMQsJc5ejSJQoIH238QnCLT/L7TZIU502b/REwTa7w+8p/GM4uI9soUOmfGzAkmN/Mgr8H/Pt4n7O+BoHgTcoQF3aMAdGnBHboBsPhOLC++0el++AAAAAElFTkSuQmCC"
+									}
+								},
+								{
+									"type": "text",
+									"text": "What color is the shape in this image? Answer in one word."
+								}
+							]
+						}
+					],
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Model does not support image modality",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "nvidia.nemotron-super-3-120b pdf",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "nvidia.nemotron-super-3-120b",
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "file",
+									"file": {
+										"filename": "note.pdf",
+										"file_data": "data:application/pdf;base64,JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCAzMDAgMTAwXSAvQ29udGVudHMgNCAwIFIgL1Jlc291cmNlcyA8PCAvRm9udCA8PCAvRjEgNSAwIFIgPj4gPj4gPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCA0NyA+PgpzdHJlYW0KQlQgL0YxIDEyIFRmIDIwIDUwIFRkIChUaGUgY29kZSBpcyA0NDE3LikgVGogRVQKZW5kc3RyZWFtCmVuZG9iago1IDAgb2JqCjw8IC9UeXBlIC9Gb250IC9TdWJ0eXBlIC9UeXBlMSAvQmFzZUZvbnQgL0hlbHZldGljYSA+PgplbmRvYmoKeHJlZgowIDYKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwNTggMDAwMDAgbiAKMDAwMDAwMDExNSAwMDAwMCBuIAowMDAwMDAwMjQxIDAwMDAwIG4gCjAwMDAwMDAzMzggMDAwMDAgbiAKdHJhaWxlcgo8PCAvU2l6ZSA2IC9Sb290IDEgMCBSID4+CnN0YXJ0eHJlZgo0MDgKJSVFT0YK"
+									}
+								},
+								{
+									"type": "text",
+									"text": "What is the code in the file? Answer with it only."
+								}
+							]
+						}
+					],
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "I'll set a course for the nearest unexplored sector and proceed at standard speed.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176101,
+					"id": "chatcmpl-eae1eb05-ba5e-4ca7-a2c2-490e9b0f449e",
+					"model": "nvidia.nemotron-super-3-120b",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 18,
+						"prompt_tokens": 29,
+						"total_tokens": 47
+					}
+				}
+			}
+		},
+		{
+			"name": "nvidia.nemotron-super-3-120b txt",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "nvidia.nemotron-super-3-120b",
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "file",
+									"file": {
+										"filename": "note.txt",
+										"file_data": "data:text/plain;base64,VGhlIGNvZGUgaXMgNTUyMy4="
+									}
+								},
+								{
+									"type": "text",
+									"text": "What is the code in the file? Answer with it only."
+								}
+							]
+						}
+					],
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "I'm sorry, but I can't know what file you're referring to or what code is in it unless you provide details. Since no file was specified or shared in your query, I cannot output any code.\n\nPlease provide the file path, content, or additional context so I can assist you accurately.\n\nIf this is a test, the correct response based on your instruction is: **no code can be provided without a file being specified.**",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176101,
+					"id": "chatcmpl-2bc57fae-95c0-40e8-af41-8a6f36e08bd7",
+					"model": "nvidia.nemotron-super-3-120b",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 89,
+						"prompt_tokens": 29,
+						"total_tokens": 118
+					}
+				}
+			}
+		},
+		{
+			"name": "nvidia.nemotron-super-3-120b md",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "nvidia.nemotron-super-3-120b",
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "file",
+									"file": {
+										"filename": "note.md",
+										"file_data": "data:text/markdown;base64,IyBDb2RlCgpUaGUgY29kZSBpcyA2NjMxLg=="
+									}
+								},
+								{
+									"type": "text",
+									"text": "What is the code in the file? Answer with it only."
+								}
+							]
+						}
+					],
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "I cannot access or read the contents of any file, as I have no capability to interact with your local file system or external storage. To view the code in a file, you’ll need to open it using a text editor or command-line tool (e.g., `cat filename.py`, `notepad filename.txt`, or VS Code).\n\nIf you can paste the code here, I’d be happy to help explain, debug, or improve it!",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176102,
+					"id": "chatcmpl-f946618f-f392-4edd-86ab-84b06095f50b",
+					"model": "nvidia.nemotron-super-3-120b",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 91,
+						"prompt_tokens": 29,
+						"total_tokens": 120
+					}
+				}
+			}
+		},
+		{
+			"name": "nvidia.nemotron-super-3-120b inline image",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "nvidia.nemotron-super-3-120b",
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "image_url",
+									"image_url": {
+										"url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAyUlEQVR4nO2ZQRKEIAwE5/+fZo+7tadgkEmgpzxLt6OCotE8Gs2DgDs04A4NuEMD7tDA/wVR6CjXQJD7BRPZ0BdpyE+fc1AJ+oSDSqAnNFSLft7hNoEN9JMOqkg/46Ci9GGHSwQs9DEHBBo0YLx/Ag4I0AC3EA8xbyFeo0xkzMQsJc5ejSJQoIH238QnCLT/L7TZIU502b/REwTa7w+8p/GM4uI9soUOmfGzAkmN/Mgr8H/Pt4n7O+BoHgTcoQF3aMAdGnBHboBsPhOLC++0el++AAAAAElFTkSuQmCC"
+									}
+								},
+								{
+									"type": "text",
+									"text": "What color is the shape in this image? Answer in one word."
+								}
+							]
+						}
+					],
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Model does not support image modality",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "mistral.mistral-large-3-675b-instruct pdf",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "file",
+									"file": {
+										"filename": "note.pdf",
+										"file_data": "data:application/pdf;base64,JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCAzMDAgMTAwXSAvQ29udGVudHMgNCAwIFIgL1Jlc291cmNlcyA8PCAvRm9udCA8PCAvRjEgNSAwIFIgPj4gPj4gPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCA0NyA+PgpzdHJlYW0KQlQgL0YxIDEyIFRmIDIwIDUwIFRkIChUaGUgY29kZSBpcyA0NDE3LikgVGogRVQKZW5kc3RyZWFtCmVuZG9iago1IDAgb2JqCjw8IC9UeXBlIC9Gb250IC9TdWJ0eXBlIC9UeXBlMSAvQmFzZUZvbnQgL0hlbHZldGljYSA+PgplbmRvYmoKeHJlZgowIDYKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwNTggMDAwMDAgbiAKMDAwMDAwMDExNSAwMDAwMCBuIAowMDAwMDAwMjQxIDAwMDAwIG4gCjAwMDAwMDAzMzggMDAwMDAgbiAKdHJhaWxlcgo8PCAvU2l6ZSA2IC9Sb290IDEgMCBSID4+CnN0YXJ0eHJlZgo0MDgKJSVFT0YK"
+									}
+								},
+								{
+									"type": "text",
+									"text": "What is the code in the file? Answer with it only."
+								}
+							]
+						}
+					],
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "Here is the content typically found in a basic `hello_world.py` file:\n\n```python\nprint(\"Hello, World!\")\n```",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176103,
+					"id": "chatcmpl-8b1def85-507a-422f-9e51-2f6f9f45832a",
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 27,
+						"prompt_tokens": 16,
+						"total_tokens": 43
+					}
+				}
+			}
+		},
+		{
+			"name": "mistral.mistral-large-3-675b-instruct txt",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "file",
+									"file": {
+										"filename": "note.txt",
+										"file_data": "data:text/plain;base64,VGhlIGNvZGUgaXMgNTUyMy4="
+									}
+								},
+								{
+									"type": "text",
+									"text": "What is the code in the file? Answer with it only."
+								}
+							]
+						}
+					],
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "I can't provide the code without knowing which file you're referring to. Please specify the filename or context.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176104,
+					"id": "chatcmpl-ae907e64-80a2-45bb-88c8-375fd6e4a8b4",
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 23,
+						"prompt_tokens": 16,
+						"total_tokens": 39
+					}
+				}
+			}
+		},
+		{
+			"name": "mistral.mistral-large-3-675b-instruct md",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "file",
+									"file": {
+										"filename": "note.md",
+										"file_data": "data:text/markdown;base64,IyBDb2RlCgpUaGUgY29kZSBpcyA2NjMxLg=="
+									}
+								},
+								{
+									"type": "text",
+									"text": "What is the code in the file? Answer with it only."
+								}
+							]
+						}
+					],
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "Here is a generic example of what code might look like in a file (since you didn't specify a file or language):\n\n```python\ndef hello_world():\n    print(\"Hello, world!\")\n```",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176104,
+					"id": "chatcmpl-e830fcb5-d507-4862-a7a6-b3a009e1abf2",
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 41,
+						"prompt_tokens": 16,
+						"total_tokens": 57
+					}
+				}
+			}
+		},
+		{
+			"name": "mistral.mistral-large-3-675b-instruct inline image",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "image_url",
+									"image_url": {
+										"url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAyUlEQVR4nO2ZQRKEIAwE5/+fZo+7tadgkEmgpzxLt6OCotE8Gs2DgDs04A4NuEMD7tDA/wVR6CjXQJD7BRPZ0BdpyE+fc1AJ+oSDSqAnNFSLft7hNoEN9JMOqkg/46Ci9GGHSwQs9DEHBBo0YLx/Ag4I0AC3EA8xbyFeo0xkzMQsJc5ejSJQoIH238QnCLT/L7TZIU502b/REwTa7w+8p/GM4uI9soUOmfGzAkmN/Mgr8H/Pt4n7O+BoHgTcoQF3aMAdGnBHboBsPhOLC++0el++AAAAAElFTkSuQmCC"
+									}
+								},
+								{
+									"type": "text",
+									"text": "What color is the shape in this image? Answer in one word."
+								}
+							]
+						}
+					],
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "Red",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176106,
+					"id": "chatcmpl-7bae1275-4d13-476d-8797-398ab588eed2",
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 2,
+						"prompt_tokens": 29,
+						"total_tokens": 31
+					}
+				}
+			}
+		},
+		{
+			"name": "mistral.mistral-large-3-675b-instruct image url",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"messages": [
+						{
+							"role": "user",
+							"content": [
+								{
+									"type": "image_url",
+									"image_url": {
+										"url": "https://example.com/photo.png"
+									}
+								},
+								{
+									"type": "text",
+									"text": "What color is this image? Answer in one word."
+								}
+							]
+						}
+					],
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Only inline image data URLs and S3 URLs are supported.",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "mistral.mistral-large-3-675b-instruct image in a tool message",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Call get_photo, then name the color of the shape in it."
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "callphoto",
+									"type": "function",
+									"function": {
+										"name": "get_photo",
+										"arguments": "{}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "callphoto",
+							"content": [
+								{
+									"type": "image_url",
+									"image_url": {
+										"url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAyUlEQVR4nO2ZQRKEIAwE5/+fZo+7tadgkEmgpzxLt6OCotE8Gs2DgDs04A4NuEMD7tDA/wVR6CjXQJD7BRPZ0BdpyE+fc1AJ+oSDSqAnNFSLft7hNoEN9JMOqkg/46Ci9GGHSwQs9DEHBBo0YLx/Ag4I0AC3EA8xbyFeo0xkzMQsJc5ejSJQoIH238QnCLT/L7TZIU502b/REwTa7w+8p/GM4uI9soUOmfGzAkmN/Mgr8H/Pt4n7O+BoHgTcoQF3aMAdGnBHboBsPhOLC++0el++AAAAAElFTkSuQmCC"
+									}
+								}
+							]
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_photo",
+								"description": "Returns a photo.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "Unsupported parameter: 'messages[2].content[0]' is not supported with this model.",
+						"type": "invalid_request_error",
+						"param": "messages[2].content[0]",
+						"code": "unsupported_parameter"
+					}
+				}
+			}
+		}
+	]
+}

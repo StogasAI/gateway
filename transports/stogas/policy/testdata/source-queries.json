@@ -401,7 +401,7 @@
     "valid": true
   },
   {
-    "filter": "\".pdf\" in route.documentFormats.extensions && deployment.retirementDate > \"2027-01-31\"",
+    "filter": "\".pdf\" in deployment.documentFormats.extensions && deployment.retirementDate > \"2027-01-31\"",
     "valid": true
   },
   {
@@ -429,7 +429,7 @@
     "valid": false
   },
   {
-    "filter": "\"pdf\" in route.documentFormats.extensions",
+    "filter": "\"pdf\" in deployment.documentFormats.extensions",
     "valid": false
   },
   {

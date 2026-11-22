@@ -1,5 +1,5 @@
 {
-	"shows": "On Agent Platform's generateContent, Gemini 3.8 Flash calls a function at modes AUTO, ANY and ANY with allowedFunctionNames, answers in text at NONE, returns an ID for each call and a thought signature on the first, takes the calls back with their IDs and signatures, or with Google's placeholder signature, refuses a call without a signature, and answers in the JSON schema of responseJsonSchema.",
+	"shows": "On Agent Platform's generateContent, Gemini 3.8 Flash calls a function at modes AUTO, ANY and ANY with allowedFunctionNames, returns an ID for each call and a thought signature on the first, takes the calls back with their IDs and signatures, or with Google's placeholder signature, refuses a call without a signature, and answers in the JSON schema of responseJsonSchema.",
 	"recorded": "2026-11-20",
 	"exchanges": [
 		{
@@ -59,7 +59,7 @@
 								"role": "model",
 								"parts": [
 									{
-										"text": "**My Thought Process for Fulfilling Your Weather Request**\n\nAlright, so I've received your query, and I understand perfectly what you need. You're looking for the weather forecast for two specific, rather lovely, locations: Paris and Rome.\n\nMy internal process immediately identifies the core task: retrieving weather information. I've assessed the available tools at my disposal, and the `get_weather` function is precisely what I need. It's designed for this very purpose – to fetch meteorological data.\n\nGiven that you've requested weather for *two* distinct cities, my next logical step is to utilize the `get_weather` tool twice. I'll initiate one call to `get_weather` specifically for Paris, and a separate, independent call for Rome. This ensures I gather the precise information you're asking for, without any conflation. It's a straightforward, parallel processing approach to fulfill your dual request efficiently.\n\n",
+										"text": "**My Thought Process for Fulfilling Your Weather Request**\n\nAlright, I've received your request. You're looking for the weather information for both Paris and Rome. My internal process immediately flags this as a task requiring a specific action: retrieving weather data.\n\nI know I have a tool available, a function called `get_weather`. The key detail about this function is that it requires a `city` argument to specify where the weather should be looked up.\n\nTherefore, my next logical step is to recognize that I need to invoke this `get_weather` function *twice*. Once for Paris, and then again for Rome. Each call will provide me with the distinct weather data you're after for each respective city.\n\n",
 										"thought": true
 									},
 									{
@@ -68,9 +68,9 @@
 											"args": {
 												"city": "Paris"
 											},
-											"id": "call_9239791051818444879"
+											"id": "call_13004789852880005326"
 										},
-										"thoughtSignature": "AY89a1+Dd/ruWIpaSZ2Ehlg/kdyNsYc1//Ui0EE4K4qL3oaV+XSjcflRJS+h/6+xaVtPvRQy/NS8gkHl9MMHD1MyrX5f49DryV2xGr6d7d9dpefhvXDLmAQT5F4g+VPs2zyXE1528JI4f5nd3mcurtYyTczzpiOR3aTIgrY/UPtnUyDvOoajaWQwGaVFvo123pHnU/6BiHvTaIL+CsWzXWfb2awnmIwOkjVwViFG0LKUt1nddlKod5M6oa+hpgpVY0YzUPbgvm/NN2b4WITDA9ADBENZwP1q85sE8+kM53fuRY3vQjjSTd19R6Thm3MtVvP1Sb+hi6aDedAcjDkcBnwNu+jPYjat0fES7Fb+FA9r+xfVurONCg=="
+										"thoughtSignature": "AY89a193OaVkE1e/WBo7v3J16z8JiLXkETLfQoCqO5DARasmdx2igt06O2UXlyQ/lhagTNDBkrK31IBVQIeQPcs7gwrA+yIHhVf/hnaBdSt/dUn25g46DbyKmiWXqpEp+sfe6IV4uxjvELUAfuy3civXmz5ha7k7sz79JNhCJ2Yh/74P/7ofHWi/izxF2irAUj3vWdJZMj6o4hqjeZDrdYSBadug3NQikvGclTUCSasxlvN70uts5PAzo60gTQfE5M5q59vlvrEniZSg8CErJDf0KldDXPZuLKBIn2oMDDk/ummDJgpyvHLp6mEIyJx4EwUHAV4zUYWOSUrQU4vRkjae+3imAjWHTTsYYkgfSquTV/V0xg=="
 									},
 									{
 										"functionCall": {
@@ -78,7 +78,7 @@
 											"args": {
 												"city": "Rome"
 											},
-											"id": "call_9239791051818444592"
+											"id": "call_13004789852880006151"
 										}
 									}
 								]
@@ -106,8 +106,8 @@
 						"thoughtsTokenCount": 38
 					},
 					"modelVersion": "gemini-3.8-flash",
-					"createTime": "2026-11-20T06:14:13.538772Z",
-					"responseId": "NeX_apTxIMmtotQP4-W9yAo"
+					"createTime": "2026-11-20T14:10:52.901833Z",
+					"responseId": "7FQAa8mFN4bVsbwPtP2L4QU"
 				}
 			}
 		},
@@ -173,14 +173,18 @@
 								"role": "model",
 								"parts": [
 									{
+										"text": "**My Internal Monologue Regarding Your Weather Inquiry**\n\nAh, an interesting request! My immediate understanding is that you, an esteemed expert in your domain, are seeking meteorological data for two distinct European capitals: Paris and Rome. My internal cognitive processes immediately identify this as a task amenable to specific, pre-defined computational functions.\n\nI've accessed my internal knowledge base and confirmed the existence of a tool perfectly suited for this purpose: `get_weather(city: STRING)`. This function is designed to accept a city name as a string input and, presumably, will return the relevant weather information for that location.\n\nTherefore, my logical next step, and indeed the core of my processing at this juncture, is to initiate two separate invocations of this `get_weather` function. The first will be `get_weather(\"Paris\")`, and the second will be `get_weather(\"Rome\")`. This dual execution will ensure that I gather the requested information for both cities efficiently and comprehensively, allowing me to present you with the complete weather picture you're after.\n\n",
+										"thought": true
+									},
+									{
 										"functionCall": {
 											"name": "get_weather",
 											"args": {
 												"city": "Paris"
 											},
-											"id": "call_4011422236305646498"
+											"id": "call_4438050871510828752"
 										},
-										"thoughtSignature": "AY89a197GvQHl7YKhUzj0cRY+lwfuTv/lmaiKbpjrEcwXeWsdstXowqgpEQRyMUhHUz0J/WaAbfe1bZb5XT0+6TdgpGBjkzj+R70IsAGqemi0ckKRqStN0GjHNBPJmS5LF9i7fhxKjK1dAkrbVckzYaR4mo5tkW5e5dXQ8QLgw=="
+										"thoughtSignature": "AY89a1/TYcQsJw52kcJlzBOHx5FVfRzmWhjo1zyoXMNRxqEJUvl22kiwxxRZwXO3gC3r9I2nQluGzfwkPTL7n+RALUsO2jA8OgVpz27J0ibI3v114sV3sfsXv3GtNfAJgMPOwsGaJ9QkYRfO/SRHUkA98ebNDdP7D0Tkfe0FgGCXO7UcHznsbwbJeqfZVFNVwLX0QeaxQXYmZEQTUH0egx9GrLK56pCvVSLmJBdpIFqHxpHLwVavnhb6/KOOfk1Imw9fIYT+9mm8DfxHlmo7s9CujJEZHocrGdlD4bZQcvDNXOXspWTnSqo+ZmK0oMM0LPX+V99UcFJRWSsXhAkq1rkI/QTUXhK2Zs0mcPiUPx+k6Vu9J/d+vMAwIPDHa7AuSqLHyiI="
 									},
 									{
 										"functionCall": {
@@ -188,7 +192,7 @@
 											"args": {
 												"city": "Rome"
 											},
-											"id": "call_4011422236305648597"
+											"id": "call_4438050871510829855"
 										}
 									}
 								]
@@ -199,7 +203,7 @@
 					"usageMetadata": {
 						"promptTokenCount": 39,
 						"candidatesTokenCount": 32,
-						"totalTokenCount": 71,
+						"totalTokenCount": 117,
 						"trafficType": "ON_DEMAND",
 						"promptTokensDetails": [
 							{
@@ -212,11 +216,12 @@
 								"modality": "TEXT",
 								"tokenCount": 32
 							}
-						]
+						],
+						"thoughtsTokenCount": 46
 					},
 					"modelVersion": "gemini-3.8-flash",
-					"createTime": "2026-11-20T06:14:18.467730Z",
-					"responseId": "OuX_apLGHIGbotQPkZTMyAU"
+					"createTime": "2026-11-20T14:10:55.593426Z",
+					"responseId": "71QAa5KcJM6UotQPsPesgAM"
 				}
 			}
 		},
@@ -285,14 +290,18 @@
 								"role": "model",
 								"parts": [
 									{
+										"text": "**My Thought Process for Fetching Weather Data**\n\nAh, I see the user's request here. They're looking to get the weather information for two specific locations: Paris and Rome. My immediate thought is to leverage the `get_weather` tool that's available to me. I recall that this tool has a `city` parameter, which is precisely what I need to specify the locations of interest. Given that the user wants information for both Paris and Rome, and since the `get_weather` tool can handle individual city requests, the most efficient approach here would be to make two simultaneous, or parallel, calls to this tool – one for Paris and another for Rome. This way, I can retrieve both pieces of information concurrently, optimizing the response time and delivering the data to the user as quickly as possible.\n\n",
+										"thought": true
+									},
+									{
 										"functionCall": {
 											"name": "get_weather",
 											"args": {
 												"city": "Paris"
 											},
-											"id": "call_8085708601686391060"
+											"id": "call_16948590664013624959"
 										},
-										"thoughtSignature": "AY89a1/3bXzJG4Q72POWiOnd48uNEGFgmYMgSA9ZaCouka+pwRRnIq2QDn8qhkEcGmrGgVuRtvtVChxAuCBca8rDEy2koxc2w4co0+/6dyLCG9zzD/s/Lv87D6NQbJFA8UyEp4O0DKyRqw3aWHAwmH86BhEQDq5kX7Tf1mNEfw=="
+										"thoughtSignature": "AY89a1+tiy+lFN9CAJLpJVXSmUOPDocXj7zDFW6pRxfQeQKct+2cOTuEYvqtP55cICXGORtsWEJXJ409lyCcvlEYcUMfowbM8ouXfdN4+45RTCRWSX2laAAFa/FLUkSTneCkGnyG5wlIt+jJRH8wtT9TBq6pSRFjdeSouXWXNXZVXY86zSAJpj9H8OfQppWUpRt3tm3sMYTsF4Ycz4MvRRz8Be98EQ8XKLYgv0bALHYTDy1dYWKUixMFJlKcxCauPFYelfG1xJGpKo+9YRx59Dx6xPaDxDMILgAbDGe5O5F/h0EqN2KUrspUEFZgh9sjf8V25ZI/EMRjwH0WPYfoqXhWsGXZLoC30Y8nafu0Yv8/3sydPP3jw+sJmB+tLtbDzg/t"
 									},
 									{
 										"functionCall": {
@@ -300,7 +309,7 @@
 											"args": {
 												"city": "Rome"
 											},
-											"id": "call_8085708601686390403"
+											"id": "call_16948590664013624140"
 										}
 									}
 								]
@@ -311,7 +320,7 @@
 					"usageMetadata": {
 						"promptTokenCount": 39,
 						"candidatesTokenCount": 32,
-						"totalTokenCount": 71,
+						"totalTokenCount": 110,
 						"trafficType": "ON_DEMAND",
 						"promptTokensDetails": [
 							{
@@ -324,105 +333,12 @@
 								"modality": "TEXT",
 								"tokenCount": 32
 							}
-						]
-					},
-					"modelVersion": "gemini-3.8-flash",
-					"createTime": "2026-11-20T06:14:19.687741Z",
-					"responseId": "O-X_av38KYuZotQPrufR6AU"
-				}
-			}
-		},
-		{
-			"name": "mode NONE",
-			"provider": "google-cloud",
-			"request": {
-				"path": "/locations/global/publishers/google/models/gemini-3.8-flash:generateContent",
-				"body": {
-					"model": "gemini-3.8-flash",
-					"generationConfig": {
-						"maxOutputTokens": 2000,
-						"thinkingConfig": {
-							"includeThoughts": true,
-							"thinkingLevel": "LOW"
-						}
-					},
-					"contents": [
-						{
-							"parts": [
-								{
-									"text": "What is the weather in Paris and in Rome? Look up each city."
-								}
-							],
-							"role": "user"
-						}
-					],
-					"tools": [
-						{
-							"functionDeclarations": [
-								{
-									"description": "Returns a city's weather.",
-									"name": "get_weather",
-									"parametersJsonSchema": {
-										"type": "object",
-										"properties": {
-											"city": {
-												"type": "string"
-											}
-										},
-										"required": [
-											"city"
-										],
-										"additionalProperties": false
-									}
-								}
-							]
-						}
-					],
-					"toolConfig": {
-						"functionCallingConfig": {
-							"mode": "NONE"
-						}
-					}
-				}
-			},
-			"response": {
-				"status": 200,
-				"body": {
-					"candidates": [
-						{
-							"content": {
-								"role": "model",
-								"parts": [
-									{
-										"text": "I cannot provide the current, real-time weather conditions for Paris and Rome, as I do not have access to live meteorological data or a real-time internet browsing tool. \n\nPlease check a live weather service such as [weather.com](https://weather.com) or your preferred weather app to see the current forecasts for both cities.",
-										"thoughtSignature": "AY89a19LwIVLtr28wtU5z026o+Bl/wWNTT8gthuELUsGI4CqNfA+wZdujn0cLKdI4MaFlxXRqKRG39kxRAOROjJbGlOxHt447kUxXALrHRJ/2VGYjNzt+yHHM5qdnvX4cdFGJ65Ya0Ig7r6HgQqWODSwBs24UU6j8N0Ep6TwwA=="
-									}
-								]
-							},
-							"finishReason": "STOP"
-						}
-					],
-					"usageMetadata": {
-						"promptTokenCount": 15,
-						"candidatesTokenCount": 70,
-						"totalTokenCount": 85,
-						"trafficType": "ON_DEMAND",
-						"promptTokensDetails": [
-							{
-								"modality": "TEXT",
-								"tokenCount": 15
-							}
 						],
-						"candidatesTokensDetails": [
-							{
-								"modality": "TEXT",
-								"tokenCount": 70
-							}
-						]
+						"thoughtsTokenCount": 39
 					},
 					"modelVersion": "gemini-3.8-flash",
-					"createTime": "2026-11-20T06:14:21.778500Z",
-					"responseId": "PeX_aoTCL96ll7oP5JzigQg"
+					"createTime": "2026-11-20T14:11:08.519846Z",
+					"responseId": "_FQAa6bdH86UotQPsPesgAM"
 				}
 			}
 		},
@@ -452,9 +368,9 @@
 						{
 							"parts": [
 								{
-									"thoughtSignature": "AY89a1+Dd/ruWIpaSZ2Ehlg/kdyNsYc1//Ui0EE4K4qL3oaV+XSjcflRJS+h/6+xaVtPvRQy/NS8gkHl9MMHD1MyrX5f49DryV2xGr6d7d9dpefhvXDLmAQT5F4g+VPs2zyXE1528JI4f5nd3mcurtYyTczzpiOR3aTIgrY/UPtnUyDvOoajaWQwGaVFvo123pHnU/6BiHvTaIL+CsWzXWfb2awnmIwOkjVwViFG0LKUt1nddlKod5M6oa+hpgpVY0YzUPbgvm/NN2b4WITDA9ADBENZwP1q85sE8+kM53fuRY3vQjjSTd19R6Thm3MtVvP1Sb+hi6aDedAcjDkcBnwNu+jPYjat0fES7Fb+FA9r+xfVurONCg==",
+									"thoughtSignature": "AY89a193OaVkE1e/WBo7v3J16z8JiLXkETLfQoCqO5DARasmdx2igt06O2UXlyQ/lhagTNDBkrK31IBVQIeQPcs7gwrA+yIHhVf/hnaBdSt/dUn25g46DbyKmiWXqpEp+sfe6IV4uxjvELUAfuy3civXmz5ha7k7sz79JNhCJ2Yh/74P/7ofHWi/izxF2irAUj3vWdJZMj6o4hqjeZDrdYSBadug3NQikvGclTUCSasxlvN70uts5PAzo60gTQfE5M5q59vlvrEniZSg8CErJDf0KldDXPZuLKBIn2oMDDk/ummDJgpyvHLp6mEIyJx4EwUHAV4zUYWOSUrQU4vRkjae+3imAjWHTTsYYkgfSquTV/V0xg==",
 									"functionCall": {
-										"id": "call_9239791051818444879",
+										"id": "call_13004789852880005326",
 										"args": {
 											"city": "Paris"
 										},
@@ -464,7 +380,7 @@
 								{
 									"thoughtSignature": "skip_thought_signature_validator",
 									"functionCall": {
-										"id": "call_9239791051818444592",
+										"id": "call_13004789852880006151",
 										"args": {
 											"city": "Rome"
 										},
@@ -478,7 +394,7 @@
 							"parts": [
 								{
 									"functionResponse": {
-										"id": "call_9239791051818444879",
+										"id": "call_13004789852880005326",
 										"name": "get_weather",
 										"response": {
 											"content": "Sunny, 21 C"
@@ -487,7 +403,7 @@
 								},
 								{
 									"functionResponse": {
-										"id": "call_9239791051818444592",
+										"id": "call_13004789852880006151",
 										"name": "get_weather",
 										"response": {
 											"content": "Rain, 14 C"
@@ -531,8 +447,12 @@
 								"role": "model",
 								"parts": [
 									{
-										"text": "The weather in the requested cities is as follows:\n\n* **Paris:** Sunny, 21°C\n* **Rome:** Rain, 14°C",
-										"thoughtSignature": "AY89a19bsI820y8aDq8q3UhW3WRnIKpbL6MGzFTbGp/8b9iLGz4c+LWTpPtqbMR/Nh2KILHEOXA7ybmoAgnD+bN2F0H+xBxl6WvkfAoVDqUHPMd5c2dhgAKvIPXjASwyDxxa1+mCWP22N/XvFCOHDy3heOKM5aBxfAWsCV686Q=="
+										"text": "**My Thought Process After Successful Calls**\n\nWell, that's a relief. Both of the calls went through without a hitch. Now, my immediate next step, the core of what I'm trying to accomplish here, is to synthesize the information I've gathered from those successful interactions into a cohesive and actionable answer. I need to take the raw data, the responses, the confirmed states, and weave them into a clear, comprehensive summary that addresses the original prompt or objective. This isn't just about confirming that things *worked*; it's about extracting the meaningful outcome of that success.\n\n",
+										"thought": true
+									},
+									{
+										"text": "The weather in Paris is sunny and 21°C, while in Rome it is raining and 14°C.",
+										"thoughtSignature": "AY89a19ddiAk5so5rFx5xjErOHxpDOLUkWP/amo0beNTCFBF1DR1ZseysRV0j5a6YLMylweZ/8pZtbr/GAlOiz55oJRpA82jptvccvwUlOZUXtATPf1qF6AtMnh50SfSOUWFOqe36UUhQ+kRKOBL4g1OGp3FyaYQd8gi46OlFa0Z3QRP3aJ9jYAjfMFKCxVhOAoJsuNfxuf0Qo1t0QFWGW6MiNRyouzavLaHMPjDJV4="
 									}
 								]
 							},
@@ -541,8 +461,8 @@
 					],
 					"usageMetadata": {
 						"promptTokenCount": 123,
-						"candidatesTokenCount": 34,
-						"totalTokenCount": 157,
+						"candidatesTokenCount": 26,
+						"totalTokenCount": 159,
 						"trafficType": "ON_DEMAND",
 						"promptTokensDetails": [
 							{
@@ -553,13 +473,14 @@
 						"candidatesTokensDetails": [
 							{
 								"modality": "TEXT",
-								"tokenCount": 34
+								"tokenCount": 26
 							}
-						]
+						],
+						"thoughtsTokenCount": 10
 					},
 					"modelVersion": "gemini-3.8-flash",
-					"createTime": "2026-11-20T06:14:24.663829Z",
-					"responseId": "QOX_apXCKMmtotQP7Ni22As"
+					"createTime": "2026-11-20T14:11:11.146470Z",
+					"responseId": "_1QAa6b4CJzYsbwP4YvO8A8"
 				}
 			}
 		},
@@ -591,7 +512,7 @@
 								{
 									"thoughtSignature": "skip_thought_signature_validator",
 									"functionCall": {
-										"id": "call_9239791051818444879",
+										"id": "call_13004789852880005326",
 										"args": {
 											"city": "Paris"
 										},
@@ -601,7 +522,7 @@
 								{
 									"thoughtSignature": "skip_thought_signature_validator",
 									"functionCall": {
-										"id": "call_9239791051818444592",
+										"id": "call_13004789852880006151",
 										"args": {
 											"city": "Rome"
 										},
@@ -615,7 +536,7 @@
 							"parts": [
 								{
 									"functionResponse": {
-										"id": "call_9239791051818444879",
+										"id": "call_13004789852880005326",
 										"name": "get_weather",
 										"response": {
 											"content": "Sunny, 21 C"
@@ -624,7 +545,7 @@
 								},
 								{
 									"functionResponse": {
-										"id": "call_9239791051818444592",
+										"id": "call_13004789852880006151",
 										"name": "get_weather",
 										"response": {
 											"content": "Rain, 14 C"
@@ -669,7 +590,7 @@
 								"parts": [
 									{
 										"text": "The current weather is:\n- **Paris**: Sunny, 21°C\n- **Rome**: Rain, 14°C",
-										"thoughtSignature": "AY89a1/R6c4AhVwh0LAEfHiCaOSN3GLsLLqRPB7y2O37a4rLfdclQSavnT1PYlIiBQE/lcV9n+ZXXZ4F2KF6wWGkcwWqu+QzH3FiFI7em5810bNQjEY9rIPOfZlWKz0tCBtD4+7iiRQ81djFeP5EuFbvxdiE2vQ56+w0rEqB7A=="
+										"thoughtSignature": "AY89a19QSTzH5layw02WRneI21kZ8VNbCZg6Vg/JJuB8C/aScjbMcDJw2xmgtV6D9glccnLqD79SFcgkNxWr+DUoKsYKkhhvSIE4gKtvJOO4oUs0FbG7N+c39yatWYwfi3fVbAwaC8eQ1XuMG3X7D9EEZjb7TqJq6klF3RG+Cg=="
 									}
 								]
 							},
@@ -695,8 +616,8 @@
 						]
 					},
 					"modelVersion": "gemini-3.8-flash",
-					"createTime": "2026-11-20T06:14:26.285273Z",
-					"responseId": "QuX_atm0Ed-TsbwPn8zF6Qc"
+					"createTime": "2026-11-20T14:11:14.760579Z",
+					"responseId": "AlUAa4O2LrWZsbwPgvTZgQ0"
 				}
 			}
 		},
@@ -727,7 +648,7 @@
 							"parts": [
 								{
 									"functionCall": {
-										"id": "call_9239791051818444879",
+										"id": "call_13004789852880005326",
 										"args": {
 											"city": "Paris"
 										},
@@ -736,7 +657,7 @@
 								},
 								{
 									"functionCall": {
-										"id": "call_9239791051818444592",
+										"id": "call_13004789852880006151",
 										"args": {
 											"city": "Rome"
 										},
@@ -750,7 +671,7 @@
 							"parts": [
 								{
 									"functionResponse": {
-										"id": "call_9239791051818444879",
+										"id": "call_13004789852880005326",
 										"name": "get_weather",
 										"response": {
 											"content": "Sunny, 21 C"
@@ -759,7 +680,7 @@
 								},
 								{
 									"functionResponse": {
-										"id": "call_9239791051818444592",
+										"id": "call_13004789852880006151",
 										"name": "get_weather",
 										"response": {
 											"content": "Rain, 14 C"
@@ -854,7 +775,7 @@
 								"parts": [
 									{
 										"text": "{\"city\": \"Paris\"}",
-										"thoughtSignature": "AY89a19Bp9qTh6JPogsBcw/GkwiCPRK+FJbLA0936ss5GG6uFRsNgD06gLWenT3oVhflkbQONqZV4dufL401ghDvNWqRIA/5hIHsQEeq4meN54ItQbyG4tNwaSwxJlw5671J9ZMf1ggz/TMeyOkrrpDdQ+hP4Js07E8pSiIhpA=="
+										"thoughtSignature": "AY89a18+HIBNlMoyWCi8Xdgl8BQLAZbTXelspIQsUFS55RoNIfkOXAPRhZNSTIlysl/6tHeH4zrv0TcxYJP41cdBzYc9pCQpfsk1CSA+wHbVGbGXjeP5Ey4ruo8iqTgWmSTRnPckY6KayOcvCoQHpdqEMF8paaIFraQfpncRQA=="
 									}
 								]
 							},
@@ -880,8 +801,8 @@
 						]
 					},
 					"modelVersion": "gemini-3.8-flash",
-					"createTime": "2026-11-20T06:14:27.480066Z",
-					"responseId": "Q-X_asKmHb2aotQP6vaniAc"
+					"createTime": "2026-11-20T14:11:17.819288Z",
+					"responseId": "BVUAa9iAMvuoirgPnt_Y2Qc"
 				}
 			}
 		}

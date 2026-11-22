@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	bedrockprovider "github.com/maximhq/bifrost/core/providers/bedrock"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
@@ -132,6 +133,10 @@ type State struct {
 
 	providerAttemptsMu sync.Mutex
 	providerAttempts   []providerAttemptObservation
+
+	// bedrockDSML holds back a stream's text from Bedrock while it can still be the tool call tag
+	// that DeepSeek V3.2 leaves there.
+	bedrockDSML *bedrockprovider.DSMLStreamFilter
 }
 
 // ResponseError preserves an upstream failure when final Stogas processing also

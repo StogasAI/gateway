@@ -1054,6 +1054,13 @@ func validateCompiledDeployment(graph compiledGraph, selectors selectorRegistry,
 		if !uniqueNonEmpty(route.InputModalities) {
 			return fmt.Errorf("%s has invalid modalities", owner)
 		}
+		if err := validateDocumentFormats(route.DocumentFormats); err != nil {
+			return fmt.Errorf("%s: %w", owner, err)
+		}
+		if formats := graph.Routes[routeID].DocumentFormats; !allIn(route.DocumentFormats.MediaTypes, formats.MediaTypes) ||
+			!allIn(route.DocumentFormats.Extensions, formats.Extensions) {
+			return fmt.Errorf("%s reads a document format that its route does not", owner)
+		}
 		if err := validateDeploymentDataHandling(owner, route.DataHandling); err != nil {
 			return err
 		}
@@ -1135,12 +1142,12 @@ func validateDeploymentUpstreamSelector(deploymentID, providerID, company string
 	}
 	switch providerID {
 	case "openai":
-		if selector.ChuteID != "" || selector.GPUCount != nil || selector.InferenceGeo != "" ||
+		if selector.ChuteID != "" || selector.GPUCount != nil || selector.InferenceGeo != "" || selector.Regions != nil ||
 			hosting != company || selector.DeploymentType != "" || selector.ModelFormat != "" || selector.ModelVersion != "" {
 			return fmt.Errorf("deployment %s has an invalid OpenAI upstream selector", deploymentID)
 		}
 	case "anthropic":
-		if selector.ChuteID != "" || selector.GPUCount != nil || selector.ReasoningMode != "" ||
+		if selector.ChuteID != "" || selector.GPUCount != nil || selector.ReasoningMode != "" || selector.Regions != nil ||
 			hosting != company || selector.DeploymentType != "" || selector.ModelFormat != "" || selector.ModelVersion != "" {
 			return fmt.Errorf("deployment %s has an invalid Anthropic upstream selector", deploymentID)
 		}
@@ -1161,7 +1168,7 @@ func validateDeploymentUpstreamSelector(deploymentID, providerID, company string
 // by an operator that Chutes does not name, and has no GPU count.
 func validateChutesUpstreamSelector(deploymentID, company string, deployment *compiledDeployment) error {
 	selector := deployment.Upstream
-	if selector.ChuteID == "" || selector.InferenceGeo != "" || selector.ReasoningMode != "" ||
+	if selector.ChuteID == "" || selector.InferenceGeo != "" || selector.Regions != nil || selector.ReasoningMode != "" ||
 		selector.DeploymentType != "" || selector.ModelFormat != "" || selector.ModelVersion != "" {
 		return fmt.Errorf("deployment %s has an invalid Chutes upstream selector", deploymentID)
 	}
@@ -1184,7 +1191,7 @@ func validateChutesUpstreamSelector(deploymentID, company string, deployment *co
 
 func validateAzureUpstreamSelector(deploymentID string, deployment *compiledDeployment) error {
 	selector := deployment.Upstream
-	if selector.ChuteID != "" || selector.GPUCount != nil || selector.InferenceGeo != "" ||
+	if selector.ChuteID != "" || selector.GPUCount != nil || selector.InferenceGeo != "" || selector.Regions != nil ||
 		selector.ModelFormat == "" || strings.TrimSpace(selector.ModelVersion) == "" ||
 		selector.DeploymentType == "" {
 		return fmt.Errorf("deployment %s has an invalid Azure upstream selector", deploymentID)
@@ -1229,7 +1236,9 @@ var BedrockSourceRegions = map[string]map[string]bool{
 
 // validateCloudSelector checks a deployment on AWS or Google Cloud. inferenceGeo is the geography
 // of Bedrock's inference profile, Google's endpoint location or Anthropic's inference geography,
-// which is global or us, and which Anthropic's models before Claude 4.6 do not take.
+// which is global or us, and which Anthropic's models before Claude 4.6 do not take. A Bedrock
+// model that runs only in the Region of each request names no profile and lists those Regions,
+// each a source Region of its geography.
 func validateCloudSelector(deploymentID, providerID, company string, deployment *compiledDeployment) error {
 	selector, hosting := deployment.Upstream, deployment.Hosting
 	if hosting != company && hosting != CompanyAnthropic {
@@ -1245,13 +1254,23 @@ func validateCloudSelector(deploymentID, providerID, company string, deployment 
 		selector.DeploymentType != "" || selector.ModelFormat != "" || selector.ModelVersion != "" {
 		return fmt.Errorf("deployment %s has an invalid %s upstream selector", deploymentID, providerID)
 	}
-	// Bedrock serves these deployments only through inference profiles, whose IDs name the
-	// geography and then the model, whose own ID starts with anthropic for Claude.
+	// Bedrock serves other deployments through inference profiles, whose IDs name the geography
+	// and then the model, whose own ID starts with anthropic for Claude.
 	profile := selector.InferenceGeo + "."
 	if claude {
 		profile += "anthropic."
 	}
-	if bedrock && !strings.HasPrefix(selector.Model, profile) {
+	switch {
+	case selector.Regions != nil:
+		sources := BedrockSourceRegions[selector.InferenceGeo]
+		valid := bedrock && len(selector.Regions) > 0 && !strings.HasPrefix(selector.Model, selector.InferenceGeo+".")
+		for index, region := range selector.Regions {
+			valid = valid && sources[region] && !slices.Contains(selector.Regions[:index], region)
+		}
+		if !valid {
+			return fmt.Errorf("deployment %s has an invalid list of Bedrock Regions", deploymentID)
+		}
+	case bedrock && !strings.HasPrefix(selector.Model, profile):
 		return fmt.Errorf("deployment %s must name the %s inference profile of its model", deploymentID, selector.InferenceGeo)
 	}
 	for routeID := range deployment.Routes {
@@ -1363,6 +1382,16 @@ func validateDeploymentDataHandling(owner string, handling DataHandling) error {
 		return fmt.Errorf("%s has contradictory zero data retention", owner)
 	}
 	return nil
+}
+
+// allIn reports whether every value is one of allowed.
+func allIn(values, allowed []string) bool {
+	for _, value := range values {
+		if !slices.Contains(allowed, value) {
+			return false
+		}
+	}
+	return true
 }
 
 // uniqueNonEmpty accepts a list with at least one value and no repeats. The policy vocabulary

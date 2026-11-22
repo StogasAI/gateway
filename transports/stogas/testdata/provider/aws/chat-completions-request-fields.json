@@ -1,5 +1,5 @@
 {
-	"shows": "Bedrock's Chat Completions API takes the max_tokens and system messages of Kimi K3 and Kimi K3.1 Pro and applies their temperature and top_k, refuses top_p other than 0.95 and penalties other than 0, and answers seed, logit_bias with a key that names no token, logprobs, web_search_options, repetition_penalty and a field that it does not know without applying them.",
+	"shows": "Bedrock's Chat Completions API takes the max_tokens and system messages of Kimi K3 and Kimi K3.1 Pro and applies their temperature and top_k, refuses top_p other than 0.95 and penalties other than 0, and answers seed, logit_bias, logprobs, web_search_options, repetition_penalty and a field that it does not know without applying them.",
 	"recorded": "2026-11-20",
 	"exchanges": [
 		{
@@ -38,8 +38,8 @@
 							}
 						}
 					],
-					"created": 1795144850,
-					"id": "chatcmpl-k4krj33llv67p2fgmfpvehrlob2kjpmvwqvofbdk4g54ptbd7flq",
+					"created": 1795175700,
+					"id": "chatcmpl-7y7rrhp57oadae636tr62h4dh6x6nrxzo4bejvqwn44bny4kktuq",
 					"model": "global.moonshotai.kimi-k3",
 					"object": "chat.completion",
 					"service_tier": "default",
@@ -90,19 +90,19 @@
 							"index": 0,
 							"message": {
 								"annotations": [],
-								"content": "OK.",
+								"content": "OK",
 								"refusal": null,
 								"role": "assistant"
 							}
 						}
 					],
-					"created": 1795144851,
-					"id": "chatcmpl-t6ywjam7w62svb62iiuhjw3ov6cxlr464nmmhamwezvfsqdbs7wa",
+					"created": 1795175700,
+					"id": "chatcmpl-7nmw77ncjpm4apqq47xj3wehx4oepdezgv6sumtodfs3himfiexq",
 					"model": "global.moonshotai.kimi-k3",
 					"object": "chat.completion",
 					"service_tier": "default",
 					"usage": {
-						"completion_tokens": 11,
+						"completion_tokens": 10,
 						"completion_tokens_details": {
 							"accepted_prediction_tokens": 0,
 							"audio_tokens": 0,
@@ -115,7 +115,7 @@
 							"cache_write_tokens": 0,
 							"cached_tokens": 0
 						},
-						"total_tokens": 32
+						"total_tokens": 31
 					},
 					"system_fingerprint": null
 				}
@@ -154,8 +154,8 @@
 							}
 						}
 					],
-					"created": 1795144851,
-					"id": "chatcmpl-mcls47g5mtc43xduyoflroqrgcpunpezmjtfht7jr3gxf76ogkfq",
+					"created": 1795175701,
+					"id": "chatcmpl-quofszbp5na6losxirp7rixwhs67e76ttovmimdo7ogufbedyeeq",
 					"model": "global.moonshotai.kimi-k3",
 					"object": "chat.completion",
 					"service_tier": "default",
@@ -266,19 +266,19 @@
 							"index": 0,
 							"message": {
 								"annotations": [],
-								"content": "OK.",
+								"content": "OK",
 								"refusal": null,
 								"role": "assistant"
 							}
 						}
 					],
-					"created": 1795144852,
-					"id": "chatcmpl-2od4vwi4tgz7mqf7qlo7mux7inkbpmub66zlicavwio5lyw6b5ya",
+					"created": 1795175702,
+					"id": "chatcmpl-p2w2dnkhakvquvfupuiedjpnyiddm77jzvumwt2uz6fndbsl7u6q",
 					"model": "global.moonshotai.kimi-k3",
 					"object": "chat.completion",
 					"service_tier": "default",
 					"usage": {
-						"completion_tokens": 11,
+						"completion_tokens": 10,
 						"completion_tokens_details": {
 							"accepted_prediction_tokens": 0,
 							"audio_tokens": 0,
@@ -291,7 +291,7 @@
 							"cache_write_tokens": 0,
 							"cached_tokens": 0
 						},
-						"total_tokens": 32
+						"total_tokens": 31
 					},
 					"system_fingerprint": null
 				}
@@ -360,8 +360,8 @@
 							}
 						}
 					],
-					"created": 1795144853,
-					"id": "chatcmpl-ruqfhkwannuaph7rwlnsty4t6migg2e42klida37htjlewnq3liq",
+					"created": 1795175702,
+					"id": "chatcmpl-wau2tk6omeyixgnif5dgsfm7vs6fdy4i36cnalk6z3jidbeb5ejq",
 					"model": "global.moonshotai.kimi-k3",
 					"object": "chat.completion",
 					"service_tier": "default",
@@ -442,19 +442,19 @@
 							"index": 0,
 							"message": {
 								"annotations": [],
-								"content": "OK.",
+								"content": "OK",
 								"refusal": null,
 								"role": "assistant"
 							}
 						}
 					],
-					"created": 1795144854,
-					"id": "chatcmpl-qcofqhal4qec23quwsi7pujpuvpvbn365afduwtavzbrkalmtflq",
+					"created": 1795175703,
+					"id": "chatcmpl-pfppqkdwgvcjr7jv7ekp32mset3n6zaaxma25yrfkwqrmmafpcvq",
 					"model": "global.moonshotai.kimi-k3",
 					"object": "chat.completion",
 					"service_tier": "default",
 					"usage": {
-						"completion_tokens": 11,
+						"completion_tokens": 10,
 						"completion_tokens_details": {
 							"accepted_prediction_tokens": 0,
 							"audio_tokens": 0,
@@ -467,7 +467,7 @@
 							"cache_write_tokens": 0,
 							"cached_tokens": 0
 						},
-						"total_tokens": 32
+						"total_tokens": 31
 					},
 					"system_fingerprint": null
 				}
@@ -501,19 +501,19 @@
 							"index": 0,
 							"message": {
 								"annotations": [],
-								"content": "Here is a sentence of eight random words:\n\nThe fluffy cat danced under the moonlight.",
+								"content": "Please write eight words.",
 								"refusal": null,
 								"role": "assistant"
 							}
 						}
 					],
-					"created": 1795144854,
-					"id": "chatcmpl-pdg4oxyssi5h3gpah6ld4aurcawuusppb66l7b2s5gslbk5tvcxa",
+					"created": 1795175704,
+					"id": "chatcmpl-owffmx3ftlt5zgif56nwfchqwiji5jnp5y3qmqtyj336qdpg2vcq",
 					"model": "global.moonshotai.kimi-k3",
 					"object": "chat.completion",
 					"service_tier": "default",
 					"usage": {
-						"completion_tokens": 27,
+						"completion_tokens": 14,
 						"completion_tokens_details": {
 							"accepted_prediction_tokens": 0,
 							"audio_tokens": 0,
@@ -526,7 +526,7 @@
 							"cache_write_tokens": 0,
 							"cached_tokens": 0
 						},
-						"total_tokens": 53
+						"total_tokens": 40
 					},
 					"system_fingerprint": null
 				}
@@ -560,19 +560,19 @@
 							"index": 0,
 							"message": {
 								"annotations": [],
-								"content": "Neon giraffes whisper quantum recipes through velvet thunderstorms.",
+								"content": "Here is one: **Silent walnuts ponder dancing umbrellas beneath moonlight.**",
 								"refusal": null,
 								"role": "assistant"
 							}
 						}
 					],
-					"created": 1795144854,
-					"id": "chatcmpl-nwxxyxt5kas6sveiflcnoihzgjmilfcarf6wpfbtbkd7kaeo575a",
+					"created": 1795175704,
+					"id": "chatcmpl-q6mljuf2wwhx3zr4tgptphnukopzco3zedqnukmfvnpxlzfsgeea",
 					"model": "global.moonshotai.kimi-k3",
 					"object": "chat.completion",
 					"service_tier": "default",
 					"usage": {
-						"completion_tokens": 21,
+						"completion_tokens": 23,
 						"completion_tokens_details": {
 							"accepted_prediction_tokens": 0,
 							"audio_tokens": 0,
@@ -585,7 +585,7 @@
 							"cache_write_tokens": 0,
 							"cached_tokens": 0
 						},
-						"total_tokens": 47
+						"total_tokens": 49
 					},
 					"system_fingerprint": null
 				}
@@ -619,19 +619,19 @@
 							"index": 0,
 							"message": {
 								"annotations": [],
-								"content": "The fluffy cat danced under the moonlight.",
+								"content": "Jelly whispers backward into Tuesday’s purple paper spoon.",
 								"refusal": null,
 								"role": "assistant"
 							}
 						}
 					],
-					"created": 1795144855,
-					"id": "chatcmpl-owzacnxs7vjad4uwibmfztjddajgu5h4pppdzj72sfskha5g55wq",
+					"created": 1795175705,
+					"id": "chatcmpl-a3sodyeivyiqlwnacudtmk7yixgyk74jdamnhakh73fqvt6ixikq",
 					"model": "global.moonshotai.kimi-k3",
 					"object": "chat.completion",
 					"service_tier": "default",
 					"usage": {
-						"completion_tokens": 18,
+						"completion_tokens": 21,
 						"completion_tokens_details": {
 							"accepted_prediction_tokens": 0,
 							"audio_tokens": 0,
@@ -644,7 +644,7 @@
 							"cache_write_tokens": 0,
 							"cached_tokens": 0
 						},
-						"total_tokens": 44
+						"total_tokens": 47
 					},
 					"system_fingerprint": null
 				}
@@ -683,8 +683,8 @@
 							}
 						}
 					],
-					"created": 1795144855,
-					"id": "chatcmpl-ix3a4etcq6ydpe5fq4ozw2w7fjpoftuqzjh3746xn73fi4bom43a",
+					"created": 1795175705,
+					"id": "chatcmpl-queogvex2mqmyzjshhprouvbcnnql76gsrbugdxsixz7d4ljhwta",
 					"model": "global.moonshotai.kimi-k3",
 					"object": "chat.completion",
 					"service_tier": "default",
@@ -741,8 +741,8 @@
 							}
 						}
 					],
-					"created": 1795144856,
-					"id": "chatcmpl-ldjpgr7mujypalvb3ytozzaewxf33huns7jc4opj5es6o4fxqv7a",
+					"created": 1795175705,
+					"id": "chatcmpl-jyixw7jy3a6myjfnlpbwiibdyxjmtvvrbh4dyzslyodrgph5vtaq",
 					"model": "global.moonshotai.kimi-k3",
 					"object": "chat.completion",
 					"service_tier": "default",
@@ -799,8 +799,8 @@
 							}
 						}
 					],
-					"created": 1795144856,
-					"id": "chatcmpl-bfvxnp5fnbpumnue6oxy3ektcq4svi62busmwpxge5o5ou5v6jtq",
+					"created": 1795175706,
+					"id": "chatcmpl-ijs3r467gqjzvzmepvskw4vdb3xne3m7avdxf4l54gszgycmofqa",
 					"model": "global.moonshotai.kimi-k3",
 					"object": "chat.completion",
 					"service_tier": "default",
@@ -857,8 +857,8 @@
 							}
 						}
 					],
-					"created": 1795144857,
-					"id": "chatcmpl-cqa67qdtnpbssiqifea6dnsgzyokbwlt5mwct6f6mwm4qpowi62a",
+					"created": 1795175706,
+					"id": "chatcmpl-qi53d4sqzswy7krp2najniehhf5ajwpt5drnwqphhzgqij7c3pka",
 					"model": "global.moonshotai.kimi-k3",
 					"object": "chat.completion",
 					"service_tier": "default",
@@ -915,8 +915,8 @@
 							}
 						}
 					],
-					"created": 1795144857,
-					"id": "chatcmpl-ft3uttas3hhk3kegshrbxlhtysjgg23wrzxefzl57h3qgx4s2wkq",
+					"created": 1795175707,
+					"id": "chatcmpl-gj7xleuu5xephz3rpp3puj4mgxxotomibrhdgosiqhyudbhip5fq",
 					"model": "global.moonshotai.kimi-k3",
 					"object": "chat.completion",
 					"service_tier": "default",
@@ -973,8 +973,8 @@
 							}
 						}
 					],
-					"created": 1795144858,
-					"id": "chatcmpl-o4ueyxnbuwxrpnbqw57tlsb4in3hgdh6waaunencbe7vqfbjrqha",
+					"created": 1795175707,
+					"id": "chatcmpl-xaadmw5zyazc4hbliqcursk3qie7mnvez6sc2xqozon6gd7a2lgq",
 					"model": "global.moonshotai.kimi-k3",
 					"object": "chat.completion",
 					"service_tier": "default",
@@ -1034,8 +1034,8 @@
 							}
 						}
 					],
-					"created": 1795144859,
-					"id": "chatcmpl-onat22leenbdiyldiitzi4tb3t46vhavmnfepl7bwmcqpu26gmxa",
+					"created": 1795175708,
+					"id": "chatcmpl-aae55xpcsp47zviitfpq4lyafm7emhe3zm4bdcas5qz44lb3jwwq",
 					"model": "global.moonshotai.kimi-k3.1",
 					"object": "chat.completion",
 					"service_tier": "default",
@@ -1092,8 +1092,8 @@
 							}
 						}
 					],
-					"created": 1795144860,
-					"id": "chatcmpl-o2326eegjfulnq6hrr332hzfte34rkh3gjfieukcvsfamefgidka",
+					"created": 1795175710,
+					"id": "chatcmpl-ysglck5pqtqxu5xoyyymbahverotp42e3yhvk3dwoimepmamu44q",
 					"model": "global.moonshotai.kimi-k3.1",
 					"object": "chat.completion",
 					"service_tier": "default",
@@ -1150,8 +1150,8 @@
 							}
 						}
 					],
-					"created": 1795144862,
-					"id": "chatcmpl-vm75fpheexdqt6v7p7zmrjuirhyseqdv3vnsungogqaljycbuvaq",
+					"created": 1795175711,
+					"id": "chatcmpl-wagysig3r7yw4rwexbkjy5xbnjubw4txycgocigbgcnzzx5lglza",
 					"model": "global.moonshotai.kimi-k3.1",
 					"object": "chat.completion",
 					"service_tier": "default",
@@ -1268,8 +1268,8 @@
 							}
 						}
 					],
-					"created": 1795144864,
-					"id": "chatcmpl-gxr4qkqqpreutyyam7ejppbi6qxgmrz2edyagillofrg2ah27r3a",
+					"created": 1795175714,
+					"id": "chatcmpl-u3b2qtjwjmx6fb5bxqr5x6l3xg45iyu5crh3zwwmzcf7kmumymdq",
 					"model": "global.moonshotai.kimi-k3.1",
 					"object": "chat.completion",
 					"service_tier": "default",
@@ -1356,8 +1356,8 @@
 							}
 						}
 					],
-					"created": 1795144867,
-					"id": "chatcmpl-y2gmbx2hpyk4wqm776mbmelen2tp6xwqzk2kgmcce77jirkcpngq",
+					"created": 1795175716,
+					"id": "chatcmpl-y5ufxsurjwpr6hjuk57wde5rtxlotem6qaski56ecvhwwk5uw4ia",
 					"model": "global.moonshotai.kimi-k3.1",
 					"object": "chat.completion",
 					"service_tier": "default",
@@ -1444,8 +1444,8 @@
 							}
 						}
 					],
-					"created": 1795144869,
-					"id": "chatcmpl-rd6zbcxphmxqggsux3ie7us5tpkdx3yzrkdfab2sqoxw4aj5jx3q",
+					"created": 1795175719,
+					"id": "chatcmpl-ahdwhatzxyx6t3wffbswk4juk6ksa23acxcagsnvmy4wfhthzwva",
 					"model": "global.moonshotai.kimi-k3.1",
 					"object": "chat.completion",
 					"service_tier": "default",
@@ -1497,19 +1497,19 @@
 							"index": 0,
 							"message": {
 								"annotations": [],
-								"content": "\"The colorful parrot whispered secrets to the moon.\"",
+								"content": "Cats often run while dogs sometimes watch silently.",
 								"refusal": null,
 								"role": "assistant"
 							}
 						}
 					],
-					"created": 1795144870,
-					"id": "chatcmpl-mwfkflzfabhrzp7lxpklqk7uyxxl6fyxrzdzter44bpcjw6lepua",
+					"created": 1795175720,
+					"id": "chatcmpl-o342hv4omn3dssr2iy43pvz37jgklfysm64nqvpe3zdqtzvi4iwa",
 					"model": "global.moonshotai.kimi-k3.1",
 					"object": "chat.completion",
 					"service_tier": "default",
 					"usage": {
-						"completion_tokens": 20,
+						"completion_tokens": 18,
 						"completion_tokens_details": {
 							"accepted_prediction_tokens": 0,
 							"audio_tokens": 0,
@@ -1522,7 +1522,7 @@
 							"cache_write_tokens": 0,
 							"cached_tokens": 0
 						},
-						"total_tokens": 46
+						"total_tokens": 44
 					},
 					"system_fingerprint": null
 				}
@@ -1556,14 +1556,14 @@
 							"index": 0,
 							"message": {
 								"annotations": [],
-								"content": "Silver clouds gather silently over ancient wooden bridges.",
+								"content": "Purple elephants dance quietly under silver moons.",
 								"refusal": null,
 								"role": "assistant"
 							}
 						}
 					],
-					"created": 1795144872,
-					"id": "chatcmpl-dypaeh3d7rt6yxi4irwngn7wwsd5ykdohw2pwp7gv6nyftxlumwq",
+					"created": 1795175722,
+					"id": "chatcmpl-7wmikgkfw4odjuwo6q7apuy7xcj5s3v74rwvz3wxhzmcsenhdvwq",
 					"model": "global.moonshotai.kimi-k3.1",
 					"object": "chat.completion",
 					"service_tier": "default",
@@ -1615,19 +1615,19 @@
 							"index": 0,
 							"message": {
 								"annotations": [],
-								"content": "Here is a sentence composed of eight random words:\n\n\"The purple elephant danced quietly under moonlight yesterday.\"\n\nThis sentence has eight words: The (1) purple (2) elephant (3) danced (4) quietly (5) under (6) moonlight (7) yesterday (8).The sentence is:\n\n**\"The purple elephant danced quietly under moonlight yesterday.\"**\n\nBreaking it down, here are the eight words:\n1. The\n2. purple\n3. elephant\n4. danced\n5. quietly\n6. under\n7. moonlight\n8. yesterday",
+								"content": "Purple bananas whispered secrets to the dancing moon.",
 								"refusal": null,
 								"role": "assistant"
 							}
 						}
 					],
-					"created": 1795144872,
-					"id": "chatcmpl-lxr3quiw5asvh4cduu65crbyed72pztko5p3vzqwwxv3wottlnyq",
+					"created": 1795175723,
+					"id": "chatcmpl-3e6dt3s756lo3yeu3nlahztcuozihcoy5ouzok7nlu7o4ir22r2a",
 					"model": "global.moonshotai.kimi-k3.1",
 					"object": "chat.completion",
 					"service_tier": "default",
 					"usage": {
-						"completion_tokens": 133,
+						"completion_tokens": 19,
 						"completion_tokens_details": {
 							"accepted_prediction_tokens": 0,
 							"audio_tokens": 0,
@@ -1640,7 +1640,7 @@
 							"cache_write_tokens": 0,
 							"cached_tokens": 0
 						},
-						"total_tokens": 159
+						"total_tokens": 45
 					},
 					"system_fingerprint": null
 				}
@@ -1679,8 +1679,8 @@
 							}
 						}
 					],
-					"created": 1795144874,
-					"id": "chatcmpl-xlhok36u3skwuvd7e3sl37egl3yn3tuqlr6eaow26qx7ergth6ba",
+					"created": 1795175725,
+					"id": "chatcmpl-cizgm5ccnrrli3jcyqfgye7nsrs2tr7lj6uiycxqnbv6uhnh4kwa",
 					"model": "global.moonshotai.kimi-k3.1",
 					"object": "chat.completion",
 					"service_tier": "default",
@@ -1737,8 +1737,8 @@
 							}
 						}
 					],
-					"created": 1795144876,
-					"id": "chatcmpl-gxz6ngqmrivqbueo4ocyht4hboqyt4xuk24hvtvfdgu7iy5n5tvq",
+					"created": 1795175726,
+					"id": "chatcmpl-xqvfih37fzc2c3a2yypuzrmswlohbhsb2seykjja246lzm4d5tyq",
 					"model": "global.moonshotai.kimi-k3.1",
 					"object": "chat.completion",
 					"service_tier": "default",
@@ -1795,8 +1795,8 @@
 							}
 						}
 					],
-					"created": 1795144876,
-					"id": "chatcmpl-ptsilmkzej7v65kxmvx37yn2bvcohbkgcbyotnom7eueddfp2aua",
+					"created": 1795175727,
+					"id": "chatcmpl-5zvbaahy7bwzwfhfg4e5pp4yq42t4s6zdd3ai735fuktl63mduwq",
 					"model": "global.moonshotai.kimi-k3.1",
 					"object": "chat.completion",
 					"service_tier": "default",
@@ -1853,8 +1853,8 @@
 							}
 						}
 					],
-					"created": 1795144877,
-					"id": "chatcmpl-3qbvq2htvrlgqo4ob7wqbthcgkh2fq5aqjjl6b3qaglm6cxehfsq",
+					"created": 1795175728,
+					"id": "chatcmpl-iuk5icb7o42ex7rmdjhkjdvlwinfbghbmwdcg77yohmzefotweiq",
 					"model": "global.moonshotai.kimi-k3.1",
 					"object": "chat.completion",
 					"service_tier": "default",
@@ -1911,8 +1911,8 @@
 							}
 						}
 					],
-					"created": 1795144879,
-					"id": "chatcmpl-jaevm2l3r6g7f35o65ljsnhhlgclovin7c564lmdeqau26olvrva",
+					"created": 1795175730,
+					"id": "chatcmpl-sc7aczi3tetvuc2b745za2tyqqrhruiesmv23xpdjxh5ohrbizlq",
 					"model": "global.moonshotai.kimi-k3.1",
 					"object": "chat.completion",
 					"service_tier": "default",
@@ -1969,8 +1969,8 @@
 							}
 						}
 					],
-					"created": 1795144880,
-					"id": "chatcmpl-wvdz3gw6xxs7ld244vr4qcpegqfflzuokgym7t5546olyur3te3a",
+					"created": 1795175731,
+					"id": "chatcmpl-4jszbm4bgoftbkjdv5snw3gzdldfpnj5etdtxty3nuyjnfkyrfjq",
 					"model": "global.moonshotai.kimi-k3.1",
 					"object": "chat.completion",
 					"service_tier": "default",
@@ -2029,8 +2029,8 @@
 							}
 						}
 					],
-					"created": 1795144881,
-					"id": "chatcmpl-za4g5ehy5fuvl2ozj7aky7a7m6lcy5ctibuhmcw3drndgbxl7lbq",
+					"created": 1795175732,
+					"id": "chatcmpl-yvofbvvu2zk5bati4nilbo2aduqneqzldjt453uwwi6lqepnscvq",
 					"model": "global.moonshotai.kimi-k3",
 					"object": "chat.completion",
 					"service_tier": "default",
@@ -2083,19 +2083,19 @@
 							"logprobs": null,
 							"message": {
 								"annotations": [],
-								"content": "OK",
+								"content": "OK.",
 								"refusal": null,
 								"role": "assistant"
 							}
 						}
 					],
-					"created": 1795144882,
-					"id": "chatcmpl-6z6sg7pd4n2bgcoffjj3nv7liy55xrpps4ooyldqoiwrn5mvcbwq",
+					"created": 1795175732,
+					"id": "chatcmpl-hug2dantlms4bpjjgcjdy3a5mvdt2xx3rxe46gj7jgmf3cpb6dea",
 					"model": "global.moonshotai.kimi-k3",
 					"object": "chat.completion",
 					"service_tier": "default",
 					"usage": {
-						"completion_tokens": 10,
+						"completion_tokens": 11,
 						"completion_tokens_details": {
 							"accepted_prediction_tokens": 0,
 							"audio_tokens": 0,
@@ -2108,7 +2108,7 @@
 							"cache_write_tokens": 0,
 							"cached_tokens": 0
 						},
-						"total_tokens": 31
+						"total_tokens": 32
 					},
 					"system_fingerprint": null
 				}
@@ -2149,8 +2149,8 @@
 							}
 						}
 					],
-					"created": 1795144882,
-					"id": "chatcmpl-avphumz6xujzuoisn2eap7gjnnqjspkanziip6lqt6wocucozmxq",
+					"created": 1795175733,
+					"id": "chatcmpl-ttytuczxe5wagrhl6la3vk7xlzzlubyssraqpbgmwk3x5odupk6q",
 					"model": "global.moonshotai.kimi-k3",
 					"object": "chat.completion",
 					"service_tier": "default",
@@ -2207,8 +2207,8 @@
 							}
 						}
 					],
-					"created": 1795144882,
-					"id": "chatcmpl-2qy6erbk3o7ofymttwpl3jo2l2s6kur3d3ppn7ogm7zcljwvr5yq",
+					"created": 1795175733,
+					"id": "chatcmpl-rrqgspseqvhhf6jacliydnvl6qluxtocncxq2nnbuxw5hwyjhapq",
 					"model": "global.moonshotai.kimi-k3",
 					"object": "chat.completion",
 					"service_tier": "default",
@@ -2265,8 +2265,68 @@
 							}
 						}
 					],
-					"created": 1795144883,
-					"id": "chatcmpl-5ynfclkwoe5bqvemgvduvfrruftp24bnkln2gsx4j7kk2vdpyitq",
+					"created": 1795175734,
+					"id": "chatcmpl-eqxda4yl7fplp2dumm2heqoqzocksrqc2jntdgty25vg4zi7xr6q",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 10,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 0,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 21,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 31
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "logit_bias of 100 for one token",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Say OK."
+						}
+					],
+					"max_tokens": 400,
+					"reasoning_effort": "none",
+					"logit_bias": {
+						"100": 100
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "OK",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795175734,
+					"id": "chatcmpl-7is6l346wvtl3d7k4kvk2i2w6fefa6fgiu63hgxfu4st25525qkq",
 					"model": "global.moonshotai.kimi-k3",
 					"object": "chat.completion",
 					"service_tier": "default",

@@ -1,0 +1,4533 @@
+{
+	"shows": "On Bedrock's Chat Completions API, gpt-oss-120b reasons without an effort and at low, medium and high, DeepSeek V3.2, Qwen3 32B and Nemotron 3 Super reason only at high, and Mistral Large 3 never reasons. Bedrock refuses minimal, xhigh and max for each, and none for gpt-oss-120b. The reasoning comes in the text, in reasoning tags before the answer, around all of it in a reply and around each piece in a stream, usage counts no reasoning tokens apart, and Bedrock takes reasoning_content back in later turns.",
+	"recorded": "2026-11-20",
+	"exchanges": [
+		{
+			"name": "openai.gpt-oss-120b-1:0 reasoning_effort unset",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "openai.gpt-oss-120b-1:0",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "<reasoning>The question: \"Is 391 a prime number? Answer yes or no.\" So just answer yes or no. 391 = 17*23? Actually 17*23 = 391. So it's not prime. Answer \"no\".</reasoning>No.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795175953,
+					"id": "chatcmpl-15efae9e-f66f-4247-9f4f-8740a78b3d6f",
+					"model": "openai.gpt-oss-120b-1:0",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 61,
+						"prompt_tokens": 79,
+						"total_tokens": 140
+					}
+				}
+			}
+		},
+		{
+			"name": "openai.gpt-oss-120b-1:0 reasoning_effort none",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "openai.gpt-oss-120b-1:0",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "none"
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "ErrorEvent { error: APIError { type: \"BadRequestError\", code: Some(400), message: \"Harmony does not support reasoning_effort='none'\", param: None } }",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "openai.gpt-oss-120b-1:0 reasoning_effort minimal",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "openai.gpt-oss-120b-1:0",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "minimal"
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "SubmitRequestFailure: SubmitRequestFailure: code=-32602, msg=1 validation error for ChatCompletionRequest\nreasoning_effort\n  Input should be 'none', 'low', 'medium' or 'high' [type=literal_error, input_value='minimal', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/literal_error",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "openai.gpt-oss-120b-1:0 reasoning_effort low",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "openai.gpt-oss-120b-1:0",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "low"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "<reasoning>Need answer yes or no. 391 = 17*23? 17*23=391 yes. So not prime. Answer no.</reasoning>No.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795175953,
+					"id": "chatcmpl-9c2a0d5c-01a2-4438-a816-e80089ea08a7",
+					"model": "openai.gpt-oss-120b-1:0",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 41,
+						"prompt_tokens": 79,
+						"total_tokens": 120
+					}
+				}
+			}
+		},
+		{
+			"name": "openai.gpt-oss-120b-1:0 reasoning_effort medium",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "openai.gpt-oss-120b-1:0",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "medium"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "<reasoning>User asks: \"Is 391 a prime number? Answer yes or no.\" So answer simply \"No\" or \"Yes\". Let's verify: 391 = 17*23? 17*23 = 391 indeed. So not prime. So answer \"No\".</reasoning>No.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795175954,
+					"id": "chatcmpl-427a526c-45f1-4b91-8bf7-a4fc99d42abf",
+					"model": "openai.gpt-oss-120b-1:0",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 67,
+						"prompt_tokens": 79,
+						"total_tokens": 146
+					}
+				}
+			}
+		},
+		{
+			"name": "openai.gpt-oss-120b-1:0 reasoning_effort high",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "openai.gpt-oss-120b-1:0",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "high"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "<reasoning>We need to answer \"Is 391 a prime number? Answer yes or no.\"\n\nThe question: \"Is 391 a prime number? Answer yes or no.\"\n\nWe evaluate: 391 = 17 * 23? Let's see: 17*23 = 391 indeed (since 17*20=340, plus 17*3=51, total 391). So it's composite. The answer is no.\n\nThus respond with \"no\". The instruction: \"Answer yes or no.\" So answer just \"no\". Probably lower case, just \"no\". Return just that.\n\nThus final output: no.</reasoning>no",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795175955,
+					"id": "chatcmpl-e736e70c-88eb-4097-ac2f-8d9100800513",
+					"model": "openai.gpt-oss-120b-1:0",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 136,
+						"prompt_tokens": 79,
+						"total_tokens": 215
+					}
+				}
+			}
+		},
+		{
+			"name": "openai.gpt-oss-120b-1:0 reasoning_effort xhigh",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "openai.gpt-oss-120b-1:0",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "xhigh"
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "SubmitRequestFailure: SubmitRequestFailure: code=-32602, msg=1 validation error for ChatCompletionRequest\nreasoning_effort\n  Input should be 'none', 'low', 'medium' or 'high' [type=literal_error, input_value='xhigh', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/literal_error",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "openai.gpt-oss-120b-1:0 reasoning_effort max",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "openai.gpt-oss-120b-1:0",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "max"
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "'reasoning_effort' value 'max' is not supported by this model",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "openai.gpt-oss-120b-1:0 stream at high",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "openai.gpt-oss-120b-1:0",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "high",
+					"stream": true,
+					"stream_options": {
+						"include_usage": true
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"events": [
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "",
+									"role": "assistant"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "ctdSjSTdzSb5IbOi6Za5QgdcALUATf5FGehUFV2sFSMkCb2GCAV9w6VvEzkcsRk1SwQTUfpiz7RfYq8aaZpDQwqcvdiaGI1xlS8mZlLvXPD"
+							}
+						],
+						"created": 1795175956,
+						"id": "chatcmpl-6517738d-18c2-4bcd-a110-8302323c9961",
+						"model": "openai.gpt-oss-120b-1:0",
+						"obfuscation": "Qqa2dTshyaTo5k0E1Im4sSBUUS2uxDCg2xSDgyfqTF9MxOe32EBaPqBoE0b5l1y3xraF9l0llEXKkm2DEOJBF9y4T4ufMr",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "MeagGedbLHOkPzqJyACLtNNAvhEetNaIVLRO6JRCn9Sn3JM43DX9s0vI0WM8uQ3psWSzka0cAvE6468UaqMCn3A86RdhhCsnRWtMsf"
+							}
+						],
+						"created": 1795175956,
+						"id": "chatcmpl-6517738d-18c2-4bcd-a110-8302323c9961",
+						"model": "openai.gpt-oss-120b-1:0",
+						"obfuscation": "TiKL29xOyutlOVGQHWeFsaljs2S5tK1HPUzO6Ebu0CMG4QE6UBZA0rjotAtpqWkuxNTtn6be3Gfa",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "RPefU2pfN75O1ci1GrDLKKLHrPmzkPqayYnYw36Gt2pQpDbrNi118g"
+							}
+						],
+						"created": 1795175956,
+						"id": "chatcmpl-6517738d-18c2-4bcd-a110-8302323c9961",
+						"model": "openai.gpt-oss-120b-1:0",
+						"obfuscation": "qSHmPnNRyeX4tlP4GxxLoIl7T2XaEcuAlfYEEKd6d",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "pn3TNUPQFw5gmf0ag5RdO7j6V0V306IlZudTkuM1RN1Gkae9ErYHZaepl4ONBEoKCwq1OqDYWKwDZPC4pT4IpYScsgUAKRNKDlD22wL7w"
+							}
+						],
+						"created": 1795175956,
+						"id": "chatcmpl-6517738d-18c2-4bcd-a110-8302323c9961",
+						"model": "openai.gpt-oss-120b-1:0",
+						"obfuscation": "WGaGscc1sHKGZgt9Lxk2kQL8nPze6kMZe2lRrAvEEIg3ngt16cDRH66Q55gjwxlL0mxHUNcWzX5kJb4eazQWFrXmlmup6tqVyOljZSglLnBIdsS3oEhBLsRg8Ybn",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning>We need to answer yes or no. Question: Is 391 a prime number? Determine if 391 is prime. 391 = 17*23</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "TMsBmbZWQ9LRzs4b85VMQI2tiIKr1fkndFZ7Xq9dlTcfZiBzMdwbsWNicYO1H"
+							}
+						],
+						"created": 1795175956,
+						"id": "chatcmpl-6517738d-18c2-4bcd-a110-8302323c9961",
+						"model": "openai.gpt-oss-120b-1:0",
+						"obfuscation": "kTgEOY3E2pMLYVg6ueahVoaAUy9PAJOGQri7WuzpxHt1Fp6m7eFhvVIAaUz8Wj56X1XIGIFzv5gZRYirBlUaDBQdb",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning>? Let's compute: 17*23 = 391 indeed: 17*20=340, +17*3=51 => 391. So it's composite.</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "KCkT5nAzhn9rMIKHk1UdE78Pnvwm3gR32dOeH06i"
+							}
+						],
+						"created": 1795175956,
+						"id": "chatcmpl-6517738d-18c2-4bcd-a110-8302323c9961",
+						"model": "openai.gpt-oss-120b-1:0",
+						"obfuscation": "BeyRdiropJQBDpnRCOnovr7HLBttDaNgKdWGA7u9RDZtJKQLnZwgVaAI43DUc2wny951Dn65lVMcTdhApdRJVwDEEEkcpOW2V",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> So answer: No. Should answer \"no\". Probably they want \"yes\" or \"no\". So answer no. Possibly they want just \"no\". Use lowercase</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "MHjxuGF8DafC3373roEoQkMgZerJhOGcIuBfRz8LSAk6EssVyNOsAGJGdCm4AlVoAnGrUiwnm4M3dTd8y3kYyhutMIwUR5uIj4QGJaG"
+							}
+						],
+						"created": 1795175956,
+						"id": "chatcmpl-6517738d-18c2-4bcd-a110-8302323c9961",
+						"model": "openai.gpt-oss-120b-1:0",
+						"obfuscation": "zp6aUY9WNGow0Jy2dWnIlptXKguWG0HQ1nUZRpOrmLK3Mne8UqUmZJG",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning>. We'll answer: no.</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "ZALLZsahNSSCrujyHrrbP3IR28dKTvXQg4cL4hE3IC6wwakf2Acvd2gv1ApAXESGq30sPzs3Sb3c9qWfzeps4"
+							}
+						],
+						"created": 1795175956,
+						"id": "chatcmpl-6517738d-18c2-4bcd-a110-8302323c9961",
+						"model": "openai.gpt-oss-120b-1:0",
+						"obfuscation": "gUt6BT5VCVB6c7YiBVn4EO081tbhA8GRZMx77JidzblQB0vF3HU1MbiOol1LwjQ6ohyziYcR8z2pVZdtCE5gw34xpta4OIDScAm8kHu",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "JElIjOJW75ykUfLVbM1D4AOQrObO3qzJRUa4R0h2tTl2J4t1Mm1B2WQB7FUvpudVyY6n0MqH7aJCVsdUILb"
+							}
+						],
+						"created": 1795175956,
+						"id": "chatcmpl-6517738d-18c2-4bcd-a110-8302323c9961",
+						"model": "openai.gpt-oss-120b-1:0",
+						"obfuscation": "2VAXA3f4FSVTfykc3teQbT7bTsUMtUTXkEUntIxNDQqIUGkhivD1iFkNb1DwkjJk",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "LWMm0MWNOtUeOvhYdwtIXs7TSHgsBR8uxKIkz2jCkEaWV1amlF3LUDKv"
+							}
+						],
+						"created": 1795175956,
+						"id": "chatcmpl-6517738d-18c2-4bcd-a110-8302323c9961",
+						"model": "openai.gpt-oss-120b-1:0",
+						"obfuscation": "1rVNa3j1UJBLvbAZq8OWhfykT29hx4uNGRv2KBj",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "k08JYSnYobOb4l85fMQDGqUeZGNTpKbeScDuKpu35kUUm5HOr9sZfCTunrAGzQfJWnZVyesbnJB4yZ1Kt6rtXVcW9Xat"
+							}
+						],
+						"created": 1795175956,
+						"id": "chatcmpl-6517738d-18c2-4bcd-a110-8302323c9961",
+						"model": "openai.gpt-oss-120b-1:0",
+						"obfuscation": "BwNjPNQcb8jc2aLtLwif9hD0zwlJCEjBgfnpFIFCK0WNDscZRDrksi1QixYP7td2eanrhOZ9ayWMytJEKlhft",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "rzJdBLMsgI22DPGYeH8QV55jIh35ReiZ01gF6WPVo95YOZ91K14iWRMWZWmPWX080D6"
+							}
+						],
+						"created": 1795175956,
+						"id": "chatcmpl-6517738d-18c2-4bcd-a110-8302323c9961",
+						"model": "openai.gpt-oss-120b-1:0",
+						"obfuscation": "Hlgy5hvP16JLhbRerPhNbYl3pXTAAkTSbfsfCuO0Crhe0fT7LvlOhrFNMPD2vm602BgNeG1wLnz5NwjiZjEixVELpJLn81iodSatTdbKuWREymqWfW5Y",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "bBOWvFFaNRUEzBd5h8hdfc11I99bBxDg4WwlQwCRnEfaIfHqUWm2pjJdljQ790NoC55BwrldDM2nVx97H0TjBkIZ1mnML010f"
+							}
+						],
+						"created": 1795175956,
+						"id": "chatcmpl-6517738d-18c2-4bcd-a110-8302323c9961",
+						"model": "openai.gpt-oss-120b-1:0",
+						"obfuscation": "7ISjHd0qzzSR0QqRIgZAwTqTLKiaT5N1Aw2E7B",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "No."
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "1tKBYcSnz5z2dBLuWdwx2hzhO6ZrEmALmFBd5FrgnnHrLj79b2xIf7MwUGxgDNWsW5Ve1PuO57Kz6BPC5xIg9QCyqjeQeiKlKF4olcO"
+							}
+						],
+						"created": 1795175956,
+						"id": "chatcmpl-6517738d-18c2-4bcd-a110-8302323c9961",
+						"model": "openai.gpt-oss-120b-1:0",
+						"obfuscation": "qopuaTN9uSw3lDADilXexTKNDIPwzAvcnTz68lwHhMc0YF",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {},
+								"finish_reason": "stop",
+								"index": 0,
+								"obfuscation": "ll21xy5qNP38nSnUhPaQRd5Ul8xg9Zlpnp1u"
+							}
+						],
+						"created": 1795175956,
+						"id": "chatcmpl-6517738d-18c2-4bcd-a110-8302323c9961",
+						"model": "openai.gpt-oss-120b-1:0",
+						"obfuscation": "eeF3EyHZKKMCKqCVEtsvlgsXfJfOkRfSg1opnnmYMlV4PyxLMUDWzfIAPFd4VYarxGC7gUCRfGBVTd4j6XxcyfCh0ak2klw",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [],
+						"created": 1795175956,
+						"id": "chatcmpl-6517738d-18c2-4bcd-a110-8302323c9961",
+						"model": "openai.gpt-oss-120b-1:0",
+						"obfuscation": "8iGEczCsuGsA3g2iknpxLVH8Jfp7ltQ68SUb4J3uS6XG4go0ce4Hh40ONjmHKHbgxVJjzUye9ipRBXvLjczwM8cBAw",
+						"object": "chat.completion.chunk",
+						"service_tier": "default",
+						"usage": {
+							"completion_tokens": 116,
+							"prompt_tokens": 79,
+							"total_tokens": 195
+						}
+					}
+				]
+			}
+		},
+		{
+			"name": "openai.gpt-oss-120b-1:0 answer",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "openai.gpt-oss-120b-1:0",
+					"reasoning_effort": "low",
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "<reasoning>Calculate 37*43 = 1591.</reasoning>1591",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795175957,
+					"id": "chatcmpl-0b708ac0-4ac0-4ec7-afef-3f575f26bdea",
+					"model": "openai.gpt-oss-120b-1:0",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 22,
+						"prompt_tokens": 128,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cached_tokens": 16
+						},
+						"total_tokens": 150
+					}
+				}
+			}
+		},
+		{
+			"name": "openai.gpt-oss-120b-1:0 tool call after an answer sent back with its reasoning",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "openai.gpt-oss-120b-1:0",
+					"reasoning_effort": "low",
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						},
+						{
+							"role": "assistant",
+							"content": "1591",
+							"reasoning_content": "Calculate 37*43 = 1591."
+						},
+						{
+							"role": "user",
+							"content": "Call get_secret_number, then tell me the secret number plus that product."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "tool_calls",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "<reasoning>We need to call function.</reasoning>",
+								"refusal": null,
+								"role": "assistant",
+								"tool_calls": [
+									{
+										"function": {
+											"arguments": "{}",
+											"name": "get_secret_number"
+										},
+										"id": "chatcmpl-tool-a092360567437533",
+										"type": "function"
+									}
+								]
+							}
+						}
+					],
+					"created": 1795175957,
+					"id": "chatcmpl-68b7fa19-bfaa-4086-941b-276de672ffa2",
+					"model": "openai.gpt-oss-120b-1:0",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 27,
+						"prompt_tokens": 155,
+						"total_tokens": 182
+					}
+				}
+			}
+		},
+		{
+			"name": "openai.gpt-oss-120b-1:0 answer after both turns sent back with their reasoning",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "openai.gpt-oss-120b-1:0",
+					"reasoning_effort": "low",
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						},
+						{
+							"role": "assistant",
+							"content": "1591",
+							"reasoning_content": "Calculate 37*43 = 1591."
+						},
+						{
+							"role": "user",
+							"content": "Call get_secret_number, then tell me the secret number plus that product."
+						},
+						{
+							"role": "assistant",
+							"content": null,
+							"reasoning_content": "We need to call function.",
+							"tool_calls": [
+								{
+									"function": {
+										"arguments": "{}",
+										"name": "get_secret_number"
+									},
+									"id": "chatcmpl-tool-a092360567437533",
+									"type": "function"
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "chatcmpl-tool-a092360567437533",
+							"content": "41"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "<reasoning>We need sum: secret 41 + product 1591 = 1632.</reasoning>1632",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795175958,
+					"id": "chatcmpl-83264916-58a6-4866-97ef-f69d4bdb3785",
+					"model": "openai.gpt-oss-120b-1:0",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 29,
+						"prompt_tokens": 184,
+						"total_tokens": 213
+					}
+				}
+			}
+		},
+		{
+			"name": "deepseek.v3.2 reasoning_effort unset",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "deepseek.v3.2",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "Let's check if **391** is prime.  \n\nA prime number has exactly two distinct divisors: 1 and itself.  \n\nFirst, try small primes to see if they divide 391.  \n\n- Not divisible by 2 (last digit 1 is odd)  \n- Not divisible by 3 (sum of digits = 3 + 9 + 1 = 13, not divisible by 3)  \n- Not divisible by 5 (last digit not 0 or 5)  \n- Check 7: \\( 7 \\times 55 = 385\\), remainder 6, so no.  \n\nNext, check 13: \\( 13 \\times 30 = 390\\), remainder 1, so no.  \n\nCheck 17: \\( 17 \\times 23 = 391\\). Yes — 391 ÷ 17 = 23 exactly.  \n\nSo 391 has divisors 1, 17, 23, and 391 — more than two distinct positive divisors.  \n\n**No, 391 is not prime.**",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795175958,
+					"id": "chatcmpl-a6974ef1-c338-4e39-b6d9-ff9e35962560",
+					"model": "deepseek.v3.2",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 215,
+						"prompt_tokens": 16,
+						"total_tokens": 231
+					}
+				}
+			}
+		},
+		{
+			"name": "deepseek.v3.2 reasoning_effort none",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "deepseek.v3.2",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "none"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "Let's check whether 391 is prime.\n\n**Step 1: Check small possible divisors.**  \nA number is composite if it has a divisor other than 1 and itself.  \nTest divisibility by small primes:\n\n- Divisible by 2? No — it’s odd.  \n- Divisible by 3? Sum of digits = 3 + 9 + 1 = 13, not divisible by 3.  \n- Divisible by 5? Doesn’t end in 0 or 5.  \n- Divisible by 7? \\( 391 \\div 7 = 55.857...\\), not integer.  \n- Divisible by 11? Difference of alternate digits \\( (3+1) - 9 = -5 \\), not 0 or divisible by 11.  \n- Divisible by 13? \\( 13 \\times 30 = 390\\), remainder 1 → no.  \n- Divisible by 17? \\( 17 \\times 23 = 391\\), yes! So \\( 391 = 17 \\times 23 \\).\n\n**Step 2: Conclusion**  \nSince 391 is divisible by 17, it is composite.\n\n\\[\n\\boxed{no}\n\\]",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795175961,
+					"id": "chatcmpl-d10d3c84-f763-4881-83ee-984913a051a3",
+					"model": "deepseek.v3.2",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 257,
+						"prompt_tokens": 16,
+						"total_tokens": 273
+					}
+				}
+			}
+		},
+		{
+			"name": "deepseek.v3.2 reasoning_effort minimal",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "deepseek.v3.2",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "minimal"
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "SubmitRequestFailure: SubmitRequestFailure: code=-32602, msg=1 validation error for ChatCompletionRequest\nreasoning_effort\n  Input should be 'none', 'low', 'medium' or 'high' [type=literal_error, input_value='minimal', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/literal_error",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "deepseek.v3.2 reasoning_effort low",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "deepseek.v3.2",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "low"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "Let's check if 391 is a prime number.  \n\nA prime number is defined as a natural number greater than 1 that has no positive divisors other than 1 and itself.  \n\n- First, note that \\( 391 \\) is not even, so 2 is not a divisor.  \n- The sum of digits: \\( 3 + 9 + 1 = 13 \\), not divisible by 3.  \n- Check divisibility by small primes:  \n   - Not divisible by 5 (last digit not 0 or 5).  \n   - Not divisible by 7: \\( 7 \\times 56 = 392 \\), so \\( 391 \\neq 7 \\times k\\).  \n\nWe can try dividing by 13: \\( 13 \\times 30 = 390 \\), so remainder 1 → not divisible.  \nTry 17: \\( 17 \\times 23 = 391 \\) exactly.  \n\nYes, \\( 391 = 17 \\times 23 \\). Since it has divisors other than 1 and itself, **391 is not prime**.  \n\n**Answer:** no.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795175985,
+					"id": "chatcmpl-d29540a1-3331-40f0-a0d5-63e781415778",
+					"model": "deepseek.v3.2",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 232,
+						"prompt_tokens": 16,
+						"total_tokens": 248
+					}
+				}
+			}
+		},
+		{
+			"name": "deepseek.v3.2 reasoning_effort medium",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "deepseek.v3.2",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "medium"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "A prime number is a natural number greater than 1 that has no positive divisors other than 1 and itself.  \nTo check whether 391 is prime, we test for divisibility by primes up to about \\(\\sqrt{391}\\).\n\n\\(\\sqrt{391} \\approx 19.77\\), so we check primes less than 20: 2, 3, 5, 7, 11, 13, 17, 19.\n\n- Divisible by 2? No, it's odd.\n- Divisible by 3? Digit sum: \\(3 + 9 + 1 = 13\\), not divisible by 3.\n- Divisible by 5? Does not end in 0 or 5.\n- Divisible by 7?  \n  \\(7 \\times 56 = 392\\), so \\(391 = 392 - 1\\), not divisible by 7.\n- Divisible by 11?  \n  Alternating sum: \\(3 - 9 + 1 = -5\\), not divisible by 11.\n- Divisible by 13?  \n  \\(13 \\times 30 = 390\\), remainder 1 ⇒ no.\n- Divisible by 17?  \n  \\(17 \\times 23 = 391\\) exactly. Yes!  \n\nSince \\(391 = 17 \\times 23\\), it has divisors other than 1 and itself.  \nTherefore, **391 is not prime**.\n\n**Answer: no**",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176004,
+					"id": "chatcmpl-fb49ed5c-04d8-4d90-880c-d9b290bb5ff3",
+					"model": "deepseek.v3.2",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 301,
+						"prompt_tokens": 16,
+						"total_tokens": 317
+					}
+				}
+			}
+		},
+		{
+			"name": "deepseek.v3.2 reasoning_effort high",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "deepseek.v3.2",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "high"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "<reasoning>We are asked: \"Is 391 a prime number? Answer yes or no.\" So we need to determine if 391 is prime. A prime number is a natural number greater than 1 that has no positive divisors other than 1 and itself. So we need to test if 391 has any divisors other than 1 and 391.\n\nFirst, check if it's even: 391 is odd, so not divisible by 2.\nSum of digits: 3+9+1=13, not divisible by 3, so not divisible by 3.\nEnds with 1, not 0 or 5, so not divisible by 5.\nNext, check divisibility by 7: 7*55=385, 7*56=392, so 391-385=6, not divisible. 7 doesn't divide it.\nCheck 11: 11*35=385, 11*36=396, so 391-385=6, not divisible.\nCheck 13: 13*30=390, so 13*30=390, remainder 1, so not divisible.\nCheck 17: 17*23=391? 17*20=340, 17*3=51, total 340+51=391. Yes! 17*23=391. So 391 is divisible by 17 and 23. Therefore, 391 is not a prime number.\n\nAnswer: no.</reasoning>No, 391 is not a prime number because it has divisors other than 1 and itself, specifically 17 and 23 (17 × 23 = 391).",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176016,
+					"id": "chatcmpl-ca8551a4-3a89-476a-8426-5a8a3305b21a",
+					"model": "deepseek.v3.2",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 338,
+						"prompt_tokens": 16,
+						"total_tokens": 354
+					}
+				}
+			}
+		},
+		{
+			"name": "deepseek.v3.2 reasoning_effort xhigh",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "deepseek.v3.2",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "xhigh"
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "SubmitRequestFailure: SubmitRequestFailure: code=-32602, msg=1 validation error for ChatCompletionRequest\nreasoning_effort\n  Input should be 'none', 'low', 'medium' or 'high' [type=literal_error, input_value='xhigh', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/literal_error",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "deepseek.v3.2 reasoning_effort max",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "deepseek.v3.2",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "max"
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "'reasoning_effort' value 'max' is not supported by this model",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "deepseek.v3.2 stream at high",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "deepseek.v3.2",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "high",
+					"stream": true,
+					"stream_options": {
+						"include_usage": true
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"events": [
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "",
+									"role": "assistant"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "GffopYqwyVL6ZovzyKVaaVjnNsLUKkz0r53xr2gZcM64GNDBu6E63dfl1HLXBogdlwzlSJTC5HYB4D8IK5wO"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "hw16tkVJnDFeFbuoS6DhhnBYOyJ1CrHR2jntN3cP4gSqAQJ6XyVvTmzZ1Uz4hkKjCD0P",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning>We are asked: \"</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "RXdIOrpkJSuqLAzwXyNEuEOXGpfqOntlwA8goRMjAFoSjKkLgyghpytXOBiVaWXwT8oPLxqwb7PxCggXAN6Qm31tYqy1s"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "iNKnvS6i8OkaeU9zOA7CFALUKLvCoEtvpsPSZ4ThbiUF8N0GdJtlmnaIIy44rx8N66yMld8EfxOEWGXnc1usAk",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning>Is 391 a</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "UROVb9hAQzMEkyM7tohAxirpO0fN9OYYUcIQD0V9AFGAwqc4llMJcWQb4psdF4zvPQv9BUjDA1DOLo2mnOYeTj28FPqWLN1J2LHDaN"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "N4c8crnGsRAzO76EzGAYzB1suWesFXDTcctuDiO4uX7SLQxXQ3xkJfSRZyohfVHo6fLZaTZZ0hOfw6kaMgJAzgfXdPW0mZs5JAOs9FvxYrNYFWNp",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> prime number? Answer yes</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "P9lDirhyvOrE3L9GDM35W6DxL23iRQ0OChvp9J0xEIWMkWQBy95yTS4hC8TwIkdwokFTi0jYO63r2VH2"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "jHnwulQYPCv3yUzX6AAlC0h6QuSF6z5BiwriPByxlScwdv9RrOzrM1diSdLAu4YTlIQsu4ClUwoDcc13sOSeKdzWT4CIPZOAAV",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> or no.\"</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "2RzaKhWh6iNifQjayl9bMe523jB4DAUTGsOEYiOUWBJLsPLluuq8P3CQgPZp5F9rKBJ2owpBO1iUC0NLpfhECLm0VC9AFt3n1gNXLh7I2K"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "HjrLpT2xpqPITRIybPBkyD7N3CT1k8aq3KqgDUhLUsPUi9be0U65cvHIbqKk74k",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> We need to</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "7gwvHkZgi4zTmY5aKMyznsHHccotq12naqZsWy1Os5L41jDve36jYBo5ma9r3J"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "ADJmYryWQpfyjCckPWQb5r4WYRcZWLyppOL",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> determine if 391</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "bCTW5EXqz9cJaa3wxIOd32L34zDQKjgcbOeDqH69yS0QNQB7gWS9nWHxA7KJ6TghK0zDIs3kRxD9pWkQPSuewq5tqkMtwDt6z5cPgNBA7W8Gha6Bs"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "VY53KgpY3e0pU4H6t2ErDwu56kOF7iYo8wLburu7Xz49GmQ5Vd2nvAsq9RPpwUDOuqrlSWdir10zWUzeWSGbpkwA",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> is prime. A</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "uDOpR6HkqrLtMcJijW22WTIE6ruVPiWFfREE4a8Tr3xweJi7tebBODxObmAg0Jf0GZSfUG61nyqCBZaxsICxHVi07o"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "EnjCvDzJlXlQQlfp0jYLbm4YP1AHmhpPxOy6Z4gCUZ",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> prime number is a natural number greater than</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "qg6HfIdFFMFDeyB3EHyphAuOLZUud8cbfQmq"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "w6f0C8svAwWRoHeFCQfR216vGlBjniBo9JosZmntgeOOmvTuvPSL8ku3OvJ6Ds8ZgqqchTc1u",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> 1</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "OT88BbqWVJzsRe4gLpsxoeRFEclGK4TBKB1oscRHXv4Xb02eK39N58dvQUD"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "5Jz4bifRknxiqSdxdKA4tJbdc2F7OMhqYUydxvPcpUA6ppR4iiUjJ7zT7nVH1l7tCy8htM2uj2SZskq5wLDClZ3",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> that has no positive divisors other</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "aYnoyAIA8GH7t2cnjVZvUoEqu5bJpL6lJDdmC89AAPgoIMzwjWBguoNL1zaaJdRGG5Bm49hu8nbNkhQ3mKOFR41DpHmq2h2UADY1JI"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "mu0fhcDgx71zREp2jt8e9jTxLmR2KXF19OgI3DAeq34IQYB0ZnxRlup2XMJpsmI5duyxNW48nseXqr79G8mt7xE2O8yCbgYrvhp83WjxmkOcYaiXiS",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> than 1</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "QFML53RXthBSIwhGW46WdG4AkDhAGpHtEBiwCQXaZvBa3O3"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "Xmp1wldxT7oasUtmX1Fq8CuivvGqyr2po4xV4Dgki2HaG3Yxm5OlOqFECPLafI6zXoS21zgWrJdKwqYUltR9sG29xTPB8zqwU5r06DeBFaFCq",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> and itself. So we</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "yZxNiib6ta3HkxaIAMYedw1e4575ZfoOp698buZPXJGVPBoIplGXEY5kcRLrdRxFyiRODqDKTBRche6JdV8WM5LIrEld5kiPtKet0SCdnp"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "NdDnT9J9qTmGp851SNbWjM5rNz2r5PUpVDYIwL6yZmwABiTt3EHXlvkW",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> need to check if </reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "Q0M5ACy23TRa0VIGxhkm8XGk1eqknpF7z2nhKDu"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "Lp3nw1Wwid0BZEUOzK2TAVQ5snWmS1AMoQeJnnEV3sGjIdoqKltbmWkMd0uH7rc09dHSrFfq8QGegeOZnyIh36ICLWVc5Ft0q2kY1UixN4o9dsa9hB67Q20bpXEMga",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning>391 has any divisors other</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "Ri62jG22hoO6xdig0OYMLO8YZ0NzHTg1yICXA8xNGIDbtjPa8PLOgwipvBbG"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "1pOGCqEq8zFHLCiRuRb49kAc9ug5wyc8nIDsEedtM7hmyQA2aIP4",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> than 1 and </reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "cdn7WYn6Ksk400vsUZlN1T23ix4u7UAWXoYTQfhz35Y67zrFYFMOdwuw5NcPt2Q2x0Y7fwe8ZAj59GUW7HEvcADzL2i2QeuTkR1uq6JRbTMcUjKEuQ4842"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "6t1YakWL64WBiRwYq2yFASKC1o50xT8jObiax7vpuJm5KJ1qgHOxUTnWWN7uHBMYAQJrsWCUGSPyTvSNz24ZcJyJKKdoZppBFlmiGkrGE4da9F",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning>391.\n\nWe can do some quick tests:</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "J0yWLNI0V0rZqQ6ijlSRNRbvOnJ9UoQ8JDsnanTW0jUCaSELh7SfpV19QikU7yMwRBD4rX1OV935wfpzh2pWg4k3CciRRio"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "pcJgDLUBPozDkAgj5FZu37AghKTCFliYwcpi1GCDAek9IRqtINwZcU3MVfb4BAYZmHgRUYPg0S19OYsJXEhGeRMaoRv8FK147gySIHRGTnCNxTG",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> Check divisibility by small primes: \n- 391 is odd,</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "8aq29HjOHfmX3ecmfTVzcR81kee5qJusgfcT6grbaJZ0MZaexU2CWJ29SNd2EiXG1V3rAHtZzmZ9JUSa6yFQcOZwVBtrSaP40I"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "CtrSt2pxKtVLbjHJjtlaRcLrGgAtvPNMTl6ZSDAVgrMO8ndwinXF5g5lIJqOqaza9asNb2encd8lPuzfit64tcHoOsekDJ6kdn4aRY",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> so not divisible by </reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "obpFGaoqLC1hojQfirQe3n4hKzNLZPjLXeqOvTCdOoPjH2XStkFHGvWAgjhezy1o2OVVkQvrOfIF2O0nUqf5MWr"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "80eCt9hyLHnl4uCA4KRFYT006nCJvtZWfs0veSIWxXks",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning>2.\n- Sum of digits: 3+9+</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "nCfHMKhZdtZCSl7JjE7P7JlsnP2060FueSX8DvqJeZnHhF3ETc45pukm3eZNEpbWT9ULpGALLJChsjSJk69fJ8tMydua1ZjX8zWZcFa5Lj"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "ead0R96UhVUxuPK9ifKlOf4sbM35wNdf75cUlxAXIe0bAyM6W4W1iFztN5X9VkOpgpAMhDXgYDdTVnAmO",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning>1=13, not divisible by 3, so not divisible</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "TLxdlA8D2FXwdBcGMGw62jyRfNMJEHo9JVUHg6WEli8Copq5mDMbbZrvhJh6njrsahHBResEKPxNqVUfFpNMFJnJgBC8yyOBgWRAEkBPsxKvnn8P5zl8itBkDVt"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "FJ3HaB3FLm4dGLAajIrRBKREtd6tehcFAl5FJ2gKz5NaabXb8R8Drra4lU5rKbRAZEiZivNBLkOWMZHdCtXjhwaWYNr",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> by 3.\n- Last digit is 1, not </reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "sNBAC2d28eLtwDJMyJhJ5tuyaoR3eJ1KaDLF0DwyrhQgLZHJtmbpHMniWFpi23vX"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "lpgPhTZ35FZjKfpMhTv75iCrkRNPioM06f073MNGgPkK1rcLteHOpXzr8hI4gBMljDHZKx9JKSOVj5xINqm",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning>0 or 5,</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "TBIME8ePR07uC7eO1wX3g3dwrh8dtnKTQCjOCzJNgSTnNM6D6t2ZhEAiUo8OiT0Y4ZDnw55leaNbbcRG1PD1PXKY"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "c1wTNuyWo63flgKfGYRZjZBsdmJVbUjkfkhR4POZXoX9NNq4AiWqaT6rEHn2W1elFcHg4xhX8byv2n",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> so not divisible by 5.\n- Check 7: </reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "jxdkpCU8m3yEpHNp7bWPvxitkiIM0URcqI"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "bPnFh6irLZdBFyYddHJr8obGM5HVkyehKDO0AoPb82xIoVHiz8AF8aKdnAgYQvvDw8P0puBvwjFAoXc",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning>7*55=385, 7*56=392,</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "Fx3vZPO1kgbL8VTYJrKAID7dc0AAo0pIb8PlWCKZL8ajvPDlVH5go4yljaKByFLaYUeewU1ftHFNO7S3dezyAJVSoNZoquN1mSGT6GZyZM0NPLS3SpaTa7YBSGq"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "m9SRNOok0WOJsxHRwWnd4wZISKk1WSgx3GB30CHSfURn5Uosuw3WS6tISGUAh0NTby5XFipsH3faQVALleps2VkpmODxABWb1YeyR1Gh",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> so 391 is not divisible by 7.\n- Check </reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "OgIVKiWeY5LwPAwdLbhCidWWcYvYdlNx4nD2ckxCk4KhNMqzWh5OaA8ybhL5U1OKOLU5XA1nLlx82EqC0E6AZXi9PK20vPGeU6kyfi3qiElJK8e"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "9GmlNh94yaXYhgXdkgx41MXuwvIyiJAlSB1RcFxPLPexbjRa1XeShqxfDgpLRhOTL4pxY0trkZqlZRScyXhJ",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning>11: Alternating sum: 3-9+1 =</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "WyExHy8rOfuKtqpXPCfhmyFWO48rd11ZIKLPKoGjtEfZHCbfNkFI58zBFJckywRWcALTlbH5LMJW1AIpK3HpATmgx1"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "9hKd5qoESCnfPFqG81ufyNWXYhEMeoCExYUlaBxs8a0T8mt94saRGv8dv",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> -5, not divisible</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "AR1CYzdLsCMAURH5UpJ0KFJ323KYsbxd53H0HIN69aJSwRVrNT1lLVJKHavtWP9PN5"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "P91ZF8Kq6FwhFQsQdX5jSY9vOHPbNKIEHf91ImqcEj5YT",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> by 11.\n- Check 13: 13*30</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "9BcuoXvFllrBLKKUmGP5MmFy7BLRWZd2LFzMiMmYYWDP5czbymmP8k1MN9CSv9HFtKuiWrxDjJ98rYVJxgV59jOOjifmeE"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "Rtw0YKgOnpGMhDBmtcc6YEviZhHY355hyraeo8o7ISK",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning>=390, so 13*30=</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "iQaoXkdYuMcQwN9RzQkXGG9iGB9waZmTXXkPAgJVpUVPCePhg8n9sASc7mS"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "7mI44ciZvdvRBhJNlATo0jKnQOg9pueh6GCqpKv8k0XCu",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning>390, 391=390+1, so not</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "zJUkScV3G99YH2oXAoSI6Zp5rm2Slaq4ENRmjng2sYCvlPJK3J5kHWaQX0n67aqYfPFJbHD2jLQ660BrxXiKgT1SY0NnF0HcUfpIPR3"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "pgcuPEOTiwNUai5YMHSgZmoFSUFVQHDNlWuPqYXK0uZIYfyASaenchPxfM2pyvZmwAdc8BoUGmQjEjeqwDeEdN5WukWHAdzr4G8rBPYFHgJBiGHzkEtzd6T",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> divisible by 13.\n- Check 17: 17*</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "tO2XFT8Gi2msjAy6JCokK3wes6UHBfyAcrTRwWav7peC3rKpfU5okOR"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "Z6QrBIuppiVdkFrK2f0Ckfdg9PDfnCbbCknD8Mjqad",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning>23=391? Let's compute</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "u3Wwy0X7UhLtf3kht6G1oKp8Ke9c38syGTRwKPMpVc30a85SgcZcmF2zEQp5oLuwztmAtXGEkJmyFQqTny8WpLc6xEdsU"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "5V4fHYFYbAcHTBsRnHTJ2GvPqXy31Bgt8Z1rImRjlYzUYGU7yTl4RmptXitZZYTRjU4haDRN0q4pPWt55AK69M1C3cAYoDiFIOPUOVreBV",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning>: 17*20</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "6EgqGXtIOlxLtr1QhyMVS47E1OxbXywmIUJKxEj25kRnhGB7GGJg9mnykDGhA5AiSqWR2d42aQixcKoT4GBL"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "BCmLOVo3xkRIuribKT4xqyYeFYwIBbKH0X",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning>=340, 17*3=51, total 340</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "e5xhobjz0XXMgBmGyk9sT8OAsfCSXEYYLJ2Lelw"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "A7YgMfXjgB9lFfnW6Ld3nWzLJfUoghBOl5N4eKCjbmj8Ey1HPNOmvQBQ6Bok7tc6MprRY",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning>+51=391.</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "FiVePgDGXqlQAcPicrOXtCjbVISrPMUoRjN1RyaR573gLrhs1vx1GzLtLsHn"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "rjocpXpoBBAr231UQbUlAl6Offhm9VDmMe5giCVySOwGGStT0T9ZiFzJ6dP43dIgqxR3cxxlghLzVMWSIGKqhrczoQm3n6",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> Yes! So 391 = 17 * 23. Therefore</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "iMCev2qrQgMCeYLfmFjXkkh2VdZU5UCy8CafDYhX8jqmwDlGQFDaLAMYPh0Oo"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "gwwvTzTlqySfczWWLJ3KZVz6PsvqE0mRycQ4bcb48Y",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> 391 is composite,</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "5iEbDskZSD08MiuOPK2nI5ZP2nPgGAsVDbjpFQ5nbJ1EmHT"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "fRxZpCv94fwVByvijZ73snZM0D7iEPp57C3R9hlKs9Ix2rLPcOBdvYMoAbvY0RPefkh4Wo0pivnDeCWGsyOsr7JxOhnz5kZ6Z",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> not prime.\n\nThus answer: no.\n\nThe instruction says: \"</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "YCpkNhpBYmNemMZHnUQtopD90BTbNx9FSz7lehUQ3laDgXaAmqsYRmwZZgBiSkPkf1UzT5Mvg2rEJbtUZMWY9OxFZ8XLV4kvjsWUFcqwVlIRpi3wKdp"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "4gxcxT1CRp49wqXHZvG6tghjjdhzKHvPWoSqjIrwXZwMgK5TrdDE0ZGEX6VUQSAbOXYhWwHCztdFvKrB11KPwinhy8T3Ff2Wg",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning>Answer yes or no</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "9BFfNF1fkRs1fGxs5WuVRnG9ptqHbAUHML28is9fSpI2oE7najweVsNWClSIMXJQZNT4g4UmvWjIOIrW087WlSAqnRdBd8tRyo1KeeDCDcngzusVImX00Uar"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "VEVrieRFUYg2BSJgcKLB0zUvFT0MDdbtYn4mSxRl0fMo09DcU29Qgah6lMcdfcHMu8EZKTAlwql3ERwl9WdMucY",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning>.\" So we should</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "OyMNCjOFpdf2E05WVzjRwkeLTPbILL8lQPiXE2xSTqRDzhdZgNXe796Vi5SAKurqCpOfPW3EnL0LiT"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "DsTtnfotXj7V7uZJMI0FT7Xg1jPy5JvNHlcfMrXewf5JkN5TLxeFpZXBtIGjvVcA3DJp4kO1PgiWld3ezW1peMRne6xbvyrAEcV3cfhKv0qDd1eGkHkxeN7khRg4Mt",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> output either \"yes\" or \"no\". Since it is not</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "hloD5bA1GM6wuLbhbUkoeGU6p5Im0dvqy1t243pFDD00iXXnMCNlwgUfNz3RpuTVKat6wEmllFW3ASAsgx0Q340jXKDIYWLYvFjWLMGPnomz7NaRCn2doJQt"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "HZ8CLCtV8yryVZiWP2j9t2lQbDAEsIy0b4b21lIGJMAtCEW2P6EsMBfRhhw5BpT8X59lrpIjLtTWBBHXsY4L3MmpTRdWkmoqxUOcx82dziCVPGfb2HJGzKOvNN7tJ",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> prime, answer is no.\n\nHowever</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "4DvbRFE1TL9WxxgSemyXGWXMpoLACXTxOXwq0F8DP6qakdQPy0IhTVlvXz9uVlXyHnjxvfMjZ4RTBm1LTja"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "Q0HdoGGQXltt247AJJFMUwSkivYd1dPMb1kpXDJumvhQOcscVeJvoEm6gz0OHDdTrnfyL2DtaqKoIxTFIIvfSqZW6cjbst6JjK6Uoxmvsw",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning>, let</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "auxErJdgsW5o36KKzzzUxxzTHnvxZwhzJOqty7e5SKjTfLZ9Jvs1vpr"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "9OX0OlAhHFJPbLaLMF6rq1KKXQ7uWgEWuIQtqpHSEhefT9F2eUbF5tk1p2tTfbOF9phHWh7azCrokLk6MIlmDHfPe8thZQ3zBLvstXoQcjV4ALkyM9ItBlaOI",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning>'s be careful: Sometimes people might think \"yes\" means it</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "BkV1lZ2mO6EYrF76dBomZJLgcbQdBQ9VIqrUYpVw7rj50EVAzK1gjVLOzmLeEEey7F"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "n12PdCfl1T8zR76P976JO5fnmcnLj2ACBXx9oof3vPNfM4jcBRBh94ABeHy3gNwtp0BWlUBXsDXWhV",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> is prime. The question: \"Is 391 a prime number</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "062Pb8edRnc0YUDycoG6PJIFCrDgkQYp80ePZ8wjkzCKQlFzDQO8CWFsW9XN3ZCmPPpJcZRkfYq3GCitrciwInp8QCHftF"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "YQAG8vicJGe9fmNfkyxmBwE4DRMjdQzufOJ",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning>?\" So if it is</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "eHtsphEIa9yqIUGDhsokzn5L6SxkeokO9dJOyONK3Q1jN5AueeULWVkQId8Hs632km8J5Uh8"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "MUCT8hgCFa2Wg5E53mHEPOP1WGeOEV8UZR6sDh73OxOEu2eQ33m0vtvtxaOQSLpqfl87Iegi8T1wmD0TFppZJcmTvezWFRNtOMjvyIn5xZ0A1prp3leL",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> prime,</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "RYkVt0G5D54GHVha6inYybJjRX3mBxaOve4WBWzXio2AE7B0Jg3SIqO4IxSi7tYmQCvI8DSXngOJcrzDNkPjqrsbGf8m8LP3mqQlZBFIzFvlv9is8CUbHlTgW5pqS"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "GyH1srKK86VSafbgfFHhyOScqF69jTuzNo09a4ogZrClHy9pERos8vBOqer9fsDYwQTfWxsS5xfA46AceSKxPI0O7MkEx0fEDo2LZEvXU2leD7N3rs4dcRGgmdgQ",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "dnxWyIs7J5CS9EcSMyfHySfkjweHW6AwfsSK62bycAEzCmLzC33BibsJ41gcBHBLoMqd4hGepXsSozA6xmWi9F4njwgR6rOVtpqLPMPdjUVZSiEbwtj4kG"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "SjLUpGDsoOlwAQ7voOAt2iDlpiVaT92bZkG14APE1",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> yes; if not, answer no. So answer is no.\n\n</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "CUQv4GGYQxzjwba3qIE97VqH0icaE3b1qsIoW7hmhaqBtRJJsJcNjyOnwj1a5rPxt90zZVYlNMps76Scv0B"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "aqbglkJ3sTp0jrLRoInB6sy1owEXrQKY2mqVJZ9z0vhXIC2j2kZz2SsDqs6WantBGPx21sGS3iEdlmvwKfq",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning>We can also check:</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "9rmMA0WqxoIcTn21YIG3PsvMAEiDZLLW4dI1zKUZPJ4tVISCVmTaAwvnDr80yZES544LbN7U9gICxz4iz8t9bxehIqnV48LFWC7eymRthvnrPaiP4VksdBhDlF4Q4vh7"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "TGcWsmphaG96sZawy351lzSgwMYTGlpGk1uN8eiMt3UyH1cDpdFNH279hiZyxKtrPrAy54d1rD6EhB4wKOy9ugFjFcd5d9Ak9mA8v",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> 23*17=</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "SbwWLs3GUgbWQh9tJK5Nj2d8ctiBK6D2TBLeFsql4CTstW1wEV80nqHW2vFigcTv4kZYzkXSR4qqF0wWn5VBIZb0j1GUlAk52XLQMjvdM3gJIwLI3C0aq"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "e42mqMBnhkQezgLpHjy5xOn66LEfTT1oy00sXUTHj4gpGMeKKjQwjQK4dCM4R2OQU9qHrgp6h6Q88D8ePgJislJKwPc6ZMzfJt8Kj2wMntKwN7fRl8ZGsgO1fc",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning>391, so definitely composite.\n\nFinal</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "pr91rCrP93X19FiXjzoF3SYv6U5Ga2Ha5TfseR556I6EFS3t0j9j2pCZdYaObQpi18cgX9X52"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "aNjVmTQovjqVew8eUR9jbFh0t5j8kTOHuKeW97f3JenmaBxMc1Tf7weOwAcGt4YYwHv7NClm5auFbpjy0P4oRJ3EfqKKWjBNQ8rg07ByF",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> answer: no.</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "nolPj6GMoWbENNoW5lQGj5ZSqsayn1B4yA69u9vSZM3g4hDA4yFJZH5fQshkfQm8fDg"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "lzpxEIhX5WwW9vwBVTP47vpSqkltvx6J0oJVzgfca5CvNZt88vccP0oK8xDCVDqaaPLWd4Admg0izzz4k6M40zScxPVqcTU4CQs6IGtbsEHaP2X2Rqz",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "GJiZC2YmfxyjYlQyE161m0wkGEpA8TMXN7DUaugaDBy6AdBWtP7JZJhLm6zAPBnNmZ9gZ7k1WjYyigKJMgZCRRIw1Nyx3l4Cn3L6UpgzpG2xfsoXpmuCA"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "LAvqwLYcDQns78zcb85Xp9fp3KLlVejYbYeDb5ylFAtK82RcQlqizni9QatvKZKslEm5YKykgAwXeGHbMSurkYm8d5YcQ9uukS0IOarq2tEQje8DNY7kHjsJ6bh2p1s",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "No, 391 is not a prime number because it is divisible"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "FjiJhEn9MfTd1JiRQYeBhh2XautyN0lL1izzUBH1c5llnbj5oasvxLUgyYRNafzinkRKvuhf"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "tkyzyCkSgqzMGuBuDI5N8bZPMcelGiMzpU62Rdq2wr0RFBcK14pHcZod",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": " by 17 and 23 (17 × 23 = "
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "Nk0CUHkw36PsWc4dEkqovuVc0mid4NSTgZQC00Y"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "HyITURPktIBHanMHlglKF6UfBa32zRZXay6QjUrUFClcGjt3ajmKOsSSWF5",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "391)."
+								},
+								"finish_reason": "stop",
+								"index": 0,
+								"obfuscation": "We5Tf5hz3ltwjsL7aBION65mXjwAtLYmLFVla6A4SDQk83UaW8DvCzXJBFNk1IHZdr0OKXPwZQ"
+							}
+						],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "N6Wj4LpVMDMLTN8gautMZmiU4H8YaOAPRNC1arOl1XNXhtmaJPuYrT5Ll0vuzkzlPc0L",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [],
+						"created": 1795176034,
+						"id": "chatcmpl-ed81c9c1-6306-4ea1-aff9-c33160d05be0",
+						"model": "deepseek.v3.2",
+						"obfuscation": "yZwVu1Fqc8qyZ8X022jUpkbt9a4UeYKVX2lpyFlNFb37OE9if5",
+						"object": "chat.completion.chunk",
+						"service_tier": "default",
+						"usage": {
+							"completion_tokens": 430,
+							"prompt_tokens": 16,
+							"total_tokens": 446
+						}
+					}
+				]
+			}
+		},
+		{
+			"name": "deepseek.v3.2 answer",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "deepseek.v3.2",
+					"reasoning_effort": "high",
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "<reasoning>The user is asking for the product of 37 and 43. I can calculate this: 37 * 40 = 1480, and 37 * 3 = 111, so 1480 + 111 = 1591. Alternatively, I could compute directly: 30*43 = 1290, 7*43 = 301, sum = 1591. So the answer is 1591. The instruction says \"Answer with the number only.\" So I should just output \"1591\". There's no need to use any tool; I can just answer. However, there's a tool get_secret_number that returns a secret number, but that's irrelevant to the question. So I'll just answer directly.</reasoning>1591",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176049,
+					"id": "chatcmpl-0e316a2b-c8b3-4248-835d-0b17346448a1",
+					"model": "deepseek.v3.2",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 157,
+						"prompt_tokens": 306,
+						"total_tokens": 463
+					}
+				}
+			}
+		},
+		{
+			"name": "deepseek.v3.2 tool call after an answer sent back with its reasoning",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "deepseek.v3.2",
+					"reasoning_effort": "high",
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						},
+						{
+							"role": "assistant",
+							"content": "1591",
+							"reasoning_content": "The user is asking for the product of 37 and 43. I can calculate this: 37 * 40 = 1480, and 37 * 3 = 111, so 1480 + 111 = 1591. Alternatively, I could compute directly: 30*43 = 1290, 7*43 = 301, sum = 1591. So the answer is 1591. The instruction says \"Answer with the number only.\" So I should just output \"1591\". There's no need to use any tool; I can just answer. However, there's a tool get_secret_number that returns a secret number, but that's irrelevant to the question. So I'll just answer directly."
+						},
+						{
+							"role": "user",
+							"content": "Call get_secret_number, then tell me the secret number plus that product."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "tool_calls",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "<reasoning>The user wants me to:\n1. Call get_secret_number\n2. Then tell them the secret number plus the product (which is 1591 from previous calculation)\n\nI need to call the function first, then compute secret_number + 1591. Let me call the function.</reasoning>\n\n<｜DSML｜function_calls",
+								"refusal": null,
+								"role": "assistant",
+								"tool_calls": [
+									{
+										"function": {
+											"arguments": "{}",
+											"name": "get_secret_number"
+										},
+										"id": "call_f1430af60b42489693e0d075",
+										"type": "function"
+									}
+								]
+							}
+						}
+					],
+					"created": 1795176053,
+					"id": "chatcmpl-8e4586ac-c11e-43d2-90b9-98f6ce0835f9",
+					"model": "deepseek.v3.2",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 89,
+						"prompt_tokens": 328,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cached_tokens": 256
+						},
+						"total_tokens": 417
+					}
+				}
+			}
+		},
+		{
+			"name": "deepseek.v3.2 answer after both turns sent back with their reasoning",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "deepseek.v3.2",
+					"reasoning_effort": "high",
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						},
+						{
+							"role": "assistant",
+							"content": "1591",
+							"reasoning_content": "The user is asking for the product of 37 and 43. I can calculate this: 37 * 40 = 1480, and 37 * 3 = 111, so 1480 + 111 = 1591. Alternatively, I could compute directly: 30*43 = 1290, 7*43 = 301, sum = 1591. So the answer is 1591. The instruction says \"Answer with the number only.\" So I should just output \"1591\". There's no need to use any tool; I can just answer. However, there's a tool get_secret_number that returns a secret number, but that's irrelevant to the question. So I'll just answer directly."
+						},
+						{
+							"role": "user",
+							"content": "Call get_secret_number, then tell me the secret number plus that product."
+						},
+						{
+							"role": "assistant",
+							"content": "\n\n",
+							"reasoning_content": "The user wants me to:\n1. Call get_secret_number\n2. Then tell them the secret number plus the product (which is 1591 from previous calculation)\n\nI need to call the function first, then compute secret_number + 1591. Let me call the function.",
+							"tool_calls": [
+								{
+									"function": {
+										"arguments": "{}",
+										"name": "get_secret_number"
+									},
+									"id": "call_f1430af60b42489693e0d075",
+									"type": "function"
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "call_f1430af60b42489693e0d075",
+							"content": "41"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "<reasoning>The secret number is 41. The product from before was 1591. Adding them:\n\n41 + 1591 = 1632\n\nSo the answer should be 1632.</reasoning>1632",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176056,
+					"id": "chatcmpl-c5ddb272-16d2-4d51-a769-6d66e6e89f8c",
+					"model": "deepseek.v3.2",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 42,
+						"prompt_tokens": 376,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cached_tokens": 192
+						},
+						"total_tokens": 418
+					}
+				}
+			}
+		},
+		{
+			"name": "qwen.qwen3-32b-v1:0 reasoning_effort unset",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "qwen.qwen3-32b-v1:0",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "No.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176058,
+					"id": "chatcmpl-24ce77a0-0667-40f6-8767-5ee0d44f11a6",
+					"model": "qwen.qwen3-32b-v1:0",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 3,
+						"prompt_tokens": 26,
+						"total_tokens": 29
+					}
+				}
+			}
+		},
+		{
+			"name": "qwen.qwen3-32b-v1:0 reasoning_effort none",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "qwen.qwen3-32b-v1:0",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "none"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "No.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176058,
+					"id": "chatcmpl-b6863443-3397-4850-8964-a23b4965c278",
+					"model": "qwen.qwen3-32b-v1:0",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 3,
+						"prompt_tokens": 26,
+						"total_tokens": 29
+					}
+				}
+			}
+		},
+		{
+			"name": "qwen.qwen3-32b-v1:0 reasoning_effort minimal",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "qwen.qwen3-32b-v1:0",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "minimal"
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "SubmitRequestFailure: SubmitRequestFailure: code=-32602, msg=1 validation error for ChatCompletionRequest\nreasoning_effort\n  Input should be 'none', 'low', 'medium' or 'high' [type=literal_error, input_value='minimal', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/literal_error",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "qwen.qwen3-32b-v1:0 reasoning_effort low",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "qwen.qwen3-32b-v1:0",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "low"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "No.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176059,
+					"id": "chatcmpl-1f25a687-069c-472c-9fd0-a5bf37005c41",
+					"model": "qwen.qwen3-32b-v1:0",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 3,
+						"prompt_tokens": 26,
+						"total_tokens": 29
+					}
+				}
+			}
+		},
+		{
+			"name": "qwen.qwen3-32b-v1:0 reasoning_effort medium",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "qwen.qwen3-32b-v1:0",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "medium"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "No.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176059,
+					"id": "chatcmpl-655218f7-45b4-41a0-962b-98dd20f45724",
+					"model": "qwen.qwen3-32b-v1:0",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 3,
+						"prompt_tokens": 26,
+						"total_tokens": 29
+					}
+				}
+			}
+		},
+		{
+			"name": "qwen.qwen3-32b-v1:0 reasoning_effort high",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "qwen.qwen3-32b-v1:0",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "high"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "<reasoning>\nOkay, let's see if 391 is a prime number. First, I need to remember that a prime number is a number greater than 1 that has no divisors other than 1 and itself. So, I need to check if any number between 2 and the square root of 391 divides it without a remainder.\n\nFirst, let me figure out the square root of 391. The square of 19 is 361, and the square of 20 is 400. So, the square root of 391 is between 19 and 20. Maybe around 19.8 or something. That means I need to check prime numbers up to 19 as possible divisors.\n\nPrimes up to 19 are 2, 3, 5, 7, 11, 13, 17, 19. Let me test each.\n\nFirst, 2: 391 is odd, so not divisible by 2.\n\n3: Let's check. Sum of digits: 3 + 9 + 1 = 13. 13 is not divisible by 3, so 391 isn't either.\n\n5: Ends with 1, not 0 or 5, so no.\n\n7: Let's divide 391 by 7. 7 times 55 is 385. 391 minus 385 is 6. Remainder 6. Not divisible by 7.\n\n11: The rule for 11 is alternating sum of digits. (3 + 1) - 9 = 4 -9 = -5. Not divisible by 11.\n\n13: Let me try dividing 391 by 13. 13 times 30 is 390. So 391 divided by 13 would be 30 with a remainder of 1. Not divisible by 13.\n\n17: Let's see. 17 times 23 is 391. Wait, 17 times 20 is 340, 17 times 23 is 340 + 51 = 391. Hmm, so 17 times 23 equals 391. That means 391 is divisible by both 17 and 23. So it's not a prime. But wait, did I do that correctly?\n\nWait, 17 times 20 is 340. Then 17 times 23 is 17*(20+3) = 340 + 51 = 391. Yep, that's correct. So 17 is a divisor, so 391 is composite. Therefore, the answer is no.\n</reasoning>\n\nno",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176059,
+					"id": "chatcmpl-cf37363b-3fcf-4889-afd7-4fc12b496da6",
+					"model": "qwen.qwen3-32b-v1:0",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 615,
+						"prompt_tokens": 22,
+						"total_tokens": 637
+					}
+				}
+			}
+		},
+		{
+			"name": "qwen.qwen3-32b-v1:0 reasoning_effort xhigh",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "qwen.qwen3-32b-v1:0",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "xhigh"
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "SubmitRequestFailure: SubmitRequestFailure: code=-32602, msg=1 validation error for ChatCompletionRequest\nreasoning_effort\n  Input should be 'none', 'low', 'medium' or 'high' [type=literal_error, input_value='xhigh', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/literal_error",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "qwen.qwen3-32b-v1:0 reasoning_effort max",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "qwen.qwen3-32b-v1:0",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "max"
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "'reasoning_effort' value 'max' is not supported by this model",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "qwen.qwen3-32b-v1:0 stream at high",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "qwen.qwen3-32b-v1:0",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "high",
+					"stream": true,
+					"stream_options": {
+						"include_usage": true
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"events": [
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "",
+									"role": "assistant"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "zgPyZM2j61w7tHOJysTP8aitqgbzLtlG9X1EPOTthJrUs0fyJRkFfuTo"
+							}
+						],
+						"created": 1795176063,
+						"id": "chatcmpl-933e3965-d11b-45fb-bbcf-0313be9bffb8",
+						"model": "qwen.qwen3-32b-v1:0",
+						"obfuscation": "k6yrq9Zz2IDXLgXKKnyfvlA4jiiUFAmmkKYWS1A6GI6c",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "7VbplFvzbTWBJFfnR9KpmzQOrVAqZOD6xAX182ggN"
+							}
+						],
+						"created": 1795176063,
+						"id": "chatcmpl-933e3965-d11b-45fb-bbcf-0313be9bffb8",
+						"model": "qwen.qwen3-32b-v1:0",
+						"obfuscation": "GAy4ZmnhDb4wONooS2eKyLb4DIKzdMwi4sqLwzSA1g0dvHLYHoHLHhQhxUCYtieVDWoXeIEBb68dLMBj2lpdckJAuFDQxUA8XPfNh2dK3uLEYx8pE0",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning>\nOkay, let me try to figure out if 391 is a prime number. Hmm, prime numbers are numbers that can only be divided by 1 and themselves. So first, I need to check if any numbers other than 1 and 391 can divide into it</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "tWkJX23J0kGwGqEuWtojnkiKs7I7n5yOV8p6EBBUnVpOmycIZ5OjCI8ueEPsP3iLkwKKDVCGIEu5RM5kXvj3wQvsodwGUlDcuEv0nsC822RD0sqRMFRufeVDa"
+							}
+						],
+						"created": 1795176063,
+						"id": "chatcmpl-933e3965-d11b-45fb-bbcf-0313be9bffb8",
+						"model": "qwen.qwen3-32b-v1:0",
+						"obfuscation": "RcYAUBdMCA6seoDETOPmwZkCN6EDOjuI4RRO1U",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> evenly. \n\nLet me start with the smaller prime</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "ckKkYvObh2gud4PJgQ2RpHbwnQ6iooEHq86ldzDdyZFn2OdIoK3rhv96OVdHt1giw2JoOmtc6POMkZfi"
+							}
+						],
+						"created": 1795176063,
+						"id": "chatcmpl-933e3965-d11b-45fb-bbcf-0313be9bffb8",
+						"model": "qwen.qwen3-32b-v1:0",
+						"obfuscation": "2ALnRzM6qvkEQ2FdhMhJNKrQkIOMCoZmAT7wgre8Z8bCWDqmC6O4uqITIijgNoNfvjjnPh3ZO16W4a67ljni5ixAlrZTsF2IgJahDospMbJddKbTTwl6eNvoaiFb0zc",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> numbers. Let's see... The first prime number is 2. But 391 is odd, so 2 doesn't divide it. Next prime number is 3. To check if 3 divides 391, I</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "zBNpAZFnRdzOQZfYOFwHdVNKN31jycShDuAypWPjFMTetpEKYOkK3jt1sid19oMVLQdWm2YTJtP5TA4LyqTOf4AoNWwIkilYN6VFmA0aAC8v"
+							}
+						],
+						"created": 1795176063,
+						"id": "chatcmpl-933e3965-d11b-45fb-bbcf-0313be9bffb8",
+						"model": "qwen.qwen3-32b-v1:0",
+						"obfuscation": "tpScLsT0k6tXADnP1tb1sLqI20GVh65U88nkCXqSngEGyWDXG4DlfguwOXkwN",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> can add the digits: 3 + 9</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "jwHhQonmyFtwQNvF8tfCkPpdxfr5GVk7YE6jpSyOi6cR6QFKethosBITIaOTIv6ATgzFaU6KeH5vP8299ATBSOg3XMtk1gpymAw4kYIy4kM84mQd9DCKFo"
+							}
+						],
+						"created": 1795176063,
+						"id": "chatcmpl-933e3965-d11b-45fb-bbcf-0313be9bffb8",
+						"model": "qwen.qwen3-32b-v1:0",
+						"obfuscation": "nydVqR3Iu74bKAp6J5RN6GidMA5lhBIPLC8fD",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> + 1 = 13. Since 13 is not divisible by 3, 391 isn't divisible by 3 either.\n\nNext prime is 5. Numbers ending with 0 or 5 are divisible by 5. 391 ends with</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "WDhetpEnhEsaOmOaF76wMqS6jMfQ54LIL71QbWmjEpHE4yP7GWmkWviPw5bFxAu21LALt7oeAye6MBl4Qgs0UQoHIUk6tscDWmP9YMddWO"
+							}
+						],
+						"created": 1795176063,
+						"id": "chatcmpl-933e3965-d11b-45fb-bbcf-0313be9bffb8",
+						"model": "qwen.qwen3-32b-v1:0",
+						"obfuscation": "BJd8XAs1qcmhkxgInI2qhz8FNy5LhDY3EZFReSH87tR",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> 1, so skip that.\n\nNext prime is 7. Let me try dividing 391 by 7. 7 times 50 is 35</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "QW6MsN8VZodVsebDAQa5TcPaiPzlafpjkydAUghjHOPgpolkAv7wya3"
+							}
+						],
+						"created": 1795176063,
+						"id": "chatcmpl-933e3965-d11b-45fb-bbcf-0313be9bffb8",
+						"model": "qwen.qwen3-32b-v1:0",
+						"obfuscation": "KYwg48M8yWfkVNKxKwpEwS3lGqoPNLvtwmoZtz3MN",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning>0. 391 - 350 is 41. 41 divided by 7 is about 5.8 something. So that doesn't divide evenly.\n\n</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "dbguYYF9cKl1Y7fcZPpFDB48IeXpHOYxo35bJlvUjCJghHB1QmknHgWK0xPt1Ut5CodfgWuCJXC6OtUgCGWkX6VQTqR9EdJnxhtcNzcFQaD"
+							}
+						],
+						"created": 1795176063,
+						"id": "chatcmpl-933e3965-d11b-45fb-bbcf-0313be9bffb8",
+						"model": "qwen.qwen3-32b-v1:0",
+						"obfuscation": "aFrtUGW0yhHXVbluuOilJovDPg6i7NKor33nNTpbIIJ1GtuQMbDzgndyQbsdGQ",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning>Then 11. For divisibility by 11, subtract the sum of the</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "9mSUTYhr4mqm6KjMv0OD1FMhMVxrnxMs8vqGjhQIQaSJQf3RHdc"
+							}
+						],
+						"created": 1795176063,
+						"id": "chatcmpl-933e3965-d11b-45fb-bbcf-0313be9bffb8",
+						"model": "qwen.qwen3-32b-v1:0",
+						"obfuscation": "elhSsfYZVAq0c0WMHzzRplocRDp95JuwgFaNO09T7C97gCXy3khQn0kKNOaJzCHz0SUB5mOhhR6cbt",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> digits in odd positions from the sum of the digits in even positions. Let's see: digits are 3, 9, 1. The odd positions (</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "Zg2wAbJXwdi72BLDuPo4fWLQHVljUc57fd1cJ7ZLd9gv2aBLoI4HKog07tTfCTl3SBh0JY7tMNR5mligeulbP7Zj4BOnoI0rnbxaloYr29quhC2xIZIuBF07YvIAlf"
+							}
+						],
+						"created": 1795176063,
+						"id": "chatcmpl-933e3965-d11b-45fb-bbcf-0313be9bffb8",
+						"model": "qwen.qwen3-32b-v1:0",
+						"obfuscation": "oB5EHt5NPmcV9QsquMUhyoqGPBM9IM6BDFFdU0Bv6Q",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning>1st and 3rd digits) are 3 and 1. Sum is 4. The even</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "l77rHqW9gPGjF11Bxr70oCVqkJXey04Vl08zZl7jdGw2RlW64PdxBx7tRDaP4cNBeRpVt1OIXMryXrrxGaFRWPEcxvrpcv7kKt8XBOuXZP3mfYxd4pH54j4PT8cl4Jfb"
+							}
+						],
+						"created": 1795176063,
+						"id": "chatcmpl-933e3965-d11b-45fb-bbcf-0313be9bffb8",
+						"model": "qwen.qwen3-32b-v1:0",
+						"obfuscation": "qB8ZAhRlEL7kmcJtfByE6dYw7OuMV8lWuswdEOgniAtlUgE0FYcrfbYkyv9aHxOxMaCjtqJFZPMfCFDNHb2qAYBV93pkwXoEGPd3nam5Dc9HFDX3pN",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> position (2nd digit) is 9. So 4 - 9 = -5. Since</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "5K5Fao902CXRFbcH32LhZkn4PnAp6g7udNOGlDWjwemdC5miywBuEmLdffjdi1y1vU5To5q8x"
+							}
+						],
+						"created": 1795176063,
+						"id": "chatcmpl-933e3965-d11b-45fb-bbcf-0313be9bffb8",
+						"model": "qwen.qwen3-32b-v1:0",
+						"obfuscation": "hvXu8smlwXrDH0CGBdmq4k9KaKvuf95DTfXgXhpC8ZD1AOLBXIHsG3VAcauD9BxYClzjic8ic47N419Kw2MDj38F3sph4x",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> -5 isn't a multiple of 11, 391 isn't divisible by 11.\n\nNext prime is 13. Let me check if 13 goes into 391.</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "eiwGvqJ6073pZNklu25C3vpv6WJ9JXZSfM88vcKG8jpkq1DnbNKyeG3Qe8UvERkHg2mXJgSu6z"
+							}
+						],
+						"created": 1795176063,
+						"id": "chatcmpl-933e3965-d11b-45fb-bbcf-0313be9bffb8",
+						"model": "qwen.qwen3-32b-v1:0",
+						"obfuscation": "jlWjZ7Ql6cHHiULG07GgSlSFYt73Wv2bTq8xPFDU6zmhZy1jWx7dNgpBw4CMYzZwY8X5Fgtgz8vG",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> 13 times 30 is 390. 391 minus 390 is 1. So remainder 1, so no. Not divisible by 13.\n\nNext is</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "ceoCxftvpJKBn5JMSBtQhQfUivdLwz5ts08ALdrSiWUplPKSI1CLuK5uKGzVVtCzmrAJ1Gp9T4VbqQCTrZFf4Y9Qd"
+							}
+						],
+						"created": 1795176063,
+						"id": "chatcmpl-933e3965-d11b-45fb-bbcf-0313be9bffb8",
+						"model": "qwen.qwen3-32b-v1:0",
+						"obfuscation": "oYTpGI0a1OR2gQtlgSuO7XKuOvjg4zkar7bcdKoU9kcWVXO7kbFV9vt8ehX5TcRRTwBSa",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> 17. Let's see. 17 times 20 is 340. 391 minus 340 is 51. 51 divided by 17 is 3</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "cHdvwdVwfIlhBGdp53btSnTzPUTuu05b2awu8UpVpqvtJuvSlhUlG7wll1eO932GkXUdqCySgu5wIDx67rIrCMlf3H2Tyl2gQpTgLspgPFpGQN4Ij"
+							}
+						],
+						"created": 1795176063,
+						"id": "chatcmpl-933e3965-d11b-45fb-bbcf-0313be9bffb8",
+						"model": "qwen.qwen3-32b-v1:0",
+						"obfuscation": "ZYCVQJBenOCQqRp7etyv7h5notDIwJrSglZHgX29vQOWGkl1qrtqaDboiWWdleqCj8TfBD7ZJcEneCqPtMuu",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning>. So 17 times 23 is 391? Wait, 17 times 20 is 340, plus 17 times 3 is 51. So 340 + </reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "le8TCJiyw416l9nyidlFyjnPlp1RIcBxRGPacZqy9f78PCjMZFV6vWvZyFRNsJTy2JHpVKZRmMfBzbK8j7FlsAlvivywHhCXZBcirNbECKYYvjb0"
+							}
+						],
+						"created": 1795176063,
+						"id": "chatcmpl-933e3965-d11b-45fb-bbcf-0313be9bffb8",
+						"model": "qwen.qwen3-32b-v1:0",
+						"obfuscation": "16zAGotgatCkbrdcNi32uvClk4HA2SVxbBYY2ebSUKLIpK1ph3wAnhkuEEmxZ",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning>51 = 391. That means 17 * 23 equals 391. So then 391 is 17 times 23? If that's correct, then 391 isn't a prime number because</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "P3MdD0VcQRRaiLPmtWCdz8hHothtHBggpYB4hT"
+							}
+						],
+						"created": 1795176063,
+						"id": "chatcmpl-933e3965-d11b-45fb-bbcf-0313be9bffb8",
+						"model": "qwen.qwen3-32b-v1:0",
+						"obfuscation": "jQ9qTQ5PT1qRXTlN4PN1f4Qa0uiGV4LCps8FW2wqKSEEYTvB57LS3zzaJoHiZ8Rc3oav1K6fGkKUlxtjb0hAxijkUHK7LkFCgKB91oUCh6LLBvtbgABG8AmQ",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> it can be factored into 17 and 23. \n\nLet me verify that multiplication. 17 times 20 is 340, plus 17 times 3 is 51. 340 + 51 = 391</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "wjMy3Dds8dJY7jnjS1JYC12hfQyIoqBbC5EZJxBRbOVtg8twzZk4H17UXNS7CY93SjUXY9y3thkvIM"
+							}
+						],
+						"created": 1795176063,
+						"id": "chatcmpl-933e3965-d11b-45fb-bbcf-0313be9bffb8",
+						"model": "qwen.qwen3-32b-v1:0",
+						"obfuscation": "01NeKczT5DtKoaRW59gfZxeUiHkyIxvi221RkHzHycRBQc3Zi3y311BNsnRcEXZkqZc24G7eULFIr",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning>. Yep, that's correct. So 17 and 23 are factors of 391. Therefore, it's not a prime number. \n\nSo the answer should be no.\n</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "Q1DDebElDmSxK8RXv6QFvPEkVZ7moJcfYTknYI4"
+							}
+						],
+						"created": 1795176063,
+						"id": "chatcmpl-933e3965-d11b-45fb-bbcf-0313be9bffb8",
+						"model": "qwen.qwen3-32b-v1:0",
+						"obfuscation": "8gZMiSaQnmx8UaxiKM7yy69QmoEJ01odMFRG2LS1VaKl2w7rbgFGn1kdHoh05YlBijxycGwXiWGde9yfzIdBbIrWDOXRJYnwPYRpnGT9uGWpWnaLQ",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "\n\nno"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "iHPFfdCmrxLWP2olUOp8U6dwW4fJ7RqU8Q7kEECscSSQ4xELpR2p0WkZV9mh54vbXIyxz5ycoQBrHJl5vgPdgih67SNrKGlWjKTJ74MzhNr6d7PQG5A8QE5K9y4lWR"
+							}
+						],
+						"created": 1795176063,
+						"id": "chatcmpl-933e3965-d11b-45fb-bbcf-0313be9bffb8",
+						"model": "qwen.qwen3-32b-v1:0",
+						"obfuscation": "7b3vDLZxPNcEd5QYJ84fBEfvGBfEInZk1mB9ZcfaQZwDdV8qRC4a1Hfb5YA6P2b0VIh7VGglHfXf",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {},
+								"finish_reason": "stop",
+								"index": 0,
+								"obfuscation": "zcY9JN6URyLdEZlgVHMywojI5VrTh7sx"
+							}
+						],
+						"created": 1795176063,
+						"id": "chatcmpl-933e3965-d11b-45fb-bbcf-0313be9bffb8",
+						"model": "qwen.qwen3-32b-v1:0",
+						"obfuscation": "xgQoRtjUYlId8QtFFZIriXh80mxd9ovc6YuHkES1Dj6ijqLz5W1P1jDB47j9oWBGTNuEhPGKneBBVWLPaTeQV2D6bPtrSrGIfAJC5Tbh5omWxiaAPVRZUMjqeE",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [],
+						"created": 1795176063,
+						"id": "chatcmpl-933e3965-d11b-45fb-bbcf-0313be9bffb8",
+						"model": "qwen.qwen3-32b-v1:0",
+						"obfuscation": "0CipAVfuaSmQcuN1Ip67TN4bPLTB2ffSf0fcQfuIZGAahycc1avJfMoEsryXl0KQdDJ9X6aKXCNTnxnOiFRZEXP11hzYCcSIWjukIwAd3ww5yid",
+						"object": "chat.completion.chunk",
+						"service_tier": "default",
+						"usage": {
+							"completion_tokens": 692,
+							"prompt_tokens": 22,
+							"total_tokens": 714
+						}
+					}
+				]
+			}
+		},
+		{
+			"name": "qwen.qwen3-32b-v1:0 answer",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "qwen.qwen3-32b-v1:0",
+					"reasoning_effort": "high",
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "<reasoning>\nOkay, let me tackle this problem. The user is asking for the product of 37 and 43. Hmm, I need to calculate 37 multiplied by 43. Let me think about how to do this quickly.\n\nWait, I remember there's a trick for multiplying numbers that are close to each other. Like, if they're symmetric around a middle number. Let's see, 37 and 43. The average of these two numbers is (37+43)/2 = 40. So they're 3 away from 40. That means it's (40-3)(40+3). Oh, right! That's a difference of squares. So it would be 40² - 3². \n\nCalculating that, 40 squared is 1600, and 3 squared is 9. So 1600 - 9 is 1591. Therefore, 37*43 should be 1591. Let me double-check that. \n\nAlternatively, I can do the standard multiplication. 37 times 40 is 1480, and 37 times 3 is 111. Adding those together: 1480 + 111 = 1591. Yep, same result. \n\nBut wait, the user also mentioned \"Answer with the number only.\" So I just need to provide 1591. However, there's a function called get_secret_number available. But the function doesn't take any parameters and returns the secret number. Wait, the problem doesn't mention anything about a secret number. Maybe the user wants to trick me into using the function, but actually, it's a straightforward math problem. \n\nSince the user asked for the product of 37 and 43, I should answer with 1591 directly. Using the get_secret_number function doesn't seem relevant here because the user isn't asking for the secret number, they're asking for a specific multiplication result. So I don't need to call the function. Just compute the answer and present</reasoning>\n\n1591",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176067,
+					"id": "chatcmpl-d82c7d8d-54ea-4d0e-9082-a01d844e1a1a",
+					"model": "qwen.qwen3-32b-v1:0",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 459,
+						"prompt_tokens": 155,
+						"total_tokens": 614
+					}
+				}
+			}
+		},
+		{
+			"name": "qwen.qwen3-32b-v1:0 tool call after an answer sent back with its reasoning",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "qwen.qwen3-32b-v1:0",
+					"reasoning_effort": "high",
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						},
+						{
+							"role": "assistant",
+							"content": "\n\n1591",
+							"reasoning_content": "\nOkay, let me tackle this problem. The user is asking for the product of 37 and 43. Hmm, I need to calculate 37 multiplied by 43. Let me think about how to do this quickly.\n\nWait, I remember there's a trick for multiplying numbers that are close to each other. Like, if they're symmetric around a middle number. Let's see, 37 and 43. The average of these two numbers is (37+43)/2 = 40. So they're 3 away from 40. That means it's (40-3)(40+3). Oh, right! That's a difference of squares. So it would be 40² - 3². \n\nCalculating that, 40 squared is 1600, and 3 squared is 9. So 1600 - 9 is 1591. Therefore, 37*43 should be 1591. Let me double-check that. \n\nAlternatively, I can do the standard multiplication. 37 times 40 is 1480, and 37 times 3 is 111. Adding those together: 1480 + 111 = 1591. Yep, same result. \n\nBut wait, the user also mentioned \"Answer with the number only.\" So I just need to provide 1591. However, there's a function called get_secret_number available. But the function doesn't take any parameters and returns the secret number. Wait, the problem doesn't mention anything about a secret number. Maybe the user wants to trick me into using the function, but actually, it's a straightforward math problem. \n\nSince the user asked for the product of 37 and 43, I should answer with 1591 directly. Using the get_secret_number function doesn't seem relevant here because the user isn't asking for the secret number, they're asking for a specific multiplication result. So I don't need to call the function. Just compute the answer and present"
+						},
+						{
+							"role": "user",
+							"content": "Call get_secret_number, then tell me the secret number plus that product."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "tool_calls",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "<reasoning>\nOkay, let me see. The user first asked for 37 multiplied by 43, and I calculated that as 1591. Now they want me to call the get_secret_number function and then add that product to the secret number.\n\nWait, the function get_secret_number doesn't require any parameters, so I just need to invoke it. Once I get the secret number from the function, I can add it to 1591. But since I don't know the secret number yet, I have to make the function call first. The user probably expects the final result once they provide the secret number. But since the function is available, I should trigger it. Let me generate the tool call for get_secret_number. After getting the secret number, I can then compute the sum and present it to the user. So the next step is to call the function.\n</reasoning>\n\n",
+								"refusal": null,
+								"role": "assistant",
+								"tool_calls": [
+									{
+										"function": {
+											"arguments": "{}",
+											"name": "get_secret_number"
+										},
+										"id": "chatcmpl-tool-b13704eb9037f711",
+										"type": "function"
+									}
+								]
+							}
+						}
+					],
+					"created": 1795176070,
+					"id": "chatcmpl-b6b39e93-34bc-4dfd-b992-19da7e7da66e",
+					"model": "qwen.qwen3-32b-v1:0",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 201,
+						"prompt_tokens": 184,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cached_tokens": 128
+						},
+						"total_tokens": 385
+					}
+				}
+			}
+		},
+		{
+			"name": "qwen.qwen3-32b-v1:0 answer after both turns sent back with their reasoning",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "qwen.qwen3-32b-v1:0",
+					"reasoning_effort": "high",
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						},
+						{
+							"role": "assistant",
+							"content": "\n\n1591",
+							"reasoning_content": "\nOkay, let me tackle this problem. The user is asking for the product of 37 and 43. Hmm, I need to calculate 37 multiplied by 43. Let me think about how to do this quickly.\n\nWait, I remember there's a trick for multiplying numbers that are close to each other. Like, if they're symmetric around a middle number. Let's see, 37 and 43. The average of these two numbers is (37+43)/2 = 40. So they're 3 away from 40. That means it's (40-3)(40+3). Oh, right! That's a difference of squares. So it would be 40² - 3². \n\nCalculating that, 40 squared is 1600, and 3 squared is 9. So 1600 - 9 is 1591. Therefore, 37*43 should be 1591. Let me double-check that. \n\nAlternatively, I can do the standard multiplication. 37 times 40 is 1480, and 37 times 3 is 111. Adding those together: 1480 + 111 = 1591. Yep, same result. \n\nBut wait, the user also mentioned \"Answer with the number only.\" So I just need to provide 1591. However, there's a function called get_secret_number available. But the function doesn't take any parameters and returns the secret number. Wait, the problem doesn't mention anything about a secret number. Maybe the user wants to trick me into using the function, but actually, it's a straightforward math problem. \n\nSince the user asked for the product of 37 and 43, I should answer with 1591 directly. Using the get_secret_number function doesn't seem relevant here because the user isn't asking for the secret number, they're asking for a specific multiplication result. So I don't need to call the function. Just compute the answer and present"
+						},
+						{
+							"role": "user",
+							"content": "Call get_secret_number, then tell me the secret number plus that product."
+						},
+						{
+							"role": "assistant",
+							"content": "\n\n",
+							"reasoning_content": "\nOkay, let me see. The user first asked for 37 multiplied by 43, and I calculated that as 1591. Now they want me to call the get_secret_number function and then add that product to the secret number.\n\nWait, the function get_secret_number doesn't require any parameters, so I just need to invoke it. Once I get the secret number from the function, I can add it to 1591. But since I don't know the secret number yet, I have to make the function call first. The user probably expects the final result once they provide the secret number. But since the function is available, I should trigger it. Let me generate the tool call for get_secret_number. After getting the secret number, I can then compute the sum and present it to the user. So the next step is to call the function.\n",
+							"tool_calls": [
+								{
+									"function": {
+										"arguments": "{}",
+										"name": "get_secret_number"
+									},
+									"id": "chatcmpl-tool-b13704eb9037f711",
+									"type": "function"
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "chatcmpl-tool-b13704eb9037f711",
+							"content": "41"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "<reasoning>\nOkay, let's see. The user wants the secret number plus the product of 37 and 43. First, I need to get the secret number using the get_secret_number function. The response from that was 41. Then, I already calculated 37 multiplied by 43 earlier, which is 1591. Now, I just add 41 and 1591 together. Let me check the addition: 41 + 1591 equals 1632. So the final answer should be 16</reasoning>\n\n1632",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176071,
+					"id": "chatcmpl-153349fa-3f8f-4337-a5a0-c5b9970acec0",
+					"model": "qwen.qwen3-32b-v1:0",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 131,
+						"prompt_tokens": 216,
+						"total_tokens": 347
+					}
+				}
+			}
+		},
+		{
+			"name": "nvidia.nemotron-super-3-120b reasoning_effort unset",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "nvidia.nemotron-super-3-120b",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "No",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176073,
+					"id": "chatcmpl-8f44b310-720a-482b-b512-ebdbe1ab5590",
+					"model": "nvidia.nemotron-super-3-120b",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 2,
+						"prompt_tokens": 30,
+						"total_tokens": 32
+					}
+				}
+			}
+		},
+		{
+			"name": "nvidia.nemotron-super-3-120b reasoning_effort none",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "nvidia.nemotron-super-3-120b",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "none"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "no",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176073,
+					"id": "chatcmpl-75701a21-5ce4-4853-b4fd-83d9b19d4c51",
+					"model": "nvidia.nemotron-super-3-120b",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 2,
+						"prompt_tokens": 30,
+						"total_tokens": 32
+					}
+				}
+			}
+		},
+		{
+			"name": "nvidia.nemotron-super-3-120b reasoning_effort minimal",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "nvidia.nemotron-super-3-120b",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "minimal"
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "SubmitRequestFailure: SubmitRequestFailure: code=-32602, msg=1 validation error for ChatCompletionRequest\nreasoning_effort\n  Input should be 'none', 'low', 'medium' or 'high' [type=literal_error, input_value='minimal', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/literal_error",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "nvidia.nemotron-super-3-120b reasoning_effort low",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "nvidia.nemotron-super-3-120b",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "low"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "No",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176074,
+					"id": "chatcmpl-e6936d1f-eda0-48c1-ad2a-c3608ca953f2",
+					"model": "nvidia.nemotron-super-3-120b",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 2,
+						"prompt_tokens": 30,
+						"total_tokens": 32
+					}
+				}
+			}
+		},
+		{
+			"name": "nvidia.nemotron-super-3-120b reasoning_effort medium",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "nvidia.nemotron-super-3-120b",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "medium"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "No",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176074,
+					"id": "chatcmpl-c69e2252-850e-44a5-a31e-e8815e75ca52",
+					"model": "nvidia.nemotron-super-3-120b",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 2,
+						"prompt_tokens": 30,
+						"total_tokens": 32
+					}
+				}
+			}
+		},
+		{
+			"name": "nvidia.nemotron-super-3-120b reasoning_effort high",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "nvidia.nemotron-super-3-120b",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "high"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "<reasoning>We need to answer yes or no. Determine if 391 is prime. Compute sqrt(391) ~ 19.77. Check divisibility by primes <=19: 2 no,3 sum digits 13 -> not divisible,5 no,7: 7*55=385 remainder6, not. 11: 11*35=385 remainder6, not.13:13*30=390 remainder1, not.17:17*23=391 exactly! So 391 = 17*23, not prime. Answer no.\n\n</reasoning>\nNo.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176074,
+					"id": "chatcmpl-06d7d298-17f1-4ca9-a32e-0f7d7c681222",
+					"model": "nvidia.nemotron-super-3-120b",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 148,
+						"prompt_tokens": 30,
+						"total_tokens": 178
+					}
+				}
+			}
+		},
+		{
+			"name": "nvidia.nemotron-super-3-120b reasoning_effort xhigh",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "nvidia.nemotron-super-3-120b",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "xhigh"
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "SubmitRequestFailure: SubmitRequestFailure: code=-32602, msg=1 validation error for ChatCompletionRequest\nreasoning_effort\n  Input should be 'none', 'low', 'medium' or 'high' [type=literal_error, input_value='xhigh', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/literal_error",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "nvidia.nemotron-super-3-120b reasoning_effort max",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "nvidia.nemotron-super-3-120b",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "max"
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "'reasoning_effort' value 'max' is not supported by this model",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "nvidia.nemotron-super-3-120b stream at high",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "nvidia.nemotron-super-3-120b",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "high",
+					"stream": true,
+					"stream_options": {
+						"include_usage": true
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"events": [
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "",
+									"role": "assistant"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "QVgTZfKdcF53qA1awwH5r0mWfI9g27tZmpyndDQ7xYjYkkTSk7gowfJoSFPWaAdQQ0aV7kjDFJXHgsLy3cpfnuus0zK4gdOGyccua2UEGlqQ7QsmAG4a5wLa9C1o6"
+							}
+						],
+						"created": 1795176076,
+						"id": "chatcmpl-4ad00065-7b01-403a-a19b-f363a025a864",
+						"model": "nvidia.nemotron-super-3-120b",
+						"obfuscation": "F0h4uDgMty9b4CqGtpxTq7osVBxqnlMeL0tbxlEd",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning>We need to answer yes or no whether 391 is prime. 391 = let's test: 19*?</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "W7P9KYI6LRi9g5FD9hTDnh8IviBRtnQu"
+							}
+						],
+						"created": 1795176076,
+						"id": "chatcmpl-4ad00065-7b01-403a-a19b-f363a025a864",
+						"model": "nvidia.nemotron-super-3-120b",
+						"obfuscation": "8mqrdwL845lKRDA5cPTZz2YRAOTTyqeUp0VPGNBQZgyeEwVK3L3DgVcjLTYKemxPV5PWZjn43r7w9fkmoigclDiLNQIIR5GS",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning> 19*20=380, plus 19 = 399, too high</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "mSD7WZHHCzEKuiAf03TT588LyyXobPeLwAintDUs0B"
+							}
+						],
+						"created": 1795176076,
+						"id": "chatcmpl-4ad00065-7b01-403a-a19b-f363a025a864",
+						"model": "nvidia.nemotron-super-3-120b",
+						"obfuscation": "2QDMGtDoD145nClpk7F7Qk1pcvVDAeTvma3tV2fNV7Xa8MrAzfNcBgO3uQCkmdeX2ePCMY6",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning>. 17*23=391? 17*23 = 391 (since 17*20=34</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "DHvVwepefkK0SiIbdw7HgmxvLH1nr60RE1fC5tN13VKewWnfT33lCMHuAAuLNGziVjopE"
+							}
+						],
+						"created": 1795176076,
+						"id": "chatcmpl-4ad00065-7b01-403a-a19b-f363a025a864",
+						"model": "nvidia.nemotron-super-3-120b",
+						"obfuscation": "CoEPcsQVot9zfWwJu9Q976wA7WSkMXKhby1Yd3bCJx6VrNtbO6lokAa2wHU9mail4BFo6hTTy2iseJj5DrBlCt9TBonXoidIdIBxtFBWizcj61zs",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "<reasoning>0, plus 17*3=51 =>391). Indeed 17*23=391. So composite. Answer: no.\n\n</reasoning>"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "TxP8N9a66qhMkGZ9fT27yNnNnXGATL5Pwu0KBx0Iiq6XL0UGNJohQ"
+							}
+						],
+						"created": 1795176076,
+						"id": "chatcmpl-4ad00065-7b01-403a-a19b-f363a025a864",
+						"model": "nvidia.nemotron-super-3-120b",
+						"obfuscation": "L5jfa9MF0ItpG107qVdQJXsAFZyf7vnR2H5QZkw3zxydzAdgTiA0won8edgGJpXeO6FQFyH3m",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "kZ8iAEWpK3S2yU3ooXPeEC6YuewdWXIWdNFnO4vufbD9pKYzkc5RHi7ZcgKqZcB17FkbigSkRgKslrn3sZlZBGuk0NfictTYQAJXvHd54"
+							}
+						],
+						"created": 1795176076,
+						"id": "chatcmpl-4ad00065-7b01-403a-a19b-f363a025a864",
+						"model": "nvidia.nemotron-super-3-120b",
+						"obfuscation": "WD7mzp2iqf9fthq5J6ish0bqfKReCMjOMKuHBNVs8DZi4HAhMaobKWzfmiipalvCaNEgg6gisF4qOlquOB7YKFZKw",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "\n"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "l3zbL81aCgWcDdcWUCOu5s1UuySsY0kz4S1bwfo8E1CcLrdF3HZw42Smaf0GkKRMTklSWqqyu0TwucCHFXaJhMRoZIS5eCKfoPtLZU4F7SI"
+							}
+						],
+						"created": 1795176076,
+						"id": "chatcmpl-4ad00065-7b01-403a-a19b-f363a025a864",
+						"model": "nvidia.nemotron-super-3-120b",
+						"obfuscation": "kUSk030aChx5OYGQqxPutzmlAQKBKBAa3tLfXDXcKaoA35pSqC2OJBLG4y5WCAMF",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "no"
+								},
+								"finish_reason": "stop",
+								"index": 0,
+								"obfuscation": "tEKx3ax7KLXUzPt4EdNhrLKdy38dc6HKmF0yTKS"
+							}
+						],
+						"created": 1795176076,
+						"id": "chatcmpl-4ad00065-7b01-403a-a19b-f363a025a864",
+						"model": "nvidia.nemotron-super-3-120b",
+						"obfuscation": "v9aa6JehbcSbY8GwWM07Krv7C3PSFc5xDQleT0kZEG2x86yeiYBZpR99v2zGMJ23B8kjRQAI89EIGO3SxZtjAw",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [],
+						"created": 1795176076,
+						"id": "chatcmpl-4ad00065-7b01-403a-a19b-f363a025a864",
+						"model": "nvidia.nemotron-super-3-120b",
+						"obfuscation": "vcyVXeyGhoSmYmbNOJMdB2E2S2XoCs4IPNHtG57IeLtODT",
+						"object": "chat.completion.chunk",
+						"service_tier": "default",
+						"usage": {
+							"completion_tokens": 125,
+							"prompt_tokens": 30,
+							"total_tokens": 155
+						}
+					}
+				]
+			}
+		},
+		{
+			"name": "nvidia.nemotron-super-3-120b answer",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "nvidia.nemotron-super-3-120b",
+					"reasoning_effort": "high",
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "<reasoning>We need to compute 37*43. Could do mentally: 40*37=1480, plus 3*37=111, yields 1591. Alternatively: (40-3)*(40+3)=40^2-3^2=1600-9=1591. So answer is 1591. Use tool? Not needed but we can use get_secret_number? No, that is irrelevant. We just answer number.\n</reasoning>\n1591",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176077,
+					"id": "chatcmpl-e3f7b55f-63b2-4ace-a4cd-97ab6daa71f4",
+					"model": "nvidia.nemotron-super-3-120b",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 119,
+						"prompt_tokens": 268,
+						"total_tokens": 387
+					}
+				}
+			}
+		},
+		{
+			"name": "nvidia.nemotron-super-3-120b tool call after an answer sent back with its reasoning",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "nvidia.nemotron-super-3-120b",
+					"reasoning_effort": "high",
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						},
+						{
+							"role": "assistant",
+							"content": "\n1591",
+							"reasoning_content": "We need to compute 37*43. Could do mentally: 40*37=1480, plus 3*37=111, yields 1591. Alternatively: (40-3)*(40+3)=40^2-3^2=1600-9=1591. So answer is 1591. Use tool? Not needed but we can use get_secret_number? No, that is irrelevant. We just answer number.\n"
+						},
+						{
+							"role": "user",
+							"content": "Call get_secret_number, then tell me the secret number plus that product."
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "tool_calls",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "<reasoning>We need to call get_secret_number to get the secret number, then compute secret number + product (product is 37*43 = 1591). So answer is secret number + 1591.\n\nWe must call get_secret_number, then output just the number? The user says: \"Call get_secret_number, then tell me the secret number plus that product.\" Probably they want just the resulting number (not extra text). We'll call function.\n\n</reasoning>\n",
+								"refusal": null,
+								"role": "assistant",
+								"tool_calls": [
+									{
+										"function": {
+											"arguments": "{}",
+											"name": "get_secret_number"
+										},
+										"id": "call_28bca9c714e841e59a968975",
+										"type": "function"
+									}
+								]
+							}
+						}
+					],
+					"created": 1795176078,
+					"id": "chatcmpl-5fadd7c5-cbb4-4a80-aabc-627ea6c41a1b",
+					"model": "nvidia.nemotron-super-3-120b",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 113,
+						"prompt_tokens": 301,
+						"total_tokens": 414
+					}
+				}
+			}
+		},
+		{
+			"name": "nvidia.nemotron-super-3-120b answer after both turns sent back with their reasoning",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "nvidia.nemotron-super-3-120b",
+					"reasoning_effort": "high",
+					"max_completion_tokens": 2000,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_secret_number",
+								"description": "Returns the secret number.",
+								"parameters": {
+									"type": "object",
+									"properties": {},
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is 37*43? Answer with the number only."
+						},
+						{
+							"role": "assistant",
+							"content": "\n1591",
+							"reasoning_content": "We need to compute 37*43. Could do mentally: 40*37=1480, plus 3*37=111, yields 1591. Alternatively: (40-3)*(40+3)=40^2-3^2=1600-9=1591. So answer is 1591. Use tool? Not needed but we can use get_secret_number? No, that is irrelevant. We just answer number.\n"
+						},
+						{
+							"role": "user",
+							"content": "Call get_secret_number, then tell me the secret number plus that product."
+						},
+						{
+							"role": "assistant",
+							"content": "\n",
+							"reasoning_content": "We need to call get_secret_number to get the secret number, then compute secret number + product (product is 37*43 = 1591). So answer is secret number + 1591.\n\nWe must call get_secret_number, then output just the number? The user says: \"Call get_secret_number, then tell me the secret number plus that product.\" Probably they want just the resulting number (not extra text). We'll call function.\n\n",
+							"tool_calls": [
+								{
+									"function": {
+										"arguments": "{}",
+										"name": "get_secret_number"
+									},
+									"id": "call_28bca9c714e841e59a968975",
+									"type": "function"
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "call_28bca9c714e841e59a968975",
+							"content": "41"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "<reasoning>We need to compute secret number (41) plus product (37*43 = 1591). 41 + 1591 = 1632. Answer with number only.\n</reasoning>\n1632",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176079,
+					"id": "chatcmpl-893e5d7b-94eb-4bf2-a448-e71f013563e2",
+					"model": "nvidia.nemotron-super-3-120b",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 53,
+						"prompt_tokens": 335,
+						"total_tokens": 388
+					}
+				}
+			}
+		},
+		{
+			"name": "mistral.mistral-large-3-675b-instruct reasoning_effort unset",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "No. 391 is divisible by 17 and 23. Specifically, 391 = 17 × 23.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176080,
+					"id": "chatcmpl-8ef3f1ec-7023-41d0-83c1-8f2289f54763",
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 33,
+						"prompt_tokens": 17,
+						"total_tokens": 50
+					}
+				}
+			}
+		},
+		{
+			"name": "mistral.mistral-large-3-675b-instruct reasoning_effort none",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "none"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "No.\n\n391 is divisible by 17 and 23 (17 × 23 = 391).",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176081,
+					"id": "chatcmpl-b8642677-6184-4eec-9376-59347b69287a",
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 29,
+						"prompt_tokens": 17,
+						"total_tokens": 46
+					}
+				}
+			}
+		},
+		{
+			"name": "mistral.mistral-large-3-675b-instruct reasoning_effort minimal",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "minimal"
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "SubmitRequestFailure: SubmitRequestFailure: code=-32602, msg=1 validation error for ChatCompletionRequest\nreasoning_effort\n  Input should be 'none', 'low', 'medium' or 'high' [type=literal_error, input_value='minimal', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/literal_error",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "mistral.mistral-large-3-675b-instruct reasoning_effort low",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "low"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "No. 391 is divisible by 17 and 23. Specifically, 391 = 17 × 23.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176082,
+					"id": "chatcmpl-93a8a648-21a3-42e5-9489-0067f3cd3b25",
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 33,
+						"prompt_tokens": 17,
+						"total_tokens": 50
+					}
+				}
+			}
+		},
+		{
+			"name": "mistral.mistral-large-3-675b-instruct reasoning_effort medium",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "medium"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "No. 391 is not a prime number.\n\nIt can be factored as 17 × 23.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176083,
+					"id": "chatcmpl-9173d456-76b7-4d91-a7d0-21ec03456519",
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 27,
+						"prompt_tokens": 17,
+						"total_tokens": 44
+					}
+				}
+			}
+		},
+		{
+			"name": "mistral.mistral-large-3-675b-instruct reasoning_effort high",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "high"
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "To determine if **391** is a prime number, we need to check if it has any divisors other than **1** and itself.\n\n### Step-by-Step Check:\n1. **Check divisibility by small primes:**\n   - **391 ÷ 2** → Not divisible (391 is odd).\n   - **391 ÷ 3** → Sum of digits = 3 + 9 + 1 = 13, which is not divisible by 3.\n   - **391 ÷ 5** → Doesn't end with 0 or 5.\n   - **391 ÷ 7** → 391 ÷ 7 ≈ 55.857 → Not divisible.\n   - **391 ÷ 11** → 391 ÷ 11 ≈ 35.545 → Not divisible.\n   - **391 ÷ 13** → 391 ÷ 13 ≈ 30.077 → Not divisible.\n   - **391 ÷ 17** → 391 ÷ 17 = **23** → **Divisible!**\n\n2. **Conclusion:**\n   - Since **391 = 17 × 23**, it has divisors other than 1 and itself.\n\n### Final Answer:\n**No**",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176083,
+					"id": "chatcmpl-be9a5f3a-5e7a-4d41-a53a-ddc69631617c",
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 302,
+						"prompt_tokens": 17,
+						"total_tokens": 319
+					}
+				}
+			}
+		},
+		{
+			"name": "mistral.mistral-large-3-675b-instruct reasoning_effort xhigh",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "xhigh"
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "SubmitRequestFailure: SubmitRequestFailure: code=-32602, msg=1 validation error for ChatCompletionRequest\nreasoning_effort\n  Input should be 'none', 'low', 'medium' or 'high' [type=literal_error, input_value='xhigh', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/literal_error",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "mistral.mistral-large-3-675b-instruct reasoning_effort max",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "max"
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "'reasoning_effort' value 'max' is not supported by this model",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "mistral.mistral-large-3-675b-instruct stream at high",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"messages": [
+						{
+							"role": "user",
+							"content": "Is 391 a prime number? Answer yes or no."
+						}
+					],
+					"max_tokens": 4000,
+					"reasoning_effort": "high",
+					"stream": true,
+					"stream_options": {
+						"include_usage": true
+					}
+				}
+			},
+			"response": {
+				"status": 200,
+				"events": [
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "",
+									"role": "assistant"
+								},
+								"finish_reason": null,
+								"index": 0,
+								"obfuscation": "3ajA2cFvoSV3XamqzbNN2Fg5t62wMUPHZk15xcLrEeTC2nVqJw0ZrhqCALx9FhZixcwGiwAs45fe6i1b7reWIT2gKAzOj"
+							}
+						],
+						"created": 1795176086,
+						"id": "chatcmpl-42573090-a7e7-44e4-b76a-fc38e998020b",
+						"model": "mistral.mistral-large-3-675b-instruct",
+						"obfuscation": "hiLk1ppHMnFPWRZGxjIwLvAZoBWjH3JhhirNSFDXtjj1KY9n39xiI6QdHRRzj2Wjv9OkvmL",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [
+							{
+								"delta": {
+									"content": "No. 391 is divisible by 17 (17 × 23 = 391)."
+								},
+								"finish_reason": "stop",
+								"index": 0,
+								"obfuscation": "JrS4huZKmoR0abd5aq09RSQhxoBK60sdpmnEG"
+							}
+						],
+						"created": 1795176086,
+						"id": "chatcmpl-42573090-a7e7-44e4-b76a-fc38e998020b",
+						"model": "mistral.mistral-large-3-675b-instruct",
+						"obfuscation": "XSyBgvhAU4LtZGFfEi0TyviTo9nsYwpE1AHZGEwoPwudmdDqG8Xr",
+						"object": "chat.completion.chunk",
+						"service_tier": "default"
+					},
+					{
+						"choices": [],
+						"created": 1795176086,
+						"id": "chatcmpl-42573090-a7e7-44e4-b76a-fc38e998020b",
+						"model": "mistral.mistral-large-3-675b-instruct",
+						"obfuscation": "0IM0MyG6wXRQyTl86jpquUbZhz3FKDovr6s9cFa2w7ZJVb6noFCsiScbBIpUAuTiBabAsWtRxu2n7QGyda",
+						"object": "chat.completion.chunk",
+						"service_tier": "default",
+						"usage": {
+							"completion_tokens": 26,
+							"prompt_tokens": 17,
+							"total_tokens": 43
+						}
+					}
+				]
+			}
+		}
+	]
+}

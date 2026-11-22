@@ -1,0 +1,424 @@
+{
+	"shows": "On Azure, Mistral Large 3 takes a conversation whose tool call IDs are nine letters and digits and refuses any other ID, OpenAI's, Kimi's and a short one included.",
+	"recorded": "2026-11-20",
+	"exchanges": [
+		{
+			"name": "nine letters and digits",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral-large-3",
+					"max_tokens": 200,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "a1B2c3D4e",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "a1B2c3D4e",
+							"content": "Sunny, 21 C"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"id": "c050605ae13e44d0b22a653a74fd5e48",
+					"model": "mistral-large-3",
+					"choices": [
+						{
+							"index": 0,
+							"message": {
+								"role": "assistant",
+								"content": "The weather in **Paris** is currently **sunny** with a temperature of **21°C**."
+							},
+							"finish_reason": "stop"
+						}
+					],
+					"usage": {
+						"prompt_tokens": 96,
+						"completion_tokens": 22,
+						"total_tokens": 118,
+						"audio_prompt_tokens": 0
+					},
+					"created": 1795176122,
+					"object": "chat.completion",
+					"prompt_filter_results": null
+				}
+			}
+		},
+		{
+			"name": "OpenAI's ID",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral-large-3",
+					"max_tokens": 200,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "call_052aaaf1c18c423e986d0a89",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "call_052aaaf1c18c423e986d0a89",
+							"content": "Sunny, 21 C"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": "Bad Request",
+						"message": "{\"object\":\"Error\",\"message\":\"Tool call id was call_052aaaf1c18c423e986d0a89 but must be a-z, A-Z, 0-9, with a length of 9.\",\"type\":\"invalid_function_call\",\"code\":3280}",
+						"status": 400
+					}
+				}
+			}
+		},
+		{
+			"name": "Claude's ID",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral-large-3",
+					"max_tokens": 200,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "toolu_01A09q90qw90lq917835lq9",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "toolu_01A09q90qw90lq917835lq9",
+							"content": "Sunny, 21 C"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": "Bad Request",
+						"message": "{\"object\":\"Error\",\"message\":\"Tool call id was toolu_01A09q90qw90lq917835lq9 but must be a-z, A-Z, 0-9, with a length of 9.\",\"type\":\"invalid_function_call\",\"code\":3280}",
+						"status": 400
+					}
+				}
+			}
+		},
+		{
+			"name": "Kimi's ID",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral-large-3",
+					"max_tokens": 200,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "functions.get_weather:0",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "functions.get_weather:0",
+							"content": "Sunny, 21 C"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": "Bad Request",
+						"message": "{\"object\":\"Error\",\"message\":\"Tool call id was functions.get_weather:0 but must be a-z, A-Z, 0-9, with a length of 9.\",\"type\":\"invalid_function_call\",\"code\":3280}",
+						"status": 400
+					}
+				}
+			}
+		},
+		{
+			"name": "a short ID",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral-large-3",
+					"max_tokens": 200,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "call1",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "call1",
+							"content": "Sunny, 21 C"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": "Bad Request",
+						"message": "{\"object\":\"Error\",\"message\":\"Tool call id was call1 but must be a-z, A-Z, 0-9, with a length of 9.\",\"type\":\"invalid_function_call\",\"code\":3280}",
+						"status": 400
+					}
+				}
+			}
+		},
+		{
+			"name": "nine characters with an underscore",
+			"provider": "azure",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral-large-3",
+					"max_tokens": 200,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "abc_defgh",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "abc_defgh",
+							"content": "Sunny, 21 C"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"code": "Bad Request",
+						"message": "{\"object\":\"Error\",\"message\":\"Tool call id was abc_defgh but must be a-z, A-Z, 0-9, with a length of 9.\",\"type\":\"invalid_function_call\",\"code\":3280}",
+						"status": 400
+					}
+				}
+			}
+		}
+	]
+}

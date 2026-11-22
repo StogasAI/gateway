@@ -30,6 +30,7 @@ type policyDeploymentData struct {
 	ContextWindowTokens int                 `json:"contextWindowTokens"`
 	MaxInputTokens      int                 `json:"maxInputTokens"`
 	DataHandling        policyDataHandling  `json:"dataHandling"`
+	DocumentFormats     DocumentFormats     `json:"documentFormats"`
 	Hosting             string              `json:"hosting"`
 	InputLimits         InputLimits         `json:"inputLimits"`
 	InputModalities     []string            `json:"inputModalities"`
@@ -538,6 +539,7 @@ func newResolvedPolicyValues(candidate *ResolvedRequest) (*resolvedPolicyValues,
 					ProcessingWithin: deployment.Locations.Containing(dataHandling.ProcessingLocation),
 					StorageWithin:    deployment.Locations.Containing(dataHandling.StorageLocation),
 				},
+				DocumentFormats:    served.DocumentFormats,
 				Hosting:            deployment.Hosting,
 				InputLimits:        served.InputLimits,
 				InputModalities:    deployment.InputModalities,

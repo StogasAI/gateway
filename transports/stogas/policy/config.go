@@ -1014,6 +1014,7 @@ var exactFieldTypes = map[string]string{
 	"deployment.dataHandling.tee": "boolean", "deployment.dataHandling.teeVerified": "boolean",
 	"deployment.dataHandling.trainingUse": "boolean", "deployment.dataHandling.zeroDataRetention": "boolean",
 	"deployment.dataHandling.isolatedPromptCache": "boolean", "deployment.dataHandling.certifications": "string_list",
+	"deployment.documentFormats.extensions": "string_list", "deployment.documentFormats.mediaTypes": "string_list",
 	"deployment.hosting": "string", "deployment.companies": "string_list", "deployment.dataHandling.sharedWith": "string_list",
 	"deployment.inputModalities": "string_list", "deployment.maxOutputTokens": "integer",
 	"deployment.modelId": "string", "deployment.outputModalities": "string_list",
@@ -1037,7 +1038,6 @@ var exactFieldTypes = map[string]string{
 	"request.mcpTools": "string_list",
 	"request.model":    "string", "request.store": "boolean", "request.storedInput": "boolean",
 	"request.systemMessages": "boolean", "request.time": "timestamp",
-	"route.documentFormats.extensions": "string_list", "route.documentFormats.mediaTypes": "string_list",
 	"route.interfaces": "string_list", "route.providerId": "string", "route.id": "string",
 }
 
@@ -1045,7 +1045,7 @@ func init() {
 	for _, capability := range []string{
 		"explicitPromptCaching", "functionCalling", "implicitPromptCaching",
 		"parallelFunctionCalling", "streaming", "structuredOutputs", "systemMessages",
-		"toolChoice", "toolResultDocuments", "toolResultImages",
+		"toolChoice", "toolChoiceNone", "toolResultDocuments", "toolResultImages",
 	} {
 		exactFieldTypes["deployment.capabilities."+capability] = "boolean"
 	}

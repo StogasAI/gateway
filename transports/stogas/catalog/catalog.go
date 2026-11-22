@@ -77,7 +77,8 @@ func (s *snapshot) sibling(routeNode compiledRoute, current *compiledDeployment,
 			candidate.Upstream.ModelFormat == current.Upstream.ModelFormat &&
 			candidate.Upstream.ModelVersion == current.Upstream.ModelVersion &&
 			candidate.Upstream.DeploymentType == current.Upstream.DeploymentType &&
-			candidate.Upstream.InferenceGeo == current.Upstream.InferenceGeo {
+			candidate.Upstream.InferenceGeo == current.Upstream.InferenceGeo &&
+			slices.Equal(candidate.Upstream.Regions, current.Upstream.Regions) {
 			return candidateID
 		}
 	}
@@ -260,6 +261,7 @@ func (s *snapshot) deploymentFromCompiledAt(deploymentID string, route compiledR
 			ChuteID:        deployment.Upstream.ChuteID,
 			GPUCount:       deployment.Upstream.GPUCount,
 			InferenceGeo:   deployment.Upstream.InferenceGeo,
+			Regions:        slices.Clone(deployment.Upstream.Regions),
 			ReasoningMode:  deployment.Upstream.ReasoningMode,
 			ServiceTier:    deployment.Upstream.ServiceTier,
 			DeploymentType: deployment.Upstream.DeploymentType,
@@ -267,8 +269,8 @@ func (s *snapshot) deploymentFromCompiledAt(deploymentID string, route compiledR
 		SupportsCancellation: route.SupportsCancellation,
 		Capabilities:         served.Capabilities,
 		DocumentFormats: DocumentFormats{
-			MediaTypes: slices.Clone(route.DocumentFormats.MediaTypes),
-			Extensions: slices.Clone(route.DocumentFormats.Extensions),
+			MediaTypes: slices.Clone(served.DocumentFormats.MediaTypes),
+			Extensions: slices.Clone(served.DocumentFormats.Extensions),
 		},
 		InputModalities:     slices.Clone(served.InputModalities),
 		OutputModalities:    slices.Clone(deployment.OutputModalities),

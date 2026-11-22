@@ -137,9 +137,10 @@ func TestRoutingSkipsDeploymentsThatCannotReadTheAttachments(t *testing.T) {
 // credential, with each reason that the candidates give and the deployments that give it.
 func TestRoutingRefusesAnAttachmentThatNoCandidateCanRead(t *testing.T) {
 	snap := loadTestCatalog(t)
-	route := snap.graph.Routes["openai-chat-completions"]
+	routes := snap.graph.Deployments["openai-gpt-5.6-sol"].Routes
+	route := routes["openai-chat-completions"]
 	route.DocumentFormats = DocumentFormats{MediaTypes: []string{"text/plain"}, Extensions: []string{".txt"}}
-	snap.graph.Routes["openai-chat-completions"] = route
+	routes["openai-chat-completions"] = route
 	config := policyConfig(3)
 	config.Routing.Deployments = &policy.Lists{Allow: []string{"azure-gpt-5.6-sol", "openai-gpt-5.6-sol"}}
 	checks := 0

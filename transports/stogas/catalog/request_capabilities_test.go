@@ -18,6 +18,7 @@ func TestCatalogCapabilitiesFilterBeforeCredentialPreparation(t *testing.T) {
 			{"stream", `"stream":true`, `"stream":true`, func(c *Capabilities) { c.Streaming = false }},
 			{"functions", `"tools":[{"type":"function","function":{"name":"test","parameters":{"type":"object"}}}]`, `"tools":[{"type":"function","name":"test","parameters":{"type":"object"}}]`, func(c *Capabilities) { c.FunctionCalling = false }},
 			{"tool choice", `"tool_choice":"required"`, `"tool_choice":"required"`, func(c *Capabilities) { c.ToolChoice = false }},
+			{"tool choice none", `"tools":[{"type":"function","function":{"name":"test","parameters":{"type":"object"}}}],"tool_choice":"none"`, `"tools":[{"type":"function","name":"test","parameters":{"type":"object"}}],"tool_choice":"none"`, func(c *Capabilities) { c.ToolChoiceNone = false }},
 			{"structured output", `"response_format":{"type":"json_schema","json_schema":{"name":"test","schema":{"type":"object"}}}`, `"text":{"format":{"type":"json_schema","name":"test","schema":{"type":"object"}}}`, func(c *Capabilities) { c.StructuredOutputs = false }},
 			{"system message", `"messages":[{"role":"developer","content":"hello"}]`, `"instructions":"hello"`, func(c *Capabilities) { c.SystemMessages = false }},
 		} {

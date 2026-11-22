@@ -1992,9 +1992,12 @@ func TestSnapshotRejectsValuesThatPoliciesCannotName(t *testing.T) {
 		{"processing location", func(g map[string]any) {
 			deploymentRoute(g)["dataHandling"].(map[string]any)["processingLocation"] = "EU"
 		}, "names a location that the catalog does not list"},
+		// An extension without its dot, which the route lists too, so that only the vocabulary
+		// refuses it.
 		{"extension", func(g map[string]any) {
-			g["routes"].(map[string]any)["azure-chat-completions"].(map[string]any)["documentFormats"] = map[string]any{
-				"extensions": []any{"pdf"}, "mediaTypes": []any{"application/pdf"}}
+			for _, node := range []map[string]any{g["routes"].(map[string]any)["azure-chat-completions"].(map[string]any), deploymentRoute(g)} {
+				node["documentFormats"] = map[string]any{"extensions": []any{"pdf"}, "mediaTypes": []any{"application/pdf"}}
+			}
 		}, vocabulary},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2015,15 +2018,29 @@ func TestSnapshotRejectsValuesThatPoliciesCannotName(t *testing.T) {
 }
 
 func TestSnapshotRejectsIncompleteOrAmbiguousFileFormats(t *testing.T) {
+	route := func(graph map[string]any) map[string]any {
+		return graph["routes"].(map[string]any)["openai-responses"].(map[string]any)
+	}
+	// served is the deployment's record on the route, which states the formats that the provider
+	// reads for its model.
+	served := func(graph map[string]any) map[string]any {
+		deployment := graph["deployments"].(map[string]any)["openai-gpt-5.6-sol"].(map[string]any)
+		return deployment["routes"].(map[string]any)["openai-responses"].(map[string]any)
+	}
 	for _, tc := range []struct {
 		name  string
 		apply func(map[string]any)
 	}{
-		{"missing formats", func(r map[string]any) { delete(r, "documentFormats") }},
-		{"missing array", func(r map[string]any) { delete(r["documentFormats"].(map[string]any), "mediaTypes") }},
-		{"wildcard MIME", func(r map[string]any) { r["documentFormats"].(map[string]any)["mediaTypes"] = []any{"text/*"} }},
-		{"duplicate extension", func(r map[string]any) {
-			r["documentFormats"].(map[string]any)["extensions"] = []any{".pdf", ".pdf"}
+		{"missing formats", func(g map[string]any) { delete(route(g), "documentFormats") }},
+		{"missing array", func(g map[string]any) { delete(route(g)["documentFormats"].(map[string]any), "mediaTypes") }},
+		{"wildcard MIME", func(g map[string]any) { route(g)["documentFormats"].(map[string]any)["mediaTypes"] = []any{"text/*"} }},
+		{"duplicate extension", func(g map[string]any) {
+			route(g)["documentFormats"].(map[string]any)["extensions"] = []any{".pdf", ".pdf"}
+		}},
+		{"deployment without formats", func(g map[string]any) { delete(served(g), "documentFormats") }},
+		{"deployment that reads a format that its route does not", func(g map[string]any) {
+			formats := served(g)["documentFormats"].(map[string]any)
+			formats["extensions"] = append(formats["extensions"].([]any), ".zzz")
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2031,7 +2048,7 @@ func TestSnapshotRejectsIncompleteOrAmbiguousFileFormats(t *testing.T) {
 			if err := json.Unmarshal(testCatalogJSON, &whole); err != nil {
 				t.Fatal(err)
 			}
-			tc.apply(whole["graph"].(map[string]any)["routes"].(map[string]any)["openai-responses"].(map[string]any))
+			tc.apply(whole["graph"].(map[string]any))
 			raw, err := json.Marshal(whole)
 			if err != nil {
 				t.Fatal(err)

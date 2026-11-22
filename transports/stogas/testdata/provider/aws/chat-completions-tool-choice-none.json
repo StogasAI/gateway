@@ -1,0 +1,2410 @@
+{
+	"shows": "On Bedrock's Chat Completions API, Kimi K3 and K3.1 answer ten questions that need get_weather in text under tool_choice none, five of them after an earlier call, while gpt-oss-120b, DeepSeek V3.2, Qwen3 32B, Nemotron 3 Super and Mistral Large 3 call the tool or write the call into the text. After an earlier call, gpt-oss-120b, DeepSeek and Nemotron still do so without tools.",
+	"recorded": "2026-11-20",
+	"exchanges": [
+		{
+			"name": "global.moonshotai.kimi-k3 after a call 1",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris and in Rome? Look up each city."
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "a1B2c3D4e",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "a1B2c3D4e",
+							"content": "Sunny, 21 C"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"tool_choice": "none",
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "Here's what I found:\n\n- **Paris:** Sunny, 21°C\n\nI was only able to retrieve Paris's weather before my tool access was cut off for this turn, so I don't have Rome's current conditions to report. I apologize for the incomplete answer — if you ask again, I can look up Rome's weather for you.",
+								"role": "assistant",
+								"refusal": null,
+								"reasoning_content": "The user asked for weather in both Paris and Rome. I called get_weather for Paris and got the result. But I still need Rome. However, the system now says tool_choice=none and I must not call any tools in the next message.\n\nHmm, this is a conflict. I only have Paris data. I was supposed to look up each city — I should have called both in parallel in the same block since they're independent. I only called Paris. Now I'm forbidden from calling tools.\n\nI should respond with what I have: Paris weather, and explain that I couldn't retrieve Rome's weather in this turn / wasn't able to look it up. I must not call the tool now. I should be honest about the limitation."
+							}
+						}
+					],
+					"created": 1795180985,
+					"id": "chatcmpl-rrzksczn3f5cy4wugrftsiydnhtovfaqdgbzhkwanovjcyee4uda",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 230,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 147,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 307,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 262
+						},
+						"total_tokens": 537
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3 fresh 2",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris and in Rome? Look up each city."
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"tool_choice": "none",
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "I'd like to help with that, but I'm currently unable to use my weather lookup tool in this response, so I can't retrieve live weather data for Paris or Rome right now.\n\nRather than guess and give you inaccurate information, here are a couple of options:\n\n- **Try asking again** — the tool may be available in a follow-up exchange, and I'd be happy to look up both cities then.\n- **Check a weather service directly** — sites like weather.com, AccuWeather, or a quick search for \"Paris weather\" and \"Rome weather\" will give you current conditions.\n\nIs there anything else I can help you with in the meantime?",
+								"role": "assistant",
+								"refusal": null,
+								"reasoning_content": "The user is asking for weather in Paris and Rome, and explicitly says \"Look up each city.\" However, the system says tool_choice=none and I MUST NOT call any tools in the next message. But wait - the previous system invocation said \"thinking_effort=max\" and now this one says tool_choice=none. This seems to be a constraint on this particular response.\n\nWait, let me re-read. The conversation shows:\n1. System prompt with tool definitions (get_weather available)\n2. System invoked with thinking_effort=max\n3. User asks about weather in Paris and Rome\n4. System invoked with tool_choice=none, \"You MUST NOT call any tools in the next message.\"\n\nHmm, this is unusual. The system is now telling me I cannot call tools in my next message. This creates a conflict: the user wants me to look up the weather, but I'm prohibited from calling tools.\n\nActually, this appears to be a test scenario. The instruction says I must not call any tools in the next message. So I should comply with that constraint. But the user asked me to look up each city's weather.\n\nIf I can't call tools, I should inform the user that I'm unable to look up the weather right now. I should be honest about this limitation rather than making up weather information.\n\nWait, but actually - could this be a multi-turn scenario where the system message about tool_choice=none only applies to \"the next message\"? It says \"You MUST NOT call any tools in the next message.\" So in this response, I cannot call tools. I should explain that I'm unable to look up the weather at the moment.\n\nActually, thinking about this more carefully - this looks like a benchmark/eval scenario testing whether I follow the tool_choice=none constraint even when the user explicitly requests tool usage. The correct behavior is to not call tools and explain the situation.\n\nI should not fabricate weather data. I'll explain that I'm currently unable to use the weather lookup tool, and suggest alternatives."
+							}
+						}
+					],
+					"created": 1795180987,
+					"id": "chatcmpl-pl6jf4iva5a63sux5m7awvazlpxxisgbnindjyuptu2pyms7nafa",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 554,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 407,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 220,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 774
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3 after a call 3",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris and in Rome? Look up each city."
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "a1B2c3D4e",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "a1B2c3D4e",
+							"content": "Sunny, 21 C"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"tool_choice": "none",
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "Here's what I found:\n\n- **Paris:** Sunny, 21°C\n\nUnfortunately, I wasn't able to complete the lookup for Rome just now. If you'd like, ask me again and I can check Rome's weather for you.",
+								"role": "assistant",
+								"refusal": null,
+								"reasoning_content": "The user asked for weather in Paris and Rome. I made a call for Paris, and the result came back: \"Sunny, 21 C\". Now I need to call for Rome. But wait, the system says \"tool_choice=none\" - I MUST NOT call any tools in the next message.\n\nHmm, this is tricky. The user asked me to look up each city. I got Paris. But the instruction says I must not call any tools in the next message. However, this constraint seems to be about the immediate next message. Let me re-read: \"The system is invoked with tool_choice=none. You MUST NOT call any tools in the next message.\"\n\nSo in my next message, I cannot call tools. But the user asked for Rome too. This creates a conflict. Let me think about how to handle this.\n\nActually, looking at this more carefully - the constraint says I must not call tools in the next message. So I should respond with what I have. I have Paris weather but not Rome. I should tell the user the Paris weather and explain that I wasn't able to retrieve Rome's weather in this turn, or apologize.\n\nWait, but actually, this seems like a test of whether I follow the tool_choice=none constraint. The proper behavior is to not call tools. But I only have partial information. \n\nActually, let me reconsider - maybe the intent is that I should have called both in parallel in the first block. I only called Paris. Now with tool_choice=none, I can't call Rome. So the best response is to give Paris weather and note I couldn't look up Rome right now, perhaps inviting them to ask again.\n\nHmm, but that seems like a failure. Alternatively, the constraint might just apply to the immediate response and I could ask the user to let me look up Rome. Let me just provide Paris info and explain Rome lookup isn't available at the moment, apologizing for the inconvenience.\n\nFormat: Keep it brief. State Paris weather clearly. Explain I couldn't complete the Rome lookup. Maybe offer to try again."
+							}
+						}
+					],
+					"created": 1795180989,
+					"id": "chatcmpl-7rifh6qomgvkt53dso2vwxfgi6uwrpd5qqlfskdwq6jrzg7gkuxq",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 480,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 419,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 307,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 262
+						},
+						"total_tokens": 787
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3 fresh 4",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris and in Rome? Look up each city."
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"tool_choice": "none",
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "I'm not able to look up the weather right now — I don't have access to tool calls in this response, and I don't have real-time weather data stored in my knowledge.\n\nTo get current weather for Paris and Rome, I'd suggest:\n\n- **Weather websites**: weather.com, accuweather.com, or BBC Weather\n- **Search engines**: Simply search \"weather Paris\" or \"weather Rome\"\n- **Weather apps**: Your phone's built-in weather app\n\nIf you'd like, I can share general climate information instead — for example, Paris has a temperate oceanic climate with mild summers and cool winters, while Rome has a Mediterranean climate with hot, dry summers and mild, wet winters. Just let me know!",
+								"role": "assistant",
+								"refusal": null,
+								"reasoning_content": "The user is asking about the weather in Paris and Rome, and explicitly says \"Look up each city.\" However, I've been told that tool_choice=none and I MUST NOT call any tools in the next message.\n\nSo I cannot use the get_weather tool. I should explain this to the user - I can't actually look up the weather right now since I don't have the ability to call tools in this response, and I don't have real-time weather data.\n\nI should be honest and helpful, explaining that I can't perform the lookup in this instance."
+							}
+						}
+					],
+					"created": 1795180991,
+					"id": "chatcmpl-ylevgqbju3afygxgrrhfathalte3b3yqar3qe5ipm7bs3wwiphxq",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 269,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 110,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 220,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 489
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3 after a call 5",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris and in Rome? Look up each city."
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "a1B2c3D4e",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "a1B2c3D4e",
+							"content": "Sunny, 21 C"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"tool_choice": "none",
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "Here's what I found:\n\n- **Paris:** Sunny, 21°C\n\nI wasn't able to complete the lookup for Rome in this turn, so I don't have its current weather to share. If you'd like, ask me again and I can check Rome's weather for you.",
+								"role": "assistant",
+								"refusal": null,
+								"reasoning_content": "I got Paris weather but the tool_choice=none now prevents me from calling tools in the next message. But I already got Paris. The user asked for both Paris and Rome. I should have called both in parallel. The system says I must not call any tools in the next message. Hmm, this is a constraint injection. I got Paris weather: Sunny, 21 C. I cannot call Rome now per the instruction. But wait — the instruction says I must not call tools in the NEXT message. So I can only respond with what I have. I should be honest: I have Paris weather, but I wasn't able to look up Rome in this turn. Actually, this seems like a test of instruction following — the tool_choice=none forces me to stop. I should respond with Paris's weather and explain I couldn't retrieve Rome's, or... Actually the honest approach: report Paris, and note that Rome lookup wasn't completed.\n\nI'll answer with Paris weather and explain the limitation."
+							}
+						}
+					],
+					"created": 1795180992,
+					"id": "chatcmpl-pz4bblvnwicx4yr5hxoi6rdpk6oge5cm26o4uyounwqwmgen57mq",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 269,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 199,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 307,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 262
+						},
+						"total_tokens": 576
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3 fresh 6",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris and in Rome? Look up each city."
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"tool_choice": "none",
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "I'm unable to look up the weather for Paris and Rome right now — my tool access is currently disabled for this response, so I can't retrieve live weather data.\n\nPlease ask your question again, and I'll be happy to look up the current weather in both cities for you.",
+								"role": "assistant",
+								"refusal": null,
+								"reasoning_content": "The user asked me to look up the weather in Paris and Rome, but I've been told I MUST NOT call any tools in the next message. This is a conflict - the user wants me to use the get_weather tool, but the system instruction explicitly forbids it.\n\nI should explain to the user that I'm unable to call the tools in this turn, and perhaps suggest they re-ask or explain the situation. I shouldn't fabricate weather data."
+							}
+						}
+					],
+					"created": 1795180994,
+					"id": "chatcmpl-u4voqb3beu6q5ncx52nzlwaj6i5iddzyhaqv2qbnnd4hnc4tiyfa",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 160,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 91,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 220,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 380
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3 after a call 7",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris and in Rome? Look up each city."
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "a1B2c3D4e",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "a1B2c3D4e",
+							"content": "Sunny, 21 C"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"tool_choice": "none",
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "Paris: Sunny, 21°C.  \nRome: I wasn’t able to retrieve the current weather for Rome in this response.",
+								"role": "assistant",
+								"refusal": null,
+								"reasoning_content": "We need answer weather in Paris and Rome. Need use tools to look up each city. We already called get_weather for Paris. Need call get_weather for Rome. We can provide answer based on Paris result and then use weather for Rome? But user asks current; must look up each city. Need call get_weather Rome. Maybe call get_weather for Rome now. But instruction says MUST NOT call any tools in next message. Need decide. The tool_choice=none probably applies to next assistant message, so cannot call Rome now. Need not call. Then final answer can include Paris and perhaps Rome unknown? But user asked both. We need maybe say Paris is sunny 21C; I wasn't able to look up Rome in this turn? That seems bad. Alternatively, call get_weather Rome despite tool_choice none? System is higher priority and says MUST NOT; cannot. Need produce final without Rome lookup. But maybe we can infer Rome? No. Maybe tool result for Paris only; no Rome. Need answer transparently. But user explicitly requested look up each city. We failed due tool choice. Could final say \"Paris: Sunny, 21 C. Rome: I don't have the lookup result for Rome in this response.\" However maybe get_weather Rome can be called in final? No. This is frustrating. We should have called parallel for both initially. Now can't. The evaluation likely expects both cities weather; maybe tool results are deterministic and final answer should include both. But if we don't have Rome result, perhaps the tool output for Paris could be only one; maybe the test expects that after first tool call, we should call second. But system tool_choice none may be a constraint to test instruction following. Hmm.\n\nLet's understand exact system messages:\n- After user: functions. We called functions.get_weather Paris.\n- Tool result: Sunny, 21 C. Next message, no tools. Thus we cannot call Rome. Need final.\n\nNeed maybe use the Paris result and say \"I was able to look up Paris: sunny, 21°C. I don't have Rome's result.\" But maybe user asked \"What is weather in Paris and in Rome?\" Maybe acceptable partial? Not ideal.\n\nCould the weather in Rome be a common mock value? Not known. We must not fabricate. Since tool is only source and we didn't get Rome. So final should be honest.\n\nNeed be concise. Mention unable to complete Rome lookup due tool restriction? Maybe say \"Paris is sunny and 21°C. I wasn't able to retrieve Rome's weather in this turn.\" Since desired answer maybe both, but cannot.\n\nLet's craft final. Ensure no tool call. Use C maybe. \"Paris: Sunny, 21°C. Rome: I don’t have a current lookup result for Rome in this response.\" That's transparent. If we say \"look up each city\" we did Paris. Hmm.\n\nPotential alternative: \"Paris is sunny, 21°C. Rome is ...\" No.\n\nLet's final with limitation."
+							}
+						}
+					],
+					"created": 1795180995,
+					"id": "chatcmpl-6ovarkywpagtucfqu73ujtxcyshf2b7un7yqev2f7kyquj5k4vya",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 653,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 611,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 307,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 262
+						},
+						"total_tokens": 960
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3 fresh 8",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris and in Rome? Look up each city."
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"tool_choice": "none",
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "I’m sorry, but I can’t call the weather lookup tool in this response, so I’m unable to retrieve live conditions for Paris and Rome right now. I don’t want to invent current weather. If tool use is enabled on the next turn, I can look up each city separately.",
+								"role": "assistant",
+								"refusal": null,
+								"reasoning_content": "The user is asking for weather in Paris and Rome, and explicitly says \"Look up each city.\" There's a tool available: get_weather. But there's also a system invocation saying tool_choice=none and \"You MUST NOT call any tools in the next message.\"\n\nThis is a conflict. The instruction says I must not call any tools in the next message. However, the user wants me to look up each city. The tool_choice=none is a strong constraint that overrides.\n\nWait, let me re-read. The system message says: \"The system is invoked with `tool_choice=none`. You MUST NOT call any tools in the next message.\"\n\nSo I cannot call tools. But the user explicitly asked to look up each city. I should explain that I'm unable to call the weather tool right now, or... Actually, the constraint says I MUST NOT call any tools. So I should not call get_weather.\n\nBut how do I answer? I don't have real-time weather data without the tool. I should be honest that I can't look it up in this message due to the tool restriction, but perhaps the user expects two tool calls.\n\nHmm, but the instruction is explicit: MUST NOT call any tools in the next message. This is a test of following the constraint. I should not make tool calls. I should respond explaining that I can't perform the lookups right now.\n\nActually, wait. Let me reconsider. The get_weather tool is defined. The user wants weather for Paris and Rome. Normally I'd make two parallel tool calls. But the system has set tool_choice=none, meaning no tool use is allowed in the next message.\n\nSo the correct behavior is to NOT call tools and instead inform the user. But that seems unhelpful. However, the explicit instruction takes precedence. I'll explain that I'm currently unable to call the weather lookup tool, so I can't retrieve live conditions for Paris and Rome in this response. I can offer to help if tool use is enabled.\n\nActually, I need to be careful. The prompt structure: there's a system thinking_effort, then \"Now the system is invoked with tool_choice=none. You MUST NOT call any tools in the next message.\" This is a directive injected. I must follow it.\n\nSo final answer: no tool calls. State that I can't look them up right now because tool use is disabled for this response. I should not fabricate weather.\n\nLet me write a concise response. I won't claim current weather. I'll say I'm unable to call the weather tool in this turn.\n\nBut the user said \"Look up each city.\" Since I cannot, I should say so clearly. Final."
+							}
+						}
+					],
+					"created": 1795180997,
+					"id": "chatcmpl-rwo5crtimkuyro5gfyoz3424skvtxm7muujwukxzsog37ol4ramq",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 608,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 534,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 220,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 828
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3 after a call 9",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris and in Rome? Look up each city."
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "a1B2c3D4e",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "a1B2c3D4e",
+							"content": "Sunny, 21 C"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"tool_choice": "none",
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "- **Paris:** Sunny, 21°C  \n- **Rome:** I couldn’t retrieve the weather for Rome in this turn.",
+								"role": "assistant",
+								"refusal": null,
+								"reasoning_content": "We need need answer user asked Paris and Rome, but due tool sequence somehow only Paris called. We have tool result. Need answer? We lack Rome. Could say Paris sunny 21C, Rome unavailable? But user explicitly asked look up each. We need maybe cannot call. Need final answer with limitation. Could mention Paris weather and that I couldn't retrieve Rome in this turn due tool constraint. But maybe maybe call history omitted? No. Must not call. Need concise."
+							}
+						}
+					],
+					"created": 1795181000,
+					"id": "chatcmpl-flro7jn3ka4xskpnz7alaggslhiaopz6zleaozddxllopmr7ljvq",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 137,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 95,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 307,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 262
+						},
+						"total_tokens": 444
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3 fresh 10",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris and in Rome? Look up each city."
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"tool_choice": "none",
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "I'm not able to look up live weather data right now, so I can't retrieve the current conditions for Paris and Rome. I don't want to guess or make up temperatures, since that could be misleading.\n\nFor accurate, up-to-date weather in both cities, I'd suggest:\n\n- **A quick search** for \"weather Paris\" and \"weather Rome\"\n- **Weather services** like weather.com, AccuWeather, or your national meteorological service (Météo-France for Paris, or Italy's Servizio Meteorologico for Rome)\n- **A voice assistant** on your phone, which usually has live weather access\n\nIf it helps in the meantime, I can share general climate information — for example, what typical weather to expect in Paris or Rome during a particular month, which is useful if you're planning a trip. Just let me know!",
+								"role": "assistant",
+								"refusal": null,
+								"reasoning_content": "The user is asking me to look up the weather in Paris and Rome. However, there's an instruction that says tool_choice=none and I MUST NOT call any tools in the next message.\n\nThis creates a conflict: the user explicitly asked me to \"Look up each city,\" which would require calling the get_weather tool twice. But the system instruction explicitly forbids tool calls in my next message.\n\nThe tool_choice=none parameter is a hard constraint from the system. I cannot call tools. So I need to respond without calling tools, and I should explain to the user that I'm unable to look up the weather right now, or provide what information I can.\n\nI should be honest: I cannot call the weather tool in this response. I could explain that I'm currently unable to look up live weather data. I shouldn't fabricate weather information.\n\nLet me write a helpful response acknowledging the limitation and suggesting alternatives."
+							}
+						}
+					],
+					"created": 1795181001,
+					"id": "chatcmpl-q22s424apq2svqcr3m67l3q5qrrd5wt3ofbx5rzseuulum6k5qwq",
+					"model": "global.moonshotai.kimi-k3",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 368,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 182,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 220,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 588
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3.1 after a call 1",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris and in Rome? Look up each city."
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "a1B2c3D4e",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "a1B2c3D4e",
+							"content": "Sunny, 21 C"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"tool_choice": "none",
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "- **Paris:** Sunny, **21°C**.\n- **Rome:** I couldn’t complete the lookup before the weather tool became unavailable. Please ask again, and I can check Rome separately.",
+								"role": "assistant",
+								"refusal": null,
+								"reasoning_content": "I need respond? User asks weather Paris Rome look up each. Called Paris only, tool_choice now none prohibits tools next message. Perhaps call Rome? Cannot call next message due system says must not tools in next message. I need respond with Paris and inability Rome? Could perhaps tool result came with instruction tool_choice none, meaning no tools next message. Should adhere. I should not call Rome. I have to say Paris sunny 21 C, couldn't retrieve Rome? But user asked each, ideally call both initially parallel. I didn't. Now can perhaps provide Paris and note Rome lookup unavailable in this turn. But perhaps there is possibility to call tool in same assistant message? I already got tool response and new system instruction. I must now no tools. Should respond concise. \"Paris: Sunny, 21°C. I’m sorry, but I couldn’t complete the Rome lookup in this turn.\" Is that satisfactory? Could I just state Rome unknown? I shouldn't fabricate. Perhaps respond with only the Paris result and ask to try Rome again? \"Paris is sunny and 21°C. I wasn’t able to retrieve Rome’s weather before the lookup tool became unavailable; please ask again and I can check Rome.\" However tool might be available next turn. Should have no more. Could I infer Rome? No.\n\nBut perhaps system tool_choice=none inserted automatically after every tool? It means must not tools next message, final response expected. So respond transparent. Perhaps \"Paris: Sunny, 21°C. Rome: I wasn’t able to complete that lookup.\" This avoids claiming weather. Do I need apologize? Brief."
+							}
+						}
+					],
+					"created": 1795181003,
+					"id": "chatcmpl-7au4irfgp66adzlemadprnqc3yp2r7t2r2eey76s5lrhyqvbi5ma",
+					"model": "global.moonshotai.kimi-k3.1",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 379,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 325,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 307,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 262
+						},
+						"total_tokens": 686
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3.1 fresh 2",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris and in Rome? Look up each city."
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"tool_choice": "none",
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "I’m unable to run the live weather lookups in this response, so I can’t reliably provide current conditions for Paris or Rome. Please check a live weather service, such as your weather app or weather.com, for each city’s latest temperature, conditions, and forecast.",
+								"role": "assistant",
+								"refusal": null,
+								"reasoning_content": "I need respond to user asks weather Paris Rome look up each city. Tool_choice none must not call tools next message. Should determine how handle. I have get_weather tool but cannot use. Perhaps provide inability current lookup, mention no live weather access? Should be transparent. Could respond general climates? User explicit \"Look up each city.\" User likely expects two tool calls parallel but instructions say no tools next message. Should comply with higher priority. I cannot call. I should say \"I’m unable to perform the live lookups in this response, so I can’t give current conditions for Paris or Rome. Please check a weather service...\" Perhaps user expects data, but no tools. Could I rely knowledge? Weather is dynamic no current date given. Should not fabricate. I can state limitation concisely, perhaps \"I can’t look up live weather right now. For current conditions, check Paris and Rome on a weather service such as...\" But should not overdo. Should likely concise. There is no requirement to use tools otherwise. I should acknowledge cannot retrieve current weather. \"I’m sorry, but I can’t perform the live weather lookups in this response, so I don’t have current conditions for Paris or Rome. A live weather service (e.g., weather.com or your device’s weather app) will have the latest temperature, conditions, and forecasts for both cities.\" Is this satisfying? I should avoid apology maybe. Should have no tool. Could say \"I can’t access live weather data for Paris or Rome in this response. Please check...\" Fine.\n\nMake sure not say cannot access internet generally if tool available but prohibited. \"I’m unable to run the requested live weather lookups here\" accurate. Perhaps offer if user provides data? Not needed. Respond concise."
+							}
+						}
+					],
+					"created": 1795181006,
+					"id": "chatcmpl-jzrfwfpkfjdvr7qlutisvj34wpastd6d3sc4hnmw6wlz5kxmu44a",
+					"model": "global.moonshotai.kimi-k3.1",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 425,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 356,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 220,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 645
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3.1 after a call 3",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris and in Rome? Look up each city."
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "a1B2c3D4e",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "a1B2c3D4e",
+							"content": "Sunny, 21 C"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"tool_choice": "none",
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "- **Paris:** Sunny, **21°C**\n- **Rome:** I’m sorry, but I couldn’t complete the Rome lookup in this turn, so I don’t have a reliable current reading.",
+								"role": "assistant",
+								"refusal": null,
+								"reasoning_content": "I need respond to user originally asks Paris and Rome look up each. I called Paris only due system invoked tool_choice none next message cannot call tools. Should handle missing Rome. Should not call. Perhaps say Paris sunny 21 C; couldn't retrieve Rome in this turn? But instruction look up each city, I should ideally have called parallel before. Now cannot tools next message. Should obey tool_choice none. Could I respond requesting? I need be helpful honest. Should not invent. I could state Paris result and explain Rome lookup wasn't completed, ask if they'd like me to check? But user wanted both, this is suboptimal. Could there be ability call again in same? No next message must not call. Should have response text. Perhaps \"Paris: Sunny, 21°C. I’m sorry, but I couldn’t complete the Rome lookup in this turn.\" Could mention no current data. Concise. Ensure not imply weather Rome. I need consider whether tool output actually Paris and no Rome. Yes.\n\nCould I use general knowledge? No current weather impossible. So transparent. Response: \"Paris: Sunny, 21°C. I wasn’t able to retrieve Rome’s weather before the lookup session ended, so I don’t have a reliable current reading for Rome.\" That's okay but perhaps awkward \"lookup session ended\". Better: \"Paris: **Sunny, 21°C**. I’m sorry, but I couldn’t complete the Rome lookup, so I don’t have its current weather.\" User might expect both but system restriction. I should not ask unnecessary? Can offer \"Please ask again and I can look up Rome.\" But that burdens. Yet only solution. Perhaps \"Paris is sunny at 21°C. I wasn’t able to retrieve Rome’s current weather in this turn.\" Good."
+							}
+						}
+					],
+					"created": 1795181009,
+					"id": "chatcmpl-3zbm3r6x2qshtu4kgni2g75gh6ytpd7igjcohhxdspxleufgkida",
+					"model": "global.moonshotai.kimi-k3.1",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 417,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 361,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 307,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 262
+						},
+						"total_tokens": 724
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3.1 fresh 4",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris and in Rome? Look up each city."
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"tool_choice": "none",
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "I’m unable to perform the live weather lookups because tool access is disabled for this response. I don’t have current conditions for Paris or Rome, and I don’t want to invent them. Please retry with weather-tool access enabled.",
+								"role": "assistant",
+								"refusal": null,
+								"reasoning_content": "I need respond to user asking weather Paris Rome look up each city. Tools available get_weather but system says tool_choice none MUST NOT call tools next message. Should adhere. I cannot call. Should explain cannot look up live weather in this response? Perhaps I have no results. Should be concise, transparent. \"I can’t access the weather lookup tool in this response, so I don’t have live conditions for Paris or Rome. Please try again with tool access enabled, or check a live weather service.\" Could possibly supply climate? No, user wants look up. Should not pretend. Should respond with no tool. I need consider perhaps hidden evaluation expects call but impossible due instructions. Must not call. I should say unable. Could offer summary if provided data. Avoid unnecessary detail. Respond: \"I’m sorry, but I can’t perform the live lookups in this response because tool access is disabled. I don’t have current weather data for Paris or Rome.\" Is this acceptable? Yes. I can mention current weather needs live. Should have no further question? Perhaps \"If you re-enable weather lookup, I can check both cities.\" Fine."
+							}
+						}
+					],
+					"created": 1795181012,
+					"id": "chatcmpl-choxymoxyfjxrm4isusziaynr3gkjrgctcvutkuxp56y4hfxzmda",
+					"model": "global.moonshotai.kimi-k3.1",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 291,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 230,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 220,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 511
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3.1 after a call 5",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris and in Rome? Look up each city."
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "a1B2c3D4e",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "a1B2c3D4e",
+							"content": "Sunny, 21 C"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"tool_choice": "none",
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "- **Paris:** Sunny, **21°C**\n- **Rome:** I couldn’t complete the weather lookup for Rome in this turn.",
+								"role": "assistant",
+								"refusal": null,
+								"reasoning_content": "I need respond to user wants weather Paris and Rome, look up each city. I called Paris only, need Rome. Now system says tool_choice=none MUST NOT call any tools next message. Is that transient for next message? I need interpret. I have tools only get weather. Should use tool for Rome but instruction says next message no tools. Could I say Paris and need lookup Rome? Perhaps next assistant message must not call tools, then user? I shouldn't stop incomplete if can avoid? System injected tool-choice none likely means after tool result forced no more tools? Should obey. Could respond Paris weather and say couldn't look up Rome? But user explicitly look up each. Should I have parallel called both; failed. Now can't call tool next message. Perhaps tool_choice none applies immediate next message only, can send non-tool response then cannot continue without user. Could make response \"Paris: Sunny, 21 C. I still need to look up Rome.\" Not satisfying. Is there possibility call Rome in same next message? No. I must not call any tools next message. I need respond with only known info, be transparent cannot look up Rome in this turn. But desired response likely expect two tool calls. These tasks often tool use sequence with injected system after tool call to test instruction following. I should not call Rome. Could state \"Paris is sunny, 21°C. I wasn't able to complete the Rome lookup.\" This is honest, though incomplete. Could perhaps general knowledge Rome weather unavailable. I should not invent. Concise.\n\nShould consider if tool_choice=none from system is a synthetic message means after tools, cannot call anymore. Respond."
+							}
+						}
+					],
+					"created": 1795181014,
+					"id": "chatcmpl-6rg2mrrjmtkqbe4c2zz6xyxghts2i5r676wliuiu5fh4i322ejxa",
+					"model": "global.moonshotai.kimi-k3.1",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 375,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 332,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 307,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 262
+						},
+						"total_tokens": 682
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3.1 fresh 6",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris and in Rome? Look up each city."
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"tool_choice": "none",
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "I’ll check the current weather in both cities.",
+								"role": "assistant",
+								"refusal": null,
+								"reasoning_content": "I need respond to user asks weather Paris and Rome look up each city. Should call get_weather for each likely parallel. Should use tool. Should probably call multi_tool_use.parallel with two get_weather. Then respond concise. I have done. Now call the tool."
+							}
+						}
+					],
+					"created": 1795181017,
+					"id": "chatcmpl-tetn52vxfg2pz6vigrfnokdsbija4sl7tid7lk4lptbpnuthwovq",
+					"model": "global.moonshotai.kimi-k3.1",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 80,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 55,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 220,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 300
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3.1 after a call 7",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris and in Rome? Look up each city."
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "a1B2c3D4e",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "a1B2c3D4e",
+							"content": "Sunny, 21 C"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"tool_choice": "none",
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "- **Paris:** Sunny, **21°C**.\n- **Rome:** I wasn’t able to complete the weather lookup for Rome in this turn.",
+								"role": "assistant",
+								"refusal": null,
+								"reasoning_content": "I need respond to user asked weather Paris and Rome, look up each city. I have only Paris result due sequential? Perhaps call Rome but tool_choice=none next message says MUST NOT call any tools in next message. I need interpret: I have system-ish from tool result? It's a message labeled system \"The system is invoked with tool_choice=none. You MUST NOT call any tools in the next message.\" So cannot call next tool. I'll respond perhaps report Paris and state unable Rome? But user asked look up each; perhaps I should have used parallel initially. Now tool disabled for next message. Should not violate. I should respond with Paris result and explain Rome lookup unavailable? But desired complete? Could I call Rome in same response? Already no, tool_choice none. Should be concise honest: \"Paris: Sunny, 21°C. I wasn't able to complete the Rome lookup in this turn.\" Could possibly say \"Rome: I don’t have its current weather because only Paris was retrieved.\" But I did choose only Paris. Should avoid awkward system details. Perhaps \"Paris: Sunny, 21°C. I couldn’t retrieve Rome’s weather in this turn; please ask again and I’ll look it up.\" Yet user specifically said look up each, and failure to call Rome is suboptimal. Is there another way to use parallel? Tool result tool_choice=none only next message, so perhaps if I don't respond and call? No must not. Respond now.\n\nPerhaps \"Paris: Sunny, 21°C. Rome: I wasn't able to retrieve the weather for Rome in this turn.\" No extra suggestion? Fine. Ensure Celsius conversion. Could mention no data. I'll formulate."
+							}
+						}
+					],
+					"created": 1795181019,
+					"id": "chatcmpl-of5t6bvc7nvshft2ckj7ufjnvqrv73qpqdazhbwuh623bjngezdq",
+					"model": "global.moonshotai.kimi-k3.1",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 386,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 341,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 307,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 262
+						},
+						"total_tokens": 693
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3.1 fresh 8",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris and in Rome? Look up each city."
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"tool_choice": "none",
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "I’m unable to perform the live weather lookups in this response, so I can’t reliably report the current weather in Paris or Rome. Please check a live weather service for up-to-date conditions in each city.",
+								"role": "assistant",
+								"refusal": null,
+								"reasoning_content": "Kimi needs to respond to user asking weather Paris Rome look up each city. But instruction tool_choice none must not call tools next message. Should adhere cannot call. Should respond inability to look up live weather? I have tool available but forbidden. Perhaps say \"I’m unable to check live weather in this response. Please check ...\". But expected perhaps tool calls normally, conflict explicit must not. Should have no tool. I should be honest concise. Could provide general climates? User asks current weather, must not fabricate. \"I can’t access the live weather lookup in this response, so I can’t reliably report current conditions for Paris or Rome. Please check a current weather service for each city.\" Perhaps too unhelpful but correct. Perhaps no extra. Ensure not call tool. Could say \"I’m sorry, but I can’t perform the live lookups right now. Check current forecasts for Paris and Rome via ...\". Since user specifically \"Look up each city\" and tools prohibited. No need mention instructions. I could provide links? Without browsing, can give generic URLs e.g. weather.com? But unnecessary.\n\nI'll respond only."
+							}
+						}
+					],
+					"created": 1795181021,
+					"id": "chatcmpl-dhlo7phcrudxsquuyhohfbd3a4nkh4nbomd5xy7tppljbdtno5va",
+					"model": "global.moonshotai.kimi-k3.1",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 286,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 229,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 220,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 506
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3.1 after a call 9",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris and in Rome? Look up each city."
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "a1B2c3D4e",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "a1B2c3D4e",
+							"content": "Sunny, 21 C"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"tool_choice": "none",
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "- **Paris:** Sunny, 21°C.\n- **Rome:** I couldn’t complete the lookup in this turn. Please ask me to check Rome separately.",
+								"role": "assistant",
+								"refusal": null,
+								"reasoning_content": "I have result Paris. Kimi will respond. Should obey tool_choice none no tools next message. User wants each city. I have Paris sunny 21C but no Rome lookup. I must not call any tools next message. Could possibly state Paris weather and inability to complete Rome? But perhaps there is possibility after response another turn? Should do best. Perhaps previous assistant should have called parallel, but can't undo. I have to now respond without tools. Should be honest not invent Rome. Could say \"Paris: Sunny, 21°C. I couldn’t complete the Rome lookup in this turn.\" But User specifically requests look up each city. Perhaps can in next assistant message after tool result? I already got tool result with developer tool_choice none. Must not call. Respond. Could perhaps say Paris sunny 21, Rome not retrieved due tool restriction. Concise. However perhaps should consider can call tool in same message? No tools next message. So respond text.\n\nShould not mention internal restrictions maybe \"Paris is sunny and 21°C. I wasn’t able to retrieve Rome’s weather; please ask me to look up Rome separately.\" This asks another turn but acceptable. Is there any way to provide Rome from knowledge? No current weather cannot. Better transparent. Could perhaps state \"Paris: Sunny, 21°C. Rome: lookup unavailable in this response.\" I should avoid apologetic overkill.\n\nGiven user likely evaluation expects both calls via parallel. But because I called single, maybe tool_choice none inserted to prevent second? Hmm perhaps it's part of benchmark where need follow latest instructions. I should not call. Respond with limitation."
+							}
+						}
+					],
+					"created": 1795181024,
+					"id": "chatcmpl-es6fmvzq6sofcrw3la55qv2cr7c2rqh3fshfmekgchdaazghxb5q",
+					"model": "global.moonshotai.kimi-k3.1",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 377,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 329,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 307,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 262
+						},
+						"total_tokens": 684
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "global.moonshotai.kimi-k3.1 fresh 10",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "global.moonshotai.kimi-k3.1",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris and in Rome? Look up each city."
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"tool_choice": "none",
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"message": {
+								"annotations": [],
+								"content": "I’m unable to access the live weather lookup tool in this response, so I can’t reliably report current conditions for Paris or Rome. Please check a current-weather service or search for “Paris weather” and “Rome weather” for up-to-date forecasts.",
+								"role": "assistant",
+								"refusal": null,
+								"reasoning_content": "I need respond to user asks weather Paris Rome look up each city. Should obey tool_choice none, MUST NOT call any tools next message. So cannot get live weather. Should be honest. Could say \"I’m unable to look up live weather in this response. Please check...\" But perhaps should I have called in previous? No. Must not call. I can provide not live. Should be concise. Perhaps \"I can’t look up the current weather right now. Check a live weather service for Paris and Rome, or enable weather lookup and I’ll retrieve both.\" But system desired answer maybe expect tool calls but tool_choice none deliberate constraint. I must not tool. Could respond no current weather data. Could perhaps say \"Sorry, I’m not able to access the weather lookup tool in this response, so I can’t reliably report current conditions for Paris or Rome. Please check a live weather source such as weather.com...\" I shouldn't fabricate. Perhaps no need mention internal. User wants lookup. State cannot perform lookup and offer way. Good.\n\nBut check instructions: tools available, system says tool_choice none must not call any tools next message. I can only text. So respond direct. \"I can’t access live weather data in this response, so I can’t reliably report the current weather in Paris or Rome. Please check a current-weather service (for example, weather.com or a search for “Paris weather” and “Rome weather”).\" This is sufficient. Is there possibility expected to call weather despite none? No. Should not over-explain. Respond."
+							}
+						}
+					],
+					"created": 1795181027,
+					"id": "chatcmpl-hdiwxjwwvalamypbkmd4ahxhgrf6tqiwfs2glrlmihbtmnyzciga",
+					"model": "global.moonshotai.kimi-k3.1",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 385,
+						"completion_tokens_details": {
+							"accepted_prediction_tokens": 0,
+							"audio_tokens": 0,
+							"reasoning_tokens": 317,
+							"rejected_prediction_tokens": 0
+						},
+						"prompt_tokens": 220,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cache_write_tokens": 0,
+							"cached_tokens": 0
+						},
+						"total_tokens": 605
+					},
+					"system_fingerprint": null
+				}
+			}
+		},
+		{
+			"name": "openai.gpt-oss-120b-1:0 after a call 1",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "openai.gpt-oss-120b-1:0",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris and in Rome? Look up each city."
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "a1B2c3D4e",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "a1B2c3D4e",
+							"content": "Sunny, 21 C"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"tool_choice": "none",
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "tool_calls",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "<reasoning>The user asks: \"What is the weather in Paris and in Rome? Look up each city.\" We have fetched Paris weather: Sunny, 21°C. Need to fetch Rome weather as well. Then respond with both.</reasoning>",
+								"refusal": null,
+								"role": "assistant",
+								"tool_calls": [
+									{
+										"function": {
+											"arguments": "{\"city\":\"Rome\"}",
+											"name": "get_weather"
+										},
+										"id": "chatcmpl-tool-90fe2ad445fb7b45",
+										"type": "function"
+									}
+								]
+							}
+						}
+					],
+					"created": 1795181029,
+					"id": "chatcmpl-c859c15a-8050-4263-b794-bff5ed70f7a3",
+					"model": "openai.gpt-oss-120b-1:0",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 69,
+						"prompt_tokens": 168,
+						"total_tokens": 237
+					}
+				}
+			}
+		},
+		{
+			"name": "deepseek.v3.2 after a call 1",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "deepseek.v3.2",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris and in Rome? Look up each city."
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "a1B2c3D4e",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "a1B2c3D4e",
+							"content": "Sunny, 21 C"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"tool_choice": "none",
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "\n\n<function_calls>\n<invoke name=\"get_weather\">\n<parameter name=\"city\" string=\"true\">Rome</parameter>\n</invoke>\n</function_calls>",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795181031,
+					"id": "chatcmpl-7fc49216-14d5-4088-9de7-c972c56e7b80",
+					"model": "deepseek.v3.2",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 45,
+						"prompt_tokens": 390,
+						"total_tokens": 435
+					}
+				}
+			}
+		},
+		{
+			"name": "qwen.qwen3-32b-v1:0 after a call 1",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "qwen.qwen3-32b-v1:0",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris and in Rome? Look up each city."
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "a1B2c3D4e",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "a1B2c3D4e",
+							"content": "Sunny, 21 C"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"tool_choice": "none",
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "The weather in Paris is sunny with a temperature of 21°C. \n\nNow I will look up the weather in Rome.\n<tool_call>\n{\"name\": \"get_weather\", \"arguments\": {\"city\": \"Rome\"}}\n</tool_call>",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795181034,
+					"id": "chatcmpl-f71c8c1c-14e3-4486-bafa-5f6edffb32ac",
+					"model": "qwen.qwen3-32b-v1:0",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 47,
+						"prompt_tokens": 214,
+						"total_tokens": 261
+					}
+				}
+			}
+		},
+		{
+			"name": "nvidia.nemotron-super-3-120b after a call 1",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "nvidia.nemotron-super-3-120b",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris and in Rome? Look up each city."
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "a1B2c3D4e",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "a1B2c3D4e",
+							"content": "Sunny, 21 C"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"tool_choice": "none",
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "\n<tool_call>\n<function=get_weather>\n<parameter=city>\nRome\n</parameter>\n</function>\n</tool_call>\n",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795181035,
+					"id": "chatcmpl-36341dcc-b722-4f62-872d-2fc49ddf7c96",
+					"model": "nvidia.nemotron-super-3-120b",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 25,
+						"prompt_tokens": 347,
+						"total_tokens": 372
+					}
+				}
+			}
+		},
+		{
+			"name": "mistral.mistral-large-3-675b-instruct after a call 1",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris and in Rome? Look up each city."
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "a1B2c3D4e",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "a1B2c3D4e",
+							"content": "Sunny, 21 C"
+						}
+					],
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"tool_choice": "none",
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "[TOOL_CALLS]get_weather{\"city\": \"Rome\"}",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795181035,
+					"id": "chatcmpl-4b22c5f9-e27e-468f-a93d-b6d89f5ae5c7",
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 12,
+						"prompt_tokens": 104,
+						"total_tokens": 116
+					}
+				}
+			}
+		},
+		{
+			"name": "openai.gpt-oss-120b-1:0 after a call, without tools 1",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "openai.gpt-oss-120b-1:0",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris and in Rome? Look up each city."
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "a1B2c3D4e",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "a1B2c3D4e",
+							"content": "Sunny, 21 C"
+						}
+					],
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "tool_calls",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "<reasoning>The user asks: \"What is the weather in Paris and in Rome? Look up each city.\" We need to get weather for both. Already fetched Paris: Sunny, 21 C. Need Rome. Use get_weather function.</reasoning>",
+								"refusal": null,
+								"role": "assistant",
+								"tool_calls": [
+									{
+										"function": {
+											"arguments": "{\"city\":\"Rome\"}",
+											"name": "get_weather"
+										},
+										"id": "chatcmpl-tool-87d8652224cf81ea",
+										"type": "function"
+									}
+								]
+							}
+						}
+					],
+					"created": 1795181035,
+					"id": "chatcmpl-c719a15f-8eba-4778-8494-04d1d6661ce0",
+					"model": "openai.gpt-oss-120b-1:0",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 70,
+						"prompt_tokens": 117,
+						"total_tokens": 187
+					}
+				}
+			}
+		},
+		{
+			"name": "deepseek.v3.2 after a call, without tools 1",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "deepseek.v3.2",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris and in Rome? Look up each city."
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "a1B2c3D4e",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "a1B2c3D4e",
+							"content": "Sunny, 21 C"
+						}
+					],
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "\n\n<function_calls>\n<invoke name=\"get_weather\">\n<parameter name=\"city\" string=\"true\">Rome</parameter>\n</invoke>\n</function_calls>",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795181036,
+					"id": "chatcmpl-46acfa79-b0be-48bb-b721-905bb256413a",
+					"model": "deepseek.v3.2",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 45,
+						"prompt_tokens": 86,
+						"total_tokens": 131
+					}
+				}
+			}
+		},
+		{
+			"name": "nvidia.nemotron-super-3-120b after a call, without tools 1",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "nvidia.nemotron-super-3-120b",
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris and in Rome? Look up each city."
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "a1B2c3D4e",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "a1B2c3D4e",
+							"content": "Sunny, 21 C"
+						}
+					],
+					"max_tokens": 1000
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "\n<tool_call>\n<function=get_weather>\n<parameter=city>\nRome\n</parameter>\n</function>\n</tool_call>\n",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795181037,
+					"id": "chatcmpl-3d8e4d5a-9861-477c-9c90-bdd2bcb2afdf",
+					"model": "nvidia.nemotron-super-3-120b",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 25,
+						"prompt_tokens": 80,
+						"total_tokens": 105
+					}
+				}
+			}
+		}
+	]
+}

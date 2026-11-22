@@ -1,0 +1,470 @@
+{
+	"shows": "Bedrock's Chat Completions API takes a Mistral Large 3 conversation whose tool call IDs end in nine letters and digits, OpenAI's and Claude's included, and refuses one that ends otherwise, as Kimi's and a short one do.",
+	"recorded": "2026-11-20",
+	"exchanges": [
+		{
+			"name": "nine letters and digits",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"max_tokens": 200,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "a1B2c3D4e",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "a1B2c3D4e",
+							"content": "Sunny, 21 C"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "The weather in **Paris** is **sunny** with a temperature of **21°C**.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176107,
+					"id": "chatcmpl-59f080ae-c107-409f-8af0-174029b3ad1a",
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 21,
+						"prompt_tokens": 96,
+						"total_tokens": 117
+					}
+				}
+			}
+		},
+		{
+			"name": "OpenAI's ID",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"max_tokens": 200,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "call_052aaaf1c18c423e986d0a89",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "call_052aaaf1c18c423e986d0a89",
+							"content": "Sunny, 21 C"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "The weather in **Paris** is **sunny** with a temperature of **21°C**.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176108,
+					"id": "chatcmpl-cf72fe99-b004-47f2-933c-74c1336e0c62",
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 21,
+						"prompt_tokens": 96,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cached_tokens": 32
+						},
+						"total_tokens": 117
+					}
+				}
+			}
+		},
+		{
+			"name": "Claude's ID",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"max_tokens": 200,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "toolu_01A09q90qw90lq917835lq9",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "toolu_01A09q90qw90lq917835lq9",
+							"content": "Sunny, 21 C"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 200,
+				"body": {
+					"choices": [
+						{
+							"finish_reason": "stop",
+							"index": 0,
+							"logprobs": null,
+							"message": {
+								"content": "The weather in **Paris** is **sunny** with a temperature of **21°C**.",
+								"refusal": null,
+								"role": "assistant"
+							}
+						}
+					],
+					"created": 1795176108,
+					"id": "chatcmpl-123885c2-ee86-4716-97cb-7faf70967834",
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"object": "chat.completion",
+					"service_tier": "default",
+					"usage": {
+						"completion_tokens": 21,
+						"prompt_tokens": 96,
+						"prompt_tokens_details": {
+							"audio_tokens": 0,
+							"cached_tokens": 32
+						},
+						"total_tokens": 117
+					}
+				}
+			}
+		},
+		{
+			"name": "Kimi's ID",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"max_tokens": 200,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "functions.get_weather:0",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "functions.get_weather:0",
+							"content": "Sunny, 21 C"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "ErrorEvent { error: APIError { type: \"BadRequestError\", code: Some(400), message: \"Tool call id was weather:0 but must be a-z, A-Z, 0-9, with a length of 9.\", param: None } }",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "a short ID",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"max_tokens": 200,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "call1",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "call1",
+							"content": "Sunny, 21 C"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "ErrorEvent { error: APIError { type: \"BadRequestError\", code: Some(400), message: \"Tool call id was call1 but must be a-z, A-Z, 0-9, with a length of 9.\", param: None } }",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		},
+		{
+			"name": "nine characters with an underscore",
+			"provider": "aws",
+			"request": {
+				"path": "/openai/v1/chat/completions",
+				"body": {
+					"model": "mistral.mistral-large-3-675b-instruct",
+					"max_tokens": 200,
+					"tools": [
+						{
+							"type": "function",
+							"function": {
+								"name": "get_weather",
+								"description": "Returns a city's weather.",
+								"parameters": {
+									"type": "object",
+									"properties": {
+										"city": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"city"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					],
+					"messages": [
+						{
+							"role": "user",
+							"content": "What is the weather in Paris?"
+						},
+						{
+							"role": "assistant",
+							"content": "",
+							"tool_calls": [
+								{
+									"id": "abc_defgh",
+									"type": "function",
+									"function": {
+										"name": "get_weather",
+										"arguments": "{\"city\":\"Paris\"}"
+									}
+								}
+							]
+						},
+						{
+							"role": "tool",
+							"tool_call_id": "abc_defgh",
+							"content": "Sunny, 21 C"
+						}
+					]
+				}
+			},
+			"response": {
+				"status": 400,
+				"body": {
+					"error": {
+						"message": "ErrorEvent { error: APIError { type: \"BadRequestError\", code: Some(400), message: \"Tool call id was abc_defgh but must be a-z, A-Z, 0-9, with a length of 9.\", param: None } }",
+						"type": "invalid_request_error",
+						"param": null,
+						"code": "validation_error"
+					}
+				}
+			}
+		}
+	]
+}

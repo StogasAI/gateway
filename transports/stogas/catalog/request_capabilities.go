@@ -44,17 +44,24 @@ func requestCapabilities(raw map[string]json.RawMessage, route Route, shared Cap
 		}
 		required.FunctionCalling = required.FunctionCalling || len(functions) != 0
 	}
+	// auto works wherever function calling does. Many providers parse no call under none but leave
+	// the model free to write one, and many models do after an earlier call, so none with tools
+	// needs a deployment that holds its model to it.
+	listed := func(name string) bool {
+		value := bytes.TrimSpace(raw[name])
+		return len(value) > 0 && !rawJSONNullOrEmptyArray(value)
+	}
 	for _, name := range []string{"tool_choice", "function_call"} {
-		if shared.ToolChoice {
-			break
-		}
 		value := bytes.TrimSpace(raw[name])
 		if len(value) == 0 || bytes.Equal(value, []byte("null")) {
 			continue
 		}
-		choice := rawStringValue(value)
-		if value[0] != '"' || (choice != "auto" && choice != "none") {
-			required.ToolChoice = true
+		switch choice := rawStringValue(value); {
+		case value[0] == '"' && choice == "auto":
+		case value[0] == '"' && choice == "none":
+			required.ToolChoiceNone = !shared.ToolChoiceNone && (listed("tools") || listed("functions"))
+		default:
+			required.ToolChoice = !shared.ToolChoice
 		}
 	}
 	var format struct{ Type string }
@@ -82,12 +89,13 @@ func requestCapabilities(raw map[string]json.RawMessage, route Route, shared Cap
 // Features supported by every candidate cannot narrow the selection. Avoid
 // traversing prompt containers merely to rediscover that they are acceptable.
 func sharedRequestCapabilities(selections []routingSelection) Capabilities {
-	shared := Capabilities{Streaming: true, FunctionCalling: true, ToolChoice: true, StructuredOutputs: true, SystemMessages: true}
+	shared := Capabilities{Streaming: true, FunctionCalling: true, ToolChoice: true, ToolChoiceNone: true, StructuredOutputs: true, SystemMessages: true}
 	for _, selection := range selections {
 		c := selection.deployment.Capabilities
 		shared.Streaming = shared.Streaming && c.Streaming
 		shared.FunctionCalling = shared.FunctionCalling && c.FunctionCalling
 		shared.ToolChoice = shared.ToolChoice && c.ToolChoice
+		shared.ToolChoiceNone = shared.ToolChoiceNone && c.ToolChoiceNone
 		shared.StructuredOutputs = shared.StructuredOutputs && c.StructuredOutputs
 		shared.SystemMessages = shared.SystemMessages && c.SystemMessages
 	}
@@ -102,6 +110,7 @@ func validateRequestCapabilities(required, supported Capabilities) error {
 		{"streaming", required.Streaming, supported.Streaming},
 		{"function calling", required.FunctionCalling, supported.FunctionCalling},
 		{"tool choice", required.ToolChoice, supported.ToolChoice},
+		{"tool choice none", required.ToolChoiceNone, supported.ToolChoiceNone},
 		{"structured outputs", required.StructuredOutputs, supported.StructuredOutputs},
 		{"system messages", required.SystemMessages, supported.SystemMessages},
 	} {

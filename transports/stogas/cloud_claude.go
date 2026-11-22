@@ -198,7 +198,8 @@ func cloudCredentialTarget(provider schemas.ModelProvider, secret string) (billi
 
 // cloudTargetServes reports whether a target can serve a deployment: it names
 // the deployment's hosting, and a Bedrock inference profile other than global
-// starts in a Region that keeps it in its geography.
+// starts in a Region that keeps it in its geography, and a model that runs only
+// in the Region of each request runs in one of the deployment's Regions.
 func cloudTargetServes(provider schemas.ModelProvider, target *billing.CloudTarget, deployment catalog.Deployment) bool {
 	if target == nil || !slices.Contains(target.Hosting, deployment.Hosting) {
 		return false
@@ -209,7 +210,13 @@ func cloudTargetServes(provider schemas.ModelProvider, target *billing.CloudTarg
 			return false
 		}
 		geo := deployment.Upstream.InferenceGeo
-		return deployment.Hosting != hostingAmazon || geo == "global" || catalog.BedrockSourceRegions[geo][target.Region]
+		switch {
+		case deployment.Hosting != hostingAmazon:
+			return true
+		case deployment.Upstream.Regions != nil:
+			return slices.Contains(deployment.Upstream.Regions, target.Region)
+		}
+		return geo == "global" || catalog.BedrockSourceRegions[geo][target.Region]
 	case catalog.ProviderGoogleCloud:
 		return target.Region == ""
 	}

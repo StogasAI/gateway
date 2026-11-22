@@ -20,6 +20,7 @@ routes:
     structuredOutputs: true
     systemMessages: true
     toolChoice: true
+    toolChoiceNone: false
     toolResultImages: false
     toolResultDocuments: false
   # The fields of generateContent's generationConfig. Each model states the ones that it refuses or

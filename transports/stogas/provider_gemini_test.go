@@ -172,7 +172,6 @@ func TestGeminiSendsWhatGoogleTook(t *testing.T) {
 		{exchange(t, tools, "tools at mode AUTO"), geminiChatPath, geminiAsk + `}`},
 		{exchange(t, tools, "mode ANY"), geminiChatPath, geminiAsk + `,"tool_choice":"required"}`},
 		{exchange(t, tools, "mode ANY with allowedFunctionNames"), geminiChatPath, geminiAsk + `,"tool_choice":{"type":"function","function":{"name":"get_weather"}}}`},
-		{exchange(t, tools, "mode NONE"), geminiChatPath, geminiAsk + `,"tool_choice":"none"}`},
 		{exchange(t, tools, "responseJsonSchema"), geminiChatPath,
 			`{"model":"google-cloud-gemini-3.8-flash","messages":[{"role":"user","content":"Name the capital of France."}],"max_completion_tokens":2000,"reasoning_effort":"low","response_format":{"type":"json_schema","json_schema":{"name":"capital","strict":true,"schema":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"],"additionalProperties":false}}}}`},
 		{exchange(t, files, "png"), geminiChatPath, file("png", `"What color is this image? Answer with one word."`)},
@@ -201,9 +200,10 @@ func TestGeminiSendsWhatGoogleTook(t *testing.T) {
 
 // TestGeminiRefusesWhatGoogleRefuses checks each request that Agent Platform refused or cannot
 // carry out: log probabilities, one tool call per turn, which Gemini has no control for while it
-// made two calls in one turn in the recording, a Word document, and penalties, temperature and
-// thinking levels that a model refuses or ignores. The gateway refuses the first three before it
-// holds funds, and leaves out the fields that only tune sampling.
+// made two calls in one turn in the recording, a Word document, tool_choice none with tools, which
+// each recorded Gemini model broke after an earlier call (TestToolChoiceNoneReachesOnlyDeploymentsThatHoldTheModelToIt),
+// and penalties, temperature and thinking levels that a model refuses or ignores. The gateway
+// refuses the first four before it holds funds, and leaves out the fields that only tune sampling.
 func TestGeminiRefusesWhatGoogleRefuses(t *testing.T) {
 	catalogtest.UseFallback(t)
 	fields := providerCapture(t, "google-cloud/generate-content-request-fields")
@@ -224,6 +224,7 @@ func TestGeminiRefusesWhatGoogleRefuses(t *testing.T) {
 		"logprobs":                  `{"model":"google-cloud-gemini-3.8-flash","messages":[{"role":"user","content":"Say OK."}],"logprobs":true,"top_logprobs":2}`,
 		"top_logprobs":              `{"model":"google-cloud-gemini-3.8-flash","messages":[{"role":"user","content":"Say OK."}],"top_logprobs":2}`,
 		"parallel_tool_calls false": geminiAsk + `,"parallel_tool_calls":false}`,
+		"tool_choice none":          geminiAsk + `,"tool_choice":"none"}`,
 		"a Word document": `{"model":"google-cloud-gemini-3.8-flash","messages":[{"role":"user","content":[` +
 			geminiRecordedPart(t, exchange(t, files, "docx")) + `,{"type":"text","text":"Summarize."}]}]}`,
 		"a function tool on Responses that Claude defines": `{"model":"google-cloud-gemini-3.8-flash","input":"Hi","tools":[{"type":"bash_20250124","name":"bash"}]}`,

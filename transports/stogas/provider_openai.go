@@ -60,7 +60,6 @@ type openAIAdapterContext struct {
 
 var (
 	errOpenAIUnsupportedTool         = errors.New("unsupported provider tool")
-	errOpenAIUnsupportedParameter    = errors.New("unsupported provider parameter")
 	errOpenAIUnsupportedInput        = errors.New("unsupported input modality")
 	errOpenAIOutputTokenLimitTooLow  = errors.New("output token limit below provider minimum")
 	errOpenAIInvalidProviderToolSpec = errors.New("invalid provider tool specification")
@@ -516,8 +515,6 @@ func openAIGuardrailError(err error) error {
 		return nil
 	case errors.Is(err, errOpenAIUnsupportedTool), errors.Is(err, errOpenAIInvalidProviderToolSpec):
 		return catalog.ErrUnsupportedTool
-	case errors.Is(err, errOpenAIUnsupportedParameter):
-		return invalidRequest("Parameter is not supported by this deployment")
 	case errors.Is(err, errOpenAIUnsupportedInput):
 		return invalidRequest("We cannot bill this input modality")
 	case errors.Is(err, errOpenAIOutputTokenLimitTooLow):
@@ -529,9 +526,6 @@ func openAIGuardrailError(err error) error {
 
 func validateOpenAIGuardrails(req openAIAdapterContext) error {
 	if err := validateOutputTokenMinimum(req); err != nil {
-		return err
-	}
-	if err := validateReasoningSupport(req); err != nil {
 		return err
 	}
 	switch req.Route {
@@ -585,18 +579,6 @@ func openAIWebSearchToolType(rawType string) bool {
 	default:
 		return false
 	}
-}
-
-func validateReasoningSupport(req openAIAdapterContext) error {
-	if req.Deployment.ReasoningSupported {
-		return nil
-	}
-	for _, name := range []string{"reasoning", "reasoning_effort", "reasoning_max_tokens", "reasoning_display", "reasoning.effort"} {
-		if _, ok := req.RawBody[name]; ok {
-			return errOpenAIUnsupportedParameter
-		}
-	}
-	return nil
 }
 
 func openAIHoldMeters(req openAIAdapterContext) []billing.MeterEstimate {
@@ -667,7 +649,7 @@ func validateChatSearchModelWebSearchOptions(req openAIAdapterContext) error {
 		return nil
 	}
 	if meterKey, _ := chatSearchMeter(req); meterKey == "" {
-		return errOpenAIUnsupportedParameter
+		return invalidRequest("web_search_options is not supported for the selected deployment")
 	}
 	return nil
 }

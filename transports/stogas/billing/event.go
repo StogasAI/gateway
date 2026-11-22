@@ -494,9 +494,10 @@ func NormalizeUpstreamStatus(bifrostErr *schemas.BifrostError) string {
 //   - The prompt is longer than the deployment's context window, which another deployment of the
 //     model can have larger: Anthropic's 400 "prompt is too long: 215000 tokens > 200000
 //     maximum", also on Bedrock and Vertex, Bedrock's "Input is too long for requested model.",
-//     vLLM's "This model's maximum context length is 32768 tokens. However, you requested ..."
-//     and SGLang's "The input (40000 tokens) is longer than the model's context length (32768
-//     tokens)." on Chutes.
+//     vLLM's "This model's maximum context length is 32768 tokens. However, you requested ...",
+//     which Bedrock's Chat Completions API wraps in its own text for a model that runs in the
+//     Region of each request (capture aws/chat-completions-in-region-limits), and SGLang's "The
+//     input (40000 tokens) is longer than the model's context length (32768 tokens)." on Chutes.
 func messageRefusal(bifrostErr *schemas.BifrostError) string {
 	if bifrostErr.Error == nil || len(bifrostErr.Error.Message) > maxMessageRefusalBytes {
 		return ""
@@ -515,7 +516,7 @@ func messageRefusal(bifrostErr *schemas.BifrostError) string {
 		return "authentication_error"
 	case strings.HasPrefix(message, "prompt is too long: "),
 		strings.HasPrefix(message, "input is too long for requested model"),
-		strings.HasPrefix(message, "this model's maximum context length is "),
+		strings.Contains(message, "this model's maximum context length is "),
 		strings.HasPrefix(message, "the input (") && strings.Contains(message, " is longer than the model's context length"):
 		return "context_length_exceeded"
 	// Claude's filter of its own output answers with a generic 400 invalid_request_error.

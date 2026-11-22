@@ -255,9 +255,12 @@ func TestCloudCredentialsRejectEveryMalformedSecret(t *testing.T) {
 	}
 }
 
-func TestCloudTargetServesOnlyItsHostingsAndTheRegionsThatKeepAProfileInItsGeography(t *testing.T) {
+func TestCloudTargetServesOnlyItsHostingsAndTheRegionsWhereItsDeploymentRuns(t *testing.T) {
 	global := cloudDeployment(t, "aws-claude-fable-5-1")
 	us := cloudDeployment(t, "aws-claude-fable-5-1-us")
+	// A model that runs only in the Region of each request names its Regions.
+	inRegion := us
+	inRegion.Upstream.Regions = []string{"us-east-1", "us-east-2", "us-west-2"}
 	eu := cloudDeployment(t, "aws-claude-haiku-5-5-eu")
 	canada := cloudDeployment(t, "aws-claude-haiku-5-5-ca")
 	platform := cloudDeployment(t, "aws-claude-fable-5-1-anthropic-hosted")
@@ -282,6 +285,9 @@ func TestCloudTargetServesOnlyItsHostingsAndTheRegionsThatKeepAProfileInItsGeogr
 		{"Bedrock EU from a US Region", catalog.ProviderAWS, aws("us-east-1", "amazon"), eu, false},
 		{"Bedrock Canada from Canada (Central)", catalog.ProviderAWS, aws("ca-central-1", "amazon"), canada, true},
 		{"Bedrock Canada from Calgary, an opt-in Region", catalog.ProviderAWS, aws("ca-west-1", "amazon"), canada, false},
+		{"Bedrock in the Region of the request, one that it lists", catalog.ProviderAWS, aws("us-west-2", "amazon"), inRegion, true},
+		{"Bedrock in the Region of the request, a US Region that it does not list", catalog.ProviderAWS, aws("us-west-1", "amazon"), inRegion, false},
+		{"Bedrock in the Region of the request, from Europe", catalog.ProviderAWS, aws("eu-west-1", "amazon"), inRegion, false},
 		{"Claude Platform without the hosting", catalog.ProviderAWS, aws("us-east-1", "amazon"), platform, false},
 		{"Claude Platform", catalog.ProviderAWS, aws("eu-west-1", "anthropic"), platform, true},
 		{"Bedrock without the hosting", catalog.ProviderAWS, aws("us-east-1", "anthropic"), global, false},

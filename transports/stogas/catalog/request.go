@@ -1908,13 +1908,18 @@ func (r *ResolvedRequest) ReasoningOff() bool {
 	return effort == "none" || set && !enabled
 }
 
-// SendReasoningOffAsEffort sends a binary reasoning-off control as the effort "none", for a wire
-// format that carries reasoning only as an effort.
-func (r *ResolvedRequest) SendReasoningOffAsEffort() {
-	if enabled, ok := r.ReasoningEnabled(); !ok || enabled {
+// SendReasoningSwitchAsEffort sends a binary reasoning control as an effort, for a wire format that
+// carries reasoning only as an effort: off as "none", and on as the effort given, or as nothing,
+// which leaves the model's default, when none is given.
+func (r *ResolvedRequest) SendReasoningSwitchAsEffort(on string) {
+	enabled, ok := r.ReasoningEnabled()
+	if !ok || enabled && on == "" {
 		return
 	}
 	effort := "none"
+	if enabled {
+		effort = on
+	}
 	r.chat.ChatParameters.Reasoning.Effort = &effort
 	r.chat.ChatParameters.Reasoning.Enabled = nil
 }

@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"slices"
@@ -84,6 +85,21 @@ var preferences = []struct {
 	{"truncation", (*ResolvedRequest).takesResponsesControls, func(r *ResolvedRequest) {
 		r.clearParameters(nil, func(p *schemas.ResponsesParameters) { p.Truncation = nil })
 	}},
+	// A deployment without reasoning serves every reasoning control without it, and routing has
+	// chosen the deployment of the request's reasoning mode.
+	{"reasoning", reasons, clearReasoning},
+	{"reasoning_effort", reasons, clearReasoning},
+	{"reasoning_max_tokens", reasons, clearReasoning},
+	{"reasoning_display", reasons, clearReasoning},
+	{"reasoning.effort", reasons, clearReasoning},
+}
+
+// reasons reports whether the deployment's model reasons.
+func reasons(r *ResolvedRequest) bool { return r.Deployment.ReasoningSupported }
+
+// clearReasoning clears the request's reasoning controls.
+func clearReasoning(r *ResolvedRequest) {
+	r.clearParameters(func(p *schemas.ChatParameters) { p.Reasoning = nil }, func(p *schemas.ResponsesParameters) { p.Reasoning = nil })
 }
 
 // usesOpenAIWire reports whether the deployment takes requests in OpenAI's format from a provider
@@ -296,15 +312,16 @@ func withoutResponsesPreferences(request *openaiprovider.OpenAIResponsesRequest)
 // keepCarriedContent leaves out of the messages what the deployment has no place for and no need
 // of, and writes the rest in the form that the deployment takes: message names, OpenAI's prompt
 // cache breakpoints, the annotations and log probabilities of an earlier reply, an earlier
-// refusal, and tool call IDs in another provider's alphabet. Other requests of the same body share
-// the messages, so it never changes them.
+// refusal, and tool call IDs that the deployment's model does not take. Other requests of the same
+// body share the messages, so it never changes them.
 func (r *ResolvedRequest) keepCarriedContent() {
 	claude := UsesClaudeWire(r.Provider, r.Deployment.ModelID)
+	ids := r.toolCallIDs(claude)
 	switch {
 	case r.chat != nil:
 		var kept []openaiprovider.OpenAIMessage
 		for index, message := range r.chat.Messages {
-			carried, changed := r.carriedChatMessage(message, claude)
+			carried, changed := r.carriedChatMessage(message, claude, ids)
 			if changed && kept == nil {
 				kept = append(make([]openaiprovider.OpenAIMessage, 0, len(r.chat.Messages)), r.chat.Messages[:index]...)
 			}
@@ -319,7 +336,7 @@ func (r *ResolvedRequest) keepCarriedContent() {
 		input := r.responses.Input.OpenAIResponsesRequestInputArray
 		var kept []schemas.ResponsesMessage
 		for index, item := range input {
-			carried, changed := r.carriedResponsesItem(item, claude)
+			carried, changed := r.carriedResponsesItem(item, claude, ids)
 			if changed && kept == nil {
 				kept = append(make([]schemas.ResponsesMessage, 0, len(input)), input[:index]...)
 			}
@@ -333,8 +350,29 @@ func (r *ResolvedRequest) keepCarriedContent() {
 	}
 }
 
+// toolCallIDs returns how the deployment's model takes a tool call ID of another provider, or nil
+// when it takes every ID.
+func (r *ResolvedRequest) toolCallIDs(claude bool) func(string) (string, bool) {
+	switch {
+	case claude:
+		return claudeToolCallID
+	case r.runsMistralModel():
+		return mistralToolCallID
+	}
+	return nil
+}
+
+// runsMistralModel reports a deployment of a model by Mistral AI.
+func (r *ResolvedRequest) runsMistralModel() bool {
+	if r.Deployment.snapshot == nil {
+		return false
+	}
+	model, ok := r.Deployment.snapshot.graph.Models[r.Deployment.ModelID]
+	return ok && model.AuthorID == "mistral-ai"
+}
+
 // carriedChatMessage returns a message as the deployment gets it and whether it differs.
-func (r *ResolvedRequest) carriedChatMessage(message openaiprovider.OpenAIMessage, claude bool) (openaiprovider.OpenAIMessage, bool) {
+func (r *ResolvedRequest) carriedChatMessage(message openaiprovider.OpenAIMessage, claude bool, ids func(string) (string, bool)) (openaiprovider.OpenAIMessage, bool) {
 	changed := false
 	// A name tells OpenAI's models who speaks. Claude, Gemini and OpenAI's Responses have no place
 	// for it, as Anthropic's own OpenAI-compatible endpoint ignores it, and Azure refuses it for
@@ -349,8 +387,8 @@ func (r *ResolvedRequest) carriedChatMessage(message openaiprovider.OpenAIMessag
 			message.Content, changed = &schemas.ChatMessageContent{ContentStr: content.ContentStr, ContentBlocks: blocks}, true
 		}
 	}
-	if tool := message.ChatToolMessage; claude && tool != nil && tool.ToolCallID != nil {
-		if id, mapped := claudeToolCallID(*tool.ToolCallID); mapped {
+	if tool := message.ChatToolMessage; ids != nil && tool != nil && tool.ToolCallID != nil {
+		if id, mapped := ids(*tool.ToolCallID); mapped {
 			copied := *tool
 			copied.ToolCallID = &id
 			message.ChatToolMessage, changed = &copied, true
@@ -373,12 +411,12 @@ func (r *ResolvedRequest) carriedChatMessage(message openaiprovider.OpenAIMessag
 		}
 		copied.Refusal, changed = nil, true
 	}
-	if claude {
+	if ids != nil {
 		for index, call := range copied.ToolCalls {
 			if call.ID == nil {
 				continue
 			}
-			if id, mapped := claudeToolCallID(*call.ID); mapped {
+			if id, mapped := ids(*call.ID); mapped {
 				if &copied.ToolCalls[0] == &assistant.ToolCalls[0] {
 					copied.ToolCalls = slices.Clone(assistant.ToolCalls)
 				}
@@ -455,7 +493,7 @@ func (r *ResolvedRequest) carriedBreakpoint(breakpoint *schemas.PromptCacheBreak
 }
 
 // carriedResponsesItem returns an input item as the deployment gets it and whether it differs.
-func (r *ResolvedRequest) carriedResponsesItem(item schemas.ResponsesMessage, claude bool) (schemas.ResponsesMessage, bool) {
+func (r *ResolvedRequest) carriedResponsesItem(item schemas.ResponsesMessage, claude bool, ids func(string) (string, bool)) (schemas.ResponsesMessage, bool) {
 	changed := false
 	if content := item.Content; content != nil {
 		if blocks, differs := r.carriedResponsesBlocks(content.ContentBlocks, r.refusalAsText(claude)); differs {
@@ -468,8 +506,8 @@ func (r *ResolvedRequest) carriedResponsesItem(item schemas.ResponsesMessage, cl
 	}
 	copied := *tool
 	toolChanged := false
-	if claude && copied.CallID != nil {
-		if id, mapped := claudeToolCallID(*copied.CallID); mapped {
+	if ids != nil && copied.CallID != nil {
+		if id, mapped := ids(*copied.CallID); mapped {
 			copied.CallID, toolChanged = &id, true
 		}
 	}
@@ -526,11 +564,43 @@ func (r *ResolvedRequest) carriedResponsesBlocks(blocks []schemas.ResponsesMessa
 // character becomes "_", which is how LiteLLM writes them.
 func claudeToolCallID(id string) (string, bool) {
 	for index := 0; index < len(id); index++ {
-		if c := id[index]; c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-' {
+		if c := id[index]; isAlphanumeric(c) || c == '_' || c == '-' {
 			continue
 		}
 		sum := sha256.Sum256([]byte(id))
 		return "call_" + hex.EncodeToString(sum[:16]), true
 	}
 	return id, false
+}
+
+// mistralToolCallID returns the ID under which a model by Mistral AI takes a tool call, nine
+// letters and digits, and reports whether it differs. Mistral's chat format takes no other ID, and
+// providers refuse a conversation that holds one: Azure refuses any other ID, and Bedrock refuses
+// one whose last nine characters, which it keeps, are not letters and digits (captures
+// azure/mistral-tool-call-ids and aws/chat-completions-in-region-tool-call-ids). Other IDs map to
+// nine characters of their hash, as claudeToolCallID maps them, where keeping their first or last
+// nine letters and digits, as opencode and vLLM do, gives Kimi's "functions.get_weather:0" and
+// "functions.get_weather:1" one ID.
+func mistralToolCallID(id string) (string, bool) {
+	valid := len(id) == 9
+	for index := 0; valid && index < len(id); index++ {
+		valid = isAlphanumeric(id[index])
+	}
+	if valid {
+		return id, false
+	}
+	sum := sha256.Sum256([]byte(id))
+	value := binary.BigEndian.Uint64(sum[:8])
+	mapped := make([]byte, 9)
+	for index := range mapped {
+		mapped[index] = alphanumeric[value%uint64(len(alphanumeric))]
+		value /= uint64(len(alphanumeric))
+	}
+	return string(mapped), true
+}
+
+const alphanumeric = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+
+func isAlphanumeric(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9'
 }

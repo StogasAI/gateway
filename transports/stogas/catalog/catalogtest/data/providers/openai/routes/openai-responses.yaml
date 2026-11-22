@@ -11,6 +11,7 @@ routes:
     structuredOutputs: true
     systemMessages: true
     toolChoice: true
+    toolChoiceNone: true
     toolResultImages: true
     toolResultDocuments: true
   sampling:
@@ -232,13 +233,3 @@ routes:
           per_1k_calls: '25'
       dataHandling: {}
     - tool: mcp
-      dataHandling:
-        processingLocation: unknown
-        storageLocation: unknown
-        retentionDays: null
-        trainingUse: null
-        zeroDataRetention: false
-        endToEndEncrypted: false
-        tee: false
-        teeVerified: false
-        sharedWith: [unknown]

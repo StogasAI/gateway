@@ -2,8 +2,11 @@ package stogas
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -15,11 +18,26 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/catalog/catalogtest"
 )
 
-// awsChatDeployments names the catalog deployment of each inference profile that the recordings of
-// Bedrock's Chat Completions API call.
+// awsChatDeployments names the catalog deployment of each inference profile or model ID that the
+// recordings of Bedrock's Chat Completions API call.
 var awsChatDeployments = map[string]string{
-	"global.moonshotai.kimi-k3":   "aws-kimi-k3",
-	"global.moonshotai.kimi-k3.1": "aws-kimi-k3.1-pro",
+	"global.moonshotai.kimi-k3":             "aws-kimi-k3",
+	"global.moonshotai.kimi-k3.1":           "aws-kimi-k3.1-pro",
+	"openai.gpt-oss-120b-1:0":               "aws-gpt-oss-120b-us",
+	"deepseek.v3.2":                         "aws-deepseek-v3.2-us",
+	"qwen.qwen3-32b-v1:0":                   "aws-qwen3-32b-us",
+	"nvidia.nemotron-super-3-120b":          "aws-nemotron-3-super-us",
+	"mistral.mistral-large-3-675b-instruct": "aws-mistral-large-2512-us",
+}
+
+// awsInRegionModels are the models that Bedrock runs only in the Region of each request, by the
+// IDs that the recordings call.
+var awsInRegionModels = []string{
+	"openai.gpt-oss-120b-1:0",
+	"deepseek.v3.2",
+	"qwen.qwen3-32b-v1:0",
+	"nvidia.nemotron-super-3-120b",
+	"mistral.mistral-large-3-675b-instruct",
 }
 
 // awsChatRequest turns a recorded request to Bedrock into a client's request for the catalog
@@ -514,7 +532,7 @@ func TestAWSChatTakesTheFilesThatBedrockReads(t *testing.T) {
 // answered in the schema of response_format.
 func TestAWSChatTakesToolChoicesThatKimiFollows(t *testing.T) {
 	catalogtest.UseFallback(t)
-	names := []string{"tool_choice auto", "tool_choice required", "tool_choice naming the function", "tool_choice none", "response_format json_schema"}
+	names := []string{"tool_choice auto", "tool_choice required", "tool_choice naming the function", "response_format json_schema"}
 	for _, model := range []string{"global.moonshotai.kimi-k3", "global.moonshotai.kimi-k3.1"} {
 		names = append(names, model+" tool_choice required after Hello", model+" tool_choice naming the function after Hello")
 	}
@@ -591,4 +609,428 @@ func TestAWSChatSendsReasoningBackAsBedrockTookIt(t *testing.T) {
 	catalogtest.UseFallback(t)
 	recorded := providerCapture(t, "aws/chat-completions-reasoning-history")
 	replayReasoningHistory(t, exchange(t, recorded, "global.moonshotai.kimi-k3 answer after both turns sent back with their reasoning"), "aws-kimi-k3")
+}
+
+// recordedChatText returns the text of a recorded Chat Completions reply, the deltas of a stream
+// joined, and how many tool calls it makes.
+func recordedChatText(t *testing.T, recorded providerExchange) (string, int) {
+	t.Helper()
+	type message struct {
+		Content   *string           `json:"content"`
+		ToolCalls []json.RawMessage `json:"tool_calls"`
+	}
+	var text strings.Builder
+	calls := 0
+	for _, data := range append([]json.RawMessage{recorded.Response.Body}, recorded.Response.Events...) {
+		var reply struct {
+			Choices []struct {
+				Message *message `json:"message"`
+				Delta   *message `json:"delta"`
+			} `json:"choices"`
+		}
+		if len(data) == 0 || string(data) == "null" {
+			continue
+		}
+		if err := json.Unmarshal(data, &reply); err != nil {
+			t.Fatalf("%s: %v", recorded.Name, err)
+		}
+		for _, choice := range reply.Choices {
+			for _, part := range []*message{choice.Message, choice.Delta} {
+				if part == nil {
+					continue
+				}
+				if part.Content != nil {
+					text.WriteString(*part.Content)
+				}
+				for _, call := range part.ToolCalls {
+					// A stream's call starts with its ID, and later deltas add to its arguments.
+					var head struct {
+						ID string `json:"id"`
+					}
+					if json.Unmarshal(call, &head) == nil && (choice.Message != nil || head.ID != "") {
+						calls++
+					}
+				}
+			}
+		}
+	}
+	return text.String(), calls
+}
+
+// TestAWSChatInRegionServesWhatBedrockApplies replays the recorded requests to the models that
+// Bedrock runs in the Region of each request (capture aws/chat-completions-in-region-fields). The
+// gateway sends a request that the recording shows Bedrock applying as Bedrock took it, log
+// probabilities and one tool call per turn included, and refuses before it holds funds one that
+// Bedrock refused or left unapplied: n above 1, logit_bias where Bedrock refused it, and the
+// forced tool choices and JSON schema that gpt-oss-120b ignores. repetition_penalty, which Bedrock
+// ignores, never reaches it, and a call under tool_choice none fails the reply's checks.
+func TestAWSChatInRegionServesWhatBedrockApplies(t *testing.T) {
+	catalogtest.UseFallback(t)
+	recorded := providerCapture(t, "aws/chat-completions-in-region-fields")
+	for _, model := range awsInRegionModels {
+		var applied func(name string) bool
+		applied = func(name string) bool {
+			took := exchange(t, recorded, model+" "+name)
+			if took.Response.Status != http.StatusOK {
+				return false
+			}
+			text, calls := recordedChatText(t, took)
+			_, answer, _ := bedrockReasoning(text)
+			switch name {
+			case "logit_bias":
+				// A bias of 100 on one token leaves the model no room to say OK.
+				return !strings.Contains(answer, "OK")
+			case "tool_choice required", "tool_choice naming the function":
+				return calls > 0
+			case "five cities with parallel_tool_calls false":
+				return calls == 1 && applied("tool_choice required")
+			case "response_format json_schema":
+				var reply struct {
+					City string `json:"city"`
+				}
+				return json.Unmarshal([]byte(answer), &reply) == nil && reply.City != ""
+			}
+			return true
+		}
+		for _, name := range []string{
+			"a system message", "temperature 0.5", "top_p 0.9", "top_k 1", "frequency_penalty 0.5",
+			"presence_penalty 0.5", "seed 7", "n 2", "logit_bias", "logprobs", "stop", "tool_choice auto",
+			"tool_choice required", "tool_choice naming the function", "five cities with parallel_tool_calls false",
+			"streamed tool call", "response_format json_schema",
+		} {
+			t.Run(model+" "+name, func(t *testing.T) {
+				took := exchange(t, recorded, model+" "+name)
+				request := awsChatRequest(t, took)
+				_, err := resolveAWSChatState(t, request)
+				if want := applied(name); want != (err == nil) {
+					t.Fatalf("Bedrock answered %d and applied it: %t, and the gateway's check returned %v", took.Response.Status, want, err)
+				}
+				if err != nil {
+					return
+				}
+				if sent := awsCustomerChatBody(t, request); !sameJSON(t, sent, took.Request.Body) {
+					t.Fatalf("sent %s, Bedrock took %s", sent, took.Request.Body)
+				}
+			})
+		}
+		t.Run(model+" apples, repetition_penalty 2", func(t *testing.T) {
+			took := exchange(t, recorded, model+" apples, repetition_penalty 2")
+			var sent map[string]json.RawMessage
+			if err := json.Unmarshal(awsCustomerChatBody(t, awsChatRequest(t, took)), &sent); err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := sent["repetition_penalty"]; ok {
+				t.Fatal("Bedrock receives repetition_penalty, which it ignores")
+			}
+		})
+	}
+}
+
+// TestAWSChatInRegionStatesTheLimitsThatBedrockTakes replays the recorded output limits of the
+// models that Bedrock runs in the Region of each request (capture
+// aws/chat-completions-in-region-limits). Each deployment states the maximum that Bedrock names in
+// its refusal, except DeepSeek V3.2's, which keeps the 128K that DeepSeek states, and the gateway
+// refuses before it holds funds a limit above the deployment's or of 0. A limit that leaves the
+// prompt no room reaches Bedrock, which refuses it for all but gpt-oss-120b
+// (TestRecordedProviderRefusalsKeepTheirMeaning).
+func TestAWSChatInRegionStatesTheLimitsThatBedrockTakes(t *testing.T) {
+	catalogtest.UseFallback(t)
+	recorded := providerCapture(t, "aws/chat-completions-in-region-limits")
+	stated := regexp.MustCompile(`exceeds model maximum \((\d+)\)`)
+	for _, model := range awsInRegionModels {
+		t.Run(model, func(t *testing.T) {
+			above := exchange(t, recorded, model+" max_tokens above the maximum")
+			match := stated.FindSubmatch(above.Response.Body)
+			if match == nil {
+				t.Fatalf("Bedrock stated no maximum: %s", above.Response.Body)
+			}
+			want, _ := strconv.Atoi(string(match[1]))
+			if model == "deepseek.v3.2" {
+				want = 131072
+			}
+			state, err := resolveAWSChatState(t, `{"model":"`+awsChatDeployments[model]+`","messages":[{"role":"user","content":"Say OK."}]}`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if deployment := state.Resolution.Deployment; deployment.ContextWindowTokens != want || deployment.MaxOutputTokens != want {
+				t.Fatalf("the catalog states a context of %d and an output limit of %d tokens, want %d", deployment.ContextWindowTokens, deployment.MaxOutputTokens, want)
+			}
+			for _, name := range []string{"max_tokens above the maximum", "max_tokens of 0"} {
+				if _, err := resolveAWSChatState(t, awsChatRequest(t, exchange(t, recorded, model+" "+name))); err == nil {
+					t.Errorf("the gateway took %s, which Bedrock refused", name)
+				}
+			}
+		})
+	}
+}
+
+// TestAWSChatInRegionReasonsAsTheRequestAsks replays the recorded efforts of the models that
+// Bedrock runs in the Region of each request (capture aws/chat-completions-in-region-reasoning).
+// The gateway serves every effort with one that Bedrock took and under which the model reasoned in
+// the recording when the request asks for reasoning, and did not when it asks for none, unless
+// the model always or never reasons. It sends reasoning back as Bedrock took it.
+func TestAWSChatInRegionReasonsAsTheRequestAsks(t *testing.T) {
+	catalogtest.UseFallback(t)
+	recorded := providerCapture(t, "aws/chat-completions-in-region-reasoning")
+	efforts := []string{"unset", "none", "minimal", "low", "medium", "high", "xhigh", "max"}
+	for _, model := range awsInRegionModels {
+		reasoned := func(effort string) bool {
+			took := exchange(t, recorded, model+" reasoning_effort "+effort)
+			text, _ := recordedChatText(t, took)
+			reasoning, _, _ := bedrockReasoning(text)
+			return took.Response.Status == http.StatusOK && reasoning != ""
+		}
+		reasons := slices.ContainsFunc(efforts, reasoned)
+		stops := !reasoned("unset") || exchange(t, recorded, model+" reasoning_effort none").Response.Status == http.StatusOK && !reasoned("none")
+		for _, effort := range efforts {
+			t.Run(model+" "+effort, func(t *testing.T) {
+				request := awsChatRequest(t, exchange(t, recorded, model+" reasoning_effort "+effort))
+				state, err := resolveAWSChatState(t, request)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var sent struct {
+					ReasoningEffort *string `json:"reasoning_effort"`
+				}
+				if err := json.Unmarshal(awsCustomerChatBody(t, request), &sent); err != nil {
+					t.Fatal(err)
+				}
+				name := "unset"
+				if sent.ReasoningEffort != nil {
+					name = *sent.ReasoningEffort
+				}
+				asks := effort != "none" && (effort != "unset" || state.Resolution.Deployment.Reasoning == "required")
+				if took := exchange(t, recorded, model+" reasoning_effort "+name); took.Response.Status != http.StatusOK || reasoned(name) != (reasons && (asks || !stops)) {
+					t.Fatalf("sent reasoning_effort %s, which Bedrock answered with %d, and the model reasoned: %t", name, took.Response.Status, reasoned(name))
+				}
+			})
+		}
+		if reasons {
+			t.Run(model+" history", func(t *testing.T) {
+				replayReasoningHistory(t, exchange(t, recorded, model+" answer after both turns sent back with their reasoning"), awsChatDeployments[model])
+			})
+		}
+	}
+}
+
+// TestAWSChatInRegionReturnsReasoningApartFromTheAnswer replays the recorded replies of the models
+// that Bedrock runs in the Region of each request, which write their reasoning into the text in
+// tags (capture aws/chat-completions-in-region-reasoning), and DeepSeek V3.2's, which leave the
+// opening tag of its tool call markup before a call (captures aws/chat-completions-in-region-reasoning
+// and aws/chat-completions-in-region-fields). The gateway returns what the tags hold as reasoning
+// and the rest as the answer, without either tag.
+func TestAWSChatInRegionReturnsReasoningApartFromTheAnswer(t *testing.T) {
+	catalogtest.UseFallback(t)
+	reasoningCapture := providerCapture(t, "aws/chat-completions-in-region-reasoning")
+	replies := []providerExchange{
+		exchange(t, reasoningCapture, "deepseek.v3.2 tool call after an answer sent back with its reasoning"),
+		exchange(t, providerCapture(t, "aws/chat-completions-in-region-fields"), "deepseek.v3.2 streamed tool call"),
+	}
+	for _, model := range awsInRegionModels {
+		replies = append(replies, exchange(t, reasoningCapture, model+" reasoning_effort high"), exchange(t, reasoningCapture, model+" stream at high"))
+	}
+	tagged := regexp.MustCompile(`(?s)<reasoning>(.*?)</reasoning>`)
+	for _, recorded := range replies {
+		t.Run(recorded.Name, func(t *testing.T) {
+			if recorded.Response.Status != http.StatusOK {
+				t.Fatalf("Bedrock answered %d in the recording", recorded.Response.Status)
+			}
+			state, err := resolveAWSChatState(t, awsChatRequest(t, recorded))
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, calls := recordedChatText(t, recorded)
+			var wantReasoning strings.Builder
+			for _, match := range tagged.FindAllStringSubmatch(raw, -1) {
+				wantReasoning.WriteString(match[1])
+			}
+			wantAnswer := tagged.ReplaceAllString(raw, "")
+			if calls > 0 {
+				wantAnswer = strings.TrimSuffix(wantAnswer, "<｜DSML｜function_calls")
+			}
+			if strings.TrimSpace(wantAnswer) == "" {
+				wantAnswer = ""
+			}
+			var reasoning, answer strings.Builder
+			read := func(content, thought *string) {
+				if content != nil {
+					answer.WriteString(*content)
+				}
+				if thought != nil {
+					reasoning.WriteString(*thought)
+				}
+			}
+			if recorded.Response.Events == nil {
+				reply := &schemas.BifrostChatResponse{}
+				if err := sonic.Unmarshal(recorded.Response.Body, reply); err != nil {
+					t.Fatal(err)
+				}
+				if err := state.Adapter.IngestResponse(state, &schemas.BifrostResponse{ChatResponse: reply}, nil); err != nil {
+					t.Fatal(err)
+				}
+				message := reply.Choices[0].Message
+				var content, thought *string
+				if message.Content != nil {
+					content = message.Content.ContentStr
+				}
+				if message.ChatAssistantMessage != nil {
+					thought = message.ChatAssistantMessage.Reasoning
+				}
+				read(content, thought)
+			}
+			for _, data := range recorded.Response.Events {
+				chunk := &schemas.BifrostChatResponse{}
+				if err := sonic.Unmarshal(data, chunk); err != nil {
+					t.Fatal(err)
+				}
+				if err := state.Adapter.IngestChunk(state, &schemas.BifrostStreamChunk{BifrostChatResponse: chunk}); err != nil {
+					t.Fatalf("event refused: %v: %s", err, data)
+				}
+				for _, choice := range chunk.Choices {
+					if choice.ChatStreamResponseChoice != nil && choice.Delta != nil {
+						read(choice.Delta.Content, choice.Delta.Reasoning)
+					}
+				}
+			}
+			if reasoning.String() != wantReasoning.String() || answer.String() != wantAnswer {
+				t.Fatalf("reasoning %q and answer %q, want %q and %q", reasoning.String(), answer.String(), wantReasoning.String(), wantAnswer)
+			}
+		})
+	}
+}
+
+// TestAWSChatInRegionTakesOnlyTheFilesThatTheModelReads replays the recorded file and image
+// requests to the models that Bedrock runs in the Region of each request (capture
+// aws/chat-completions-in-region-files). Bedrock answered 200 for each document and left it out of
+// the prompt, so no reply holds the code that the file states, and the gateway refuses documents
+// there. It refuses each image that Bedrock refused and sends Mistral Large 3's inline image as
+// Bedrock took it.
+func TestAWSChatInRegionTakesOnlyTheFilesThatTheModelReads(t *testing.T) {
+	catalogtest.UseFallback(t)
+	code := regexp.MustCompile(`\d+`)
+	for name, recorded := range providerCapture(t, "aws/chat-completions-in-region-files") {
+		t.Run(name, func(t *testing.T) {
+			var took struct {
+				Messages []struct {
+					Content json.RawMessage `json:"content"`
+				} `json:"messages"`
+			}
+			if err := json.Unmarshal(recorded.Request.Body, &took); err != nil {
+				t.Fatal(err)
+			}
+			var parts []struct {
+				File struct {
+					FileData string `json:"file_data"`
+				} `json:"file"`
+			}
+			_ = json.Unmarshal(took.Messages[0].Content, &parts)
+			if len(parts) > 0 && strings.HasPrefix(parts[0].File.FileData, "data:text/") {
+				_, encoded, _ := strings.Cut(parts[0].File.FileData, ",")
+				file, err := base64.StdEncoding.DecodeString(encoded)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if reply, _ := recordedChatText(t, recorded); strings.Contains(reply, code.FindString(string(file))) {
+					t.Fatalf("the model read the file: %s", reply)
+				}
+			}
+			request := awsChatRequest(t, recorded)
+			_, err := resolveAWSChatState(t, request)
+			if read := recorded.Response.Status == http.StatusOK && strings.HasSuffix(name, " inline image"); read != (err == nil) {
+				t.Fatalf("Bedrock answered %d, and the gateway's check returned %v", recorded.Response.Status, err)
+			}
+			if err != nil {
+				return
+			}
+			if sent := awsCustomerChatBody(t, request); !sameJSON(t, sent, recorded.Request.Body) {
+				t.Fatalf("sent %s, Bedrock took %s", sent, recorded.Request.Body)
+			}
+		})
+	}
+}
+
+// TestMistralGetsToolCallIDsThatItTakes replays the recorded conversations whose tool call IDs
+// Azure and Bedrock took or refused for Mistral Large 3 (captures azure/mistral-tool-call-ids and
+// aws/chat-completions-in-region-tool-call-ids). Both took an ID of nine letters and digits, which
+// the gateway keeps, and the gateway sends any other ID as nine letters and digits of its hash,
+// the same for the call and its result, so that Kimi's calls of one turn keep apart.
+func TestMistralGetsToolCallIDsThatItTakes(t *testing.T) {
+	catalogtest.UseFallback(t)
+	nine := regexp.MustCompile(`^[A-Za-z0-9]{9}$`)
+	type wire struct {
+		Messages []struct {
+			ToolCallID string `json:"tool_call_id"`
+			ToolCalls  []struct {
+				ID string `json:"id"`
+			} `json:"tool_calls"`
+		} `json:"messages"`
+	}
+	// ids returns the IDs of a body's calls and results, in order.
+	ids := func(body []byte) (calls, results []string) {
+		var request wire
+		if err := json.Unmarshal(body, &request); err != nil {
+			t.Fatal(err)
+		}
+		for _, message := range request.Messages {
+			for _, call := range message.ToolCalls {
+				calls = append(calls, call.ID)
+			}
+			if message.ToolCallID != "" {
+				results = append(results, message.ToolCallID)
+			}
+		}
+		return calls, results
+	}
+	for _, test := range []struct {
+		capture, deployment string
+		body                func(*testing.T, string) []byte
+	}{
+		{"azure/mistral-tool-call-ids", "azure-mistral-large-2512", azureCustomerChatBody},
+		{"aws/chat-completions-in-region-tool-call-ids", "aws-mistral-large-2512-us", awsCustomerChatBody},
+	} {
+		for name, recorded := range providerCapture(t, test.capture) {
+			t.Run(test.capture+" "+name, func(t *testing.T) {
+				request := map[string]json.RawMessage{}
+				if err := json.Unmarshal(recorded.Request.Body, &request); err != nil {
+					t.Fatal(err)
+				}
+				request["model"], _ = json.Marshal(test.deployment)
+				body, _ := json.Marshal(request)
+				took, _ := ids(recorded.Request.Body)
+				calls, results := ids(test.body(t, string(body)))
+				if len(took) != 1 || len(calls) != 1 || !slices.Equal(calls, results) || !nine.MatchString(calls[0]) {
+					t.Fatalf("sent calls %v and results %v for %v", calls, results, took)
+				}
+				if recorded.Response.Status == http.StatusOK && nine.MatchString(took[0]) && calls[0] != took[0] {
+					t.Fatalf("sent %s for %s, which the provider took", calls[0], took[0])
+				}
+				if recorded.Response.Status != http.StatusOK && nine.MatchString(took[0]) {
+					t.Fatalf("the provider refused %s", took[0])
+				}
+			})
+		}
+	}
+	tools := `"tools":[{"type":"function","function":{"name":"get_weather","parameters":{"type":"object"}}}]`
+	t.Run("Kimi's calls of one turn", func(t *testing.T) {
+		calls, results := ids(awsCustomerChatBody(t, `{"model":"aws-mistral-large-2512-us","max_tokens":20,`+tools+`,"messages":[`+
+			`{"role":"user","content":"Weather in Paris and Rome?"},`+
+			`{"role":"assistant","content":null,"tool_calls":[`+
+			`{"id":"functions.get_weather:0","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"Paris\"}"}},`+
+			`{"id":"functions.get_weather:1","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"Rome\"}"}}]},`+
+			`{"role":"tool","tool_call_id":"functions.get_weather:0","content":"Sunny"},`+
+			`{"role":"tool","tool_call_id":"functions.get_weather:1","content":"Rain"}]}`))
+		if len(calls) != 2 || calls[0] == calls[1] || !slices.Equal(calls, results) {
+			t.Fatalf("sent calls %v and results %v", calls, results)
+		}
+	})
+	t.Run("Responses", func(t *testing.T) {
+		calls, results := ids(awsCustomerBody(t, "/v1/responses", `{"model":"aws-mistral-large-2512-us","max_output_tokens":20,`+
+			`"tools":[{"type":"function","name":"get_weather","parameters":{"type":"object"}}],"input":[`+
+			`{"role":"user","content":"Weather in Paris?"},`+
+			`{"type":"function_call","call_id":"functions.get_weather:0","name":"get_weather","arguments":"{\"city\":\"Paris\"}"},`+
+			`{"type":"function_call_output","call_id":"functions.get_weather:0","output":"Sunny"}]}`))
+		if len(calls) != 1 || !slices.Equal(calls, results) || !nine.MatchString(calls[0]) {
+			t.Fatalf("sent calls %v and results %v", calls, results)
+		}
+	})
 }

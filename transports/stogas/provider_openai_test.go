@@ -274,7 +274,7 @@ func TestValidateRequestAllowsWebSearchOptionsOnlyForChatSearchModels(t *testing
 		HasWebSearchOptions: true,
 		Deployment:          openAIAdapterDeployment{Model: "gpt-5.5"},
 	})
-	if !errors.Is(err, errOpenAIUnsupportedParameter) {
+	if err == nil || err.Error() != "web_search_options is not supported for the selected deployment" {
 		t.Fatalf("expected normal chat model web_search_options rejection, got %v", err)
 	}
 
