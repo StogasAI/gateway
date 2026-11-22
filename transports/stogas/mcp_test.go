@@ -334,7 +334,7 @@ func TestProviderResponsesAcceptRemoteMCPItemsFromDeclaredServers(t *testing.T) 
 	failed.Status = schemas.Ptr("failed")
 	failed.ResponsesToolMessage.Output = nil
 	failed.ResponsesToolMessage.Error = &schemas.ResponsesToolMessageError{ResponsesToolMessageErrorStruct: &schemas.ResponsesToolMessageErrorStruct{
-		Type: "mcp_protocol_error", Code: schemas.Ptr(-32600), Message: schemas.Ptr("bad request"),
+		Type: "mcp_protocol_error", Code: json.RawMessage(`-32600`), Message: schemas.Ptr("bad request"),
 	}}
 	response.Output = []schemas.ResponsesMessage{mcpListing("mcpl_1", "wiki"), mcpCall("mcp_1", "wiki"), failed}
 	if err := validateProviderResponsesResponse(state, response); err != nil {

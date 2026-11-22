@@ -648,6 +648,11 @@ func TestReleaseRefusesFilesThatDifferFromTheRoot(t *testing.T) {
 				route.(map[string]any)["hostedTools"] = map[string]any{"mcp": map[string]any{"dataHandling": map[string]any{}, "pricing": map[string]any{}}}
 			}
 		}, "offers remote MCP on Stogas's own account"},
+		"Stogas's own account with image generation": {func(r testRelease) {
+			for _, route := range r.record("deployments", "chutes-kimi-k3")["routes"].(map[string]any) {
+				route.(map[string]any)["hostedTools"] = map[string]any{"image_generation": map[string]any{"dataHandling": map[string]any{}}}
+			}
+		}, "offers image generation on Stogas's own account"},
 		"a change that the root does not list": {func(r testRelease) {
 			r.parts[0]["schedule"] = []any{map[string]any{"start": "2027-01-01T00:00:00Z", "graph": map[string]any{}}}
 		}, "does not list"},

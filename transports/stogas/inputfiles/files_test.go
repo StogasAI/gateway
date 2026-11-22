@@ -333,3 +333,58 @@ func TestProcessLeavesFilesOutsideUserMessagesToTheRequestChecks(t *testing.T) {
 		}
 	}
 }
+
+// An image generation tool's mask is an image like any other: its checks name it by the tool, and
+// an export describes it, as it describes the archive of a hosted shell's inline skill. A mask of
+// another kind of tool, which the request's checks refuse, is no attachment.
+func TestToolFilesAreFiles(t *testing.T) {
+	const digest = `"sha256":"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"`
+	tools := `[{"type":"image_generation","input_image_mask":{"image_url":"data:image/png;base64,` + encoded(pngBytes) + `"}},` +
+		`{"type":"image_generation","input_image_mask":{"file_id":"file-1"}},{"type":"code_interpreter","input_image_mask":{"file_id":"file-2"}}]`
+	var seen []string
+	fields := map[string]json.RawMessage{"input": json.RawMessage(`"hi"`), "tools": json.RawMessage(tools)}
+	stats, err := Process(fields, true, Options{Check: func(path string, mediaType MediaType) error {
+		seen = append(seen, path+" "+mediaType.String())
+		return nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(seen, []string{"tools[0].input_image_mask image/png", "tools[1].input_image_mask image/* of unknown type"}) {
+		t.Fatalf("checked %v", seen)
+	}
+	if stats.Count != 2 || stats.IDs != 1 || stats.InlineBytes != len(pngBytes) || stats.Opaque != "tools[0].input_image_mask" || string(fields["tools"]) != tools {
+		t.Fatalf("stats %+v, tools %s", stats, fields["tools"])
+	}
+	_, err = Process(map[string]json.RawMessage{"tools": json.RawMessage(`[{"type":"image_generation","input_image_mask":{"image_url":"data:image/png;base64,aGVsbG8="}}]`)}, true,
+		Options{Check: func(string, MediaType) error { return nil }})
+	var part *PartError
+	if !errors.As(err, &part) || part.Path != "tools[0].input_image_mask" {
+		t.Fatalf("text as a PNG mask got %v", err)
+	}
+
+	tools = `[{"type":"image_generation","input_image_mask":{"image_url":"data:image/png;base64,aGVsbG8="}},` +
+		`{"type":"shell","environment":{"type":"container_auto","skills":[{"type":"inline","name":"greet","description":"Greets","source":{"type":"base64","media_type":"application/zip","data":"aGVsbG8="}},` +
+		`{"type":"skill_reference","skill_id":"skill_1"}]}}]`
+	described, err := Describe(map[string]json.RawMessage{"input": json.RawMessage(`"hi"`), "tools": json.RawMessage(tools)}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `[{"type":"image_generation","input_image_mask":{"image_url":{"media_type":"image/png","size":5,` + digest + `}}},` +
+		`{"type":"shell","environment":{"type":"container_auto","skills":[{"type":"inline","name":"greet","description":"Greets","source":{"type":"base64","media_type":"application/zip","data":{"media_type":"application/zip","size":5,` + digest + `}}},` +
+		`{"type":"skill_reference","skill_id":"skill_1"}]}}]`
+	var got, expected any
+	if err := json.Unmarshal(described["tools"], &got); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(want), &expected); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, expected) {
+		t.Fatalf("described tools %s", described["tools"])
+	}
+	// Chat Completions has neither tool.
+	if described, err := Describe(map[string]json.RawMessage{"messages": json.RawMessage(`[]`), "tools": json.RawMessage(tools)}, false); err != nil || string(described["tools"]) != tools {
+		t.Fatalf("Chat Completions tools described as %s, %v", described["tools"], err)
+	}
+}

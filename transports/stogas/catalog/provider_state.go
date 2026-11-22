@@ -14,10 +14,10 @@ import (
 
 // ProviderState is what a request keeps or reads in its provider account through OpenAI's API: a
 // reply that the provider stores (store), a stored reply that it continues (previous_response_id),
-// a conversation that it adds to (conversation), the vector stores that file search searches, or
-// the container that code interpreter or a hosted shell runs in. Each lives in one account, so only
-// a customer's own credential serves such a request, never Stogas's, and only on the provider's own
-// API, which no translation carries.
+// a conversation that it adds to (conversation), the vector stores that file search searches, the
+// container that code interpreter or a hosted shell runs in, or a generated image that the input
+// sends back by its ID. Each lives in one account, so only a customer's own credential serves such
+// a request, never Stogas's, and only on the provider's own API, which no translation carries.
 //
 // OpenAI's prompt templates (prompt) stay refused: a template can hold instructions, tools and
 // output settings that the gateway never sees, so policies on tools and the checks of the reply
@@ -25,8 +25,9 @@ import (
 type ProviderState struct {
 	// Fields lists the fields that keep or read provider state, in this order: store where the
 	// provider gets store: true, each of previous_response_id and conversation that the request
-	// sends, vector_store_ids where a file search reads vector stores, and container where code
-	// interpreter or a hosted shell runs in one.
+	// sends, vector_store_ids where a file search reads vector stores, container where code
+	// interpreter or a hosted shell runs in one, and image_generation_call where the input sends
+	// back a generated image by its ID.
 	Fields []string
 	// Store is the store value that the provider gets: the client's, or, where the client sends
 	// none, true for a request that continues a stored reply or a conversation, as OpenAI's own
@@ -44,9 +45,11 @@ type ProviderState struct {
 	Held string
 	// Reads is the path of the first field that names content in one account, which the model
 	// reads and no input check can: Held, a file search's vector stores, such as
-	// tools[0].vector_store_ids, a container tool's container, files and stored skills, or the
+	// tools[0].vector_store_ids, a container tool's container, files and stored skills, the
 	// container of a call that the input sends back while a container tool is listed, which OpenAI
-	// runs the next calls in (captures openai/code-interpreter and openai/hosted-shell).
+	// runs the next calls in (captures openai/code-interpreter and openai/hosted-shell), or an image
+	// generation call that the input sends back, which OpenAI reads from the stored reply (capture
+	// openai/image-generation-replay).
 	Reads string
 	// Container is the path of the first container tool, such as tools[1]. OpenAI bills a
 	// container to the account by the session, a price that no reply reports, so only the
@@ -117,6 +120,10 @@ func readProviderState(route Route, raw map[string]json.RawMessage) ProviderStat
 			if state.Network == "" {
 				state.Network = replayed
 			}
+		}
+		if image := replayedImageCall(raw["input"]); image != "" {
+			state.Fields = append(state.Fields, "image_generation_call")
+			state.read(image)
 		}
 	}
 	state.Keeps = state.Store || slices.Contains(held, "conversation") || state.Container != ""
@@ -195,6 +202,21 @@ func replayedContainer(input json.RawMessage) string {
 			if environment, _ := rawObjectValue(item["environment"]); rawStringValue(environment["container_id"]) != "" {
 				return fmt.Sprintf("input[%d].environment.container_id", index)
 			}
+		}
+	}
+	return ""
+}
+
+// replayedImageCall is the path of the input's first image generation call that names an image by
+// its ID, or "". Planning has reduced each such call to its type and ID (keepImageCallIDs).
+func replayedImageCall(input json.RawMessage) string {
+	if !bytes.Contains(input, []byte("image_generation_call")) && !bytes.Contains(input, []byte(`\u`)) {
+		return ""
+	}
+	items, _ := rawjson.Array(input)
+	for index, rawItem := range items {
+		if item, _ := rawObjectValue(rawItem); rawStringValue(item["type"]) == "image_generation_call" && rawStringValue(item["id"]) != "" {
+			return fmt.Sprintf("input[%d]", index)
 		}
 	}
 	return ""

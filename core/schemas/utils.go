@@ -1531,15 +1531,17 @@ func DeepCopyResponsesMessage(original ResponsesMessage) ResponsesMessage {
 			}
 			if original.ResponsesToolMessage.Error.ResponsesToolMessageErrorStruct != nil {
 				copyErrorStruct := *original.ResponsesToolMessage.Error.ResponsesToolMessageErrorStruct
-				if copyErrorStruct.Code != nil {
-					copyCode := *copyErrorStruct.Code
-					copyErrorStruct.Code = &copyCode
-				}
 				if copyErrorStruct.Message != nil {
 					copyMessage := *copyErrorStruct.Message
 					copyErrorStruct.Message = &copyMessage
 				}
+				if copyErrorStruct.Param != nil {
+					copyParam := *copyErrorStruct.Param
+					copyErrorStruct.Param = &copyParam
+				}
+				copyErrorStruct.Code = append(json.RawMessage(nil), copyErrorStruct.Code...)
 				copyErrorStruct.Content = append(json.RawMessage(nil), copyErrorStruct.Content...)
+				copyErrorStruct.ModerationDetails = append(json.RawMessage(nil), copyErrorStruct.ModerationDetails...)
 				copyError.ResponsesToolMessageErrorStruct = &copyErrorStruct
 			}
 			copy.ResponsesToolMessage.Error = &copyError
@@ -1776,6 +1778,7 @@ func DeepCopyResponsesMessage(original ResponsesMessage) ResponsesMessage {
 				copySize := *original.ResponsesToolMessage.ResponsesImageGenerationCall.Size
 				copyToolCall.Size = &copySize
 			}
+			copyToolCall.SvgUsage = append(json.RawMessage(nil), copyToolCall.SvgUsage...)
 			copy.ResponsesToolMessage.ResponsesImageGenerationCall = &copyToolCall
 		}
 

@@ -269,9 +269,19 @@ func TestSnapshotValidationRejectsHostedToolsThatTheRouteCannotRun(t *testing.T)
 	}{
 		{"an unknown tool", "openai-gpt-5.5-2026-04-23", "openai-responses",
 			func(route map[string]any) {
-				tools(route)["image_generation"] = map[string]any{"dataHandling": map[string]any{}}
+				tools(route)["local_shell"] = map[string]any{"dataHandling": map[string]any{}}
 			},
 			"offers unknown hosted tool"},
+		{"image generation on Claude's wire", "anthropic-claude-fable-5-1", "anthropic-messages",
+			func(route map[string]any) {
+				tools(route)["image_generation"] = map[string]any{"dataHandling": map[string]any{}}
+			},
+			"offers image generation on Claude's wire, which has none"},
+		{"a price on image generation", "openai-gpt-5.5-2026-04-23", "openai-responses",
+			func(route map[string]any) {
+				tools(route)["image_generation"] = map[string]any{"dataHandling": map[string]any{},
+					"pricing": map[string]any{"openai_responses_file_search_calls": map[string]any{"per_1k_calls": "2.5"}}}
+			}, "prices image_generation on a meter that it does not bill"},
 		{"zero data retention that the deployment lacks", "anthropic-claude-fable-5-1", "anthropic-messages",
 			func(route map[string]any) { effect(route, "web_fetch")["zeroDataRetention"] = true }, "would improve the deployment's"},
 		{"no training use", "openai-gpt-5.5-2026-04-23", "openai-responses",

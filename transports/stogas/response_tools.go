@@ -306,7 +306,7 @@ func validateProviderResponsesStreamPayload(state *State, response *schemas.Bifr
 		schemas.ResponsesStreamResponseTypeCompleted,
 		schemas.ResponsesStreamResponseTypeIncomplete:
 		terminal := response.Type == schemas.ResponsesStreamResponseTypeCompleted || response.Type == schemas.ResponsesStreamResponseTypeIncomplete
-		if responsesStreamNonResponsePayloadSet(response) || validateProviderResponsesOutput(state, response.Response, terminal) != nil {
+		if responsesStreamUnexpectedPayload(response, responsePayloadResponse) || validateProviderResponsesOutput(state, response.Response, terminal) != nil {
 			return ErrProviderResponseMalformed
 		}
 		return nil
@@ -392,7 +392,7 @@ func validateProviderResponsesStreamPayload(state *State, response *schemas.Bifr
 	case schemas.ResponsesStreamResponseTypeApplyPatchCallOperationDiffDone:
 		if !providerResponsesToolTypeAllowed(state, schemas.ResponsesToolTypeApplyPatch) || response.Diff == nil ||
 			!responsesStreamHasItemType(state, response, schemas.ResponsesMessageTypeApplyPatchCall) ||
-			responsesStreamUnexpectedPayload(response, responsePayloadOutputIndex|responsePayloadItemID) ||
+			responsesStreamUnexpectedPayload(response, responsePayloadOutputIndex|responsePayloadItemID|responsePayloadDiff) ||
 			validateProviderResponsesToolValueEvent(state, response) != nil {
 			return ErrProviderResponseMalformed
 		}
@@ -402,7 +402,8 @@ func validateProviderResponsesStreamPayload(state *State, response *schemas.Bifr
 		schemas.ResponsesStreamResponseTypeShellCallCommandDone:
 		// OpenAI names the call of a command event by its output index alone.
 		if !providerResponsesToolTypeAllowed(state, schemas.ResponsesToolTypeShell) ||
-			responsesStreamUnexpectedPayload(response, responsePayloadOutputIndex|responsePayloadItemID|responsePayloadDelta|responsePayloadObfuscation) ||
+			responsesStreamUnexpectedPayload(response, responsePayloadOutputIndex|responsePayloadItemID|responsePayloadCommandIndex|
+				responsePayloadCommand|responsePayloadDelta|responsePayloadObfuscation) ||
 			validateProviderResponsesShellCommandEvent(state, response) != nil {
 			return ErrProviderResponseMalformed
 		}
@@ -462,10 +463,27 @@ func validateProviderResponsesStreamPayload(state *State, response *schemas.Bifr
 			return ErrProviderResponseMalformed
 		}
 		return nil
+	case schemas.ResponsesStreamResponseTypeImageGenerationCallInProgress,
+		schemas.ResponsesStreamResponseTypeImageGenerationCallGenerating,
+		schemas.ResponsesStreamResponseTypeImageGenerationCallCompleted:
+		if !responsesStreamHasItemType(state, response, schemas.ResponsesMessageTypeImageGenerationCall) ||
+			responsesStreamUnexpectedPayload(response, responsePayloadItemReference) ||
+			validateProviderResponsesHostedToolEvent(state, response) != nil {
+			return ErrProviderResponseMalformed
+		}
+		return nil
+	case schemas.ResponsesStreamResponseTypeImageGenerationCallPartialImage:
+		if !responsesStreamHasItemType(state, response, schemas.ResponsesMessageTypeImageGenerationCall) ||
+			responsesStreamUnexpectedPayload(response, responsePayloadItemReference|responsePayloadPartialImageB64|
+				responsePayloadPartialImageIndex|responsePayloadPartialImageSettings) ||
+			validateProviderResponsesPartialImage(state, response) != nil {
+			return ErrProviderResponseMalformed
+		}
+		return nil
 	case schemas.ResponsesStreamResponseTypeShellCallOutputContentDelta,
 		schemas.ResponsesStreamResponseTypeShellCallOutputContentDone:
 		if !responsesStreamHasItemType(state, response, schemas.ResponsesMessageTypeShellCallOutput) ||
-			responsesStreamUnexpectedPayload(response, responsePayloadItemReference) ||
+			responsesStreamUnexpectedPayload(response, responsePayloadItemReference|responsePayloadCommandIndex|responsePayloadShellOutput) ||
 			validateProviderResponsesShellOutputEvent(state, response) != nil {
 			return ErrProviderResponseMalformed
 		}
@@ -748,6 +766,12 @@ func validateProviderResponsesTerminalItem(item *schemas.ResponsesMessage, befor
 		if !stringInSet(*item.Status, "completed", "incomplete", "interpreting", "failed") {
 			return ErrProviderResponseMalformed
 		}
+	case schemas.ResponsesMessageTypeImageGenerationCall:
+		// And an image generation call that it stops with the status generating, without an image
+		// (capture openai/image-generation).
+		if !stringInSet(*item.Status, "completed", "incomplete", "generating", "failed") {
+			return ErrProviderResponseMalformed
+		}
 	case schemas.ResponsesMessageTypeApplyPatchCall:
 		if !stringInSet(*item.Status, "completed", "incomplete") || item.ResponsesToolMessage == nil ||
 			item.ResponsesToolMessage.ResponsesApplyPatchCall == nil || item.ResponsesToolMessage.ResponsesApplyPatchCall.Operation == nil {
@@ -988,15 +1012,8 @@ func responsesStreamHasItemType(state *State, response *schemas.BifrostResponses
 	return state.responsesItems[*response.OutputIndex].itemType == itemType
 }
 
-func responsesStreamNonResponsePayloadSet(response *schemas.BifrostResponsesStreamResponse) bool {
-	return response.OutputIndex != nil || response.Item != nil || response.SummaryIndex != nil || response.ContentIndex != nil ||
-		response.ItemID != nil || response.Part != nil || response.Delta != nil || response.Signature != nil ||
-		response.Obfuscation != nil || len(response.LogProbs) != 0 || response.Text != nil || response.Refusal != nil ||
-		response.Arguments != nil || response.Input != nil || response.PartialImageB64 != nil || response.PartialImageIndex != nil ||
-		response.Annotation != nil || response.AnnotationIndex != nil || response.Error != nil || response.Code != nil ||
-		response.Message != nil || response.Param != nil
-}
-
+// responsesStreamPayload names the fields of a stream event that carry its payload, one bit each,
+// so that each event type admits only its own.
 type responsesStreamPayload uint32
 
 const (
@@ -1015,8 +1032,13 @@ const (
 	responsePayloadRefusal
 	responsePayloadArguments
 	responsePayloadInput
+	responsePayloadCommand
+	responsePayloadCommandIndex
+	responsePayloadShellOutput
+	responsePayloadDiff
 	responsePayloadPartialImageB64
 	responsePayloadPartialImageIndex
+	responsePayloadPartialImageSettings
 	responsePayloadAnnotation
 	responsePayloadAnnotationIndex
 	responsePayloadError
@@ -1077,11 +1099,27 @@ func responsesStreamUnexpectedPayload(response *schemas.BifrostResponsesStreamRe
 	if response.Input != nil {
 		present |= responsePayloadInput
 	}
+	if response.Command != nil {
+		present |= responsePayloadCommand
+	}
+	if response.CommandIndex != nil {
+		present |= responsePayloadCommandIndex
+	}
+	if response.Output != nil || response.ShellOutputDelta != nil {
+		present |= responsePayloadShellOutput
+	}
+	if response.Diff != nil {
+		present |= responsePayloadDiff
+	}
 	if response.PartialImageB64 != nil {
 		present |= responsePayloadPartialImageB64
 	}
 	if response.PartialImageIndex != nil {
 		present |= responsePayloadPartialImageIndex
+	}
+	if response.PartialImageBackground != nil || response.PartialImageOutputFormat != nil ||
+		response.PartialImageQuality != nil || response.PartialImageSize != nil {
+		present |= responsePayloadPartialImageSettings
 	}
 	if response.Annotation != nil {
 		present |= responsePayloadAnnotation
@@ -1118,7 +1156,8 @@ func validateProviderResponsesItem(state *State, item *schemas.ResponsesMessage)
 	}
 	if item.Status != nil && !stringInSet(*item.Status, "in_progress", "completed", "incomplete", "failed") &&
 		!(*item.Type == schemas.ResponsesMessageTypeMCPCall && *item.Status == "calling") &&
-		!(*item.Type == schemas.ResponsesMessageTypeCodeInterpreterCall && *item.Status == "interpreting") {
+		!(*item.Type == schemas.ResponsesMessageTypeCodeInterpreterCall && *item.Status == "interpreting") &&
+		!(*item.Type == schemas.ResponsesMessageTypeImageGenerationCall && *item.Status == "generating") {
 		return providerResponsesItem{}, ErrProviderResponseMalformed
 	}
 	if item.Role != nil && *item.Role != schemas.ResponsesInputMessageRoleAssistant ||
@@ -1213,6 +1252,16 @@ func validateProviderResponsesItem(state *State, item *schemas.ResponsesMessage)
 		if err := validateAndRecordProviderResponsesToolCall(state, item, &observed, false); err != nil {
 			return providerResponsesItem{}, err
 		}
+	case schemas.ResponsesMessageTypeImageGenerationCall:
+		// A call starts as its ID, type and status alone (capture openai/image-generation).
+		if item.Role != nil || item.Phase != nil || item.Content != nil || item.ResponsesReasoning != nil ||
+			!providerResponsesToolTypeAllowed(state, schemas.ResponsesToolTypeImageGeneration) ||
+			item.ResponsesToolMessage != nil && validateProviderResponsesToolMessage(state, item.ResponsesToolMessage, *item.Type) != nil {
+			return providerResponsesItem{}, ErrProviderResponseMalformed
+		}
+		if err := validateAndRecordProviderResponsesToolCall(state, item, &observed, false); err != nil {
+			return providerResponsesItem{}, err
+		}
 	case schemas.ResponsesMessageTypeShellCallOutput:
 		// OpenAI writes the output of each call that a hosted shell runs, after the call.
 		if item.Role != nil || item.Phase != nil || item.Content != nil || item.ResponsesReasoning != nil ||
@@ -1277,9 +1326,15 @@ func providerResponsesToolIdentity(item *schemas.ResponsesMessage) (string, stri
 		return "", "", nil
 	}
 	tool := item.ResponsesToolMessage
-	callerPayload, err := json.Marshal(tool.Caller)
-	if err != nil {
-		return "", "", err
+	// A call without a caller reads as one without a tool message, as an image generation call
+	// starts.
+	callerPayload := ""
+	if tool.Caller != nil {
+		encoded, err := json.Marshal(tool.Caller)
+		if err != nil {
+			return "", "", err
+		}
+		callerPayload = string(encoded)
 	}
 
 	actionPayload := ""
@@ -1319,7 +1374,7 @@ func providerResponsesToolIdentity(item *schemas.ResponsesMessage) (string, stri
 			actionPayload = "mcp:" + *tool.ServerLabel
 		}
 	}
-	return string(callerPayload), actionPayload, nil
+	return callerPayload, actionPayload, nil
 }
 
 func providerResponsesCompactionPayload(item *schemas.ResponsesMessage) string {
@@ -1367,9 +1422,10 @@ func validateProviderResponsesToolMessage(state *State, tool *schemas.ResponsesT
 		return ErrProviderResponseMalformed
 	}
 	shellOutput := itemType == schemas.ResponsesMessageTypeShellCallOutput
-	if tool.Execution != nil || tool.Output != nil && !shellOutput || tool.Error != nil ||
+	image := itemType == schemas.ResponsesMessageTypeImageGenerationCall
+	if tool.Execution != nil || tool.Output != nil && !shellOutput || tool.Error != nil && !image ||
 		tool.ResponsesComputerToolCallOutput != nil || tool.ServerLabel != nil ||
-		tool.ResponsesImageGenerationCall != nil || tool.ResponsesMCPListTools != nil ||
+		tool.ResponsesImageGenerationCall != nil && !image || tool.ResponsesMCPListTools != nil ||
 		tool.ResponsesMCPApprovalResponse != nil || tool.ResponsesAdvisorCall != nil ||
 		tool.ResponsesToolSearchCall != nil || tool.ResponsesCodeExecutionCall != nil ||
 		tool.ResponsesCodeInterpreterToolCall != nil && itemType != schemas.ResponsesMessageTypeCodeInterpreterCall {
@@ -1432,6 +1488,17 @@ func validateProviderResponsesToolMessage(state *State, tool *schemas.ResponsesT
 		if tool.CallID != nil || tool.Name != nil || tool.Namespace != nil || tool.Arguments != nil || tool.Action != nil ||
 			tool.Caller != nil || tool.ResponsesCustomToolCall != nil || tool.ResponsesWebFetchCall != nil ||
 			!validProviderCodeInterpreterCall(tool.ResponsesCodeInterpreterToolCall) {
+			return ErrProviderResponseMalformed
+		}
+	case schemas.ResponsesMessageTypeImageGenerationCall:
+		// OpenAI writes the image in base64 into the call, with the prompt that the model wrote for
+		// it and the settings that made it, and a failed call holds its error. The action is a name,
+		// such as generate or edit.
+		if tool.CallID != nil || tool.Name != nil || tool.Namespace != nil || tool.Arguments != nil || tool.Caller != nil ||
+			tool.ResponsesCustomToolCall != nil || tool.ResponsesWebFetchCall != nil ||
+			tool.Action != nil && (tool.Action.ResponsesToolCallActionStr == nil ||
+				!validProviderText(*tool.Action.ResponsesToolCallActionStr, maxProviderResponseIDBytes, false)) ||
+			!validProviderImageGenerationCall(tool.ResponsesImageGenerationCall) || !validProviderToolError(tool.Error) {
 			return ErrProviderResponseMalformed
 		}
 	case schemas.ResponsesMessageTypeComputerCall:
@@ -1552,6 +1619,15 @@ func validProviderCodeInterpreterCall(call *schemas.ResponsesCodeInterpreterTool
 		}
 	}
 	return true
+}
+
+// validProviderImageGenerationCall checks what an image generation call holds, which a call that
+// failed or that max_tool_calls stopped may lack: the image, the prompt that the model wrote, the
+// settings, and the usage of the model that wrote an SVG image.
+func validProviderImageGenerationCall(call *schemas.ResponsesImageGenerationCall) bool {
+	return call == nil || validProviderText(call.Result, maxProviderResponseBodySize, true) &&
+		validOptionalProviderText(call.RevisedPrompt, maxProviderResponseBodySize, true) &&
+		validProviderImageSettings(call.Background, call.OutputFormat, call.Quality, call.Size)
 }
 
 // validProviderFileSearch checks the queries of a file search and the results that include
@@ -1875,15 +1951,15 @@ func validProviderToolCaller(caller *schemas.ResponsesToolCaller) bool {
 }
 
 func validateAndRecordProviderResponsesToolCall(state *State, item *schemas.ResponsesMessage, observed *providerResponsesItem, requireCallID bool) error {
-	if item == nil || observed == nil || item.ResponsesToolMessage == nil {
+	if item == nil || observed == nil {
 		return ErrProviderResponseMalformed
 	}
 	observed.callID = observed.id
-	if item.ResponsesToolMessage.CallID != nil {
-		if !validProviderResponseID(*item.ResponsesToolMessage.CallID) {
+	if tool := item.ResponsesToolMessage; tool != nil && tool.CallID != nil {
+		if !validProviderResponseID(*tool.CallID) {
 			return ErrProviderResponseMalformed
 		}
-		observed.callID = *item.ResponsesToolMessage.CallID
+		observed.callID = *tool.CallID
 	} else if requireCallID {
 		return ErrProviderResponseMalformed
 	}
@@ -1915,9 +1991,10 @@ func validateAndRecordProviderResponsesToolCall(state *State, item *schemas.Resp
 				state.responsesHostedShellCalls = make(map[string]bool)
 			}
 			state.responsesHostedShellCalls[observed.callID] = true
-		case schemas.ResponsesMessageTypeCodeInterpreterCall:
-			// max_tool_calls stops code interpreter's calls past it, which end interpreting (capture
-			// openai/container-tool-calls), and they cost nothing of their own, so no cap on hosted
+		case schemas.ResponsesMessageTypeCodeInterpreterCall, schemas.ResponsesMessageTypeImageGenerationCall:
+			// max_tool_calls stops the calls of code interpreter and image generation past it, which
+			// end interpreting or generating (captures openai/container-tool-calls and
+			// openai/image-generation), and they cost no fee that a hold prices, so no cap on hosted
 			// calls counts them.
 			state.responsesDeclaredCalls++
 		case schemas.ResponsesMessageTypeFunctionCall, schemas.ResponsesMessageTypeCustomToolCall,
@@ -2183,8 +2260,7 @@ func validateProviderResponsesShellCommandEvent(state *State, response *schemas.
 // validateProviderResponsesShellOutputEvent checks what a command of a hosted shell's call wrote,
 // which OpenAI streams by command.
 func validateProviderResponsesShellOutputEvent(state *State, response *schemas.BifrostResponsesStreamResponse) error {
-	if response.CommandIndex == nil || *response.CommandIndex < 0 || *response.CommandIndex >= maxProviderResponseItems ||
-		response.Command != nil {
+	if response.CommandIndex == nil || *response.CommandIndex < 0 || *response.CommandIndex >= maxProviderResponseItems {
 		return ErrProviderResponseMalformed
 	}
 	if response.Type == schemas.ResponsesStreamResponseTypeShellCallOutputContentDelta {
@@ -2264,12 +2340,56 @@ func validateProviderResponsesHostedToolEvent(state *State, response *schemas.Bi
 			return ErrProviderResponseMalformed
 		}
 		next = 3
+	// So do image generation's: a call that max_tool_calls stops ends while it is generating
+	// (capture openai/image-generation).
+	case schemas.ResponsesStreamResponseTypeImageGenerationCallInProgress:
+		if item.stage != 0 {
+			return ErrProviderResponseMalformed
+		}
+		next = 1
+	case schemas.ResponsesStreamResponseTypeImageGenerationCallGenerating:
+		if item.stage > 1 {
+			return ErrProviderResponseMalformed
+		}
+		next = 2
+	case schemas.ResponsesStreamResponseTypeImageGenerationCallCompleted:
+		if item.stage > 2 {
+			return ErrProviderResponseMalformed
+		}
+		next = 3
 	default:
 		return ErrProviderResponseMalformed
 	}
 	item.stage = next
 	state.responsesItems[*response.OutputIndex] = item
 	return nil
+}
+
+// validateProviderResponsesPartialImage checks a partial image of an image generation call, which
+// arrives in base64 with its settings before the call completes.
+func validateProviderResponsesPartialImage(state *State, response *schemas.BifrostResponsesStreamResponse) error {
+	if state == nil || response.OutputIndex == nil || response.PartialImageB64 == nil || response.PartialImageIndex == nil ||
+		*response.PartialImageIndex < 0 || *response.PartialImageIndex >= maxProviderResponseItems ||
+		!validProviderText(*response.PartialImageB64, maxProviderResponseBodySize, false) ||
+		!validProviderImageSettings(response.PartialImageBackground, response.PartialImageOutputFormat,
+			response.PartialImageQuality, response.PartialImageSize) {
+		return ErrProviderResponseMalformed
+	}
+	if item := state.responsesItems[*response.OutputIndex]; item.stage > 2 {
+		return ErrProviderResponseMalformed
+	}
+	return nil
+}
+
+// validProviderImageSettings checks the settings that OpenAI reports an image with, each a short
+// name such as webp or 1024x1024.
+func validProviderImageSettings(settings ...*string) bool {
+	for _, setting := range settings {
+		if !validOptionalProviderText(setting, maxProviderResponseIDBytes, false) {
+			return false
+		}
+	}
+	return true
 }
 
 func appendProviderBuffer(buffer *bytes.Buffer, value string) bool {

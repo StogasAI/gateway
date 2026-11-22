@@ -373,7 +373,7 @@ func parseResponsesTools(state *State, raw json.RawMessage) ([]schemas.Responses
 				seenNames[memberName] = true
 			}
 		case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview, schemas.ResponsesToolTypeWebFetch,
-			schemas.ResponsesToolTypeToolSearch, schemas.ResponsesToolTypeFileSearch:
+			schemas.ResponsesToolTypeToolSearch, schemas.ResponsesToolTypeFileSearch, schemas.ResponsesToolTypeImageGeneration:
 			if seenHostedTypes[toolType] {
 				return nil, invalidRequest(fmt.Sprintf("tools[%d].type duplicates another %s tool", index, toolType))
 			}
@@ -406,10 +406,10 @@ func parseResponsesTools(state *State, raw json.RawMessage) ([]schemas.Responses
 		case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview, schemas.ResponsesToolTypeWebFetch:
 		case schemas.ResponsesToolTypeMCP, schemas.ResponsesToolTypeToolSearch, schemas.ResponsesToolTypeFileSearch:
 		case schemas.ResponsesToolTypeShell, schemas.ResponsesToolTypeApplyPatch, schemas.ResponsesToolTypeComputer:
-		case schemas.ResponsesToolTypeCodeInterpreter:
+		case schemas.ResponsesToolTypeCodeInterpreter, schemas.ResponsesToolTypeImageGeneration:
 		case catalog.AnthropicBashToolType, catalog.AnthropicTextEditorToolType:
 		default:
-			return nil, invalidRequest("Only function, custom, namespace, shell, apply_patch, computer, tool_search, file_search, code_interpreter, web_fetch, and priced hosted web search tools are supported")
+			return nil, invalidRequest("Only function, custom, namespace, shell, apply_patch, computer, tool_search, file_search, code_interpreter, image_generation, web_fetch, and priced hosted web search tools are supported")
 		}
 	}
 	return tools, nil
@@ -465,12 +465,24 @@ func validateRawResponsesToolShape(state *State, tool map[string]json.RawMessage
 		return toolType, "", validateResponsesShellTool(tool, path)
 	case schemas.ResponsesToolTypeCodeInterpreter:
 		return toolType, "", validateResponsesCodeInterpreterTool(tool, path)
+	case schemas.ResponsesToolTypeImageGeneration:
+		return toolType, "", checkInputShape(tool, path, imageGenerationToolShape)
 	case schemas.ResponsesToolTypeApplyPatch, schemas.ResponsesToolTypeComputer:
 		return toolType, "", rejectUnsupportedResponsesToolKeys(tool, path, "type")
 	default:
 		return toolType, "", nil
 	}
 }
+
+// imageGenerationToolShape lists the settings of image generation. Core rebuilds the tool and would
+// drop another key, and OpenAI checks the values, such as sizes, formats and the image models that
+// it runs. The mask is an image that the request's attachment checks read (inputfiles.MaskBlock).
+var imageGenerationToolShape = inputShape{"type": inputText, "action": inputText, "background": inputText,
+	"complexity": inputText, "frame_count": inputInteger, "frame_duration_ms": inputInteger, "input_fidelity": inputText,
+	"input_image_mask": inputShape{"image_url": inputText, "file_id": inputText}, "model": inputText,
+	"moderation": inputText, "output_compression": inputInteger, "output_format": inputText,
+	"partial_images": inputInteger, "quality": inputText, "size": inputText,
+	"svg": inputShape{"model": inputText, "reasoning": inputShape{"effort": inputText}}}
 
 // validateAnthropicClientTool checks one of Anthropic's bash and text editor tools. Anthropic
 // fixes its name, which joins the names of the request's function tools.
@@ -1205,12 +1217,14 @@ func hostedToolOffered(state *State, rawTool map[string]json.RawMessage) error {
 }
 
 // responsesHasHostedTool reports whether a request lists a hosted tool whose calls max_tool_calls
-// caps. It caps no call of a hosted shell (capture openai/container-tool-calls).
+// caps. It caps image generation (capture openai/image-generation) and no call of a hosted shell
+// (capture openai/container-tool-calls).
 func responsesHasHostedTool(tools []schemas.ResponsesTool) bool {
 	for _, tool := range tools {
 		switch tool.Type {
 		case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview, schemas.ResponsesToolTypeWebFetch,
-			schemas.ResponsesToolTypeMCP, schemas.ResponsesToolTypeFileSearch, schemas.ResponsesToolTypeCodeInterpreter:
+			schemas.ResponsesToolTypeMCP, schemas.ResponsesToolTypeFileSearch, schemas.ResponsesToolTypeCodeInterpreter,
+			schemas.ResponsesToolTypeImageGeneration:
 			return true
 		}
 	}
@@ -1257,7 +1271,8 @@ func responsesHostedToolChoiceAllowsCalls(raw map[string]json.RawMessage) bool {
 func responsesHostedSelector(raw map[string]json.RawMessage, kind string) bool {
 	switch catalog.CanonicalResponsesToolType(kind) {
 	case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview, schemas.ResponsesToolTypeWebFetch,
-		schemas.ResponsesToolTypeMCP, schemas.ResponsesToolTypeFileSearch, schemas.ResponsesToolTypeCodeInterpreter:
+		schemas.ResponsesToolTypeMCP, schemas.ResponsesToolTypeFileSearch, schemas.ResponsesToolTypeCodeInterpreter,
+		schemas.ResponsesToolTypeImageGeneration:
 		return true
 	case schemas.ResponsesToolTypeShell:
 		tools, _ := rawjson.Array(raw["tools"])
@@ -1338,7 +1353,7 @@ func validateResponsesToolChoice(state *State, raw json.RawMessage, tools []sche
 	case schemas.ResponsesToolTypeMCP:
 		return validateResponsesMCPToolSelector(choice, "tool_choice", tools)
 	case schemas.ResponsesToolTypeShell, schemas.ResponsesToolTypeApplyPatch, schemas.ResponsesToolTypeComputer,
-		schemas.ResponsesToolTypeFileSearch, schemas.ResponsesToolTypeCodeInterpreter:
+		schemas.ResponsesToolTypeFileSearch, schemas.ResponsesToolTypeCodeInterpreter, schemas.ResponsesToolTypeImageGeneration:
 		if err := rejectUnsupportedResponsesToolKeys(choice, "tool_choice", "type"); err != nil {
 			return err
 		}
@@ -1430,7 +1445,7 @@ func validateResponsesAllowedToolChoice(state *State, raw json.RawMessage, tools
 			}
 			seen[identity] = true
 		case schemas.ResponsesToolTypeShell, schemas.ResponsesToolTypeApplyPatch, schemas.ResponsesToolTypeComputer,
-			schemas.ResponsesToolTypeFileSearch, schemas.ResponsesToolTypeCodeInterpreter:
+			schemas.ResponsesToolTypeFileSearch, schemas.ResponsesToolTypeCodeInterpreter, schemas.ResponsesToolTypeImageGeneration:
 			if err := rejectUnsupportedResponsesToolKeys(allowed, path, "type"); err != nil {
 				return err
 			}
@@ -1505,7 +1520,7 @@ func validateResponsesToolSelectorType(state *State, rawType string) (schemas.Re
 		if responsesLocalToolsSupported(state) {
 			return toolType, nil
 		}
-	case schemas.ResponsesToolTypeFileSearch, schemas.ResponsesToolTypeCodeInterpreter:
+	case schemas.ResponsesToolTypeFileSearch, schemas.ResponsesToolTypeCodeInterpreter, schemas.ResponsesToolTypeImageGeneration:
 		if rawType == string(toolType) && state != nil && state.Resolution != nil && state.Resolution.Provider == schemas.OpenAI {
 			return toolType, nil
 		}
@@ -1650,7 +1665,7 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 			// Reasoning, MCP and hosted tool items are the provider's own steps, which a response can
 			// interleave with client calls, as Claude does with a progress update before each call.
 			case "reasoning", "mcp_list_tools", "mcp_call", "mcp_approval_request", "mcp_approval_response",
-				"web_search_call", "web_fetch_call", "file_search_call", "code_interpreter_call":
+				"web_search_call", "web_fetch_call", "file_search_call", "code_interpreter_call", "image_generation_call":
 			default:
 				return invalidRequest(path + " must resolve the preceding client tool calls before adding another input item")
 			}
@@ -1765,6 +1780,13 @@ func validateResponsesInput(state *State, raw json.RawMessage) error {
 				return err
 			}
 			turn.call()
+		case "image_generation_call":
+			// Planning has reduced the call to its type and ID (catalog's keepImageCallIDs), which
+			// OpenAI reads the image by from the stored reply.
+			if id, ok := rawStringValue(item["id"]); !ok || strings.TrimSpace(id) == "" {
+				return invalidRequest(path + ".id is required, because OpenAI reads a generated image by its ID from the stored response. Send an image without one as an input_image.")
+			}
+			turn.call()
 		case "tool_search_call", "tool_search_output":
 			if !responsesToolSearchSupported(state) {
 				return invalidRequest(itemType + " input items are supported only for OpenAI deployments")
@@ -1864,6 +1886,10 @@ func validateResponsesMessageInput(state *State, item map[string]json.RawMessage
 	return nil
 }
 
+// validateResponsesMessageContent checks a message's content and reports whether it holds anything
+// that the model reads. Each message must, except an assistant message: OpenAI's reply can hold one
+// whose text is empty, as after an image, and takes it back (capture openai/image-generation), and
+// no other deployment gets it (catalog.ResolvedRequest.KeepReadableHistory).
 func validateResponsesMessageContent(state *State, raw json.RawMessage, path string, role string) (bool, error) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
@@ -1874,10 +1900,10 @@ func validateResponsesMessageContent(state *State, raw json.RawMessage, path str
 		if err := sonic.Unmarshal(raw, &text); err != nil {
 			return false, invalidRequest(path + " must be text or an array of text blocks")
 		}
-		if !hasNonWhitespace(text) {
+		if !hasNonWhitespace(text) && role != "assistant" {
 			return false, invalidRequest(path + " must contain non-empty text")
 		}
-		return true, nil
+		return hasNonWhitespace(text), nil
 	}
 	blocks, err := rawjson.Array(raw)
 	if err != nil || len(blocks) == 0 {
@@ -1948,10 +1974,10 @@ func validateResponsesMessageContent(state *State, raw json.RawMessage, path str
 			return false, invalidRequest("Only input_text, output_text, and refusal content blocks are supported")
 		}
 	}
-	if !meaningful {
+	if !meaningful && role != "assistant" {
 		return false, invalidRequest(path + " must contain non-empty text")
 	}
-	return true, nil
+	return meaningful, nil
 }
 
 func validateResponsesOutputAnnotations(state *State, raw json.RawMessage, path string) error {

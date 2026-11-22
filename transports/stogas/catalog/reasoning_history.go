@@ -444,9 +444,10 @@ func chatEncryptedReasoningHistory(raw json.RawMessage) bool {
 }
 
 // KeepReadableHistory leaves out the history that the deployment does not take back: reasoning
-// (ReadsReasoning), an assistant message that held nothing else, and the calls of hosted tools that
-// it does not read (readsHostedCall). The request's checks have refused history that no
-// deployment takes back. Translate reads what remains.
+// (ReadsReasoning), an assistant message that held nothing else, the calls of hosted tools that it
+// does not read (readsHostedCall), and an assistant message without text, which only OpenAI's
+// models take back on Responses (emptyAssistantMessage). The request's checks have refused history
+// that no deployment takes back. Translate reads what remains.
 func (r *ResolvedRequest) KeepReadableHistory() {
 	switch {
 	case r == nil:
@@ -494,6 +495,9 @@ func (r *ResolvedRequest) readableResponsesItem(item schemas.ResponsesMessage, s
 		keep := r.readsHostedCall(&item, tool)
 		return item, keep, !keep
 	}
+	if emptyAssistantMessage(&item) && (!r.RunsOpenAIModel() || r.WireRoute() != RouteResponses) {
+		return item, false, true
+	}
 	if item.Type == nil || *item.Type != schemas.ResponsesMessageTypeReasoning {
 		return item, true, false
 	}
@@ -517,6 +521,28 @@ func (r *ResolvedRequest) readableResponsesItem(item schemas.ResponsesMessage, s
 	}
 	item.ResponsesReasoning = &reasoning
 	return item, true, true
+}
+
+// emptyAssistantMessage reports whether an item is an assistant message whose text and refusals
+// hold no visible character. OpenAI's reply holds one after an image, and OpenAI takes it back
+// (capture openai/image-generation), where a reasoning item can need it as the item that follows.
+// Claude refuses a text block without a visible character, and the message holds nothing for any
+// model to read.
+func emptyAssistantMessage(item *schemas.ResponsesMessage) bool {
+	if item.Role == nil || *item.Role != schemas.ResponsesInputMessageRoleAssistant || item.Content == nil ||
+		item.Type != nil && *item.Type != schemas.ResponsesMessageTypeMessage {
+		return false
+	}
+	if text := item.Content.ContentStr; text != nil {
+		return strings.TrimSpace(*text) == ""
+	}
+	for _, block := range item.Content.ContentBlocks {
+		if block.Text != nil && strings.TrimSpace(*block.Text) != "" ||
+			block.ResponsesOutputMessageContentRefusal != nil && strings.TrimSpace(block.Refusal) != "" {
+			return false
+		}
+	}
+	return true
 }
 
 // readableChatMessages is the messages with only the reasoning history that the deployment takes

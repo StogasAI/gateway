@@ -80,9 +80,10 @@ func Process(fields map[string]json.RawMessage, responses bool, options Options)
 	return p.stats, nil
 }
 
-// Describe returns a copy of a validated request whose inline attachments are
-// replaced by their declared media type and the size and SHA-256 of their
-// decoded bytes. URLs, provider file IDs and other values are borrowed.
+// Describe returns a copy of a validated request whose inline files are replaced by their declared
+// media type and the size and SHA-256 of their decoded bytes: its attachments, and on Responses the
+// archive of each inline skill of a hosted shell. URLs, provider file IDs and other values are
+// borrowed.
 func Describe(fields map[string]json.RawMessage, responses bool) (map[string]json.RawMessage, error) {
 	described := maps.Clone(fields)
 	err := replaceBlocks(described, responses, func(_ string, block map[string]json.RawMessage) (json.RawMessage, error) {
@@ -113,21 +114,8 @@ func Describe(fields map[string]json.RawMessage, responses bool) (map[string]jso
 		if data == "" || !inline {
 			return nil, nil
 		}
-		mediaType, payload, err := ParseInline(data, stringField(holder, "file_type"))
-		if err != nil {
-			return nil, err
-		}
-		digest := sha256.New()
-		size, err := io.Copy(digest, base64.NewDecoder(base64.StdEncoding.Strict(), strings.NewReader(payload)))
-		if err != nil {
-			return nil, errors.New("inline attachment has invalid base64")
-		}
-		holder[key], err = sonic.Marshal(struct {
-			MediaType string `json:"media_type,omitempty"`
-			Size      int64  `json:"size"`
-			SHA256    string `json:"sha256"`
-		}{mediaType, size, hex.EncodeToString(digest.Sum(nil))})
-		if err != nil {
+		var err error
+		if holder[key], err = DescribeInline(data, stringField(holder, "file_type")); err != nil {
 			return nil, err
 		}
 		if parent != "" {
@@ -140,7 +128,101 @@ func Describe(fields map[string]json.RawMessage, responses bool) (map[string]jso
 	if err != nil {
 		return nil, err
 	}
+	if responses {
+		if err := describeSkillArchives(described); err != nil {
+			return nil, err
+		}
+	}
 	return described, nil
+}
+
+// DescribeInline describes an inline file, a data URL or base64 of the declared type, by its media
+// type and the size and SHA-256 of its decoded bytes.
+func DescribeInline(data, declared string) (json.RawMessage, error) {
+	mediaType, payload, err := ParseInline(data, declared)
+	if err != nil {
+		return nil, err
+	}
+	digest := sha256.New()
+	size, err := io.Copy(digest, base64.NewDecoder(base64.StdEncoding.Strict(), strings.NewReader(payload)))
+	if err != nil {
+		return nil, errors.New("inline file has invalid base64")
+	}
+	return sonic.Marshal(struct {
+		MediaType string `json:"media_type,omitempty"`
+		Size      int64  `json:"size"`
+		SHA256    string `json:"sha256"`
+	}{mediaType, size, hex.EncodeToString(digest.Sum(nil))})
+}
+
+// describeSkillArchives replaces the archive of each inline skill of a hosted shell with its
+// description, and re-encodes the tools when it replaced one.
+func describeSkillArchives(fields map[string]json.RawMessage) error {
+	raw := fields["tools"]
+	if !bytes.Contains(raw, []byte("inline")) {
+		return nil
+	}
+	tools, err := rawjson.Array(raw)
+	if err != nil {
+		return err
+	}
+	changed := false
+	for i, toolRaw := range tools {
+		tool, err := rawjson.Object(toolRaw)
+		if err != nil {
+			continue
+		}
+		environment, err := rawjson.Object(tool["environment"])
+		if err != nil || stringField(tool, "type") != "shell" {
+			continue
+		}
+		skills, err := rawjson.Array(environment["skills"])
+		if err != nil {
+			continue
+		}
+		toolChanged := false
+		for j, skillRaw := range skills {
+			skill, err := rawjson.Object(skillRaw)
+			if err != nil || stringField(skill, "type") != "inline" {
+				continue
+			}
+			source, err := rawjson.Object(skill["source"])
+			if err != nil || stringField(source, "data") == "" {
+				continue
+			}
+			if source["data"], err = DescribeInline(stringField(source, "data"), stringField(source, "media_type")); err != nil {
+				return err
+			}
+			if skill["source"], err = sonic.Marshal(source); err != nil {
+				return err
+			}
+			if skills[j], err = sonic.Marshal(skill); err != nil {
+				return err
+			}
+			toolChanged = true
+		}
+		if !toolChanged {
+			continue
+		}
+		if environment["skills"], err = sonic.Marshal(skills); err != nil {
+			return err
+		}
+		if tool["environment"], err = sonic.Marshal(environment); err != nil {
+			return err
+		}
+		if tools[i], err = sonic.Marshal(tool); err != nil {
+			return err
+		}
+		changed = true
+	}
+	if changed {
+		encoded, err := sonic.Marshal(tools)
+		if err != nil {
+			return err
+		}
+		fields["tools"] = encoded
+	}
+	return nil
 }
 
 // ItemParts says where a message or input item holds the parts that can be attachments.
@@ -204,12 +286,16 @@ func (p ItemParts) Blocks(item map[string]json.RawMessage, prefix string) ([]jso
 	return blocks, paths, nil
 }
 
-// replaceBlocks visits the parts of each user message and tool result and re-encodes only the
-// containers whose parts were replaced. It names each part by its path, as
-// messages[0].content[1] or input[2].output[0]. Other messages stay as sent.
+// replaceBlocks visits the parts of each user message and tool result, and on Responses the mask of
+// each image generation tool, and re-encodes only the containers whose parts were replaced. It
+// names each part by its path, as messages[0].content[1], input[2].output[0] or
+// tools[1].input_image_mask. Other messages stay as sent.
 func replaceBlocks(fields map[string]json.RawMessage, responses bool, replace func(string, map[string]json.RawMessage) (json.RawMessage, error)) error {
 	field := "messages"
 	if responses {
+		if err := replaceMasks(fields, replace); err != nil {
+			return err
+		}
 		field = "input"
 	}
 	raw := bytes.TrimSpace(fields[field])
@@ -268,6 +354,73 @@ func replaceBlocks(fields map[string]json.RawMessage, responses bool, replace fu
 		fields[field] = encoded
 	}
 	return nil
+}
+
+// replaceMasks visits the mask of each image generation tool as the input_image part that it reads
+// as, and re-encodes the tools when a mask was replaced.
+func replaceMasks(fields map[string]json.RawMessage, replace func(string, map[string]json.RawMessage) (json.RawMessage, error)) error {
+	raw := fields["tools"]
+	if !bytes.Contains(raw, []byte("input_image_mask")) {
+		return nil
+	}
+	tools, err := rawjson.Array(raw)
+	if err != nil {
+		return err
+	}
+	changed := false
+	for i, toolRaw := range tools {
+		tool, err := rawjson.Object(toolRaw)
+		if err != nil {
+			continue
+		}
+		block, ok := MaskBlock(tool)
+		if !ok {
+			continue
+		}
+		replacement, err := replace(fmt.Sprintf("tools[%d].input_image_mask", i), block)
+		if err != nil {
+			return err
+		}
+		if replacement == nil {
+			continue
+		}
+		mask, err := rawjson.Object(replacement)
+		if err != nil {
+			return err
+		}
+		delete(mask, "type")
+		if tool["input_image_mask"], err = sonic.Marshal(mask); err != nil {
+			return err
+		}
+		if tools[i], err = sonic.Marshal(tool); err != nil {
+			return err
+		}
+		changed = true
+	}
+	if changed {
+		encoded, err := sonic.Marshal(tools)
+		if err != nil {
+			return err
+		}
+		fields["tools"] = encoded
+	}
+	return nil
+}
+
+// MaskBlock returns the mask of an image generation tool as the input_image part that it reads as,
+// an image that a URL, data URLs included, or a provider file ID names, or false for a tool without
+// one. Only the image model reads it.
+func MaskBlock(tool map[string]json.RawMessage) (map[string]json.RawMessage, bool) {
+	if stringField(tool, "type") != "image_generation" {
+		return nil, false
+	}
+	mask, err := rawjson.Object(tool["input_image_mask"])
+	if err != nil || mask == nil {
+		return nil, false
+	}
+	block := maps.Clone(mask)
+	block["type"] = json.RawMessage(`"input_image"`)
+	return block, true
 }
 
 type processor struct {

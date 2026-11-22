@@ -34,6 +34,17 @@ func TestSSEDataReader_DataLinesAndDone(t *testing.T) {
 	}
 }
 
+// A Responses stream ends with response.completed, which repeats every output item, so one event
+// holds every image that the reply generated, in base64, and several images pass 10 MiB.
+func TestSSEDataReader_ReadsAnEventWithSeveralImages(t *testing.T) {
+	event := `{"type":"response.completed","response":{"output":[{"type":"image_generation_call","result":"` +
+		strings.Repeat("A", 12<<20) + `"}]}}`
+	payloads := drainSSEDataReader(t, newDefaultSSEDataReader(nil, strings.NewReader("data: "+event+"\n\ndata: [DONE]\n")))
+	if len(payloads) != 1 || payloads[0] != event {
+		t.Fatalf("read %d payloads", len(payloads))
+	}
+}
+
 // [DONE] and a bare body EOF both surface as io.EOF from ReadDataLine, so the
 // reader must record which one it was — that flag is the only way a provider
 // loop can tell a finished stream from a dead upstream connection.

@@ -450,7 +450,7 @@ func validateProviderResponsesMCPItem(state *State, item *schemas.ResponsesMessa
 				tool.Output.ResponsesFunctionToolCallOutputBlocks != nil || tool.Output.ResponsesComputerToolCallOutput != nil ||
 				tool.Output.ResponsesShellCallOutput != nil ||
 				!validProviderText(*tool.Output.ResponsesToolCallOutputStr, maxProviderResponseBodySize, true)) ||
-			!validMCPCallError(tool.Error) || !validMCPCallApproval(tool.ResponsesMCPApprovalResponse) {
+			!validProviderToolError(tool.Error) || !validMCPCallApproval(tool.ResponsesMCPApprovalResponse) {
 			return ErrProviderResponseMalformed
 		}
 		observed.name = *tool.Name
@@ -470,7 +470,9 @@ func validMCPListError(value *schemas.ResponsesToolMessageError) bool {
 		validProviderText(*value.ResponsesToolMessageErrorStr, maxProviderResponseBodySize, true)
 }
 
-func validMCPCallError(value *schemas.ResponsesToolMessageError) bool {
+// validProviderToolError checks the error of a hosted tool's call: a failed MCP call's or image
+// generation call's. Its code, content and moderation details stay as the provider sent them.
+func validProviderToolError(value *schemas.ResponsesToolMessageError) bool {
 	switch {
 	case value == nil:
 		return true
@@ -481,7 +483,7 @@ func validMCPCallError(value *schemas.ResponsesToolMessageError) bool {
 		failure := value.ResponsesToolMessageErrorStruct
 		return validProviderText(failure.Type, 256, false) &&
 			validOptionalProviderText(failure.Message, maxProviderResponseBodySize, true) &&
-			len(failure.Content) <= maxProviderResponseBodySize
+			validOptionalProviderText(failure.Param, maxProviderResponseBodySize, true)
 	default:
 		return false
 	}

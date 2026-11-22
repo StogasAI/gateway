@@ -1054,6 +1054,11 @@ func validateCompiledDeployment(graph compiledGraph, selectors selectorRegistry,
 		if _, offered := route.HostedTools[HostedToolMCP]; offered && deployment.StogasManaged {
 			return fmt.Errorf("%s offers remote MCP on Stogas's own account", owner)
 		}
+		// OpenAI bills images at the image model's prices, which no deployment holds, and no reply
+		// reports their cached part, so no request on Stogas's own account could pay for them.
+		if _, offered := route.HostedTools[HostedToolImageGeneration]; offered && deployment.StogasManaged {
+			return fmt.Errorf("%s offers image generation on Stogas's own account", owner)
+		}
 		if !validSHA256Digest(route.ChainHash) {
 			return fmt.Errorf("%s has an invalid resolved chain", owner)
 		}

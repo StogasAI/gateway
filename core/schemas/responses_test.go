@@ -1927,7 +1927,7 @@ func TestResponsesToolMessageErrorClassification(t *testing.T) {
 func TestDeepCopyResponsesMessageCopiesStructuredErrorPointers(t *testing.T) {
 	original := ResponsesMessage{ResponsesToolMessage: &ResponsesToolMessage{Error: &ResponsesToolMessageError{
 		ResponsesToolMessageErrorStruct: &ResponsesToolMessageErrorStruct{
-			Type: "http_error", Code: Ptr(502), Message: Ptr("upstream failed"), Content: json.RawMessage(`{"retryable":true}`),
+			Type: "http_error", Code: json.RawMessage(`502`), Message: Ptr("upstream failed"), Content: json.RawMessage(`{"retryable":true}`),
 		},
 	}}}
 
@@ -1937,17 +1937,17 @@ func TestDeepCopyResponsesMessageCopiesStructuredErrorPointers(t *testing.T) {
 	if copiedError == nil {
 		t.Fatal("deep copy dropped structured error")
 	}
-	if copiedError == originalError || copiedError.Code == originalError.Code || copiedError.Message == originalError.Message {
+	if copiedError == originalError || &copiedError.Code[0] == &originalError.Code[0] || copiedError.Message == originalError.Message {
 		t.Fatal("deep copy aliases structured error fields")
 	}
 	if len(copiedError.Content) > 0 && &copiedError.Content[0] == &originalError.Content[0] {
 		t.Fatal("deep copy aliases structured error content")
 	}
 
-	*copiedError.Code = 503
+	copiedError.Code[2] = '3'
 	*copiedError.Message = "changed"
 	copiedError.Content[2] = 'x'
-	if *originalError.Code != 502 || *originalError.Message != "upstream failed" || string(originalError.Content) != `{"retryable":true}` {
+	if string(originalError.Code) != "502" || *originalError.Message != "upstream failed" || string(originalError.Content) != `{"retryable":true}` {
 		t.Fatalf("mutating copied error changed original: %#v", originalError)
 	}
 }

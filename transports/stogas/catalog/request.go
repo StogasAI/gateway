@@ -1794,17 +1794,62 @@ func dropNoOpCompatibilityFields(rawData map[string]json.RawMessage, route Route
 			return rawStringValue(raw) == "disabled"
 		})
 		dropCodeImageOutputs(rawData)
+		keepImageCallIDs(rawData)
 	}
 }
 
 // dropCodeImageOutputs removes the images that the input's code interpreter calls send back, which
 // OpenAI ignores: a call reads the same input tokens with and without them (capture
 // openai/container-replay). Each is a data URL that input checks and the hold would read as text.
-// A call left with no outputs sends null, as a reply without include does. JSON spells a type
-// plainly or with \u escapes, so input without either holds no such call.
+// A call left with no outputs sends null, as a reply without include does.
 func dropCodeImageOutputs(rawData map[string]json.RawMessage) {
+	editInputItems(rawData, "code_interpreter_call", func(item map[string]json.RawMessage) bool {
+		outputs, _ := rawjson.Array(item["outputs"])
+		kept := make([]json.RawMessage, 0, len(outputs))
+		for _, rawOutput := range outputs {
+			if output, _ := rawObjectValue(rawOutput); rawStringValue(output["type"]) != "image" {
+				kept = append(kept, rawOutput)
+			}
+		}
+		if len(kept) == len(outputs) {
+			return false
+		}
+		item["outputs"] = json.RawMessage("null")
+		if len(kept) > 0 {
+			encoded, err := sonic.Marshal(kept)
+			if err != nil {
+				return false
+			}
+			item["outputs"] = encoded
+		}
+		return true
+	})
+}
+
+// keepImageCallIDs reduces each image generation call of the input to its type and ID. OpenAI reads
+// a call sent back by its ID from the stored reply, whatever else the item holds: it read as many
+// input tokens from an item with another image as from the ID alone (capture
+// openai/image-generation-replay). The image is base64 that input checks and the hold would read as
+// text. A call without an ID keeps only its type, which the request's checks refuse.
+func keepImageCallIDs(rawData map[string]json.RawMessage) {
+	editInputItems(rawData, "image_generation_call", func(item map[string]json.RawMessage) bool {
+		changed := false
+		for key := range item {
+			if key != "type" && key != "id" {
+				delete(item, key)
+				changed = true
+			}
+		}
+		return changed
+	})
+}
+
+// editInputItems applies edit to each input item of a type, and encodes the input again when an
+// edit changed an item. JSON spells a type plainly or with \u escapes, so input without either
+// holds no such item.
+func editInputItems(rawData map[string]json.RawMessage, itemType string, edit func(item map[string]json.RawMessage) bool) {
 	input := rawData["input"]
-	if !bytes.Contains(input, []byte("code_interpreter_call")) && !bytes.Contains(input, []byte(`\u`)) {
+	if !bytes.Contains(input, []byte(itemType)) && !bytes.Contains(input, []byte(`\u`)) {
 		return
 	}
 	items, err := rawjson.Array(input)
@@ -1814,29 +1859,14 @@ func dropCodeImageOutputs(rawData map[string]json.RawMessage) {
 	changed := false
 	for index, rawItem := range items {
 		item, err := rawjson.Object(rawItem)
-		if err != nil || rawStringValue(item["type"]) != "code_interpreter_call" {
+		if err != nil || rawStringValue(item["type"]) != itemType || !edit(item) {
 			continue
 		}
-		outputs, _ := rawjson.Array(item["outputs"])
-		kept := make([]json.RawMessage, 0, len(outputs))
-		for _, rawOutput := range outputs {
-			if output, _ := rawObjectValue(rawOutput); rawStringValue(output["type"]) != "image" {
-				kept = append(kept, rawOutput)
-			}
-		}
-		if len(kept) == len(outputs) {
-			continue
-		}
-		item["outputs"] = json.RawMessage("null")
-		if len(kept) > 0 {
-			if item["outputs"], err = sonic.Marshal(kept); err != nil {
-				return
-			}
-		}
-		if items[index], err = sonic.Marshal(item); err != nil {
+		encoded, err := sonic.Marshal(item)
+		if err != nil {
 			return
 		}
-		changed = true
+		items[index], changed = encoded, true
 	}
 	if !changed {
 		return

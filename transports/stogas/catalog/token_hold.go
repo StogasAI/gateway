@@ -42,6 +42,9 @@ const (
 	// File search adds 1,483 on gpt-6-luna, also under tool_choice none, before any search
 	// (capture openai/file-search).
 	openAIFileSearchToolTokens = 1483
+	// Image generation adds 342 on gpt-6-luna, also under tool_choice none (capture
+	// openai/image-generation).
+	openAIImageGenerationToolTokens = 342
 
 	// Anthropic documents what its bash and text editor tools add to the input: 325 and 974
 	// tokens on Claude Opus 4.7 and later, and less on earlier models. No live count confirms them.
@@ -238,7 +241,7 @@ func collectMessageObject(raw json.RawMessage, stats *inputHoldStats) {
 	case "function_call", "function_call_output", "custom_tool_call", "custom_tool_call_output", "tool_call", "tool_result",
 		"shell_call", "shell_call_output", "apply_patch_call", "apply_patch_call_output", "computer_call", "computer_call_output",
 		"web_search_call", "web_fetch_call", "file_search_call", "tool_search_call", "tool_search_output",
-		"code_interpreter_call", "mcp_list_tools", "mcp_call", "mcp_approval_request", "mcp_approval_response":
+		"code_interpreter_call", "image_generation_call", "mcp_list_tools", "mcp_call", "mcp_approval_request", "mcp_approval_response":
 		stats.ToolEvents++
 	}
 	if rawToolCalls, ok := object["tool_calls"]; ok {
@@ -444,6 +447,8 @@ func toolPromptTokens(raw json.RawMessage) int {
 		return openAIComputerToolTokens
 	case schemas.ResponsesToolTypeFileSearch:
 		return openAIFileSearchToolTokens
+	case schemas.ResponsesToolTypeImageGeneration:
+		return openAIImageGenerationToolTokens
 	}
 	return 0
 }
@@ -477,7 +482,7 @@ func appendCompactJSONText(raw json.RawMessage, stats *inputHoldStats) {
 	if err := json.Unmarshal(raw, &value); err != nil {
 		return
 	}
-	dropSkillArchives(value)
+	dropToolFiles(value)
 	// encoding/json sorts object keys. The reservation must not change when a
 	// client writes the same tool schema in a different key order.
 	encoded, err := json.Marshal(value)
@@ -487,10 +492,14 @@ func appendCompactJSONText(raw json.RawMessage, stats *inputHoldStats) {
 	appendText(string(encoded), stats)
 }
 
-// dropSkillArchives removes the archive of each inline skill of a hosted shell, which the model
-// reads only in the container.
-func dropSkillArchives(tool any) {
+// dropToolFiles removes the files of a tool that the model does not read as text: the archive of
+// each inline skill of a hosted shell, which the model reads only in the container, and the mask of
+// image generation, which only the image model reads.
+func dropToolFiles(tool any) {
 	object, _ := tool.(map[string]any)
+	if mask, ok := object["input_image_mask"].(map[string]any); ok {
+		delete(mask, "image_url")
+	}
 	environment, _ := object["environment"].(map[string]any)
 	skills, _ := environment["skills"].([]any)
 	for _, skill := range skills {

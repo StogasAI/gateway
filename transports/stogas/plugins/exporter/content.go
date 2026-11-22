@@ -1,11 +1,14 @@
 package exporter
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/url"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/maximhq/bifrost/transports/stogas/inputfiles"
+	"github.com/maximhq/bifrost/transports/stogas/rawjson"
 )
 
 // Input copies the processed request before its pooled storage is released,
@@ -50,12 +53,19 @@ func (c *Capture) Input(body map[string]json.RawMessage, responses bool) {
 	c.request = append(c.request, '}')
 }
 
-// Response and Event copy public JSON before response buffers are reused.
+// Response and Event copy public JSON before response buffers are reused, with each generated
+// image replaced by its description.
 func (c *Capture) Response(body []byte) {
 	if !c.Active() {
 		return
 	}
 	defer c.measure(time.Now())
+	body, err := describeGeneratedImages(body)
+	if err != nil {
+		c.engine.failed.Add(uint64(len(c.destinations)))
+		c.Discard()
+		return
+	}
 	if !c.grow(len(body)) {
 		return
 	}
@@ -68,6 +78,12 @@ func (c *Capture) Event(body []byte) {
 		return
 	}
 	defer c.measure(time.Now())
+	body, err := describeGeneratedImages(body)
+	if err != nil {
+		c.engine.failed.Add(uint64(len(c.destinations)))
+		c.Discard()
+		return
+	}
 	capacity := cap(c.events)
 	next := capacity
 	if len(c.events) == capacity {
@@ -93,6 +109,118 @@ func (c *Capture) Metadata(body []byte) {
 	}
 	clear(c.metadata)
 	c.metadata = append([]byte(nil), body...)
+}
+
+// describeGeneratedImages replaces each image that image generation made with its description, as
+// Input does for the files of a request: the result of each image generation call in a Responses
+// response, a stream event's item or its response, and a stream event's partial image. It returns
+// body itself when it holds none. The gateway encodes body, which spells each type plainly.
+func describeGeneratedImages(body []byte) ([]byte, error) {
+	if !bytes.Contains(body, []byte("image_generation_call")) {
+		return body, nil
+	}
+	fields, err := rawjson.Object(body)
+	if err != nil {
+		return nil, err
+	}
+	partial := false
+	if stringField(fields, "type") == "response.image_generation_call.partial_image" {
+		if partial, err = describeImage(fields, "partial_image_b64"); err != nil {
+			return nil, err
+		}
+	}
+	// A buffered response holds its output, and a stream event its item or its response.
+	output, err := describeOutput(fields)
+	if err != nil {
+		return nil, err
+	}
+	item, err := editMember(fields, "item", describeImageCall)
+	if err != nil {
+		return nil, err
+	}
+	response, err := editMember(fields, "response", describeOutput)
+	if err != nil {
+		return nil, err
+	}
+	if !partial && !output && !item && !response {
+		return body, nil
+	}
+	return sonic.Marshal(fields)
+}
+
+// describeOutput describes the image of each image generation call in a response's output.
+func describeOutput(response map[string]json.RawMessage) (bool, error) {
+	items, err := rawjson.Array(response["output"])
+	if err != nil {
+		return false, nil
+	}
+	changed := false
+	for index, raw := range items {
+		item, err := rawjson.Object(raw)
+		if err != nil {
+			continue
+		}
+		described, err := describeImageCall(item)
+		if err != nil {
+			return false, err
+		}
+		if !described {
+			continue
+		}
+		if items[index], err = sonic.Marshal(item); err != nil {
+			return false, err
+		}
+		changed = true
+	}
+	if !changed {
+		return false, nil
+	}
+	response["output"], err = sonic.Marshal(items)
+	return err == nil, err
+}
+
+// describeImageCall describes the image of an image generation call. A call that failed or that
+// max_tool_calls stopped has none.
+func describeImageCall(item map[string]json.RawMessage) (bool, error) {
+	if stringField(item, "type") != "image_generation_call" {
+		return false, nil
+	}
+	return describeImage(item, "result")
+}
+
+// describeImage replaces the base64 image in fields[key] with its description.
+func describeImage(fields map[string]json.RawMessage, key string) (bool, error) {
+	data := stringField(fields, key)
+	if data == "" {
+		return false, nil
+	}
+	description, err := inputfiles.DescribeInline(data, "")
+	if err != nil {
+		return false, err
+	}
+	fields[key] = description
+	return true, nil
+}
+
+// editMember applies edit to the object in fields[key], and re-encodes it when edit changed it.
+func editMember(fields map[string]json.RawMessage, key string, edit func(map[string]json.RawMessage) (bool, error)) (bool, error) {
+	object, err := rawjson.Object(fields[key])
+	if err != nil || object == nil {
+		return false, nil
+	}
+	changed, err := edit(object)
+	if err != nil || !changed {
+		return false, err
+	}
+	fields[key], err = sonic.Marshal(object)
+	return err == nil, err
+}
+
+// stringField returns the string in fields[key], or "".
+func stringField(fields map[string]json.RawMessage, key string) string {
+	var value string
+	_ = sonic.Unmarshal(fields[key], &value)
+	return value
 }
 
 // omitToolCredentials replaces the authorization and header values of each tool, and keeps only

@@ -11,8 +11,10 @@ import (
 )
 
 const (
-	sseInitialBufSize = 8 * 1024        // 8KB — sufficient for >99.9% of SSE lines
-	sseMaxBufSize     = 10 * 1024 * 1024 // 10MB — allow large tokens (tool calls, audio)
+	sseInitialBufSize = 8 * 1024 // 8KB — sufficient for >99.9% of SSE lines
+	// 64MB — a Responses stream ends with response.completed, which repeats every output item, so
+	// one event holds every generated image of the response.
+	sseMaxBufSize = 64 * 1024 * 1024
 )
 
 // SSEDataReader reads SSE data-only events (Format A: OpenAI, Gemini, Cohere, etc.).

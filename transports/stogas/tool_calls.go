@@ -42,7 +42,8 @@ func (s *State) responsesLoggedToolCall(item providerResponsesItem) (string, boo
 		}
 		return "", true
 	case schemas.ResponsesMessageTypeWebSearchCall, schemas.ResponsesMessageTypeWebFetchCall, schemas.ResponsesMessageTypeFileSearchCall,
-		schemas.ResponsesMessageTypeCodeInterpreterCall, schemas.ResponsesMessageTypeMCPCall, schemas.ResponsesMessageTypeMCPListTools:
+		schemas.ResponsesMessageTypeCodeInterpreterCall, schemas.ResponsesMessageTypeImageGenerationCall,
+		schemas.ResponsesMessageTypeMCPCall, schemas.ResponsesMessageTypeMCPListTools:
 		return "", true
 	default:
 		return "", false

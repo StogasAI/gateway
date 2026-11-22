@@ -76,7 +76,8 @@ func chatOutputText(choice *schemas.BifrostResponseChoice, visit func(source tex
 }
 
 // responsesItemOutputText visits the output text of the Responses item at index: the text and
-// refusals of a message, the reply, and the values of a tool call.
+// refusals of a message, the reply, and the values of a tool call, such as the prompt that the
+// model wrote for an image.
 func responsesItemOutputText(index int, item *schemas.ResponsesMessage, visit func(source textSource, text string, reply bool)) {
 	if item == nil || item.Type == nil {
 		return
@@ -122,6 +123,10 @@ func responsesItemOutputText(index int, item *schemas.ResponsesMessage, visit fu
 	case schemas.ResponsesMessageTypeCodeInterpreterCall:
 		if call := tool.ResponsesCodeInterpreterToolCall; call != nil {
 			visit(source, stringValue(call.Code), false)
+		}
+	case schemas.ResponsesMessageTypeImageGenerationCall:
+		if call := tool.ResponsesImageGenerationCall; call != nil {
+			visit(source, stringValue(call.RevisedPrompt), false)
 		}
 	}
 }

@@ -45,10 +45,11 @@ func validateDocumentFormats(value DocumentFormats) error {
 	return nil
 }
 
-// Attachment is an image, audio or document part of a user message or of a tool result, with
-// what a deployment needs to read it.
+// Attachment is an image, audio or document part of a user message or of a tool result, or the
+// mask of an image generation tool, with what a deployment needs to read it.
 type Attachment struct {
-	// Path names the part in errors, such as messages[0].content[1] or input[2].output[0].
+	// Path names the part in errors, such as messages[0].content[1], input[2].output[0] or
+	// tools[1].input_image_mask.
 	Path string
 	// Kind is the part's type: image_url, input_image, computer_screenshot, input_audio, file or
 	// input_file.
@@ -441,23 +442,25 @@ func unreadAttachment(attachment Attachment, reasons []attachmentReason) error {
 	return refusal
 }
 
-// requestAttachments lists the attachments of the request's user messages and tool results, so
-// that routing can skip the candidates that cannot read them. A part that fails its checks on
-// any deployment, such as one with two sources, is left to those checks.
+// requestAttachments lists the attachments of the request's user messages and tool results, and
+// the masks of its image generation tools, so that routing can skip the candidates that cannot
+// read them. A part that fails its checks on any deployment, such as one with two sources, is left
+// to those checks.
 func requestAttachments(raw map[string]json.RawMessage, route Route) []Attachment {
 	field, responses := "messages", route == RouteResponses
+	var attachments []Attachment
 	if responses {
 		field = "input"
+		attachments = maskAttachments(raw["tools"])
 	}
 	value := bytes.TrimSpace(raw[field])
 	if len(value) == 0 || value[0] != '[' || !attachmentNamed(value) {
-		return nil
+		return attachments
 	}
 	items, err := rawjson.Array(value)
 	if err != nil {
-		return nil
+		return attachments
 	}
-	var attachments []Attachment
 	for i, itemRaw := range items {
 		item, err := rawjson.Object(itemRaw)
 		if err != nil {
@@ -478,6 +481,31 @@ func requestAttachments(raw map[string]json.RawMessage, route Route) []Attachmen
 			}
 			if attachment, ok := readAttachment(block, paths[j], responses); ok {
 				attachment.ToolResult = parts.ToolResult
+				attachments = append(attachments, attachment)
+			}
+		}
+	}
+	return attachments
+}
+
+// maskAttachments lists the mask of each image generation tool as the image attachment that the
+// image model reads, which the request's checks read as an input_image part (inputfiles.MaskBlock).
+func maskAttachments(tools json.RawMessage) []Attachment {
+	if !bytes.Contains(tools, []byte("input_image_mask")) {
+		return nil
+	}
+	list, err := rawjson.Array(tools)
+	if err != nil {
+		return nil
+	}
+	var attachments []Attachment
+	for i, rawTool := range list {
+		tool, err := rawjson.Object(rawTool)
+		if err != nil {
+			continue
+		}
+		if block, ok := inputfiles.MaskBlock(tool); ok {
+			if attachment, ok := readAttachment(block, fmt.Sprintf("tools[%d].input_image_mask", i), true); ok {
 				attachments = append(attachments, attachment)
 			}
 		}

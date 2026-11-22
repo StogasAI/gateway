@@ -10,10 +10,10 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
 
-// containerExchange returns an exchange of a provider capture of OpenAI's containers (gpt-6-luna,
-// November 22, 2026), such as openai/code-interpreter, and its request, sent to an OpenAI
-// deployment of the test catalog, whose model takes other reasoning efforts.
-func containerExchange(t *testing.T, capture, name string) (providerExchange, string) {
+// hostedToolExchange returns an exchange of a provider capture of OpenAI's hosted tools
+// (gpt-6-luna, November 22, 2026), such as openai/code-interpreter, and its request, sent to an
+// OpenAI deployment of the test catalog, whose model takes other reasoning efforts.
+func hostedToolExchange(t *testing.T, capture, name string) (providerExchange, string) {
 	t.Helper()
 	recorded := exchange(t, providerCapture(t, "openai/"+capture), name)
 	var body map[string]any
@@ -29,8 +29,8 @@ func containerExchange(t *testing.T, capture, name string) (providerExchange, st
 	return recorded, string(request)
 }
 
-// ingestContainerReply checks a recorded reply against the state of its request.
-func ingestContainerReply(state *State, reply *schemas.BifrostResponsesResponse) error {
+// ingestHostedToolReply checks a recorded reply against the state of its request.
+func ingestHostedToolReply(state *State, reply *schemas.BifrostResponsesResponse) error {
 	// The test deployment runs another model than the recording.
 	reply.Model = state.Resolution.Deployment.Upstream.Model
 	state.Signals = &StandardSignals{Prompt: 10, Completion: 10}
@@ -63,9 +63,9 @@ func TestOpenAIContainerRepliesPass(t *testing.T) {
 		{"container-tool-calls", "two hosted runs", []string{"shell_call", "shell_call"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			recorded, request := containerExchange(t, test.capture, test.name)
+			recorded, request := hostedToolExchange(t, test.capture, test.name)
 			state := customerFileSearchState(t, request)
-			if err := ingestContainerReply(state, recorded.responsesReply(t)); err != nil {
+			if err := ingestHostedToolReply(state, recorded.responsesReply(t)); err != nil {
 				t.Fatalf("recorded reply refused: %v", err)
 			}
 			var logged []string
@@ -99,7 +99,7 @@ func TestOpenAIContainerStreamsAsRecorded(t *testing.T) {
 		{"hosted-shell", "a streamed hosted run", "shell_call"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			recorded, request := containerExchange(t, test.capture, test.name)
+			recorded, request := hostedToolExchange(t, test.capture, test.name)
 			state := customerFileSearchState(t, request)
 			state.Signals = &StandardSignals{Prompt: 10, Completion: 10}
 			for sequence, event := range recorded.responsesStream(t) {
@@ -118,7 +118,7 @@ func TestOpenAIContainerStreamsAsRecorded(t *testing.T) {
 		})
 	}
 
-	recorded, request := containerExchange(t, "code-interpreter", "a streamed run")
+	recorded, request := hostedToolExchange(t, "code-interpreter", "a streamed run")
 	replay := func(change func([]*schemas.BifrostResponsesStreamResponse) []*schemas.BifrostResponsesStreamResponse) error {
 		return replayLocalToolStream(customerFileSearchState(t, request), change(recorded.responsesStream(t)))
 	}
@@ -169,32 +169,32 @@ func TestOpenAIContainerStreamsAsRecorded(t *testing.T) {
 // A reply's calls must run where the request lets them: a hosted shell's in a container, a local
 // shell's at the client, and output only for a hosted call of the reply.
 func TestOpenAIContainerReplyChecks(t *testing.T) {
-	hosted, hostedRequest := containerExchange(t, "hosted-shell", "a hosted run")
+	hosted, hostedRequest := hostedToolExchange(t, "hosted-shell", "a hosted run")
 	local := changedRequest(t, hostedRequest, func(body map[string]any) {
 		body["tools"] = []any{map[string]any{"type": "shell", "environment": map[string]any{"type": "local"}}}
 	})
-	if err := ingestContainerReply(customerFileSearchState(t, local), hosted.responsesReply(t)); err == nil {
+	if err := ingestHostedToolReply(customerFileSearchState(t, local), hosted.responsesReply(t)); err == nil {
 		t.Fatal("a hosted run passed a request whose shell is local")
 	}
 	reply := hosted.responsesReply(t)
 	reply.Output[0].ResponsesShellCall.Environment = &schemas.ResponsesShellCallEnvironment{Type: "local"}
 	reply.Output = reply.Output[:1]
-	if err := ingestContainerReply(customerFileSearchState(t, hostedRequest), reply); err == nil {
+	if err := ingestHostedToolReply(customerFileSearchState(t, hostedRequest), reply); err == nil {
 		t.Fatal("a local call passed a request whose shell is hosted")
 	}
 	reply = hosted.responsesReply(t)
 	reply.Output[1].ResponsesToolMessage.CallID = schemas.Ptr("call_other")
-	if err := ingestContainerReply(customerFileSearchState(t, hostedRequest), reply); err == nil {
+	if err := ingestHostedToolReply(customerFileSearchState(t, hostedRequest), reply); err == nil {
 		t.Fatal("output of no call of the reply passed")
 	}
 
 	// A file citation of a container belongs to a reply whose request lets the model run code.
-	written, writtenRequest := containerExchange(t, "code-interpreter", "a file that the code writes")
+	written, writtenRequest := hostedToolExchange(t, "code-interpreter", "a file that the code writes")
 	for choice, allowed := range map[string]bool{"auto": true, "none": false} {
 		state := customerFileSearchState(t, changedRequest(t, writtenRequest, func(body map[string]any) { body["tool_choice"] = choice }))
 		reply := written.responsesReply(t)
 		reply.Output = reply.Output[len(reply.Output)-1:]
-		if err := ingestContainerReply(state, reply); (err == nil) != allowed {
+		if err := ingestHostedToolReply(state, reply); (err == nil) != allowed {
 			t.Fatalf("a container's file citation under tool_choice %s: %v", choice, err)
 		}
 	}
@@ -203,11 +203,11 @@ func TestOpenAIContainerReplyChecks(t *testing.T) {
 // max_tool_calls caps code interpreter's calls, but no hosted shell's (capture
 // openai/container-tool-calls), so a request whose only hosted tool is a shell cannot ask for it.
 func TestOpenAIContainerMaxToolCalls(t *testing.T) {
-	_, request := containerExchange(t, "container-tool-calls", "two hosted runs under max_tool_calls 1")
+	_, request := hostedToolExchange(t, "container-tool-calls", "two hosted runs under max_tool_calls 1")
 	if err := customerRequestError(t, []byte(request)); err == nil || !strings.Contains(err.Error(), "max_tool_calls needs a hosted tool whose calls it caps") {
 		t.Fatalf("max_tool_calls with a hosted shell got %v", err)
 	}
-	_, request = containerExchange(t, "container-tool-calls", "two runs under max_tool_calls 1")
+	_, request = hostedToolExchange(t, "container-tool-calls", "two runs under max_tool_calls 1")
 	customerFileSearchState(t, request)
 }
 
@@ -221,7 +221,7 @@ func TestOpenAIContainerCallsSentBack(t *testing.T) {
 		{"hosted-shell", "a hosted run sent back"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			_, request := containerExchange(t, test.capture, test.name)
+			_, request := hostedToolExchange(t, test.capture, test.name)
 			var sent, wire struct {
 				Input []json.RawMessage `json:"input"`
 			}
@@ -251,7 +251,7 @@ func TestOpenAIContainerCallsSentBack(t *testing.T) {
 		})
 	}
 
-	_, request := containerExchange(t, "container-replay", "an image output sent back")
+	_, request := hostedToolExchange(t, "container-replay", "an image output sent back")
 	body := string(fileSearchProviderBody(t, customerFileSearchState(t, request)))
 	if strings.Contains(body, "data:image/png") || !strings.Contains(body, `"outputs":null`) {
 		t.Fatalf("OpenAI got %s", body)
@@ -331,8 +331,8 @@ func TestOpenAIContainerToolShapes(t *testing.T) {
 // whose policy no request shows, or from a container of a call sent back while a container tool
 // is listed, which OpenAI runs the next calls in. A hosted shell runs where OpenAI does not say.
 func TestOpenAIContainerNetworkReadsAsUnknownDestination(t *testing.T) {
-	_, sentBack := containerExchange(t, "code-interpreter", "a run sent back")
-	_, withoutTool := containerExchange(t, "container-replay", "a run sent back without the tool")
+	_, sentBack := hostedToolExchange(t, "code-interpreter", "a run sent back")
+	_, withoutTool := hostedToolExchange(t, "container-replay", "a run sent back without the tool")
 	for _, test := range []struct {
 		name, request   string
 		location, share bool
@@ -360,7 +360,7 @@ func TestOpenAIContainerNetworkReadsAsUnknownDestination(t *testing.T) {
 // it, and a container, a file or a stored skill that the request names is content that no input
 // check reads.
 func TestOpenAIContainerProviderState(t *testing.T) {
-	_, sentBack := containerExchange(t, "code-interpreter", "a run sent back")
+	_, sentBack := hostedToolExchange(t, "code-interpreter", "a run sent back")
 	for _, test := range []struct{ name, request, reads string }{
 		{"a container that the request makes", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"code_interpreter","container":{"type":"auto"}}]}`, ""},
 		{"a named container", `{"model":"provider:openai gpt-5.5","input":"hi","tools":[{"type":"code_interpreter","container":"cntr_1"}]}`, "tools[0].container"},
@@ -390,8 +390,8 @@ func TestOpenAIContainerHold(t *testing.T) {
 		{"hosted-shell", 655},
 	} {
 		t.Run(test.capture, func(t *testing.T) {
-			recorded, declared := containerExchange(t, test.capture, "the tool under tool_choice none")
-			_, bare := containerExchange(t, test.capture, "without the tool")
+			recorded, declared := hostedToolExchange(t, test.capture, "the tool under tool_choice none")
+			_, bare := hostedToolExchange(t, test.capture, "without the tool")
 			held := heldInputTokensOf(t, customerFileSearchState(t, declared))
 			without := heldInputTokensOf(t, customerFileSearchState(t, bare))
 			var usage struct {

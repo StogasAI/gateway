@@ -2720,13 +2720,17 @@ type ResponsesToolMessageError struct {
 	ResponsesToolMessageErrorStruct *ResponsesToolMessageErrorStruct
 }
 
-// ResponsesToolMessageErrorStruct is the structured mcp_call error: mcp_protocol_error
-// and http_error carry code and message, mcp_tool_execution_error carries content.
+// ResponsesToolMessageErrorStruct is a structured tool call error. On mcp_call, mcp_protocol_error
+// and http_error carry a numeric code and message, and mcp_tool_execution_error carries content. A
+// failed image_generation_call carries a string code such as moderation_blocked, a message, param
+// and moderation_details.
 type ResponsesToolMessageErrorStruct struct {
-	Type    string          `json:"type"`
-	Code    *int            `json:"code,omitempty"`
-	Message *string         `json:"message,omitempty"`
-	Content json.RawMessage `json:"content,omitempty"` // untyped in OpenAI's spec, kept verbatim
+	Type              string          `json:"type"`
+	Code              json.RawMessage `json:"code,omitempty"` // a number or a string, kept verbatim
+	Message           *string         `json:"message,omitempty"`
+	Param             *string         `json:"param,omitempty"`
+	Content           json.RawMessage `json:"content,omitempty"`            // untyped in OpenAI's spec, kept verbatim
+	ModerationDetails json.RawMessage `json:"moderation_details,omitempty"` // kept verbatim
 }
 
 func (e ResponsesToolMessageError) MarshalJSON() ([]byte, error) {
@@ -3019,6 +3023,8 @@ type ResponsesImageGenerationCall struct {
 	Quality       *string `json:"quality,omitempty"`
 	RevisedPrompt *string `json:"revised_prompt,omitempty"`
 	Size          *string `json:"size,omitempty"`
+	// SvgUsage is the usage of the model that wrote an SVG image, apart from the image model's; kept verbatim.
+	SvgUsage json.RawMessage `json:"svg_usage,omitempty"`
 }
 
 // -----------------------------------------------------------------------------
@@ -4412,15 +4418,30 @@ type ResponsesToolCodeInterpreter struct {
 type ResponsesToolImageGeneration struct {
 	Action            *string                                     `json:"action,omitempty"`             // "generate" | "edit" | "auto"
 	Background        *string                                     `json:"background,omitempty"`         // "transparent" | "opaque" | "auto"
+	Complexity        *string                                     `json:"complexity,omitempty"`         // Planning effort: "low" | "medium" | "high"
+	FrameCount        *int                                        `json:"frame_count,omitempty"`        // Frames of a GIF
+	FrameDurationMS   *int                                        `json:"frame_duration_ms,omitempty"`  // Duration of each GIF frame
 	InputFidelity     *string                                     `json:"input_fidelity,omitempty"`     // "high" | "low"
 	InputImageMask    *ResponsesToolImageGenerationInputImageMask `json:"input_image_mask,omitempty"`   // Optional mask for inpainting
 	Model             *string                                     `json:"model,omitempty"`              // Image generation model
 	Moderation        *string                                     `json:"moderation,omitempty"`         // Moderation level
 	OutputCompression *int                                        `json:"output_compression,omitempty"` // Compression level (0-100)
-	OutputFormat      *string                                     `json:"output_format,omitempty"`      // "png" | "webp" | "jpeg"
+	OutputFormat      *string                                     `json:"output_format,omitempty"`      // "png" | "webp" | "jpeg" | "gif" | "svg"
 	PartialImages     *int                                        `json:"partial_images,omitempty"`     // Number of partial images (0-3)
-	Quality           *string                                     `json:"quality,omitempty"`            // "low" | "medium" | "high" | "auto"
+	Quality           *string                                     `json:"quality,omitempty"`            // "low" | "medium" | "high" | "xhigh" | "max" | "auto"
 	Size              *string                                     `json:"size,omitempty"`               // Image size
+	Svg               *ResponsesToolImageGenerationSvg            `json:"svg,omitempty"`                // The model that writes SVG output
+}
+
+// ResponsesToolImageGenerationSvg selects the model that writes SVG output and its reasoning effort.
+type ResponsesToolImageGenerationSvg struct {
+	Model     *string                                   `json:"model,omitempty"`
+	Reasoning *ResponsesToolImageGenerationSvgReasoning `json:"reasoning,omitempty"`
+}
+
+// ResponsesToolImageGenerationSvgReasoning is the reasoning effort of the model that writes SVG output.
+type ResponsesToolImageGenerationSvgReasoning struct {
+	Effort *string `json:"effort,omitempty"`
 }
 
 // ResponsesToolImageGenerationInputImageMask represents a image generation input image mask
@@ -4719,6 +4740,11 @@ type BifrostResponsesStreamResponse struct {
 
 	PartialImageB64   *string `json:"partial_image_b64,omitempty"`
 	PartialImageIndex *int    `json:"partial_image_index,omitempty"`
+	// The settings of a partial image of image_generation_call.partial_image.
+	PartialImageBackground   *string `json:"background,omitempty"`
+	PartialImageOutputFormat *string `json:"output_format,omitempty"`
+	PartialImageQuality      *string `json:"quality,omitempty"`
+	PartialImageSize         *string `json:"size,omitempty"`
 
 	Annotation      *ResponsesOutputMessageContentTextAnnotation `json:"annotation,omitempty"`
 	AnnotationIndex *int                                         `json:"annotation_index,omitempty"`
@@ -4859,6 +4885,10 @@ func (resp *BifrostResponsesStreamResponse) WithDefaults() *BifrostResponsesStre
 	result.ShellOutputDelta = resp.ShellOutputDelta
 	result.PartialImageB64 = resp.PartialImageB64
 	result.PartialImageIndex = resp.PartialImageIndex
+	result.PartialImageBackground = resp.PartialImageBackground
+	result.PartialImageOutputFormat = resp.PartialImageOutputFormat
+	result.PartialImageQuality = resp.PartialImageQuality
+	result.PartialImageSize = resp.PartialImageSize
 	result.Annotation = resp.Annotation
 	result.AnnotationIndex = resp.AnnotationIndex
 	result.Error = resp.Error

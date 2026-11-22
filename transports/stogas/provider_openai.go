@@ -586,7 +586,7 @@ func validateOpenAIGuardrails(req openAIAdapterContext) error {
 func openAIResponsesToolTypeSupported(rawType string) bool {
 	switch strings.TrimSpace(rawType) {
 	case "function", "custom", "namespace", "mcp", "shell", "apply_patch", "computer", "tool_search", "file_search",
-		"code_interpreter":
+		"code_interpreter", "image_generation":
 		return true
 	default:
 		return openAIWebSearchToolType(rawType)
@@ -605,10 +605,10 @@ func openAIUnsupportedResponsesToolMessage(rawType string) string {
 		return rawType + " is Claude's tool; use code_interpreter"
 	case normalized == "computer_use_preview":
 		return "computer_use_preview is not supported because OpenAI retired the model that runs it; use the computer tool"
-	case normalized == "image_generation", normalized == "memory":
+	case normalized == "memory":
 		return rawType + " is not supported"
 	default:
-		return "Only function, custom, namespace, shell, apply_patch, computer, tool_search, file_search, code_interpreter, remote MCP, and priced hosted web search tools are supported"
+		return "Only function, custom, namespace, shell, apply_patch, computer, tool_search, file_search, code_interpreter, image_generation, remote MCP, and priced hosted web search tools are supported"
 	}
 }
 
@@ -626,7 +626,7 @@ func openAIHoldMeters(req openAIAdapterContext) []billing.MeterEstimate {
 	if req.Route == openAIAdapterRouteResponses {
 		meters = append(meters, openAIResponsesHostedToolHoldMeters(req)...)
 		meters = append(meters, openAIResponsesMCPHoldMeters(req)...)
-		meters = append(meters, openAIResponsesContainerHoldMeters(req)...)
+		meters = append(meters, openAIResponsesCallOutputHoldMeters(req)...)
 	}
 	if req.Route == openAIAdapterRouteChat {
 		meters = append(meters, openAIChatSearchModelHoldMeters(req)...)
@@ -711,27 +711,31 @@ func openAIResponsesHostedToolHoldMeters(req openAIAdapterContext) []billing.Met
 	return meters
 }
 
-// openAIResponsesContainerHoldMeters holds input for what code interpreter and a hosted shell add to
-// the model's context: each call's logs, or each command's output, whose size nothing bounds, so
-// the hold takes what a hosted call typically reads (hostedCallContentTokens), as for a web search.
-// max_tool_calls caps code interpreter with the other hosted tools, so the hold of a search or of
-// an MCP server that runs calls without approval already covers its calls. It caps no call of a
-// hosted shell (capture openai/container-tool-calls), whose hold covers
-// defaultResponsesHostedToolCalls. Settlement charges what OpenAI counts. OpenAI bills the
-// containers to the customer's account by the session, which no hold or settlement covers.
-func openAIResponsesContainerHoldMeters(req openAIAdapterContext) []billing.MeterEstimate {
+// openAIResponsesCallOutputHoldMeters holds input for what calls of code interpreter, a hosted shell
+// and image generation add to the model's context: each call's logs, each command's output, or each
+// image, which the model reads back, about 1,300 input tokens for a 1024x1024 image on gpt-6-luna
+// (capture openai/image-generation). Nothing bounds a log or an output, and an image's tokens grow
+// with its size, so the hold takes what a hosted call typically reads (hostedCallContentTokens), as
+// for a web search. max_tool_calls caps code interpreter and image generation with the other hosted
+// tools, so the hold of a search or of an MCP server that runs calls without approval already
+// covers their calls. It caps no call of a hosted shell (capture openai/container-tool-calls), whose
+// hold covers defaultResponsesHostedToolCalls. Each image call that the input sends back by its ID
+// adds what OpenAI reads of it from the stored response. Settlement charges what OpenAI counts.
+// OpenAI bills containers to the customer's account by the session, and images at the image
+// model's prices, which no hold or settlement covers.
+func openAIResponsesCallOutputHoldMeters(req openAIAdapterContext) []billing.MeterEstimate {
 	if req.Route != openAIAdapterRouteResponses {
 		return nil
 	}
 	callable := catalog.EffectiveResponsesToolTypes(req.RawBody, req.ToolTypes)
-	reads := 0
+	reads := imageCallsSentBack(req.RawBody["input"])
 	if usesToolType(callable, string(schemas.ResponsesToolTypeShell)) && slices.ContainsFunc(req.RawTools, func(tool map[string]json.RawMessage) bool {
 		hosted, _ := catalog.HostedToolOf(tool)
 		return hosted == catalog.HostedToolShell
 	}) {
-		reads = defaultResponsesHostedToolCalls
+		reads += defaultResponsesHostedToolCalls
 	}
-	if usesToolType(callable, string(schemas.ResponsesToolTypeCodeInterpreter)) &&
+	if (usesToolType(callable, string(schemas.ResponsesToolTypeCodeInterpreter)) || usesToolType(callable, string(schemas.ResponsesToolTypeImageGeneration))) &&
 		searchContentHoldTokensForKind(req, responsesSearchHoldKind(req)) == 0 &&
 		!responsesMCPServerUnattended(enabledMCPServers(req.RawBody, req.RawTools)) {
 		reads += responsesHostedToolHoldQuantity(req)
@@ -740,6 +744,22 @@ func openAIResponsesContainerHoldMeters(req openAIAdapterContext) []billing.Mete
 		return nil
 	}
 	return billing.AppendTokenMeterCost(nil, req.Deployment.Pricing, billing.MeterInputTokens, reads*hostedCallContentTokens, true, billing.TokenRateHighest)
+}
+
+// imageCallsSentBack counts the input's image generation calls, each of which names an image by its
+// ID. JSON spells a type plainly or with \u escapes, so input without either holds none.
+func imageCallsSentBack(input json.RawMessage) int {
+	if !bytes.Contains(input, []byte("image_generation_call")) && !bytes.Contains(input, []byte(`\u`)) {
+		return 0
+	}
+	items, _ := rawjson.Array(input)
+	count := 0
+	for _, rawItem := range items {
+		if item, err := rawjson.Object(rawItem); err == nil && rawString(item["type"]) == "image_generation_call" {
+			count++
+		}
+	}
+	return count
 }
 
 // openAIResponsesHostedToolFinalMeters charges the hosted calls that ran: each web search, and
@@ -868,7 +888,8 @@ func validateTool(route openAIAdapterRoute, tool map[string]json.RawMessage) err
 			schemas.ResponsesToolTypeToolSearch,
 			schemas.ResponsesToolTypeFileSearch,
 			schemas.ResponsesToolTypeShell,
-			schemas.ResponsesToolTypeCodeInterpreter:
+			schemas.ResponsesToolTypeCodeInterpreter,
+			schemas.ResponsesToolTypeImageGeneration:
 			return nil
 		default:
 			return errOpenAIUnsupportedTool

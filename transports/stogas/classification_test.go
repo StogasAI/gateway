@@ -113,6 +113,26 @@ func TestClassificationOfResponses(t *testing.T) {
 	if got, want := classificationJSON(t, unary), `{"language":{"input":"de"}}`; got != want {
 		t.Fatalf("unary classification %s, want %s", got, want)
 	}
+
+	// The prompt that the model wrote for an image counts hidden characters as tool arguments do,
+	// and arrives in a stream when the call ends.
+	image := func() *schemas.ResponsesMessage {
+		return &schemas.ResponsesMessage{
+			Type: schemas.Ptr(schemas.ResponsesMessageTypeImageGenerationCall),
+			ResponsesToolMessage: &schemas.ResponsesToolMessage{ResponsesImageGenerationCall: &schemas.ResponsesImageGenerationCall{
+				Result: "UklGRg==", RevisedPrompt: schemas.Ptr(germanReply + "\U000E0041"),
+			}},
+		}
+	}
+	unary = classifiedState(t, "/v1/responses", `["hidden_characters","language"]`, body)
+	unary.classifyResponsesOutput(&schemas.BifrostResponsesResponse{Output: []schemas.ResponsesMessage{*image()}})
+	stream = classifiedState(t, "/v1/responses", `["hidden_characters","language"]`, body)
+	stream.classifyResponsesStream(&schemas.BifrostResponsesStreamResponse{Type: schemas.ResponsesStreamResponseTypeOutputItemDone, OutputIndex: &index, Item: image()})
+	for _, state := range []*State{unary, stream} {
+		if got, want := classificationJSON(t, state), `{"language":{"input":"de"},"hidden_characters":{"input":0,"output":1}}`; got != want {
+			t.Fatalf("image classification %s, want %s", got, want)
+		}
+	}
 }
 
 func TestNoClassifiersLeaveNoSection(t *testing.T) {

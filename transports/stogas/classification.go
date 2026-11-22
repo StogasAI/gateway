@@ -76,7 +76,7 @@ func (s *State) classifyResponsesOutput(response *schemas.BifrostResponsesRespon
 
 // classifyResponsesStream reads the deltas of a stream, which validation holds to every text of
 // its items but a patch's path, which arrives with the call, and the text that a computer call
-// types, which arrives when the call ends.
+// types and the prompt that the model wrote for an image, which arrive when the call ends.
 func (s *State) classifyResponsesStream(event *schemas.BifrostResponsesStreamResponse) {
 	language, hidden := s.replyClassifiers()
 	if !language && !hidden || event == nil || event.OutputIndex == nil {
@@ -107,6 +107,8 @@ func (s *State) classifyResponsesStream(event *schemas.BifrostResponsesStreamRes
 		for i, action := range providerComputerActions(item.ResponsesToolMessage) {
 			s.reply.read(textSource{kind: responsesValue, item: index, part: i}, stringValue(action.Text), false, hidden)
 		}
+	case event.Type == schemas.ResponsesStreamResponseTypeOutputItemDone && item.ResponsesImageGenerationCall != nil:
+		s.reply.read(textSource{kind: responsesValue, item: index}, stringValue(item.ResponsesImageGenerationCall.RevisedPrompt), false, hidden)
 	}
 }
 

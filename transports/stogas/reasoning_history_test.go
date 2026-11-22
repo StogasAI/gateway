@@ -400,6 +400,30 @@ func TestReasoningItemsWithNothingToContinueFromAreLeftOut(t *testing.T) {
 	}
 }
 
+// OpenAI's reply after an image holds an assistant message without text (capture
+// openai/image-generation). It passes as history, and only OpenAI's models on Responses, which take
+// it back, get it: it holds nothing for a model to read, and Claude refuses a text block without a
+// visible character. Any other message still needs text.
+func TestAssistantMessagesWithoutTextGoOnlyToOpenAIResponses(t *testing.T) {
+	const input = `[{"role":"user","content":"Draw a red circle."},{"id":"msg_1","type":"message","status":"completed",` +
+		`"content":[{"type":"output_text","annotations":[],"logprobs":[],"text":""}],"phase":"final_answer","role":"assistant"},` +
+		`{"role":"assistant","content":" "},{"role":"user","content":"Make it blue."}]`
+	keeps := map[string]bool{"provider:openai gpt-5.5": true, "azure-gpt-5.6-sol": true}
+	for _, model := range historyDeployments {
+		body, _, _ := providerBody(t, "/v1/responses", `{"model":"`+model+`","input":`+input+`}`)
+		history := providerHistory(body)
+		kept := strings.Contains(history, `"role":"assistant"`) || strings.Contains(history, `"role":"model"`)
+		if !strings.Contains(history, "Make it blue.") || kept != keeps[model] {
+			t.Fatalf("%s history = %s", model, history)
+		}
+	}
+	for _, content := range []string{`""`, `[{"type":"input_text","text":" "}]`} {
+		if err := requestCheckError(t, "/v1/responses", `{"model":"provider:openai gpt-5.5","input":[{"role":"user","content":`+content+`},{"role":"user","content":"hi"}]}`); err == nil {
+			t.Fatalf("a user message with content %s was accepted", content)
+		}
+	}
+}
+
 // An empty reasoning_details or annotations array holds nothing: a client's stream accumulator
 // leaves the first for a reply without reasoning, and OpenAI's own replies carry the second.
 func TestEmptyReplyArraysInChatHistoryAreAccepted(t *testing.T) {

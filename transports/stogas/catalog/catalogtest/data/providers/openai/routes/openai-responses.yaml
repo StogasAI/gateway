@@ -244,3 +244,8 @@ routes:
       dataHandling:
         processingLocation: unknown
         storageLocation: unknown
+    - tool: image_generation
+      dataHandling:
+        processingLocation: unknown
+        storageLocation: unknown
+        retentionDays: 30

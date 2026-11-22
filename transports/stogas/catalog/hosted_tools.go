@@ -26,11 +26,13 @@ const (
 	HostedToolFileSearch      HostedTool = "file_search"
 	HostedToolCodeInterpreter HostedTool = "code_interpreter"
 	HostedToolShell           HostedTool = "shell"
+	HostedToolImageGeneration HostedTool = "image_generation"
 )
 
 // HostedTools lists every hosted tool in canonical order.
 var HostedTools = []HostedTool{
 	HostedToolWebSearch, HostedToolWebFetch, HostedToolMCP, HostedToolFileSearch, HostedToolCodeInterpreter, HostedToolShell,
+	HostedToolImageGeneration,
 }
 
 func hostedToolRank(tool HostedTool) int { return slices.Index(HostedTools, tool) }
@@ -185,10 +187,11 @@ func isFalse(value *bool) bool { return value != nil && !*value }
 
 // validateHostedTools checks a deployment's tools on one route: each is known and sets only facts
 // that it can make worse, web search and file search price exactly the call meters of their wire,
-// so no call bills at zero, and nothing else prices them. Code interpreter and a hosted shell price
-// nothing: OpenAI bills their containers to the account by the session, which no request's reply
-// reports, so they serve only customers' own credentials (ProviderState.Container) and bill their
-// tokens alone. validateLocations checks the tools' locations.
+// so no call bills at zero, and nothing else prices them. Code interpreter, a hosted shell and image
+// generation price nothing, so each serves only customers' own credentials and bills its tokens
+// alone: OpenAI bills containers to the account by the session, which no request's reply reports
+// (ProviderState.Container), and images at the image model's prices, whose cached part no reply
+// reports (the loader's refusal of a managed offer). validateLocations checks the tools' locations.
 func validateHostedTools(owner string, claudeWire bool, tools map[HostedTool]HostedToolOffer, deployment Pricing) error {
 	required, foreign := webSearchMeters(claudeWire)
 	for tool, offer := range tools {
@@ -218,6 +221,10 @@ func validateHostedTools(owner string, claudeWire bool, tools map[HostedTool]Hos
 			// Claude's code execution has another wire, prices and limits, which nothing serves yet.
 			if claudeWire {
 				return fmt.Errorf("%s offers %s on Claude's wire, which the gateway does not run", owner, tool)
+			}
+		case HostedToolImageGeneration:
+			if claudeWire {
+				return fmt.Errorf("%s offers image generation on Claude's wire, which has none", owner)
 			}
 		}
 		for _, meter := range meters {
@@ -335,6 +342,8 @@ func HostedToolOf(tool map[string]json.RawMessage) (HostedTool, bool) {
 		return HostedToolMCP, true
 	case schemas.ResponsesToolTypeFileSearch:
 		return HostedToolFileSearch, true
+	case schemas.ResponsesToolTypeImageGeneration:
+		return HostedToolImageGeneration, true
 	case schemas.ResponsesToolTypeCodeInterpreter:
 		// Claude's code execution tools read as code interpreter, but they are another tool, which
 		// the gateway does not run.

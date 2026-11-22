@@ -74,6 +74,8 @@ const (
 	inputTexts
 	// inputNumber is a number, such as a search result's score.
 	inputNumber
+	// inputInteger is an integer, such as a count of images, which core reads into an int.
+	inputInteger
 	// inputScalars is an object of strings, numbers and booleans, such as a file's attributes.
 	inputScalars
 )
@@ -136,6 +138,10 @@ func checkInputKind(raw json.RawMessage, field string, kind inputKind) error {
 		var value float64
 		if sonic.Unmarshal(raw, &value) != nil {
 			return invalidRequest(field + " must be a number")
+		}
+	case inputInteger:
+		if _, ok := rawIntegerValue(raw); !ok {
+			return invalidRequest(field + " must be an integer")
 		}
 	case inputScalars:
 		object, ok := rawObject(raw)
