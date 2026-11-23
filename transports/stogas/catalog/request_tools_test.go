@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -317,5 +318,56 @@ func TestMCPServerNamesNeverNameAServerThatAnotherReaderWouldNotReach(t *testing
 		if names := MCPServerNames(map[string]json.RawMessage{"connector_id": encoded}); len(names) != 1 || names[0] != want {
 			t.Errorf("connector %q names %q, want %q", id, names, want)
 		}
+	}
+}
+
+// A client chooses how many tools a request lists and how long their names are, so a rule that
+// reads each one costs what the request makes it cost. The policy's allowance meters that work:
+// past it the request is refused, and a list that the rule could not finish reading never passes.
+func TestToolListsChargeThePolicyAllowance(t *testing.T) {
+	loadTestCatalog(t)
+	const deployment = "anthropic-claude-fable-5-1"
+	functions := func(count int, name func(int) string) string {
+		tools := make([]string, count)
+		for index := range tools {
+			tools[index] = `{"type":"function","name":"` + name(index) + `","parameters":{}}`
+		}
+		return `{"model":"` + deployment + `","input":"hi","tools":[` + strings.Join(tools, ",") + `]}`
+	}
+	short := func(index int) string { return fmt.Sprintf("lookup_%05d", index) }
+	long := func(index int) string { return fmt.Sprintf("lookup_%05d_%s", index, strings.Repeat("a", 50_000)) }
+	for _, test := range []struct {
+		name, filter, body, want string
+	}{
+		{"membership in a short list", `!('run_shell' in request.clientTools)`, functions(100, short), deployment},
+		{"membership in a long list", `!('run_shell' in request.clientTools)`, functions(20_000, short), "policy_work_limit_exceeded"},
+		{"a pattern on each name of a short list", `!request.clientTools.exists(tool, tool.matches('^(run|exec)_.*$'))`, functions(100, short), deployment},
+		{"a pattern on each name of a long list", `!request.clientTools.exists(tool, tool.matches('^(run|exec)_.*$'))`, functions(20_000, short), "policy_work_limit_exceeded"},
+		{"a pattern on long names", `!request.clientTools.exists(tool, tool.matches('^(run|exec)_.*$'))`, functions(100, long), "policy_work_limit_exceeded"},
+		{"a prefix on each name of a long list", `request.clientTools.all(tool, tool.startsWith('lookup_'))`, functions(20_000, short), "policy_work_limit_exceeded"},
+		{"the count of a long list", `size(request.clientTools) < 50000`, functions(20_000, short), deployment},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			document, _ := json.Marshal(map[string]any{"routing": map[string]any{"filter": test.filter}})
+			source, err := policy.CompileSource(document)
+			if err != nil {
+				t.Fatal(err)
+			}
+			config, err := policy.ComposeSources([]policy.ScopedSource{{Scope: policy.OrganizationScope, Value: source}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resolved, err := ResolveRequest(RequestInput{Body: []byte(test.body), Method: "POST", Path: "/v1/responses",
+				Policy: config, AvailableCredentials: map[string][]int{"anthropic": {0}}})
+			got := ""
+			if err != nil {
+				got = PublicError(err).Code
+			} else {
+				got = resolved.Deployment.ID
+			}
+			if got != test.want {
+				t.Fatalf("got %s (%v), want %s", got, err, test.want)
+			}
+		})
 	}
 }
