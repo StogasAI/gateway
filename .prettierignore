@@ -1,0 +1,16 @@
+# Bifrost core keeps upstream's formatting.
+core/
+# Recorded exchanges and expected results are compared byte for byte.
+**/testdata/
+# The catalog compiler writes these files.
+transports/stogas/catalog/fallback/catalog.json
+transports/stogas/catalog/fallback/catalog.parts
+transports/stogas/catalog/catalogtest/generated/
+transports/cmd/stogas-policy-wasm/places.json
+transports/cmd/stogas-policy-wasm/companies.json
+transports/stogas/policy/regions.json
+# The tokenizer generator writes these files.
+transports/stogas/tokenizer/generate/licenses.json
+transports/stogas/tokenizer/generate/published.json
+# The release build accepts this file only as canonical JSON.
+stogas/release/snp-launch-policies.json

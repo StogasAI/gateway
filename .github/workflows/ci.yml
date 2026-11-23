@@ -151,6 +151,16 @@ jobs:
           cache-dependency-path: |
             core/go.sum
             transports/go.sum
+      # core keeps upstream's formatting, so gofmt checks only the Go that this repository owns.
+      - name: Check formatting
+        run: |
+          unformatted=$(git ls-files '*.go' ':!core' | xargs gofmt -l)
+          if [ -n "$unformatted" ]; then
+            printf 'Run gofmt on these files:\n%s\n' "$unformatted"
+            exit 1
+          fi
+          npm ci --ignore-scripts
+          npm run format:check
       - name: Verify release pins
         run: node stogas/release/scripts/verify-pins.mjs
       - name: Test release scripts

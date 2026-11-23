@@ -20,6 +20,8 @@
 		"check": "stogas/scripts/go.sh test ./...",
 		"test:policy": "npm run build:policy && node --test bindings/policy/compiler.test.mjs",
 		"clean": "rm -rf dist tmp",
+		"format": "prettier --write .",
+		"format:check": "prettier --check .",
 		"dev": "stogas/scripts/go.sh run ./cmd/stogas-gateway",
 		"release:build": "stogas/release/scripts/build-release.sh",
 		"release:verify-pins": "node stogas/release/scripts/verify-pins.mjs"
@@ -27,5 +29,8 @@
 	"version": "0.0.1",
 	"dependencies": {
 		"@bjorn3/browser_wasi_shim": "0.4.2"
+	},
+	"devDependencies": {
+		"prettier": "3.9.10"
 	}
 }
