@@ -373,20 +373,23 @@ func (s *Service) runAuthorizations(conn *pgxpool.Conn, batch []*pendingAuthoriz
 		return nil, false
 	}
 	s.authorizations.answered()
-	busy := false
 	for i, p := range batch {
 		if rows[i].Result == "organization_busy" {
-			busy = true
 			retry = append(retry, p)
-			continue
 		}
-		p.done <- authorizationOutcome{row: rows[i], sent: true}
 	}
-	if busy {
+	// The counts change before the answers go out, so a caller that has its
+	// answer reads counts that include its batch.
+	if len(retry) > 0 {
 		s.organizationQueues.busy.Add(1)
 	}
 	if answered := len(batch) - len(retry); answered > 1 {
 		s.organizationQueues.recordBatch(answered)
+	}
+	for i, p := range batch {
+		if rows[i].Result != "organization_busy" {
+			p.done <- authorizationOutcome{row: rows[i], sent: true}
+		}
 	}
 	return retry, false
 }
