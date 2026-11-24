@@ -56,6 +56,11 @@ export function createPolicyCompiler(module) {
 				if (!request || typeof request !== 'object') return call({ operation: 'invalid' });
 				if (Object.hasOwn(request, 'operation') || Object.hasOwn(request, 'item'))
 					return call({ operation: 'invalid' });
+				// A stored source, compiled as a gateway compiles it for a request.
+				if (Object.hasOwn(request, 'stored')) {
+					const { stored, ...header } = request;
+					return call({ ...header, operation: 'stored', source: stored });
+				}
 				if (!Array.isArray(request.sources)) return call({ ...request, operation: 'source' });
 				const { sources, ...header } = request;
 				const begin = call({ ...header, operation: 'begin' });

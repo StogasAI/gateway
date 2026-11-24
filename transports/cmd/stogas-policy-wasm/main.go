@@ -130,6 +130,12 @@ func inspectRequest(raw []byte) (*policy.Inspection, error) {
 		}
 		received = len(request.Source)
 		return policy.InspectSource(request.Source)
+	case "stored":
+		if request.Item != nil || request.Edit != nil {
+			return nil, errors.New("invalid stored source inspection request")
+		}
+		received = len(request.Source)
+		return policy.InspectStored(request.Source)
 	case "begin":
 		if request.Source != nil || request.Item != nil {
 			return nil, errors.New("invalid combined inspection request")

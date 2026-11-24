@@ -221,6 +221,31 @@ func TestInspectionUsesExecutionPatternValidationAndTypedEditErrors(t *testing.T
 	}
 }
 
+func TestInspectStoredChecksExpressionsAsAGatewayDoes(t *testing.T) {
+	// Composition for display leaves the expressions of an unchanged source unchecked, so only
+	// this compile tells whether a gateway runs a stored source.
+	for name, config := range map[string]string{
+		"filter that is no condition": `{"routing":{"filter":"provider.id"}}`,
+		"field that does not exist":   `{"rules":{"r":{"when":"provider.missing == 'x'","input":{"asciiOnly":true}}}}`,
+		"unsupported regex":           `{"rules":{"r":{"when":"request.model.matches('(?=x)')","input":{"asciiOnly":true}}}}`,
+	} {
+		entries := []InspectionSource{{Scope: OrganizationScope, Config: json.RawMessage(config)}}
+		if _, err := InspectSources(entries, nil); err != nil {
+			t.Fatalf("%s: composition for display checks the expression: %v", name, err)
+		}
+		if _, err := InspectStored(json.RawMessage(config)); err == nil {
+			t.Errorf("%s: a gateway refuses it", name)
+		}
+		if _, err := CompileSource(json.RawMessage(config)); err == nil {
+			t.Fatalf("%s: a gateway compiles it", name)
+		}
+	}
+	inspection, err := InspectStored(json.RawMessage(`{"rules":{"r":{"when":"provider.id == 'openai'","input":{"asciiOnly":true}}}}`))
+	if err != nil || inspection.Compiled == nil || inspection.Digest == "" {
+		t.Fatalf("a source that gateways run: %v", err)
+	}
+}
+
 func TestInspectionChecksTheEditedPolicyAsASaveDoes(t *testing.T) {
 	edit := &InspectionEdit{Scope: KeyScope, ID: "key", Previous: json.RawMessage(`{}`)}
 	for name, config := range map[string]string{

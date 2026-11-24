@@ -19,6 +19,17 @@ test('the JavaScript binding preserves Unicode and recovers after a rejected doc
 	assert.deepEqual(inspectPolicy({ source }), first);
 });
 
+test('a stored source compiles as a gateway compiles it', () => {
+	const stored = {
+		rules: { r: { when: "request.model.matches('(?=x)')", input: { asciiOnly: true } } }
+	};
+	// Composition for display does not check the expressions of an unchanged source.
+	assert.ok(!inspectPolicy({ sources: [{ scope: 'organization', config: stored }] }).error);
+	assert.equal(inspectPolicy({ stored }).error.status, 400);
+	assert.ok(inspectPolicy({ stored: { routing: { retries: 1 } } }).compiled);
+	assert.equal(inspectPolicy({ stored, edit: { scope: 'key' } }).error.status, 400);
+});
+
 test('opaque plugins survive the memory bridge in their original order', () => {
 	const envelope = (byte, length = 200_000) => ({
 		version: 1,

@@ -87,6 +87,21 @@ func InspectSource(raw []byte) (*Inspection, error) {
 	return &Inspection{Compiled: source.Config, CompilerVersion: CompilerVersion, Digest: source.Digest, Conditions: conditions}, nil
 }
 
+// InspectStored compiles a stored source as a gateway does for a request: with checked
+// expressions, without the further checks of a save, and with encrypted plugins left closed. A
+// source that it refuses fails every request that the policy governs.
+func InspectStored(raw []byte) (*Inspection, error) {
+	document, err := ParseSourceDocument(raw)
+	if err != nil {
+		return nil, err
+	}
+	source, err := document.RoutingSource()
+	if err != nil {
+		return nil, err
+	}
+	return &Inspection{Compiled: source.Config, CompilerVersion: CompilerVersion, Digest: source.Digest}, nil
+}
+
 // compileForSave compiles a source with every check that a save runs: CEL type
 // checks, which an unchanged stored source skips, and its redaction patterns.
 func compileForSave(document *SourceDocument, plugins map[[32]byte]*Plugins) (*Source, error) {
