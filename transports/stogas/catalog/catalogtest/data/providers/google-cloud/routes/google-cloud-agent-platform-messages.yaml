@@ -8,6 +8,7 @@
 routes:
   providerId: google-cloud
   interfaces: [chat_completions, responses, messages]
+  convertedInterfaces: [chat_completions, responses]
   inputModalities: [text, image]
   capabilities:
     streaming: true

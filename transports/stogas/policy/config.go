@@ -1038,7 +1038,7 @@ var exactFieldTypes = map[string]string{
 	"request.mcpTools": "string_list",
 	"request.model":    "string", "request.store": "boolean", "request.storedInput": "boolean",
 	"request.systemMessages": "boolean", "request.time": "timestamp",
-	"route.interfaces": "string_list", "route.providerId": "string", "route.id": "string",
+	"route.convertedInterfaces": "string_list", "route.interfaces": "string_list", "route.providerId": "string", "route.id": "string",
 }
 
 func init() {

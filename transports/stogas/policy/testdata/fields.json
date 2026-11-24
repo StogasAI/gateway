@@ -111,6 +111,7 @@
 	"request.storedInput": "boolean",
 	"request.systemMessages": "boolean",
 	"request.time": "timestamp",
+	"route.convertedInterfaces": "string_list",
 	"route.id": "string",
 	"route.interfaces": "string_list",
 	"route.providerId": "string"

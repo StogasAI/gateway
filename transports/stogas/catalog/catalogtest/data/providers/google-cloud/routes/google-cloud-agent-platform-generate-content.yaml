@@ -8,7 +8,8 @@
 # and https://docs.cloud.google.com/gemini-enterprise-agent-platform/resources/zero-data-retention
 routes:
   providerId: google-cloud
-  interfaces: [chat_completions]
+  interfaces: [chat_completions, responses]
+  convertedInterfaces: [chat_completions, responses]
   # Gemini reads video only from a URL, which Google fetches. Gemini reads what a URL holds whatever
   # media type the request names (capture google-cloud/generate-content-files), so the gateway sends
   # a URL only to a deployment that takes audio and video, which the catalog's one input price must

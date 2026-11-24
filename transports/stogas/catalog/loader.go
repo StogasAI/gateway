@@ -34,9 +34,15 @@ const (
 	maxAliasesPerNode = 8
 )
 
+// compiledRouteContracts pins each route that the gateway serves: its provider, the interfaces
+// that the gateway serves on it, and those among them that it serves only through the translation
+// between Chat Completions and Responses (bridge.go). OpenAI's Chat Completions route translates
+// nothing: its only deployment without Responses is the search model, whose searches only Chat
+// Completions' web_search_options prices.
 var compiledRouteContracts = map[string]struct {
 	providerID string
 	interfaces []string
+	translated []string
 }{
 	"anthropic-messages": {
 		providerID: "anthropic",
@@ -48,11 +54,13 @@ var compiledRouteContracts = map[string]struct {
 	},
 	"azure-chat-completions": {
 		providerID: "azure",
-		interfaces: []string{"chat_completions"},
+		interfaces: []string{"chat_completions", "responses"},
+		translated: []string{"responses"},
 	},
 	"azure-responses": {
 		providerID: "azure",
-		interfaces: []string{"responses"},
+		interfaces: []string{"chat_completions", "responses"},
+		translated: []string{"chat_completions"},
 	},
 	"aws-bedrock-messages": {
 		providerID: "aws",
@@ -60,7 +68,8 @@ var compiledRouteContracts = map[string]struct {
 	},
 	"aws-bedrock-chat-completions": {
 		providerID: "aws",
-		interfaces: []string{"chat_completions"},
+		interfaces: []string{"chat_completions", "responses"},
+		translated: []string{"responses"},
 	},
 	"aws-claude-platform-messages": {
 		providerID: "aws",
@@ -68,19 +77,23 @@ var compiledRouteContracts = map[string]struct {
 	},
 	"chutes-chat-completions": {
 		providerID: "chutes",
-		interfaces: []string{"chat_completions"},
+		interfaces: []string{"chat_completions", "responses"},
+		translated: []string{"responses"},
 	},
 	"chutes-standard-chat-completions": {
 		providerID: "chutes",
-		interfaces: []string{"chat_completions"},
+		interfaces: []string{"chat_completions", "responses"},
+		translated: []string{"responses"},
 	},
 	"google-cloud-agent-platform-chat-completions": {
 		providerID: "google-cloud",
-		interfaces: []string{"chat_completions"},
+		interfaces: []string{"chat_completions", "responses"},
+		translated: []string{"responses"},
 	},
 	"google-cloud-agent-platform-generate-content": {
 		providerID: "google-cloud",
-		interfaces: []string{"chat_completions"},
+		interfaces: []string{"chat_completions", "responses"},
+		translated: []string{"responses"},
 	},
 	"google-cloud-agent-platform-messages": {
 		providerID: "google-cloud",
@@ -88,7 +101,8 @@ var compiledRouteContracts = map[string]struct {
 	},
 	"google-cloud-agent-platform-meta-responses": {
 		providerID: "google-cloud",
-		interfaces: []string{"responses"},
+		interfaces: []string{"chat_completions", "responses"},
+		translated: []string{"chat_completions"},
 	},
 	"google-cloud-anthropic-managed-messages": {
 		providerID: "google-cloud",
@@ -100,7 +114,8 @@ var compiledRouteContracts = map[string]struct {
 	},
 	"openai-responses": {
 		providerID: "openai",
-		interfaces: []string{"responses"},
+		interfaces: []string{"chat_completions", "responses"},
+		translated: []string{"chat_completions"},
 	},
 }
 
@@ -994,6 +1009,11 @@ func validateCompiledRoute(graph compiledGraph, routeID string, route compiledRo
 		!listsServedInterfaces(route.Interfaces, contract.interfaces) {
 		return fmt.Errorf("route %s is not a compiled gateway transport contract", routeID)
 	}
+	for _, name := range contract.translated {
+		if slices.Contains(route.Interfaces, name) && !slices.Contains(route.ConvertedInterfaces, name) {
+			return fmt.Errorf("route %s lists %s as an interface that its provider takes itself, and the gateway translates it", routeID, name)
+		}
+	}
 	if _, ok := graph.Providers[route.ProviderID]; !ok {
 		return fmt.Errorf("route %s references unknown provider %s", routeID, route.ProviderID)
 	}
@@ -1106,7 +1126,8 @@ func validateCompiledDeployment(graph compiledGraph, selectors selectorRegistry,
 }
 
 // validateDeploymentRoutes returns the provider of a deployment whose routes belong to one
-// provider and serve different interfaces, so each interface has one route.
+// provider and take different interfaces themselves, so each interface has one route that takes
+// it without the translation.
 func validateDeploymentRoutes(graph compiledGraph, deploymentID string, deployment *compiledDeployment) (string, error) {
 	providerID := ""
 	interfaces := make(map[string]bool)
@@ -1119,7 +1140,7 @@ func validateDeploymentRoutes(graph compiledGraph, deploymentID string, deployme
 			return "", fmt.Errorf("deployment %s spans multiple providers", deploymentID)
 		}
 		providerID = route.ProviderID
-		for _, name := range route.Interfaces {
+		for _, name := range ownInterfaces(routeID, route) {
 			if interfaces[name] {
 				return "", fmt.Errorf("deployment %s serves %s on more than one route", deploymentID, name)
 			}
@@ -1130,6 +1151,15 @@ func validateDeploymentRoutes(graph compiledGraph, deploymentID string, deployme
 		return "", fmt.Errorf("deployment %s has no route", deploymentID)
 	}
 	return providerID, nil
+}
+
+// ownInterfaces returns the interfaces that a route takes itself, without the translation
+// between Chat Completions and Responses.
+func ownInterfaces(routeID string, route compiledRoute) []string {
+	translated := compiledRouteContracts[routeID].translated
+	return slices.DeleteFunc(slices.Clone(route.Interfaces), func(name string) bool {
+		return slices.Contains(translated, name)
+	})
 }
 
 func sortedRouteIDs(deployment *compiledDeployment) []string {
@@ -1590,8 +1620,7 @@ func validateReasoningConfiguration(deploymentID, providerID, modelAuthorID stri
 		return fmt.Errorf("deployment %s has an invalid fixed reasoning mode", deploymentID)
 	}
 	for routeID := range deployment.Routes {
-		route := graph.Routes[routeID]
-		if len(route.Interfaces) != 1 || route.Interfaces[0] != "responses" {
+		if !slices.Equal(ownInterfaces(routeID, graph.Routes[routeID]), []string{"responses"}) {
 			return fmt.Errorf("deployment %s fixed reasoning mode requires the Responses API", deploymentID)
 		}
 	}

@@ -1630,7 +1630,8 @@ func TestEveryActiveCatalogDeploymentHoldCoversEveryTokenCategory(t *testing.T) 
 						},
 					)
 				}
-				if resolution.WritesLongPromptCache() {
+				// Only the Responses body above asks for the 12-hour lifetime.
+				if resolution.WritesLongPromptCache() && interfaceName == "responses" {
 					scenarios = append(scenarios, struct {
 						name    string
 						meter   string

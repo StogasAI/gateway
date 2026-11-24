@@ -23,18 +23,8 @@ import (
 // the deployment's route names the interface on which the gateway called the provider. A deployment
 // that takes the client's interface itself gets it, unless the model field names its route for the
 // other interface or the request is a Chat Completions request with tools, summarized reasoning or
-// reasoning history (chatThroughResponses).
-//
-// bridgedProviders names, for each interface, the providers whose deployments serve it through the
-// other. Chutes, Azure, AWS and Google Cloud serve Responses through Chat Completions. OpenAI's only
-// deployment without Responses is its search model, whose searches only Chat Completions'
-// web_search_options prices. OpenAI and Azure serve Chat Completions through Responses, for the
-// deployments that take only Responses, such as Pro, and for requests with tools, summarized
-// reasoning or reasoning history, and Google Cloud for Meta's Muse models, which take only Responses.
-var bridgedProviders = map[Route]map[schemas.ModelProvider]bool{
-	RouteChat:      {schemas.OpenAI: true, schemas.Azure: true, ProviderGoogleCloud: true},
-	RouteResponses: {ProviderChutes: true, schemas.Azure: true, ProviderAWS: true, ProviderGoogleCloud: true},
-}
+// reasoning history (chatThroughResponses). compiledRouteContracts names the interfaces that each
+// route serves through the translation, and a route translates one once the catalog lists it.
 
 // bridgeWire is the interface on which a bridged deployment takes the requests on an interface.
 var bridgeWire = map[Route]Route{RouteChat: RouteResponses, RouteResponses: RouteChat}
@@ -62,15 +52,14 @@ var chatReasoningFields = []string{"reasoning", "reasoning_display", "reasoning_
 
 // routeBridges reports whether a route serves requests on route only through the translation.
 func routeBridges(node compiledRoute, route Route) bool {
-	wire, ok := bridgeWire[route]
-	return ok && bridgedProviders[route][schemas.ModelProvider(node.ProviderID)] &&
-		!routeSupportsInterface(node, route) && routeSupportsInterface(node, wire)
+	return routeServes(node, route) &&
+		slices.Contains(compiledRouteContracts[node.ID].translated, route.Interface())
 }
 
 // routeServes reports whether a route serves requests on route, itself or through the
 // translation.
 func routeServes(node compiledRoute, route Route) bool {
-	return routeSupportsInterface(node, route) || routeBridges(node, route)
+	return slices.Contains(node.Interfaces, route.Interface())
 }
 
 // bridges reports whether the deployment serves requests on route only through the translation.

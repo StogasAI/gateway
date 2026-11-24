@@ -162,6 +162,7 @@ var fieldDomains = map[string]fieldDomain{
 	"route.id":                          catalogID,
 	"route.providerId":                  catalogID,
 	"route.interfaces":                  interfaces,
+	"route.convertedInterfaces":         interfaces,
 	"provider.id":                       catalogID,
 	"provider.headquarteredCountry":     country,
 	"request.hostedTools":               oneOf("web_search", "web_fetch", "mcp", "file_search", "code_interpreter", "shell", "image_generation"),

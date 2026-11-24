@@ -1953,6 +1953,49 @@ func TestSnapshotValidationRejectsRoutesWithoutCompiledTransportContracts(t *tes
 	}
 }
 
+// A gateway serves an interface before catalogs list it, so a route translates one only once its
+// catalog lists it, and that catalog must say that the route converts it.
+func TestRoutesTranslateTheInterfacesThatTheirCatalogLists(t *testing.T) {
+	load := func(change func(route map[string]any)) (*snapshot, error) {
+		var whole map[string]any
+		if err := json.Unmarshal(testCatalogJSON, &whole); err != nil {
+			t.Fatal(err)
+		}
+		change(whole["graph"].(map[string]any)["routes"].(map[string]any)["chutes-chat-completions"].(map[string]any))
+		changed, err := json.Marshal(whole)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return snapshotFromCatalogBytes(changed)
+	}
+
+	listed, err := load(func(map[string]any) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	route := listed.graph.Routes["chutes-chat-completions"]
+	if !routeBridges(route, RouteResponses) || routeSupportsInterface(route, RouteResponses) ||
+		!routeSupportsInterface(route, RouteChat) || routeBridges(route, RouteChat) {
+		t.Fatalf("a route that lists Responses as converted does not translate it: %+v", route.Interfaces)
+	}
+
+	unlisted, err := load(func(route map[string]any) {
+		route["interfaces"] = []any{"chat_completions"}
+		route["convertedInterfaces"] = []any{}
+	})
+	if err != nil {
+		t.Fatalf("catalog whose route lists fewer interfaces was refused: %v", err)
+	}
+	if route := unlisted.graph.Routes["chutes-chat-completions"]; routeServes(route, RouteResponses) {
+		t.Fatal("a route serves an interface that its catalog does not list")
+	}
+
+	if _, err := load(func(route map[string]any) { route["convertedInterfaces"] = []any{} }); err == nil ||
+		!strings.Contains(err.Error(), "the gateway translates it") {
+		t.Fatalf("catalog that lists a translated interface as the provider's own was accepted: %v", err)
+	}
+}
+
 func stringPointer(value string) *string {
 	return &value
 }

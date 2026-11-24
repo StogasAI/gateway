@@ -369,6 +369,8 @@ func headerPriority(priority map[string]int, name string) int {
 	return 100
 }
 
+// routeSupportsInterface reports whether a route takes requests on route itself, without the
+// translation between Chat Completions and Responses.
 func routeSupportsInterface(catalogRoute compiledRoute, route Route) bool {
-	return slices.Contains(catalogRoute.Interfaces, route.Interface())
+	return routeServes(catalogRoute, route) && !routeBridges(catalogRoute, route)
 }

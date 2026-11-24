@@ -429,6 +429,29 @@ func TestRoutingPolicyCanSelectACompatibleDeploymentVariant(t *testing.T) {
 	}
 }
 
+// A route lists every interface that it serves, so a policy that wants the provider to take the
+// client's interface itself names the ones that the gateway converts.
+func TestRoutingPolicyCanRefuseConvertedInterfaces(t *testing.T) {
+	loadTestCatalog(t)
+	resolve := func(query string) (*ResolvedRequest, error) {
+		config := policyConfig(1)
+		config.Routing.Query = mustRouting(t, query, nil)
+		return ResolveRequest(RequestInput{
+			Body:   []byte(`{"model":"chutes-glm-5.2","input":"hello"}`),
+			Method: "POST",
+			Path:   "/v1/responses",
+			Policy: config,
+		})
+	}
+	converted, err := resolve(`request.interface in route.interfaces`)
+	if err != nil || !converted.Bridged() {
+		t.Fatalf("a route that lists Responses did not serve it by conversion: %v", err)
+	}
+	if _, err := resolve(`!(request.interface in route.convertedInterfaces)`); !errors.Is(err, ErrModelUnavailable) {
+		t.Fatalf("a policy against converted interfaces reached a route that converts: %v", err)
+	}
+}
+
 // A field without a value excludes the candidate, so a registered name that matches no catalog
 // fact would make every condition on it fail quietly. Each catalog field reads a value from some
 // deployment of the test catalog, except the limits and the meter that none of them states.

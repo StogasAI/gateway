@@ -2157,6 +2157,11 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 					continue
 				}
 
+				// The deployment takes this interface itself on another route, which tests it.
+				if resolved.RouteID != routeID {
+					continue
+				}
+
 				efforts := resolved.ReasoningEfforts
 				if len(efforts) == 0 {
 					efforts = []string{""}
@@ -2213,30 +2218,32 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 							t.Fatalf("sanitize catalog deployment: %v", err)
 						}
 						ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+						// The gateway calls the provider on the other interface for a request that it translates.
+						wireInterface := resolution.WireRoute().Interface()
 						request, err := resolution.ToBifrost(ctx)
 						if err != nil {
 							t.Fatalf("build Bifrost request: %v", err)
 						}
-						if interfaceName == "chat_completions" && request.ChatRequest.Provider != coreProvider {
+						if wireInterface == "chat_completions" && request.ChatRequest.Provider != coreProvider {
 							t.Fatalf("Bifrost chat provider = %q, want %q", request.ChatRequest.Provider, coreProvider)
 						}
-						if interfaceName != "chat_completions" && request.ResponsesRequest.Provider != coreProvider {
+						if wireInterface != "chat_completions" && request.ResponsesRequest.Provider != coreProvider {
 							t.Fatalf("Bifrost Responses provider = %q, want %q", request.ResponsesRequest.Provider, coreProvider)
 						}
 
 						var wireBytes []byte
 						switch {
-						case cloudClaude && interfaceName == "chat_completions":
+						case cloudClaude && wireInterface == "chat_completions":
 							var bifrostErr *schemas.BifrostError
 							if wireBytes, bifrostErr = prepareChatProviderBody(ctx, request.ChatRequest, false, source.Hosting); bifrostErr != nil {
 								t.Fatalf("prepare cloud Claude chat body: %v", bifrostErr)
 							}
-						case cloudClaude && interfaceName != "chat_completions":
+						case cloudClaude && wireInterface != "chat_completions":
 							var bifrostErr *schemas.BifrostError
 							if wireBytes, bifrostErr = prepareResponsesProviderBody(ctx, request.ResponsesRequest, false, source.Hosting); bifrostErr != nil {
 								t.Fatalf("prepare cloud Claude Responses body: %v", bifrostErr)
 							}
-						case usesAnthropicWire && interfaceName == "chat_completions":
+						case usesAnthropicWire && wireInterface == "chat_completions":
 							var bifrostErr *schemas.BifrostError
 							wireBytes, bifrostErr = anthropicprovider.BuildAnthropicChatRequestBody(
 								ctx,
@@ -2246,7 +2253,7 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 							if bifrostErr != nil {
 								t.Fatalf("build Anthropic-family chat wire request: %v", bifrostErr)
 							}
-						case usesAnthropicWire && interfaceName != "chat_completions":
+						case usesAnthropicWire && wireInterface != "chat_completions":
 							var bifrostErr *schemas.BifrostError
 							wireBytes, bifrostErr = anthropicprovider.BuildAnthropicResponsesRequestBody(
 								ctx,
@@ -2263,19 +2270,19 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 							if err := PrepareProviderRequest(ctx, state, request); err != nil {
 								t.Fatalf("prepare provider body: %v", err)
 							}
-							if interfaceName == "chat_completions" {
+							if wireInterface == "chat_completions" {
 								wireBytes = preparedProviderBody(t, ctx, request.ChatRequest)
 							} else {
 								wireBytes = preparedProviderBody(t, ctx, request.ResponsesRequest)
 							}
-						case provider == catalog.ProviderChutes && interfaceName == "chat_completions":
+						case provider == catalog.ProviderChutes && wireInterface == "chat_completions":
 							var bifrostErr *schemas.BifrostError
 							wireBytes, bifrostErr = prepareChutesChatBody(ctx, request.ChatRequest, false)
 							if bifrostErr != nil {
 								t.Fatalf("prepare Chutes provider body: %v", bifrostErr)
 							}
 						default:
-							t.Fatalf("unsupported provider/interface %s/%s", provider, interfaceName)
+							t.Fatalf("unsupported provider/interface %s/%s", provider, wireInterface)
 						}
 						if err != nil {
 							t.Fatalf("build provider wire request: %v", err)
@@ -2361,7 +2368,7 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 						switch {
 						case usesAnthropicWire:
 							wireEffort = wire.OutputConfig.Effort
-						case (provider == schemas.OpenAI || provider == schemas.Azure || provider == catalog.ProviderAWS || openModel) && interfaceName == "chat_completions":
+						case (provider == schemas.OpenAI || provider == schemas.Azure || provider == catalog.ProviderAWS || openModel) && wireInterface == "chat_completions":
 							wireEffort = wire.ReasoningEffort
 						case provider == schemas.OpenAI || provider == schemas.Azure || meta:
 							wireEffort = wire.Reasoning.Effort

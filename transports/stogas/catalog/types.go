@@ -451,7 +451,10 @@ type compiledRoute struct {
 	DeploymentIDs   []string        `json:"-"`
 	DocumentFormats DocumentFormats `json:"documentFormats"`
 	Interfaces      []string        `json:"interfaces"`
-	ProviderID      string          `json:"providerId"`
+	// ConvertedInterfaces are those of the interfaces that the provider's API does not take
+	// itself, which readers show. The gateway translates the ones that its contract names.
+	ConvertedInterfaces []string `json:"convertedInterfaces"`
+	ProviderID          string   `json:"providerId"`
 	// The day that the provider names for shutting the route down, or for its own end.
 	RetirementDate *string `json:"retirementDate"`
 	// The provider bills a stream that the client stops for no more than the usage that the

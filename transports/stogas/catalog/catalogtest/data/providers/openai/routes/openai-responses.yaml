@@ -1,6 +1,7 @@
 routes:
   providerId: openai
-  interfaces: [responses]
+  interfaces: [chat_completions, responses]
+  convertedInterfaces: [chat_completions]
   inputModalities: [text, image]
   capabilities:
     streaming: true
