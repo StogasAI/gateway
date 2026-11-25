@@ -322,7 +322,7 @@ func init() {
 }
 
 func FinalizeState(ctx context.Context, billing billingAuthorizer, state *State) {
-	defer FinalizeExportState(ctx, state)
+	defer FinalizeExportState(state)
 	if billing == nil || state == nil || state.Authorization == nil || state.BillingFinalized {
 		return
 	}

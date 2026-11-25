@@ -32,7 +32,7 @@ func TestDeliveryNeedsTLS12OrLater(t *testing.T) {
 			roots := x509.NewCertPool()
 			roots.AddCert(receiver.Certificate())
 			e.client.transport.TLSClientConfig.RootCAs = roots
-			e.Start(testConfig(receiver.URL), "id", "", Trace{}).Finish("id", "success", testRecord("id"), testMetadata())
+			e.Start(testConfig(receiver.URL), "id", "", Trace{}).Finish("id", "success", testRecord("id"))
 			await(t, func() bool { return e.Diagnostics().PendingDeliveries == 0 })
 			if delivered := e.Diagnostics().Delivered == 1; delivered != tc.want || (received.Load() == 1) != tc.want {
 				t.Fatalf("delivery over %s: %+v, %d received", tls.VersionName(tc.version), e.Diagnostics(), received.Load())

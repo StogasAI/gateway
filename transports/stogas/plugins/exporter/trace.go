@@ -129,9 +129,10 @@ func traceExport(event, metadata []byte, trace Trace, bodies *traceBodies, v con
 			p.flatten(9, "stogas."+key, record[key])
 		}
 	}
-	// The metadata repeats the record's usage and times. These are its own.
-	if extra, err := decodeObject(metadata); err == nil {
-		for _, key := range []string{"catalog", "policy_versions_sha512", "provider", "receipt"} {
+	// A response that carried a receipt has signed metadata, which repeats the record. These
+	// are its own.
+	if extra, err := decodeObject(metadata); len(metadata) > 0 && err == nil {
+		for _, key := range []string{"policy_versions_sha512", "receipt"} {
 			p.flatten(9, "stogas."+key, extra[key])
 		}
 	}

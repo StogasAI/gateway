@@ -387,6 +387,7 @@ func (a *attestor) verifyOnce(
 				MeasurementDigest:     policy.Digest,
 				MeasurementName:       measurement.Name,
 				MeasurementVersion:    measurement.Version,
+				MeasurementSHA256:     measurement.registersSHA256(),
 				KeyPossessionVerified: keyPossessionVerified,
 				VerifiedAt:            verifiedAt,
 				ValidUntil:            verifiedAt.Add(attestationLifetime),

@@ -233,7 +233,7 @@ func encodeTrace(t *testing.T, v conventions, event any, metadata string, trace 
 }
 
 func TestTraceExportDescribesTheRequestAndItsAttempts(t *testing.T) {
-	metadata := `{"request_id":"req_trace","catalog":{"version":22,"chain_hash":"abc","selection_ids":["a","b"]},"policy_versions_sha512":"feed","usage":{"billed_cost_usd":"9"},"node_id":"node-1","receipt":{"schema":"stogas.receipt.v1","signature":"sig"}}`
+	metadata := `{"request_id":"req_trace","policy_versions_sha512":"feed","usage":{"billed_cost_usd":"9"},"node_id":"node-1","receipt":{"schema":"stogas.receipt.v1","signature":"sig"}}`
 	trace := encodeTrace(t, conventions141, traceEvent(), metadata, Trace{Model: "gpt-5.6-sol", TraceID: testTraceID, ParentSpanID: testParentID}, nil)
 	if trace.resourceSpansCount != 1 || trace.scope != "stogas.gateway.export" || !reflect.DeepEqual(trace.schemaURLs, []string{"https://opentelemetry.io/schemas/1.41.0", "https://opentelemetry.io/schemas/1.41.0"}) {
 		t.Fatalf("unexpected envelope: %+v", trace)
@@ -261,8 +261,8 @@ func TestTraceExportDescribesTheRequestAndItsAttempts(t *testing.T) {
 		"stogas.request_id": "req_trace", "stogas.organization_id": "org_1", "stogas.metadata.team": "search", "stogas.stream": true,
 		"stogas.request_settings.hosted_tools": []any{"web_search"}, "stogas.usage.billed_cost_usd": "0.0123",
 		"stogas.usage.meters.reasoning_tokens.usd": "0.001", "stogas.performance.total_ms": int64(1000), "stogas.schema_version": int64(1),
-		// The metadata's own fields. Its usage repeats the record's.
-		"stogas.catalog.version": int64(22), "stogas.catalog.selection_ids": []any{"a", "b"}, "stogas.policy_versions_sha512": "feed", "stogas.receipt.signature": "sig",
+		// The signed metadata's own fields. The rest of it repeats the record.
+		"stogas.policy_versions_sha512": "feed", "stogas.receipt.signature": "sig",
 	} {
 		if got := root.attributes[key]; !reflect.DeepEqual(got, want) {
 			t.Errorf("%s = %#v, want %#v", key, got, want)
@@ -847,7 +847,7 @@ func TestDestinationsGetTheirOwnFormat(t *testing.T) {
 	c := e.Start(config, "req_trace", "", Trace{Model: "gpt-5.6-sol", TraceID: testTraceID, ParentSpanID: testParentID})
 	c.Input(map[string]json.RawMessage{"messages": json.RawMessage(`[{"role":"user","content":"Hi"}]`)}, false)
 	c.Response([]byte(`{"choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"Hello"}}]}`))
-	c.Finish("req_trace", "success", traceEvent(), testMetadata())
+	c.Finish("req_trace", "success", traceEvent())
 	await(t, func() bool { return e.Diagnostics().Delivered == 4 })
 	if e.Diagnostics().ReservedBytes != 0 {
 		t.Fatal("delivered records keep memory")
@@ -881,7 +881,7 @@ func TestDestinationsGetTheirOwnFormat(t *testing.T) {
 	c = e.Start(&exportconfig.Config{Destinations: config.Destinations[1:2]}, "req_rejected", "", Trace{Model: "gpt-5.6-sol", TraceID: testTraceID, ParentSpanID: testParentID})
 	rejected := traceEvent()
 	rejected.RequestID, rejected.ProviderAttempts, rejected.GatewayError = "req_rejected", nil, &billing.EventError{Code: "insufficient_balance", Status: 402}
-	c.Hold().Finish("req_rejected", "rejected", rejected, testMetadata())
+	c.Hold().Finish("req_rejected", "rejected", rejected)
 	await(t, func() bool { return e.Diagnostics().Delivered == 5 })
 	mu.Lock()
 	defer mu.Unlock()
@@ -902,7 +902,7 @@ func TestTraceExportDropsWithoutMemory(t *testing.T) {
 	}}
 	c := e.Start(config, "id", "", Trace{})
 	c.Response([]byte(`{"choices":[{"message":{"role":"assistant","content":"` + strings.Repeat("x", 16<<10) + `"}}]}`))
-	c.Finish("id", "success", traceEvent(), testMetadata())
+	c.Finish("id", "success", traceEvent())
 	if d := e.Diagnostics(); d.MemoryDropped != 3 || d.ReservedBytes != 0 || d.PendingDeliveries != 0 || c.held() {
 		t.Fatalf("unexpected diagnostics: %+v", d)
 	}

@@ -81,9 +81,18 @@ type ProviderAttemptInput struct {
 // that its support uses to find the call, the model that served it and, where the provider names
 // one, the instance that ran it.
 type UpstreamRecord struct {
-	RequestID  string
-	Model      string
-	InstanceID string
+	RequestID string
+	Model     string
+	Instance  UpstreamInstance
+}
+
+// UpstreamInstance is the provider's machine that ran a call, the SHA-256 of that machine's
+// attested key, which the gateway encrypted the call to, and the SHA-256 of the registers of the
+// published measurement that its attestation matched.
+type UpstreamInstance struct {
+	ID                  string
+	EncryptionKeySHA256 string
+	MeasurementSHA256   string
 }
 
 func NewRequestEvent(input EventInput) (RequestEvent, error) {
@@ -228,17 +237,6 @@ func requestFirstOutput(input EventInput, stream bool, startedAt time.Time, atte
 	return &value
 }
 
-// ProviderMS is the time from the start of the first provider call to the end of the last, so it
-// includes the waits between calls. It is 0 without a call.
-func (event *RequestEvent) ProviderMS() uint32 {
-	attempts := event.ProviderAttempts
-	if len(attempts) == 0 {
-		return 0
-	}
-	last := attempts[len(attempts)-1]
-	return last.StartMS + last.LatencyMS - attempts[0].StartMS
-}
-
 // requestRateLimitWait ends by the start of the first provider call, which the wait held.
 func requestRateLimitWait(wait time.Duration, attempts []ProviderAttempt, totalTimeMS uint32) uint32 {
 	if len(attempts) > 0 {
@@ -274,7 +272,9 @@ func requestProviderAttempts(input EventInput, startedAt time.Time, totalTimeMS 
 			ProviderRequestID:        boundedTelemetryValue(observed.Upstream.RequestID, maxProviderRequestIDBytes),
 			ProviderResponseID:       providerResponseID(observed.Response),
 			ProviderModel:            boundedTelemetryValue(observed.Upstream.Model, maxProviderModelBytes),
-			ProviderInstanceID:       boundedTelemetryValue(observed.Upstream.InstanceID, maxProviderInstanceIDBytes),
+			ProviderInstanceID:       boundedTelemetryValue(observed.Upstream.Instance.ID, maxProviderInstanceIDBytes),
+			ProviderEncryptionKey:    observed.Upstream.Instance.EncryptionKeySHA256,
+			ProviderMeasurement:      observed.Upstream.Instance.MeasurementSHA256,
 			FinishReason:             finishReason(observed.Response),
 			Byok:                     loggedCredentialID(observed.Byok),
 			AccountOptions:           observed.AccountOptions,

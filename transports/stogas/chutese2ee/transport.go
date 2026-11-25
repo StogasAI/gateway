@@ -82,21 +82,25 @@ func recordDispatch(ctx context.Context, dispatched bool) {
 	setter.SetValue(dispatchKey{}, dispatched)
 }
 
-// InvocationMetadata returns only the selected attempt's public provider facts.
-// The transport publishes one immutable map before dispatch; tickets and keys stay private.
-func InvocationMetadata(ctx context.Context) map[string]any {
-	if ctx == nil {
-		return nil
-	}
-	metadata, _ := ctx.Value(invocationMetadataKey{}).(map[string]any)
-	return metadata
+// Instance is what the request record says about the instance that the latest invocation went
+// to: its ID, the SHA-256 of its key, which the instance's attestation covers and which the
+// invocation was encrypted to, and the SHA-256 of the registers of the measurement in Chutes's
+// list that its quote matched. Chutes sends no request ID on encrypted calls, so its records find
+// a call by instance and time.
+type Instance struct {
+	ID                  string
+	EncryptionKeySHA256 string
+	MeasurementSHA256   string
 }
 
-// InvocationInstanceID names the instance that the latest invocation went to. Chutes sends
-// no request ID on encrypted calls, so its records find a call by instance and time.
-func InvocationInstanceID(ctx context.Context) string {
-	id, _ := InvocationMetadata(ctx)["instance_id"].(string)
-	return id
+// InvocationInstance returns the instance of the latest invocation. The transport publishes it
+// before dispatch; tickets and keys stay private.
+func InvocationInstance(ctx context.Context) Instance {
+	if ctx == nil {
+		return Instance{}
+	}
+	instance, _ := ctx.Value(invocationMetadataKey{}).(Instance)
+	return instance
 }
 
 func setInvocationMetadata(ctx context.Context, ticket *reservedTicket) {
@@ -104,19 +108,16 @@ func setInvocationMetadata(ctx context.Context, ticket *reservedTicket) {
 	if !ok {
 		return
 	}
-	var metadata map[string]any
+	var instance Instance
 	if ticket != nil {
 		key, err := base64.StdEncoding.DecodeString(ticket.PublicKey)
 		if err != nil {
 			return
 		}
 		digest := sha256.Sum256(key)
-		metadata = map[string]any{"name": "chutes", "instance_id": ticket.InstanceID, "encryption_key_sha256": hex.EncodeToString(digest[:])}
-		if ticket.MeasurementName != "" && ticket.MeasurementVersion != "" {
-			metadata["measurement"] = map[string]string{"name": ticket.MeasurementName, "version": ticket.MeasurementVersion}
-		}
+		instance = Instance{ID: ticket.InstanceID, EncryptionKeySHA256: hex.EncodeToString(digest[:]), MeasurementSHA256: ticket.MeasurementSHA256}
 	}
-	setter.SetValue(invocationMetadataKey{}, metadata)
+	setter.SetValue(invocationMetadataKey{}, instance)
 }
 
 type Transport struct {

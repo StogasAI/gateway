@@ -1151,8 +1151,8 @@ func TestOpenAIFastDowngradeUsesActualDeploymentForBillingAndEvidence(t *testing
 			if got := authorizer.finalEvents[0].ProviderAttempts[attemptCount-1].CatalogChainHash; got != actual.ChainHash || got == resolution.Deployment.ChainHash {
 				t.Fatalf("final chain = %v, want the actual standard-tier chain %s", got, actual.ChainHash)
 			}
-			if metadata := FinalMetadata(context.Background(), state); metadata.Catalog.ChainHash != actual.ChainHash {
-				t.Fatalf("response metadata lost the catalog identity: %#v", metadata.Catalog)
+			if served := FinalMetadata(state).ProviderAttempts; len(served) != attemptCount || served[attemptCount-1].CatalogChainHash != actual.ChainHash {
+				t.Fatalf("response metadata lost the catalog identity: %#v", served)
 			}
 			attempts := authorizer.finalEvents[0].ProviderAttempts
 			if len(attempts) != attemptCount || attempts[attemptCount-1].ResolvedCatalogChainHash != resolution.Deployment.ChainHash {

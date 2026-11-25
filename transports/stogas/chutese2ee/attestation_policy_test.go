@@ -17,6 +17,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -43,6 +44,12 @@ func TestMeasurementPolicyValidationAndMatching(t *testing.T) {
 	}
 	if matched.Name != measurement.Name || matched.Version != measurement.Version {
 		t.Fatalf("matched policy = %#v", matched)
+	}
+	// The record names the matched measurement by the hash of the registers that the quote holds.
+	body := quote.GetTdQuoteBody()
+	registers := sha256.Sum256(slices.Concat(body.GetMrTd(), body.GetRtmrs()[0], body.GetRtmrs()[1], body.GetRtmrs()[2], body.GetRtmrs()[3]))
+	if matched.registersSHA256() != hex.EncodeToString(registers[:]) {
+		t.Fatalf("registers hash = %s", matched.registersSHA256())
 	}
 
 	quote.TdQuoteBody.Rtmrs[3][0] ^= 1

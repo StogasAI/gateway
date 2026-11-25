@@ -427,8 +427,8 @@ func (s *State) setLatestProviderAttemptUpstream(record billing.UpstreamRecord) 
 	if upstream.Model == "" {
 		upstream.Model = record.Model
 	}
-	if upstream.InstanceID == "" {
-		upstream.InstanceID = record.InstanceID
+	if upstream.Instance.ID == "" {
+		upstream.Instance = record.Instance
 	}
 }
 

@@ -24,7 +24,6 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/attest"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/channel"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proof"
@@ -968,7 +967,7 @@ func TestSessionHTTPBufferedMetadataReceiptsAndOuterQueryRejection(t *testing.T)
 		if !wantsMetadata(bifrostCtx) || state.RequestID == "client-chosen" {
 			t.Error("request identity or metadata selection lost")
 		}
-		state.FinalEvent = &billing.RequestEvent{CreatedAt: "2026-08-24T12:34:56.789Z", Usage: billing.RequestUsage{BilledCostUSD: "0", UpstreamCostUSD: "0", Meters: billing.EventMeters{}}}
+		state.FinalEvent = servedEvent(state.RequestID)
 		ctx.writer.Header().Set("Retry-After", "1")
 		ctx.writer.Header().Set("X-Internal-Note", "private")
 		(&Server{proofs: service}).writeInferenceJSON(ctx, bifrostCtx, state, 429, map[string]any{"error": "limited"})

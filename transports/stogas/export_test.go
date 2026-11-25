@@ -37,7 +37,7 @@ func TestExportFollowsTheRequestOutcome(t *testing.T) {
 		state.FinalEvent = &billing.RequestEvent{RequestID: "request", ProviderAttempts: attempts, Plugins: plugins.Metrics{Export: &plugins.ExportMetrics{}}}
 		finalizeExportMetrics(state)
 		marked := state.FinalEvent.Plugins.Export != nil
-		FinalizeExportState(context.Background(), state)
+		FinalizeExportState(state)
 		if state.Export != nil || marked != (state.FinalEvent.Plugins.Export != nil) {
 			t.Fatal("finishing the export kept the capture or changed the record's mark")
 		}

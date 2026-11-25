@@ -375,7 +375,7 @@ func (c *Capture) Hold() *Held {
 }
 
 // Finish sends the export with the record, as Capture.Finish does.
-func (h *Held) Finish(requestID, outcome string, event any, finalMetadata any) {
+func (h *Held) Finish(requestID, outcome string, event any) {
 	if h == nil || h.reservation == nil {
 		return
 	}
@@ -386,7 +386,7 @@ func (h *Held) Finish(requestID, outcome string, event any, finalMetadata any) {
 		return
 	}
 	if c.grow(len(c.destinations) * deliveryStateBytes) {
-		c.finish(requestID, event, finalMetadata)
+		c.finish(requestID, event)
 	}
 }
 
@@ -413,9 +413,10 @@ func (c *Capture) grow(n int) bool {
 }
 
 // Finish sends the record to the destinations that get this outcome's, and
-// appends captured content to the canonical event. A captured signed metadata
-// object wins over the unsigned final metadata, preserving its signature.
-func (c *Capture) Finish(requestID, outcome string, event any, finalMetadata any) {
+// appends captured content to the canonical event. The signed metadata of a
+// response that carried a receipt goes with it as the client received it; any
+// other record needs none, because the metadata only repeats the record.
+func (c *Capture) Finish(requestID, outcome string, event any) {
 	if !c.held() {
 		return
 	}
@@ -423,26 +424,15 @@ func (c *Capture) Finish(requestID, outcome string, event any, finalMetadata any
 		c.Discard()
 		return
 	}
-	c.finish(requestID, event, finalMetadata)
+	c.finish(requestID, event)
 }
 
-func (c *Capture) finish(requestID string, event any, finalMetadata any) {
+func (c *Capture) finish(requestID string, event any) {
 	encoded, err := json.Marshal(event)
 	if err != nil || len(encoded) < 2 || encoded[0] != '{' {
 		c.engine.failed.Add(uint64(len(c.destinations)))
 		c.Discard()
 		return
-	}
-	if c.metadata == nil {
-		metadata, err := json.Marshal(finalMetadata)
-		if err != nil {
-			c.engine.failed.Add(uint64(len(c.destinations)))
-			c.Discard()
-			clear(encoded)
-			return
-		}
-		c.Metadata(metadata)
-		clear(metadata)
 	}
 	// Parts retain the original JSON buffers without copying the whole body.
 	capacity := len(c.events)*2 + 10
@@ -451,7 +441,10 @@ func (c *Capture) finish(requestID string, event any, finalMetadata any) {
 		return
 	}
 	parts := make([][]byte, 0, capacity)
-	parts = append(parts, encoded[:len(encoded)-1], []byte(`,"stogas":`), c.metadata)
+	parts = append(parts, encoded[:len(encoded)-1])
+	if c.metadata != nil {
+		parts = append(parts, []byte(`,"stogas":`), c.metadata)
+	}
 	metadataParts := append(parts[:len(parts):len(parts)], []byte{'}'})
 	if c.content {
 		parts = append(parts, []byte(`,"request":`), c.request)

@@ -16,6 +16,10 @@ import (
 // the client also received. ProviderModel is the model that the provider reported serving.
 // ProviderInstanceID names the provider's machine that ran the call where the provider names one:
 // the Chutes instance, by which with the call's time Chutes's records find an encrypted call.
+// ProviderEncryptionKey is the SHA-256 of that instance's attested key, which the gateway
+// encrypted the call to. ProviderMeasurement is the SHA-256 of the registers of the measurement
+// in the provider's published list that the instance's attestation matched, which a reader can
+// compute from that list; the provider's name and version for it are labels that nothing checks.
 type ProviderAttempt struct {
 	CatalogChainHash         string  `json:"catalog_chain_hash"`
 	ResolvedCatalogChainHash string  `json:"resolved_catalog_chain_hash,omitempty"`
@@ -30,6 +34,8 @@ type ProviderAttempt struct {
 	ProviderResponseID       string  `json:"provider_response_id"`
 	ProviderModel            string  `json:"provider_model"`
 	ProviderInstanceID       string  `json:"provider_instance_id,omitempty"`
+	ProviderEncryptionKey    string  `json:"provider_encryption_key_sha256,omitempty"`
+	ProviderMeasurement      string  `json:"provider_measurement_sha256,omitempty"`
 	FinishReason             string  `json:"finish_reason"`
 	Byok                     *string `json:"byok"`
 	// AccountOptions are the options of the credential's provider account that changed the facts

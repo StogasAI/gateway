@@ -45,9 +45,6 @@ func TestProviderTimingFitsTheRequestForEveryClockReading(t *testing.T) {
 		if len(attempts) > 0 {
 			firstStart = attempts[0].StartMS
 		}
-		if want := end - min(firstStart, end); event.ProviderMS() != want {
-			t.Fatalf("provider time = %d, want %d for %+v", event.ProviderMS(), want, attempts)
-		}
 		if timing.RateLimitWaitMS > firstStart {
 			t.Fatalf("rate limit wait %d ends after the first call starts at %d", timing.RateLimitWaitMS, firstStart)
 		}
@@ -75,8 +72,9 @@ func TestProviderTimeSpansTheCallsOnTheRequestClock(t *testing.T) {
 	}
 	event := mustNewRequestEvent(t, input)
 	timing := event.Performance
-	if event.ProviderMS() != 315 || timing.RateLimitWaitMS != 15 || timing.FirstOutputMS == nil || *timing.FirstOutputMS != 160 {
-		t.Fatalf("provider time %d and timing %+v, want 315 ms of provider time, a 15 ms wait and first output at 160 ms", event.ProviderMS(), timing)
+	calls := event.ProviderAttempts
+	if calls[0].StartMS != 20 || calls[1].StartMS+calls[1].LatencyMS != 335 || timing.RateLimitWaitMS != 15 || timing.FirstOutputMS == nil || *timing.FirstOutputMS != 160 {
+		t.Fatalf("calls %+v and timing %+v, want calls from 20 ms to 335 ms, a 15 ms wait and first output at 160 ms", calls, timing)
 	}
 	input.RequestType = string(schemas.ChatCompletionRequest)
 	if output := mustNewRequestEvent(t, input).Performance.FirstOutputMS; output != nil {

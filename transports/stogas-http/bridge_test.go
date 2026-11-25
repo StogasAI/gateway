@@ -9,7 +9,6 @@ import (
 
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas"
-	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proof"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proof/prooftest"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proofhttp"
@@ -174,9 +173,7 @@ func testBridgedResponsesReceipt(t *testing.T, usageWithFinish bool) {
 	state := bridgedTestState(t, "/v1/responses", bridgedStreamBody)
 	state.RequestID = "018f4f70-7c88-7b9a-baf8-31a93d2cf615"
 	state.NodeID = strings.Repeat("5", 64)
-	state.FinalEvent = &billing.RequestEvent{
-		CreatedAt: "2026-08-24T12:34:56.789Z", Usage: billing.RequestUsage{BilledCostUSD: "0", UpstreamCostUSD: "0", Meters: billing.EventMeters{}},
-	}
+	state.FinalEvent = servedEvent(state.RequestID)
 	reader := startTestStream(&Server{proofs: service}, ctx, bifrostCtx, state, stream, cancel, nil)
 	defer reader.Close()
 	go sendBridgedChunks(stream, state, usageWithFinish)

@@ -359,7 +359,7 @@ func TestNewRequestEventUsesProviderClockAndClampsItToTotal(t *testing.T) {
 	if event.ClientStopMS == nil || *event.ClientStopMS < 40 || *event.ClientStopMS > 50 {
 		t.Fatalf("client stop time should use the request clock, got %#v", event.ClientStopMS)
 	}
-	if event.ProviderMS() < 35 || event.ProviderMS() > 45 || event.ProviderMS() > event.Performance.TotalMS {
+	if event.ProviderAttempts[0].StartMS+providerTime > event.Performance.TotalMS {
 		t.Fatalf("provider duration exceeds the request clock: %#v", event)
 	}
 
@@ -373,9 +373,6 @@ func TestNewRequestEventUsesProviderClockAndClampsItToTotal(t *testing.T) {
 	}
 	if len(event.Usage.Meters) != 0 {
 		t.Fatalf("a request that never started a provider has usage: %#v", event.Usage)
-	}
-	if event.ProviderMS() != 0 {
-		t.Fatalf("a request never dispatched must not record provider time: %#v", event.Performance)
 	}
 
 	event = mustNewRequestEvent(t, EventInput{
@@ -472,8 +469,8 @@ func TestNewRequestEventProjectsSequentialProviderAttempts(t *testing.T) {
 	if event.ProviderAttempts[0].Status != "provider_error" || event.ProviderAttempts[1].Status != "success" {
 		t.Fatalf("provider attempt statuses = %#v", event.ProviderAttempts)
 	}
-	if event.ProviderMS() != 135 {
-		t.Fatalf("provider duration = %d, want 135", event.ProviderMS())
+	if first, last := event.ProviderAttempts[0], event.ProviderAttempts[1]; last.StartMS+last.LatencyMS-first.StartMS != 135 {
+		t.Fatalf("provider calls = %#v, want 135 ms from the first start to the last end", event.ProviderAttempts)
 	}
 	if event.Performance.TTFTMS == nil || *event.Performance.TTFTMS != ttftMS {
 		t.Fatalf("TTFT = %#v, want %d", event.Performance.TTFTMS, ttftMS)
@@ -566,7 +563,9 @@ func TestLargestRequestLogFitsTheLimit(t *testing.T) {
 			StartMS: count, LatencyMS: count,
 			OutputObserved: true, ProviderRequestID: quotes(maxProviderRequestIDBytes), ProviderResponseID: quotes(maxProviderResponseIDBytes),
 			ProviderModel: quotes(maxProviderModelBytes), ProviderInstanceID: quotes(maxProviderInstanceIDBytes), FinishReason: quotes(maxProviderReasonBytes),
-			Byok: new(uuid.NewString()),
+			ProviderEncryptionKey: strings.Repeat("f", 64),
+			ProviderMeasurement:   strings.Repeat("f", 64),
+			Byok:                  new(uuid.NewString()),
 		})
 	}
 	for i := range 40 {

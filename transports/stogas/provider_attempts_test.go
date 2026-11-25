@@ -115,9 +115,9 @@ func TestBifrostRetryFeedsProviderAttemptsIntoFinalEvent(t *testing.T) {
 	if event.ProviderAttempts[0].LatencyMS == 0 || event.ProviderAttempts[1].LatencyMS == 0 {
 		t.Fatalf("provider attempt timing was not captured: %#v", event.ProviderAttempts)
 	}
-	wantProviderMS := event.ProviderAttempts[0].LatencyMS + event.ProviderAttempts[1].LatencyMS
-	if providerMS := event.ProviderMS(); providerMS < wantProviderMS {
-		t.Fatalf("provider stage = %d, want at least %d", providerMS, wantProviderMS)
+	// The second call starts after the first one ends.
+	if first, second := event.ProviderAttempts[0], event.ProviderAttempts[1]; second.StartMS < first.StartMS+first.LatencyMS {
+		t.Fatalf("provider calls overlap: %#v", event.ProviderAttempts)
 	}
 }
 
@@ -200,8 +200,8 @@ func TestProviderAttemptTracerFeedsRetrySequenceIntoFinalEvent(t *testing.T) {
 		t.Fatalf("final provider response ID = %q", retryAttempt.ProviderResponseID)
 	}
 	// Provider time runs from the first call's start at 10 ms to the retry's end at 145 ms.
-	if providerMS := event.ProviderMS(); providerMS != 135 {
-		t.Fatalf("provider time = %d, want 135", providerMS)
+	if first := event.ProviderAttempts[0]; first.StartMS != 10 || retryAttempt.StartMS+retryAttempt.LatencyMS != 145 {
+		t.Fatalf("provider calls = %#v, want a start at 10 ms and an end at 145 ms", event.ProviderAttempts)
 	}
 }
 

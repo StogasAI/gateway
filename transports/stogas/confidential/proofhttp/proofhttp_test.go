@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -16,11 +17,10 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/billing/batchtest"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proof"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proof/prooftest"
+	"github.com/maximhq/bifrost/transports/stogas/money"
 )
 
 const testCatalogDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-
-var testCatalogSelectionIDs = []string{"author:openai", "model:gpt-5.5", "deployment:openai-gpt-5.5", "route:openai-responses", "provider:openai"}
 
 // receiptService signs under fresh keys committed by a synthetic boot document.
 func receiptService(t *testing.T) (*Service, [32]byte, []byte) {
@@ -93,9 +93,6 @@ func TestReceiptSignsContentAndFinalMetadata(t *testing.T) {
 	other, err := service.Build(context.Background(), input)
 	if err != nil || other.Object.Receipt == decoded.Receipt || *other.Object.Salts == *decoded.Salts {
 		t.Fatal("a new receipt reused a signature or salts", err)
-	}
-	if bytes.Contains(output.JSON, []byte("durability")) || bytes.Contains(output.JSON, []byte("observed")) {
-		t.Fatal("unexpected receipt claim")
 	}
 }
 
@@ -179,7 +176,7 @@ func TestReceiptRejectsWrongIdentityAndInvalidOrCancelledWork(t *testing.T) {
 func TestReceiptLeavesRoomForMetadataAndStillBoundsTheCompleteResponseBag(t *testing.T) {
 	service, boot, public := receiptService(t)
 	input := Input{RequestDigest: requestDigest(t, []byte(`{}`)), ResponseBody: []byte(`{}`), Metadata: testMetadata()}
-	input.Metadata.Provider = map[string]any{"detail": strings.Repeat("x", 7*1024)}
+	input.Metadata.ProviderAttempts[0].ProviderModel = strings.Repeat("x", 7*1024)
 	output, err := service.Build(t.Context(), input)
 	if err != nil {
 		t.Fatal(err)
@@ -187,22 +184,56 @@ func TestReceiptLeavesRoomForMetadataAndStillBoundsTheCompleteResponseBag(t *tes
 	if len(output.JSON) <= 8*1024 || !prooftest.VerifyReceipt(public, output.Object, boot, []byte(`{}`), input.ResponseBody) {
 		t.Fatal("post-quantum signature crowded out previously supported metadata")
 	}
-	input.Metadata.Provider["detail"] = strings.Repeat("x", proof.MaxObjectBytes)
+	input.Metadata.ProviderAttempts[0].ProviderModel = strings.Repeat("x", proof.MaxObjectBytes)
 	if _, err := service.Build(t.Context(), input); err == nil {
 		t.Fatal("oversized metadata accepted")
 	}
 }
 
+// A response must never fail because its metadata is too large, so the caller's part of the
+// largest request record must fit the bound with its receipt. The sizes are the record's own
+// bounds, as billing's TestLargestRequestLogFitsTheLimit fills them: strings are quotes, which
+// JSON writes as two bytes each. It holds the 64 meters that the metadata accepts.
+func TestLargestMetadataFitsTheBound(t *testing.T) {
+	service, _, _ := receiptService(t)
+	quotes := func(n int) string { return strings.Repeat(`"`, n) }
+	usd, count, status := strings.Repeat("9", money.Precision-money.Scale)+"."+strings.Repeat("9", money.Scale), uint32(1<<32-1), 599
+	metadata := proof.Metadata{
+		RequestID: strings.Repeat("r", 36), CreatedAt: "2026-10-16T12:00:00.000Z", Transport: "attested_tls", CatalogVersion: new(uint64(9007199254740991)),
+		PolicyVersionsSHA512: strings.Repeat("f", 128), GatewayVersion: "v" + strings.Repeat("9", 31),
+		Performance: proof.Performance{TotalMS: count, RateLimitWaitMS: count, FirstOutputMS: &count, TTFTMS: &count},
+		Usage:       billing.RequestUsage{UpstreamCostUSD: usd, BilledCostUSD: usd, CacheReadSavingsUSD: &usd, CacheWriteOverheadUSD: &usd, Meters: billing.EventMeters{}},
+	}
+	for range 12 {
+		metadata.ProviderAttempts = append(metadata.ProviderAttempts, proof.ProviderAttempt{
+			CatalogChainHash: "sha256:" + strings.Repeat("f", 64), ResolvedCatalogChainHash: "sha256:" + strings.Repeat("e", 64),
+			Provider: quotes(64), Status: "context_length_exceeded", StatusCode: &status, ErrorCode: strings.Repeat("e", 48),
+			StartMS: count, LatencyMS: count, OutputObserved: true, ProviderRequestID: quotes(128), ProviderResponseID: quotes(256),
+			ProviderModel: quotes(128), ProviderInstanceID: quotes(64), ProviderEncryptionKey: strings.Repeat("f", 64),
+			FinishReason: quotes(128),
+		})
+	}
+	// A meter's rate and amount stay under the settlement ceiling of 10^12 dollars.
+	rate, metered := strings.Repeat("r", 64), strings.Repeat("9", 12)+"."+strings.Repeat("9", money.Scale)
+	for i := range 64 {
+		metadata.Usage.Meters[fmt.Sprintf("%064d", i)] = billing.EventMeter{Quantity: "18446744073709551615", RateKey: &rate, RateUSD: &metered, USD: &metered}
+	}
+	output, err := service.Build(t.Context(), Input{RequestDigest: requestDigest(t, []byte(`{}`)), ResponseBody: []byte(`{}`), Metadata: metadata})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("largest metadata: %d of %d bytes", len(output.JSON), proof.MaxObjectBytes)
+}
+
 func testMetadata() proof.Metadata {
 	ttft := uint32(4)
 	return proof.Metadata{
-		RequestID: "req_1",
-		CreatedAt: "2026-08-24T12:34:56.789Z",
-		Catalog: proof.Catalog{
-			ChainHash:    testCatalogDigest,
-			Version:      7,
-			SelectionIDs: append([]string(nil), testCatalogSelectionIDs...),
-		},
+		RequestID:      "req_1",
+		CreatedAt:      "2026-08-24T12:34:56.789Z",
+		CatalogVersion: new(uint64(7)),
+		ProviderAttempts: []proof.ProviderAttempt{{
+			CatalogChainHash: testCatalogDigest, Provider: "openai", Status: "success", StartMS: 1, LatencyMS: 15,
+		}},
 		Usage: billing.RequestUsage{
 			Meters: map[string]proof.Meter{
 				"input_tokens": billing.PricedMeter("10", "input_tokens", "2", "20"),
@@ -210,9 +241,8 @@ func testMetadata() proof.Metadata {
 			UpstreamCostUSD: "20", BilledCostUSD: "20",
 		},
 		Performance: proof.Performance{
-			TotalMS:    20,
-			ProviderMS: 15,
-			TTFTMS:     &ttft,
+			TotalMS: 20,
+			TTFTMS:  &ttft,
 		},
 	}
 }

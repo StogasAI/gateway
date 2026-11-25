@@ -86,7 +86,7 @@ func (t *providerAttemptTracer) wrapAttempt(ctx context.Context, kind schemas.Sp
 func (s *providerAttemptSpan) nextChutesInvocation(status int, instanceID string, completedAt, startedAt time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.state.setProviderAttemptUpstream(s.index, billing.UpstreamRecord{InstanceID: instanceID})
+	s.state.setProviderAttemptUpstream(s.index, billing.UpstreamRecord{Instance: billing.UpstreamInstance{ID: instanceID}})
 	s.state.finishProviderAttempt(s.index, completedAt, nil, &schemas.BifrostError{
 		StatusCode: &status,
 		Error:      &schemas.ErrorField{Message: "Chutes rejected the invocation before execution"},
@@ -223,7 +223,7 @@ func readUpstreamRecord(ctx *schemas.BifrostContext, resolution *catalog.Resolve
 	case catalog.ProviderChutes:
 		// Chutes sends no request ID on encrypted calls; its records name the instance.
 		record.Model = replyModel(response)
-		record.InstanceID = chutese2ee.InvocationInstanceID(ctx)
+		record.Instance = billing.UpstreamInstance(chutese2ee.InvocationInstance(ctx))
 	default:
 		record.Model = replyModel(response)
 	}

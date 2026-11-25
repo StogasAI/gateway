@@ -156,7 +156,7 @@ func (s *Server) proofInput(ctx *requestContext, bifrostCtx context.Context, sta
 	return proofhttp.Input{
 		RequestDigest: digest,
 		ResponseBody:  responseJSON,
-		Metadata:      stogas.FinalMetadata(bifrostCtx, state),
+		Metadata:      stogas.FinalMetadata(state),
 	}, nil
 }
 

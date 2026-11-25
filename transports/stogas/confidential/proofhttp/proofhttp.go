@@ -122,7 +122,7 @@ func (s *Service) NewStream(ctx context.Context, input Input) (*Stream, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if s.nodeID == "" || s.keys == nil || input.RequestDigest == nil || !proof.ValidCatalog(input.Metadata.Catalog) {
+	if s.nodeID == "" || s.keys == nil || input.RequestDigest == nil {
 		return nil, errors.New("receipt context is incomplete")
 	}
 	return &Stream{request: verifier.ContentDigest(*input.RequestDigest), content: verifier.NewStreamContent(), metadata: input.Metadata}, nil

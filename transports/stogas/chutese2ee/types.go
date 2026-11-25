@@ -1,6 +1,8 @@
 package chutese2ee
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"strconv"
 	"time"
@@ -77,6 +79,7 @@ type reservedTicket struct {
 	Value              string
 	MeasurementName    string
 	MeasurementVersion string
+	MeasurementSHA256  string
 }
 
 type verifiedInstance struct {
@@ -86,6 +89,7 @@ type verifiedInstance struct {
 	MeasurementDigest     string
 	MeasurementName       string
 	MeasurementVersion    string
+	MeasurementSHA256     string
 	KeyPossessionVerified bool
 	VerifiedAt            time.Time
 	ValidUntil            time.Time
@@ -174,6 +178,17 @@ type measurementPolicy struct {
 // registers lists MRTD and RTMR0-3 in quote order.
 func (m measurementPolicy) registers() [5]string {
 	return [5]string{m.MRTD, m.RTMR0, m.RTMR1, m.RTMR2, m.RTMR3}
+}
+
+// registersSHA256 is the SHA-256 of the five registers' 240 bytes in quote order, which names
+// the measured software whatever Chutes calls it.
+func (m measurementPolicy) registersSHA256() string {
+	hash := sha256.New()
+	for _, register := range m.registers() {
+		decoded, _ := decodeMeasurementHex(register)
+		hash.Write(decoded)
+	}
+	return hex.EncodeToString(hash.Sum(nil))
 }
 
 type httpStatusError struct {

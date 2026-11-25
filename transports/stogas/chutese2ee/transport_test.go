@@ -117,16 +117,14 @@ func TestTransportEncryptsAndTargetsVerifiedInstance(t *testing.T) {
 	if err := transport.DoRequestWithContext(ctx, request, response); err != nil {
 		t.Fatal(err)
 	}
-	metadata := InvocationMetadata(ctx)
+	instance := InvocationInstance(ctx)
 	digest := sha256.Sum256(instanceKey.EncapsulationKey().Bytes())
-	if metadata["instance_id"] != testInstanceID || InvocationInstanceID(ctx) != testInstanceID || metadata["encryption_key_sha256"] != hex.EncodeToString(digest[:]) {
-		t.Fatalf("metadata differs from selected instance: %v", metadata)
+	if instance.ID != testInstanceID || instance.EncryptionKeySHA256 != hex.EncodeToString(digest[:]) ||
+		instance.MeasurementSHA256 != strings.Repeat("ab", 32) {
+		t.Fatalf("the record differs from the selected instance: %v", instance)
 	}
-	if len(metadata) != 4 || metadata["measurement"].(map[string]string)["version"] != "fixture-v1" {
-		t.Fatal("provider metadata missing or contains unexpected fields")
-	}
-	if InvocationMetadata(t.Context()) != nil || InvocationInstanceID(t.Context()) != "" {
-		t.Fatal("request metadata leaked across contexts")
+	if InvocationInstance(t.Context()) != (Instance{}) {
+		t.Fatal("an instance leaked across contexts")
 	}
 	if NotSent(ctx) {
 		t.Fatal("dispatched request reported as unsent")
@@ -709,8 +707,8 @@ func TestTransportStopsAtInvocationBudget(t *testing.T) {
 				}
 				// Each rejection names the instance that the rejected call went to, and the
 				// request's metadata names the last one.
-				if !slices.Equal(rejectedBy, invoked[:len(invoked)-1]) || InvocationInstanceID(ctx) != invoked[len(invoked)-1] {
-					t.Fatalf("rejected by %v, latest %q, invoked %v", rejectedBy, InvocationInstanceID(ctx), invoked)
+				if !slices.Equal(rejectedBy, invoked[:len(invoked)-1]) || InvocationInstance(ctx).ID != invoked[len(invoked)-1] {
+					t.Fatalf("rejected by %v, latest %q, invoked %v", rejectedBy, InvocationInstance(ctx).ID, invoked)
 				}
 			})
 		}
@@ -1212,6 +1210,7 @@ func installPoolForTest(pool *poolState, instanceKey *mlkem.DecapsulationKey768,
 			ValidUntil:         now.Add(time.Minute),
 			MeasurementName:    "fixture-image",
 			MeasurementVersion: "fixture-v1",
+			MeasurementSHA256:  strings.Repeat("ab", 32),
 		},
 	}
 	pool.mu.Unlock()

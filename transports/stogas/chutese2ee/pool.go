@@ -376,6 +376,7 @@ func (s *poolState) take(target ModelTarget, now time.Time) (reservedTicket, boo
 			Value:              value.Value,
 			MeasurementName:    verification.MeasurementName,
 			MeasurementVersion: verification.MeasurementVersion,
+			MeasurementSHA256:  verification.MeasurementSHA256,
 		}, true
 	}
 	return reservedTicket{}, false

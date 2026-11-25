@@ -114,6 +114,19 @@ func TestNewRequestContextDoesNotExposeClientHeadersToBifrost(t *testing.T) {
 	}
 }
 
+// servedEvent is the finished record of a request that one provider call served, which is the
+// only record that a receipt can sign.
+func servedEvent(requestID string) *billing.RequestEvent {
+	if requestID == "" {
+		requestID = "018f4f70-7c88-7b9a-baf8-31a93d2cf610"
+	}
+	return &billing.RequestEvent{
+		RequestID: requestID, CreatedAt: "2026-08-24T12:34:56.789Z", CatalogVersion: new(uint64(7)),
+		ProviderAttempts: []billing.ProviderAttempt{{CatalogChainHash: "sha256:" + strings.Repeat("a", 64), Provider: "openai", Status: "success"}},
+		Usage:            billing.RequestUsage{BilledCostUSD: "0", UpstreamCostUSD: "0", Meters: billing.EventMeters{}},
+	}
+}
+
 func testResolution() *catalog.ResolvedRequest {
 	return &catalog.ResolvedRequest{
 		Route:       catalog.RouteChat,
@@ -785,7 +798,7 @@ func TestWriteInferenceJSONAddsContentReceipt(t *testing.T) {
 	testRequestBody(ctx, `{"model":"provider:openai gpt-5.5"}`)
 	bifrostCtx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 	bifrostCtx.SetValue(stogasMetadataKey, true)
-	state := &stogas.State{Pair: stogas.Pair{Resolution: mustResolvedRequest(t, "/v1/chat/completions", string(ctx.body))}, RequestID: "req_1", FinalEvent: &billing.RequestEvent{CreatedAt: "2026-08-24T12:34:56.789Z", Usage: billing.RequestUsage{BilledCostUSD: "0", UpstreamCostUSD: "0", Meters: billing.EventMeters{}}}}
+	state := &stogas.State{Pair: stogas.Pair{Resolution: mustResolvedRequest(t, "/v1/chat/completions", string(ctx.body))}, RequestID: "req_1", FinalEvent: servedEvent("req_1")}
 	state.FinalEvent.Usage.Meters = billing.EventMeters{
 		"input_tokens":        billing.PricedMeter("1000", "per_mill_tokens", "2", "0.002"),
 		"cached_input_tokens": billing.PricedMeter("300", "per_mill_tokens", "0", "0"),
@@ -2535,11 +2548,9 @@ func TestWriteSSEStreamEmitsFinalConfidentialProof(t *testing.T) {
 			Resolution: mustResolvedRequest(t, "/v1/chat/completions", `{"model":"provider:openai gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true}`),
 			Adapter:    stogas.DefaultAdapter{},
 		},
-		RequestID: "018f4f70-7c88-7b9a-baf8-31a93d2cf613",
-		NodeID:    strings.Repeat("3", 64),
-		FinalEvent: &billing.RequestEvent{
-			CreatedAt: "2026-08-24T12:34:56.789Z", Usage: billing.RequestUsage{BilledCostUSD: "0", UpstreamCostUSD: "0", Meters: billing.EventMeters{}},
-		},
+		RequestID:  "018f4f70-7c88-7b9a-baf8-31a93d2cf613",
+		NodeID:     strings.Repeat("3", 64),
+		FinalEvent: servedEvent(""),
 	}
 
 	streamBodyReader := startTestStream(server, ctx, bifrostCtx, state, stream, cancel, nil)
@@ -2641,11 +2652,9 @@ func TestWriteSSEStreamEmitsReceiptBeforeResponsesTerminalEvent(t *testing.T) {
 			Resolution: mustResolvedRequest(t, "/v1/responses", `{"model":"provider:openai gpt-5.5","input":"hi","stream":true}`),
 			Adapter:    stogas.DefaultAdapter{},
 		},
-		RequestID: "018f4f70-7c88-7b9a-baf8-31a93d2cf615",
-		NodeID:    strings.Repeat("5", 64),
-		FinalEvent: &billing.RequestEvent{
-			CreatedAt: "2026-08-24T12:34:56.789Z", Usage: billing.RequestUsage{BilledCostUSD: "0", UpstreamCostUSD: "0", Meters: billing.EventMeters{}},
-		},
+		RequestID:  "018f4f70-7c88-7b9a-baf8-31a93d2cf615",
+		NodeID:     strings.Repeat("5", 64),
+		FinalEvent: servedEvent(""),
 	}
 
 	streamBodyReader := startTestStream(server, ctx, bifrostCtx, state, stream, cancel, nil)
