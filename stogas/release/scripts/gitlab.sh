@@ -10,7 +10,7 @@ stogas/release/scripts/install-guix-bootstrap.sh
 stogas/release/scripts/build-release.sh "$CI_COMMIT_TAG" /builds/release
 node stogas/release/scripts/provenance.mjs /builds/release > /builds/statement.json
 
-curl --fail --location --silent --show-error --output /usr/local/bin/cosign \
+curl --fail --location --silent --show-error --retry 5 --retry-all-errors --output /usr/local/bin/cosign \
   https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64
 echo '424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  /usr/local/bin/cosign' |
   sha256sum --check --strict -
