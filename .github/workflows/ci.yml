@@ -128,6 +128,14 @@ jobs:
           npm run format:check
       - name: Verify release pins
         run: node stogas/release/scripts/verify-pins.mjs
+      # The release build compares the pinned SDK commit's Cargo.lock with the copy here, about
+      # 50 minutes after it starts.
+      - name: Check the SDK lock file against the pinned commit
+        run: |
+          commit=$(node --print "require('./stogas/release/pins.lock.json').releaseSources.stogasVerifier.commit")
+          curl --fail --silent --show-error --location --retry 5 --retry-all-errors \
+            "https://raw.githubusercontent.com/StogasAI/stogas/$commit/Cargo.lock" |
+            cmp - stogas/release/locks/stogas-verifier.Cargo.lock
       - name: Test release scripts
         run: node --test stogas/release/scripts/*.test.mjs
       - name: Verify Go modules
