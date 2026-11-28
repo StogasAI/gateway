@@ -117,5 +117,6 @@ fn ends_at_the_processor_limit_with_its_own_signal() {
         .spawn()
         .unwrap();
     let _ = reader.stdin.take().unwrap().write_all(&file_of(&objects));
-    assert_eq!(reader.wait().unwrap().signal(), Some(libc::SIGXCPU));
+    // Linux's SIGXCPU. These tests use no crate, so the release build compiles them alone.
+    assert_eq!(reader.wait().unwrap().signal(), Some(24));
 }

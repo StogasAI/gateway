@@ -454,8 +454,10 @@ OUTPUTS files that BUILD leaves in TARGET."
 ;; The gateway starts this program for each PDF whose text it needs.  Like
 ;; every program in the guest rootfs it is a fixed-address static executable.
 ;; Its tests run the built binary, so they also show that it can install its
-;; system call filter.  The program has no unit tests, and `--tests' would
-;; link it a second time, with link-time optimization, only to run none.
+;; system call filter.  They use no crate, so rustc compiles them alone:
+;; `cargo test' compiles every crate of the program a second time, because a
+;; test cannot abort on a panic as the release profile does, and that took 6
+;; of the 43 minutes of GitHub's build.
 (define stogas-pdftext
   (cargo-package
    "stogas-pdftext" "0"
@@ -467,7 +469,13 @@ OUTPUTS files that BUILD leaves in TARGET."
        (setenv "CARGO_PROFILE_RELEASE_DEBUG" "false")
        (setenv "RUSTFLAGS" "-C target-feature=+crt-static -C relocation-model=static")
        (invoke "cargo" "build" "--release" "--locked" "--offline"))
-   #~(invoke "cargo" "test" "--release" "--locked" "--offline" "--test" "reader")
+   #~(begin
+       (setenv "CARGO_BIN_EXE_stogas-pdftext"
+               (string-append (getcwd) "/target/x86_64-unknown-linux-gnu"
+                              "/release/stogas-pdftext"))
+       (invoke "rustc" "--edition" "2021" "--test" "tests/reader.rs"
+               "-o" "target/reader")
+       (invoke "target/reader"))
    '("stogas-pdftext")
    "https://github.com/StogasAI/gateway"
    "Static program that reads the text of one PDF under a system call filter"
