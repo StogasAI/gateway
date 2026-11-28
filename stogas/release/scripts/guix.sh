@@ -31,9 +31,16 @@ resolve_stogas_guix() {
   commit="$(sed -n 's/.*(commit "\([0-9a-f]\{40\}\)").*/\1/p' "$channels")"
   url="$(sed -n 's/.*(url .*"\(https:[^"]*\)").*/\1/p' "$channels")"
   STOGAS_GUIX_CHANNEL="${XDG_CACHE_HOME:-$HOME/.cache}/stogas/guix.git"
-  if ! git -C "$STOGAS_GUIX_CHANNEL" cat-file -e "$commit^{commit}" 2>/dev/null; then
-    rm -rf -- "$STOGAS_GUIX_CHANNEL"
-    git clone --bare --quiet "$url" "$STOGAS_GUIX_CHANNEL"
+  if [ ! -d "$STOGAS_GUIX_CHANNEL" ]; then
+    # The clone gets its name only when it is complete, so that a stopped clone or a second
+    # build's clone never stands in for the repository.
+    local clone
+    mkdir -p -- "$(dirname -- "$STOGAS_GUIX_CHANNEL")"
+    clone="$(mktemp -d -- "$STOGAS_GUIX_CHANNEL.XXXXXX")"
+    git clone --bare --quiet "$url" "$clone"
+    mv -T -- "$clone" "$STOGAS_GUIX_CHANNEL" 2>/dev/null || rm -rf -- "$clone"
+  elif ! git -C "$STOGAS_GUIX_CHANNEL" cat-file -e "$commit^{commit}" 2>/dev/null; then
+    git -C "$STOGAS_GUIX_CHANNEL" fetch --quiet "$url" '+refs/heads/*:refs/heads/*'
   fi
   export STOGAS_GUIX_CHANNEL
 
