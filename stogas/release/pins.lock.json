@@ -32,8 +32,8 @@
 			"narSha256": "0lkd9mvii7k5qrgicaypzarrchmg71kcvil9lph2bz5s0gdwcs1c"
 		},
 		"stogasVerifier": {
-			"commit": "dd864b2c52e9a51ee57f6fce6513e7118387d899",
-			"narSha256": "0fbq7hk1fc7gpzgk06w4zb2hs5brpqbqisprs26dvbpmrqg5j74z"
+			"commit": "c0617b9a65b7710dfa067302be963a991b4874fb",
+			"narSha256": "1xwhyvx85xfjmzxg8dja6hrjx0zz11j9aalrkz4h1gz0m04igdjk"
 		},
 		"svsm": {
 			"version": "2026.09-devel",
