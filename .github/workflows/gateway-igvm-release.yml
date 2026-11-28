@@ -13,18 +13,18 @@ permissions:
   contents: read
 
 jobs:
-  # A release builds only a commit that passes CI. It runs CI itself, because a newer push to main
-  # can cancel main's run of the tagged commit.
+  # A release is drafted only for a commit that passes CI, which runs beside the build. The
+  # workflow runs CI itself, because a newer push to main can cancel main's run of the tagged
+  # commit.
   ci:
     name: CI
     uses: $/.github/workflows/ci.yml
 
   build:
     name: Build IGVM Release
-    needs: ci
     runs-on: ubuntu-24.04
-    # A hosted runner builds the pinned Guix, Go, the kernel and the firmware from source. For
-    # v1.9.81 that passed two hours, so the job takes the six hours that GitHub allows a hosted job.
+    # A hosted runner builds Go, the kernel and the firmware from source. For v1.9.81 that passed
+    # two hours, so the job takes the six hours that GitHub allows a hosted job.
     timeout-minutes: 360
     permissions:
       attestations: write
@@ -126,7 +126,7 @@ jobs:
   publish:
     name: Publish Draft Release
     runs-on: ubuntu-24.04
-    needs: build
+    needs: [ci, build]
     timeout-minutes: 20
     permissions:
       actions: read

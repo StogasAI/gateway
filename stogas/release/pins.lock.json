@@ -23,7 +23,7 @@
 			"narSha256": "0s2r7j6fa4nwkrsqarbp5jwb0p87zh6cihidr46476my1989wy78"
 		},
 		"linux": {
-			"version": "6.18.63"
+			"version": "6.18.64"
 		},
 		"ntpdRs": {
 			"version": "1.9.0",

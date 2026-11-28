@@ -23,6 +23,20 @@ resolve_stogas_guix() {
     return
   fi
 
+  # Guix's own first download of its repository took 11 minutes on GitHub's
+  # runner and 15 on GitLab's, and Git's takes 2, so Git fetches it and Guix
+  # reads that copy. Guix still checks the signature of every commit between
+  # the channel's introduction and the pinned commit.
+  local channels="$release_root/guix/channels.scm" commit url
+  commit="$(sed -n 's/.*(commit "\([0-9a-f]\{40\}\)").*/\1/p' "$channels")"
+  url="$(sed -n 's/.*(url .*"\(https:[^"]*\)").*/\1/p' "$channels")"
+  STOGAS_GUIX_CHANNEL="${XDG_CACHE_HOME:-$HOME/.cache}/stogas/guix.git"
+  if ! git -C "$STOGAS_GUIX_CHANNEL" cat-file -e "$commit^{commit}" 2>/dev/null; then
+    rm -rf -- "$STOGAS_GUIX_CHANNEL"
+    git clone --bare --quiet "$url" "$STOGAS_GUIX_CHANNEL"
+  fi
+  export STOGAS_GUIX_CHANNEL
+
   profile="$(guix time-machine --substitute-urls="$STOGAS_GUIX_SUBSTITUTE_URLS" \
     --no-channel-files -C "$release_root/guix/channels.scm")"
   profile="$(readlink -f -- "$profile")"

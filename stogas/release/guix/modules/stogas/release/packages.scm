@@ -73,7 +73,13 @@
     (package
       (inherit base)
       (version (pin "go" "version"))
-      (source (pinned-git-origin "go" "https://github.com/golang/go")))))
+      (source (pinned-git-origin "go" "https://github.com/golang/go"))
+      ;; Go's own test suite tests the Go project's code, not what this build
+      ;; makes, and took 13 of the 82 minutes of GitHub's build.  The gateway's
+      ;; tests run with this Go version on every commit.
+      (arguments
+       (substitute-keyword-arguments (package-arguments base)
+         ((#:tests? _ #f) #f))))))
 
 ;; Kbuild records the source and headers of each file it builds in a .cmd
 ;; file, and GCC, as edk2 runs it, in a .deps file. Advisories name the files
@@ -448,7 +454,8 @@ OUTPUTS files that BUILD leaves in TARGET."
 ;; The gateway starts this program for each PDF whose text it needs.  Like
 ;; every program in the guest rootfs it is a fixed-address static executable.
 ;; Its tests run the built binary, so they also show that it can install its
-;; system call filter.
+;; system call filter.  The program has no unit tests, and `--tests' would
+;; link it a second time, with link-time optimization, only to run none.
 (define stogas-pdftext
   (cargo-package
    "stogas-pdftext" "0"
@@ -460,7 +467,7 @@ OUTPUTS files that BUILD leaves in TARGET."
        (setenv "CARGO_PROFILE_RELEASE_DEBUG" "false")
        (setenv "RUSTFLAGS" "-C target-feature=+crt-static -C relocation-model=static")
        (invoke "cargo" "build" "--release" "--locked" "--offline"))
-   #~(invoke "cargo" "test" "--release" "--locked" "--offline" "--tests")
+   #~(invoke "cargo" "test" "--release" "--locked" "--offline" "--test" "reader")
    '("stogas-pdftext")
    "https://github.com/StogasAI/gateway"
    "Static program that reads the text of one PDF under a system call filter"
