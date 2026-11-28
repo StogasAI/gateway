@@ -18,10 +18,10 @@ github.com/AzureAD/microsoft-authentication-extensions-for-go/cache v0.1.1 h1:WJ
 github.com/AzureAD/microsoft-authentication-extensions-for-go/cache v0.1.1/go.mod h1:tCcJZ0uHAmvjsVYzEFivsRTN00oz5BEsRgQHu5JZ9WE=
 github.com/AzureAD/microsoft-authentication-library-for-go v1.10.1 h1:0O6j18nQDoIff6/mtosT5LNU2WehEwp+LqfX6699oqY=
 github.com/AzureAD/microsoft-authentication-library-for-go v1.10.1/go.mod h1:xdYAf5bjkOpsd3auA8riiJW4vneBubt9caavL7626jQ=
-github.com/StogasAI/stogas/go v0.0.0-20261126175537-8da54680198a h1:RtbdzZaQ2cHASnjQhwsnFExjKMky+jEauD8IjL/mnfY=
-github.com/StogasAI/stogas/go v0.0.0-20261126175537-8da54680198a/go.mod h1:6ZEMQJCjL0NY9bcYghoevAOF9MdFlzvu8mZL5WRTwhc=
-github.com/StogasAI/stogas/go/reference v0.0.0-20261126175537-8da54680198a h1:cZ0hLkmFoGvTySi5nkbaYLKrn+qnfXDBs4pwOwRSbdY=
-github.com/StogasAI/stogas/go/reference v0.0.0-20261126175537-8da54680198a/go.mod h1:1jCeiQS4+JxbnWCOPm4o0FcJXafhlPSAvjshSSMSJOE=
+github.com/StogasAI/stogas/go v0.0.0-20261128024452-dd864b2c52e9 h1:Grx1vZ52Zxpk/g7P/Zz9DJzFYCGC6JHrsem5SILucAc=
+github.com/StogasAI/stogas/go v0.0.0-20261128024452-dd864b2c52e9/go.mod h1:6ZEMQJCjL0NY9bcYghoevAOF9MdFlzvu8mZL5WRTwhc=
+github.com/StogasAI/stogas/go/reference v0.0.0-20261128024452-dd864b2c52e9 h1:ol+jB3OoK3Yo/jmNyDo90KrPRDtpabPt/C+ba45gzvQ=
+github.com/StogasAI/stogas/go/reference v0.0.0-20261128024452-dd864b2c52e9/go.mod h1:1jCeiQS4+JxbnWCOPm4o0FcJXafhlPSAvjshSSMSJOE=
 github.com/andybalholm/brotli v1.2.7 h1:UgafRPGMam5ySHfRkhthMqOFA6IFoeF3D7mWIDLjG5A=
 github.com/andybalholm/brotli v1.2.7/go.mod h1:rzTDkvFWvIrjDXZHkuS16NPggd91W3kUSvPlQ1pLaKY=
 github.com/antlr4-go/antlr/v4 v4.13.1 h1:SqQKkuVZ+zWkMMNkjy5FZe5mr5WURWnlpmOuzYWrPrQ=
