@@ -74,9 +74,10 @@
       (inherit base)
       (version (pin "go" "version"))
       (source (pinned-git-origin "go" "https://github.com/golang/go"))
-      ;; Go's own test suite tests the Go project's code, not what this build
-      ;; makes, and took 13 of the 82 minutes of GitHub's build.  The gateway's
-      ;; tests run with this Go version on every commit.
+      ;; Go's own test suite tests the compiler and the standard library, which
+      ;; the Go project tests for every version that it releases, and took 13
+      ;; of the 82 minutes of GitHub's build.  The gateway's tests run with
+      ;; this Go version on every commit.
       (arguments
        (substitute-keyword-arguments (package-arguments base)
          ((#:tests? _ #f) #f))))))
@@ -473,9 +474,12 @@ OUTPUTS files that BUILD leaves in TARGET."
        (setenv "CARGO_BIN_EXE_stogas-pdftext"
                (string-append (getcwd) "/target/x86_64-unknown-linux-gnu"
                               "/release/stogas-pdftext"))
-       (invoke "rustc" "--edition" "2021" "--test" "tests/reader.rs"
-               "-o" "target/reader")
-       (invoke "target/reader"))
+       ;; Every file of tests, so that the release build leaves no new one out.
+       (for-each (lambda (tests)
+                   (invoke "rustc" "--edition" "2021" "--test" tests
+                           "-o" "target/tests")
+                   (invoke "target/tests"))
+                 (find-files "tests" "\\.rs$")))
    '("stogas-pdftext")
    "https://github.com/StogasAI/gateway"
    "Static program that reads the text of one PDF under a system call filter"

@@ -65,6 +65,9 @@ fn read(arguments: &[&str], file: &[u8]) -> (i32, Vec<String>) {
 }
 
 const LIMITS: [&str; 4] = ["2000", "8388608", "1073741824", "20"];
+/// Linux's number for the signal that ends a process at its processor time limit. These tests use
+/// the standard library alone, so the release build compiles them without Cargo.
+const SIGXCPU: i32 = 24;
 
 #[test]
 fn writes_each_page_under_the_filter() {
@@ -117,6 +120,5 @@ fn ends_at_the_processor_limit_with_its_own_signal() {
         .spawn()
         .unwrap();
     let _ = reader.stdin.take().unwrap().write_all(&file_of(&objects));
-    // Linux's SIGXCPU. These tests use no crate, so the release build compiles them alone.
-    assert_eq!(reader.wait().unwrap().signal(), Some(24));
+    assert_eq!(reader.wait().unwrap().signal(), Some(SIGXCPU));
 }

@@ -57,19 +57,19 @@ Guix applies each patch with zero fuzz.
 
 ## Checks During the Build
 
-- The patched IGVM tools, the ntpd-rs protocol and daemon libraries, and the verifier run their tests. The PDF reader's tests run the built program, which reads a file only after the kernel accepts its system call filter. The Go compiler builds without the Go project's own test suite, which tests no code of this release; the gateway's tests run with the same Go version on every commit.
+- The patched IGVM tools, the ntpd-rs protocol and daemon libraries, and the verifier run their tests. The PDF reader's tests run the built program, which reads a file only after the kernel accepts its system call filter. The Go compiler builds without the Go project's own test suite, which tests the compiler and the standard library and which the Go project runs for every version that it releases; the gateway's tests run on every commit with the Go project's own build of the same version.
 - The kernel build fails if the final configuration differs from any line in `guix/linux.config`.
 - `igvmmeasure --check-kvm` fails if the IGVM file breaks the rules that QEMU/KVM measurement depends on.
 - The release fails if `snp-launch-policies.json` is not canonical JSON, because verifiers check the embedded policies against the hash of that file.
 
 ## Outputs
 
-| File                                                           | Use                                                       |
-| -------------------------------------------------------------- | --------------------------------------------------------- |
-| `gateway.igvm`, `release-manifest.json`, `LICENSE`, `NOTICE`   | Published in the GitHub release with a build attestation. |
-| `sbom.cdx.json`                                                | Published in the GitHub release as the bill of materials. |
-| `gateway.init`, `gateway.kernel`, `gateway.initramfs.cpio.zst` | Local tests.                                              |
-| `kernel-config.txt`                                            | Review of the full kernel configuration.                  |
+| File                                                           | Use                                                                                                           |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `gateway.igvm`, `release-manifest.json`, `LICENSE`, `NOTICE`   | Published in the GitHub release with a build attestation.                                                     |
+| `sbom.cdx.json`                                                | Published with them as the bill of materials, named in the same attestation and attested again for the image. |
+| `gateway.init`, `gateway.kernel`, `gateway.initramfs.cpio.zst` | Local tests.                                                                                                  |
+| `kernel-config.txt`                                            | Review of the full kernel configuration.                                                                      |
 
 The manifest records the image hash and size, the launch measurement and launch policies, the source commit and digest, the digests of the verifier source and the vendored Go modules, the Guix commit, the hashes of the kernel, firmware, EFI stub, UKI, and measurement tool, and the hashes of the inputs above.
 
